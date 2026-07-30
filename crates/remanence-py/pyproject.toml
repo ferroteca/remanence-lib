@@ -18,6 +18,9 @@ classifiers = [
     "Topic :: System :: Filesystems",
 ]
 
+[project.urls]
+Repository = "https://github.com/ferroteca/remanence-lib"
+
 [tool.maturin]
 module-name = "remanence"
 features = ["pyo3/extension-module"]

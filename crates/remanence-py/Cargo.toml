@@ -4,6 +4,7 @@ description = "Python bindings for the Remanence disk image analysis library"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "remanence_py"
