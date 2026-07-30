@@ -38,7 +38,7 @@ fn kind_str(kind: remanence::ContainerKind) -> &'static str {
 }
 
 /// A container format definition from the registry.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct ContainerFormat {
     pub id: String,
@@ -75,7 +75,7 @@ impl ContainerFormat {
 }
 
 /// A filesystem format definition from the registry.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct FilesystemFormat {
     pub id: String,
@@ -171,7 +171,7 @@ impl FormatRegistry {
 }
 
 /// Current and expected byte sizes, when known.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct SizeInformation {
     pub current_bytes: Option<u64>,
@@ -179,7 +179,7 @@ pub struct SizeInformation {
 }
 
 /// Where the image bytes came from inside an archive.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct ArchiveLayout {
     pub path: String,
@@ -189,7 +189,7 @@ pub struct ArchiveLayout {
 }
 
 /// Where the payload sits inside a raw image container.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct ImageLayout {
     pub payload_offset_bytes: Option<u64>,
@@ -197,7 +197,7 @@ pub struct ImageLayout {
 }
 
 /// Per-track sector geometry for variable layouts.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct TrackSectorLayout {
     pub cylinder: u32,
@@ -210,7 +210,7 @@ pub struct TrackSectorLayout {
 ///
 /// `sector_layout` is `"unknown"`, `"fixed"`, or `"variable"`;
 /// `sectors_per_track` is set for fixed layouts and `tracks` for variable ones.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct DiskLayout {
     pub media_kind: Option<String>,
@@ -259,7 +259,7 @@ impl DiskLayout {
 }
 
 /// Where a filesystem sits inside the image.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct FilesystemLayout {
     pub offset_bytes: Option<u64>,
@@ -272,7 +272,7 @@ pub struct FilesystemLayout {
 /// `"filesystem"`, or `"unknown"`. `layout` is the matching layout object —
 /// `ArchiveLayout`, `ImageLayout`, `DiskLayout`, `FilesystemLayout` — or
 /// `None` when no layout details are known.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct Container {
     pub kind: String,
@@ -364,7 +364,7 @@ pub struct Identification {
 }
 
 /// One file listed in an HDOS directory.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct HdosFile {
     pub name: String,
@@ -525,7 +525,7 @@ impl Session {
 }
 
 /// One discovered MBR partition.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct PartitionInfo {
     pub number: u32,
@@ -536,7 +536,7 @@ pub struct PartitionInfo {
 }
 
 /// One FAT volume actually read from a disk.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct VolumeInfo {
     pub partition_number: Option<u32>,
@@ -558,7 +558,7 @@ pub struct DiskGeometry {
 }
 
 /// One FAT directory entry; `kind` is `"file"` or `"directory"`.
-#[pyclass(frozen, get_all, module = "remanence")]
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct FatEntry {
     pub name: String,
