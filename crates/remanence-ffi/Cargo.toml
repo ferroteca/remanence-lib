@@ -1,0 +1,16 @@
+[package]
+name = "remanence-ffi"
+description = "C ABI for the Remanence disk image analysis library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "remanence_ffi"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+remanence.workspace = true
+
+[build-dependencies]
+cbindgen = "0.29"

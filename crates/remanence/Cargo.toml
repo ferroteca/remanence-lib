@@ -1,0 +1,10 @@
+[package]
+name = "remanence"
+description = "Core disk image analysis library for Remanence Workbench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Intentionally none: the library is dependency-free, including its own
+# ZIP central-directory reader and RFC 1951 (DEFLATE) decompressor.

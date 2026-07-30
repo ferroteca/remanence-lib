@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/remanence",
+    "crates/remanence-ffi",
+    "crates/remanence-py",
+]
+# remanence-py needs a Python toolchain (maturin/PyO3); keep plain
+# `cargo build` / `cargo test` runnable without one.
+default-members = [
+    "crates/remanence",
+    "crates/remanence-ffi",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+
+[workspace.dependencies]
+remanence = { path = "crates/remanence", version = "0.1.0" }

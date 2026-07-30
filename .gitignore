@@ -1,0 +1,5 @@
+/target
+*.pyd
+__pycache__/
+.idea/
+.vscode/

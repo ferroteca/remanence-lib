@@ -1,0 +1,31 @@
+version = 1
+SPDX-PackageName = "remanence-lib"
+SPDX-PackageSupplier = "Paul Galbraith <paul@galbraiths.ca>"
+
+# Files that cannot (or should not) carry comment headers.
+[[annotations]]
+path = [
+    ".gitignore",
+    "README.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "ARCHITECTURE.md",
+    "REUSE.toml",
+    "planning/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/remanence/Cargo.toml",
+    "crates/remanence-ffi/Cargo.toml",
+    "crates/remanence-ffi/cbindgen.toml",
+    "crates/remanence-py/Cargo.toml",
+    "crates/remanence-py/pyproject.toml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Paul Galbraith"
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# crates/remanence/tests/fixtures/ is deliberately NOT annotated: the HDOS
+# disk images there are vintage third-party distribution media the project
+# claims no copyright in. Their status is an open question in
+# planning/DECISIONS.md, to be resolved before any package publish.

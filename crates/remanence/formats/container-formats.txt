@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Paul Galbraith
+# SPDX-License-Identifier: GPL-3.0-only
+
+# Remanence container format definitions.
+#
+# Sections are container ids. Key/value pairs use "key = value".
+# Unknown keys are preserved as attributes so the schema can grow gradually.
+
+[h8d]
+name = Heathkit H8 H17 disk image
+extensions = h8d
+media_kind = floppy
+sector_size = 256
+cylinders = 40
+sides = 1
+sectors_per_track = 10
+filesystem_candidates = hdos, cpm
