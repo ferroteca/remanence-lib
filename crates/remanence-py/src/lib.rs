@@ -522,7 +522,15 @@ fn default_format_registry() -> PyResult<FormatRegistry> {
 
 #[pymodule(name = "remanence")]
 fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // The distribution version (pyproject.toml) governs; the crate version is
+    // only a fallback for uninstalled contexts.
+    let version = m
+        .py()
+        .import("importlib.metadata")
+        .and_then(|metadata| metadata.call_method1("version", ("remanence",)))
+        .and_then(|version| version.extract::<String>())
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+    m.add("__version__", version)?;
     m.add("DEFAULT_CONTAINER_FORMATS", remanence::DEFAULT_CONTAINER_FORMATS)?;
     m.add("DEFAULT_FILESYSTEM_FORMATS", remanence::DEFAULT_FILESYSTEM_FORMATS)?;
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;

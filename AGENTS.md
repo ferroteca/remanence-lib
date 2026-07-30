@@ -173,13 +173,16 @@ compiled into the wheel.
   implementation of RFC 1951 following that published structure, written
   from the project's own C++ lineage, not from puff.c. Keep the
   attribution comment in the file.
-- `crates/remanence/tests/fixtures/` holds vintage HDOS distribution disk
-  images used as test fixtures. **They are third-party material and are
-  not covered by the project's copyright claim** — their status is
-  unresolved and flagged in `planning/DECISIONS.md`. They are test-only
-  today, but `cargo package` would bundle them into a published crate
-  and the maturin sdist (`uv build`) bundles them likewise — verified;
-  resolve the question before any publish, crates.io or PyPI.
+- `crates/remanence/tests/fixtures/` is **local-only test data** and is
+  deliberately empty in a fresh checkout: the vintage HDOS distribution
+  disk images used by the integration tests are third-party material
+  the project cannot account for, so per D1 (`planning/DECISIONS.md`)
+  they are excluded from git (history rewritten before any remote
+  existed), from cargo packages (`package.exclude`), and from Python
+  sdists. The fixture-driven integration tests fail without the local
+  files — a knowingly accepted state; `planning/TASKS.md` T5 tracks
+  the repair. Never re-add the images to git or to any published
+  artifact.
 
 ## Required checks
 

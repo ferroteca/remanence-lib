@@ -54,13 +54,6 @@ becoming a D-number, and the commit that moves it is the record.
   significant decisions are flagged to the owner case by case.
   Settled by the owner dictating the first lists, in the owner's
   voice.
-- **HDOS fixture image provenance** — the test fixtures under
-  `crates/remanence/tests/fixtures/` are vintage HDOS distribution
-  disk images; the project cannot claim copyright in them and their
-  status is unresolved. What turns on it: REUSE completeness, and
-  whether `cargo package` may bundle them into a published crate.
-  Settled by an owner ruling on fixture handling before any
-  publish.
 - **CLA legal review** — [CLA.md](../CLA.md) states intended terms
   but has not been reviewed by a lawyer, and its governing-law
   clause is deliberately unfilled. What turns on it: no external
@@ -69,7 +62,39 @@ becoming a D-number, and the commit that moves it is the record.
 
 ## Decisions
 
-*(none recorded yet; D1 is the next number)*
+### D1 — The HDOS fixture images leave git and every published artifact
+
+**Decided** Paul Galbraith, 2026-07-30. **Supports** (none) — no
+numbered vision entry exists yet to demand it; the demand is the
+licensing policy in [AGENTS.md](../AGENTS.md): the project must own
+every line it ships, and the vintage HDOS distribution images are
+not the project's to distribute — or at least that is not certain,
+which is the same bar.
+
+The fixture images under `crates/remanence/tests/fixtures/` are
+excluded from **everything the project distributes or records**:
+Python sdists and wheels, cargo packages, and the git repository
+itself — history was rewritten to expunge them before any remote
+existed, and the directory is ignored. They remain local-only test
+data. Implemented as `package.exclude` on the core crate (governing
+maturin sdists and `cargo publish` alike), the `.gitignore` entry,
+and the history rewrite.
+
+**Accepted cost, stated by the owner:** a fresh checkout cannot run
+the fixture-driven integration tests — better to commit a broken
+build than to commit something the project should not carry. T5
+tracks the repair. *(T-numbers evaporate; once that task is struck,
+its commit is the record.)*
+
+**Weighed and declined:** publishing the wheel without an sdist
+(with no public repository, GPL object code would ship with no
+corresponding source at all); annotating the fixtures in REUSE and
+shipping them (the project cannot convey rights it does not hold);
+keeping them in git as local-only history (any future push would
+distribute the blobs).
+
+**Folded into:** `crates/remanence/Cargo.toml` (`package.exclude`),
+`.gitignore`, AGENTS.md "Prior art and provenance notes".
 
 ## Retired decisions
 

@@ -5,3 +5,5 @@ dist/
 __pycache__/
 .idea/
 .vscode/
+# Vintage HDOS fixture images: local-only test data, never tracked (D1).
+crates/remanence/tests/fixtures/

@@ -4,6 +4,10 @@ description = "Core disk image analysis library for Remanence Workbench"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# The HDOS fixture images are third-party media with unresolved status
+# (planning/DECISIONS.md); they are test-only and stay out of every
+# published artifact — cargo packages and Python sdists alike.
+exclude = ["tests/fixtures/"]
 
 [dependencies]
 # Intentionally none: the library is dependency-free, including its own
