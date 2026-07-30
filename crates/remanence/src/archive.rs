@@ -3,9 +3,14 @@
 
 //! Resolves a user-supplied path — a raw image, or `archive.zip[/entry]` — to
 //! the image bytes plus any archive layers that were unwrapped along the way.
+//! The source file is opened under the P7 claim, and the claim travels with
+//! the resolution so the session can hold it for its lifetime.
 
+use std::fs::File;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use crate::device::{AccessMode, open_locked};
 use crate::error::{Error, Result};
 use crate::zip::ZipArchive;
 
@@ -21,13 +26,21 @@ pub(crate) struct ArchiveLayer {
     pub uncompressed_size: Option<u64>,
 }
 
+/// The P7 claim on the source file, held for the session's lifetime.
+#[derive(Debug)]
+pub(crate) struct SourceClaim {
+    _file: File,
+    pub mode: AccessMode,
+}
+
 /// The fully-resolved image bytes and provenance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct ResolvedImage {
     pub source_path: PathBuf,
     pub image_path: PathBuf,
     pub bytes: Vec<u8>,
     pub archive_layers: Vec<ArchiveLayer>,
+    pub claim: SourceClaim,
 }
 
 fn has_zip_extension(component: &Path) -> bool {
@@ -81,8 +94,14 @@ fn normalize_entry_name(path: &Path) -> String {
     result
 }
 
-fn read_file_bytes(path: &Path) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|_| Error::io(format!("failed to open '{}'", path.display())))
+/// Opens `path` under the P7 ladder and reads it whole through the
+/// claimed handle.
+fn read_claimed(path: &Path) -> Result<(Vec<u8>, SourceClaim)> {
+    let (mut file, mode) = open_locked(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| Error::io(format!("failed to read '{}': {error}", path.display())))?;
+    Ok((bytes, SourceClaim { _file: file, mode }))
 }
 
 /// Returns the name of the archive's only file entry, or an error when the
@@ -113,18 +132,19 @@ fn only_file_entry_name(archive: &ZipArchive, archive_path: &Path) -> Result<Str
 /// Resolves `path` to image bytes, unwrapping a `.zip` archive when present.
 pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
     let Some((archive_path, entry_path)) = split_zip_path(path) else {
-        let bytes = read_file_bytes(path)?;
+        let (bytes, claim) = read_claimed(path)?;
         return Ok(ResolvedImage {
             source_path: path.to_path_buf(),
             image_path: path.to_path_buf(),
             bytes,
             archive_layers: Vec::new(),
+            claim,
         });
     };
 
-    let archive = ZipArchive::open(&archive_path)?;
-
-    let archive_size = std::fs::metadata(&archive_path).ok().map(|metadata| metadata.len());
+    let (archive_bytes, claim) = read_claimed(&archive_path)?;
+    let archive_size = Some(archive_bytes.len() as u64);
+    let archive = ZipArchive::from_bytes(archive_bytes)?;
 
     let entry_name = match &entry_path {
         Some(entry_path) => normalize_entry_name(entry_path),
@@ -156,5 +176,6 @@ pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
         image_path: PathBuf::from(entry_name),
         bytes,
         archive_layers: vec![layer],
+        claim,
     })
 }

@@ -19,13 +19,21 @@ C ABI. The Rust code here is now the authoritative implementation.
   `FormatRegistry` (BTreeMap-keyed, so detection iterates in stable id
   order); `image.rs` size validation against a container format;
   `container.rs` / `filesystem.rs` the detection heuristics (crate-private,
-  reached through `Session::identify`); `session.rs` the session model and
-  the layered identification result; `hdos.rs` the HDOS directory lister;
-  `archive.rs` `.zip[/entry]` path resolution; `zip.rs` + `inflate.rs` the
-  self-contained ZIP reader and DEFLATE decompressor. `formats/` holds the
-  starter container/filesystem definitions, embedded with `include_str!`.
-  Unit tests live in their modules; fixture-driven integration tests in
-  `tests/` with the images in `tests/fixtures/`.
+  reached through `Session::identify`); `session.rs` the session model,
+  the layered identification result, and the P7 claim held for the
+  session's lifetime; `hdos.rs` the HDOS directory lister and file
+  extractor; `archive.rs` `.zip[/entry]` path resolution under the claim;
+  `zip.rs` + `inflate.rs` the self-contained ZIP reader and DEFLATE
+  decompressor; `device.rs` the block-device seam, the P7 open ladder,
+  and the P2 commit-point overlay; `qcow2.rs` the native qcow2 v2/v3
+  driver (P8 version gate first; write path refuses snapshots and
+  non-16-bit refcounts by name); `mbr.rs` partition discovery with
+  pinned types; `fat.rs` FAT12/16 volume read/write; `disk.rs` the
+  public at-rest `Disk` API (open/geometry/entries/read/write/mkdir/
+  commit/rollback). `formats/` holds the starter container/filesystem
+  definitions, embedded with `include_str!`. Unit tests live in their
+  modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
+  images built in-test, plus the fixture-driven HDOS tests.
 - `crates/remanence-ffi/` — the C ABI (`rmn_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`
   regenerates `include/remanence.h` with cbindgen on every build; the
@@ -38,6 +46,9 @@ C ABI. The Rust code here is now the authoritative implementation.
   are built with **uv** (`uv build crates/remanence-py` → sdist + abi3
   wheel in its `dist/`), which drives the maturin build backend in an
   isolated environment; publishing is `uv publish` and is owner-gated.
+  **The Python package claims Windows only** (the tested host; the
+  classifiers state it) — keep POSIX paths correct but never state or
+  imply support the project has not tested.
 - `planning/README.md` is the map of the maintainer-facing planning
   machinery, and the place to start. `planning/SURFACES.md` is the
   surface-change rule; the application surface inventory it scopes over is
@@ -49,11 +60,12 @@ C ABI. The Rust code here is now the authoritative implementation.
   pre-approved task queue: **agents do not add tasks on their own
   initiative, and ask before editing that file at all**; anyone may pick
   up what is already there.
-- **The vision is not yet dictated.** There is no root `USE-CASES.md` and
-  no armed architectural principles yet; the use cases and principles are
-  the owner's to state, and significant decisions should be flagged rather
-  than argued against lists that do not exist. What is enumerated today is
-  the application surfaces (factual, in force).
+- **The vision is in force.** Use cases U1–U5 (root
+  [USE-CASES.md](USE-CASES.md)) and architectural principles P1–P8
+  (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
+  met or honored by the code today, and a divergence is a bug. Triage
+  cites them by number; the surface-change rule in
+  [planning/SURFACES.md](planning/SURFACES.md) is fully operable.
 - **There is no roadmap**, and no issue tracker yet — until one exists the
   task lane has no proposed state at all (see `planning/TASKS.md`).
 
@@ -183,6 +195,31 @@ compiled into the wheel.
   files — a knowingly accepted state; `planning/TASKS.md` T5 tracks
   the repair. Never re-add the images to git or to any published
   artifact.
+
+## Versioning and releases
+
+The **workspace SemVer is the single upstream version** —
+`workspace.package.version`, inherited by every crate (currently
+`0.0.1-alpha.1`). Pre-releases follow SemVer's ladder (`-alpha.N` →
+`-beta.N` → `-rc.N` → bare); nothing below `-alpha.1` is ever
+published to a registry — unpublished git is the dev channel.
+
+The **PyPI version is derived, never hand-written**: pyproject
+declares `dynamic = ["version"]` and maturin converts the Cargo
+version to PEP 440 (`0.0.1-alpha.1` → `0.0.1a1`). Do not put a static
+version back in pyproject.
+
+**Repackaging an unchanged upstream** (distro-style revision — the
+wheel changed, the library did not) is spelled as a PEP 440
+post-release: give `crates/remanence-py` its own Cargo version with
+`.post.N` appended to the workspace version (e.g.
+`0.0.1-alpha.1.post.1` → PyPI `0.0.1a1.post1`), and return it to
+`version.workspace = true` at the next upstream bump. **The decision
+that a repack is warranted is the releaser's judgment — only the
+spelling is mechanized.** PEP 440 discourages post-releases of
+pre-releases; the distro-revision model is chosen deliberately over
+that advice (D3), and PyPI's local-version syntax — the truer
+analog — is rejected by the index outright.
 
 ## Required checks
 

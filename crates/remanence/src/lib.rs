@@ -10,18 +10,27 @@
 
 mod archive;
 mod container;
+mod device;
+mod disk;
 mod error;
+mod fat;
 mod filesystem;
 mod hdos;
 mod image;
 mod inflate;
+mod mbr;
+mod qcow2;
 mod registry;
 mod session;
 mod zip;
 
+pub use device::AccessMode;
+pub use disk::{Disk, DiskFormat, DiskGeometry};
 pub use error::{Error, Result};
-pub use hdos::{HdosFile, list_hdos_files};
+pub use fat::{FatEntry, FatEntryKind, FatKind, VolumeInfo};
+pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
 pub use image::DiskImage;
+pub use mbr::PartitionInfo;
 pub use registry::{ContainerFormat, FilesystemFormat, FormatRegistry};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout,

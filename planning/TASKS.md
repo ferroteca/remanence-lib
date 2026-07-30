@@ -61,7 +61,7 @@ not reusable: the number retires and is never issued again, so one
 surviving in a commit message never resolves to something else
 later, and gaps are history.
 
-**The next number to issue is T6.** Keep this line current. Tasks
+**The next number to issue is T7.** Keep this line current. Tasks
 are the one class whose whole population can vanish — the queue
 empties and a struck task's only record is its commit — so nothing
 else would say what the highest number ever issued was. It records
@@ -98,6 +98,22 @@ would bundle them into a published crate. Decide whether they are
 excluded from the `.crate`, replaced with synthetic fixtures, or
 kept with their status documented. Must land before any crates.io
 publish. Record the ruling as a D-number.
+
+### T6 — Converge the FreeDOS rig and run its suite
+
+`testing/freedos-rig/` holds the owner-directed integration rig: a
+blueprint and install script for reliquary to build a FreeDOS 1.4
+qcow2 whose disk carries two primary partitions and an extended
+chain of two logicals, each FAT volume labeled and marked — real
+QEMU allocation patterns and installer-authored filesystems for the
+at-rest stack (U3/U4). The install script is a first draft: the
+LiveCD prompt texts and the FDISK/FORMAT sequences are annotated
+`to-converge` and need live iteration in reliquary's driving loop.
+Converge it, build the artifact into
+`crates/remanence/tests/fixtures/freedos-parttest.qcow2`
+(local-only, per D1's directory), and make
+`cargo test -p remanence --test freedos_qcow2 -- --ignored` pass;
+extend that suite as the rig stabilizes.
 
 ### T5 — Restore the integration suite for fresh checkouts
 

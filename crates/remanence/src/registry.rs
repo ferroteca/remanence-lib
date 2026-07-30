@@ -18,6 +18,8 @@ pub struct ContainerFormat {
     pub sides: Option<usize>,
     pub tracks: Option<usize>,
     pub sectors_per_track: Option<usize>,
+    /// A leading byte signature, hex-encoded in the definition text.
+    pub magic: Option<Vec<u8>>,
     pub filesystem_candidates: Vec<String>,
     /// Unknown keys are preserved here so the schema can grow gradually.
     pub attributes: BTreeMap<String, String>,
@@ -145,6 +147,22 @@ fn parse_usize(value: &str, line: usize) -> Result<usize> {
         return Err(error());
     }
     value.parse().map_err(|_| error())
+}
+
+fn parse_hex_bytes(value: &str, line: usize) -> Result<Vec<u8>> {
+    let error = || {
+        Error::registry(
+            line,
+            format!("expected an even-length hex byte string, found '{value}'"),
+        )
+    };
+    if value.is_empty() || value.len() % 2 != 0 {
+        return Err(error());
+    }
+    (0..value.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&value[at..at + 2], 16).map_err(|_| error()))
+        .collect()
 }
 
 /// Returns `Ok(None)` when the line is not a section header at all.
@@ -295,6 +313,7 @@ fn set_container_value(
         "sectors_per_track" => {
             container.sectors_per_track = Some(parse_usize(value, line)?)
         }
+        "magic" => container.magic = Some(parse_hex_bytes(value, line)?),
         "filesystem_candidates" => container.filesystem_candidates = parse_list(value),
         _ => {
             container.attributes.insert(key.to_owned(), value.to_owned());

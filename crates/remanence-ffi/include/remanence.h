@@ -39,6 +39,36 @@ typedef enum {
   RMN_SECTOR_LAYOUT_KIND_VARIABLE,
 } RmnSectorLayoutKind;
 
+// Which P7 mode an open obtained.
+typedef enum {
+  RMN_ACCESS_MODE_READ_WRITE,
+  RMN_ACCESS_MODE_READ_ONLY,
+} RmnAccessMode;
+
+// The container format a disk image turned out to be.
+typedef enum {
+  RMN_DISK_FORMAT_RAW,
+  RMN_DISK_FORMAT_QCOW2,
+} RmnDiskFormat;
+
+// What a FAT directory entry is.
+typedef enum {
+  RMN_FAT_ENTRY_KIND_FILE,
+  RMN_FAT_ENTRY_KIND_DIRECTORY,
+} RmnFatEntryKind;
+
+// An open at-rest disk image.
+typedef struct RmnDisk RmnDisk;
+
+// A snapshot of a disk's partitions and volumes.
+typedef struct RmnDiskGeometry RmnDiskGeometry;
+
+// A directory listing.
+typedef struct RmnFatEntryList RmnFatEntryList;
+
+// Bytes read out of a volume or catalog.
+typedef struct RmnFileData RmnFileData;
+
 // A parsed HDOS directory listing.
 typedef struct RmnHdosFileList RmnHdosFileList;
 
@@ -248,6 +278,156 @@ const char *rmn_hdos_file_flags(const RmnHdosFileList *list, size_t index);
 
 // HDOS catalog date, e.g. "09-May-78", or "No-Date".
 const char *rmn_hdos_file_modified_date(const RmnHdosFileList *list, size_t index);
+
+// Opens `path` (UTF-8) as an at-rest disk image — raw or qcow2, detected
+// by magic — under the P7 claim: read/write with writes denied to others
+// (preferred), read-only fallback, fail fast when deny-write cannot be
+// obtained. Returns null on failure with a message in `error_out`.
+RmnDisk *rmn_disk_open(const char *path, char **error_out);
+
+// Frees a disk handle, releasing the P7 claim. Uncommitted changes are
+// discarded (the commit point never reached the file).
+void rmn_disk_free(RmnDisk *disk);
+
+// Which P7 mode the open obtained.
+RmnAccessMode rmn_disk_mode(const RmnDisk *disk);
+
+// The detected container format.
+RmnDiskFormat rmn_disk_format(const RmnDisk *disk);
+
+// The qcow2 version, or 0 for a raw image.
+uint32_t rmn_disk_qcow2_version(const RmnDisk *disk);
+
+// The virtual disk size in bytes.
+uint64_t rmn_disk_size(const RmnDisk *disk);
+
+// Whether uncommitted changes exist.
+bool rmn_disk_is_modified(const RmnDisk *disk);
+
+// Reads the disk's partitions and volumes as they actually are. Free the
+// result with `rmn_disk_geometry_free`.
+RmnDiskGeometry *rmn_disk_geometry(RmnDisk *disk, char **error_out);
+
+// Frees a geometry snapshot.
+void rmn_disk_geometry_free(RmnDiskGeometry *geometry);
+
+// Number of partitions (0 for a partitionless image).
+size_t rmn_geometry_partition_count(const RmnDiskGeometry *geometry);
+
+// A partition's 1-based number.
+uint32_t rmn_geometry_partition_number(const RmnDiskGeometry *geometry, size_t index);
+
+// A partition's MBR type byte.
+uint8_t rmn_geometry_partition_type_byte(const RmnDiskGeometry *geometry, size_t index);
+
+// A partition's pinned type name.
+const char *rmn_geometry_partition_type_name(const RmnDiskGeometry *geometry, size_t index);
+
+// A partition's start offset in bytes.
+uint64_t rmn_geometry_partition_start_bytes(const RmnDiskGeometry *geometry, size_t index);
+
+// A partition's length in bytes.
+uint64_t rmn_geometry_partition_length_bytes(const RmnDiskGeometry *geometry, size_t index);
+
+// Number of volumes actually read (one guest drive letter each).
+size_t rmn_geometry_volume_count(const RmnDiskGeometry *geometry);
+
+// The 1-based partition number a volume sits in; returns false for a
+// partitionless image.
+bool rmn_geometry_volume_partition_number(const RmnDiskGeometry *geometry,
+                                          size_t index,
+                                          uint32_t *out);
+
+// The volume's FAT kind name ("FAT12" or "FAT16").
+const char *rmn_geometry_volume_kind(const RmnDiskGeometry *geometry, size_t index);
+
+// The volume label, or null when it has none.
+const char *rmn_geometry_volume_label(const RmnDiskGeometry *geometry, size_t index);
+
+// The volume's offset in bytes.
+uint64_t rmn_geometry_volume_offset_bytes(const RmnDiskGeometry *geometry, size_t index);
+
+// The volume's length in bytes.
+uint64_t rmn_geometry_volume_length_bytes(const RmnDiskGeometry *geometry, size_t index);
+
+// The volume's cluster size in bytes.
+uint64_t rmn_geometry_volume_cluster_bytes(const RmnDiskGeometry *geometry, size_t index);
+
+// The volume's data-cluster count.
+uint64_t rmn_geometry_volume_cluster_count(const RmnDiskGeometry *geometry, size_t index);
+
+// The BPB-stated sectors per track; returns false where the boot record
+// states none.
+bool rmn_geometry_volume_sectors_per_track(const RmnDiskGeometry *geometry,
+                                           size_t index,
+                                           uint32_t *out);
+
+// The BPB-stated head count; returns false where the boot record states
+// none.
+bool rmn_geometry_volume_heads(const RmnDiskGeometry *geometry, size_t index, uint32_t *out);
+
+// Lists a directory in volume `volume` ("" = root, "A/B" descends). Free
+// with `rmn_fat_entry_list_free`.
+RmnFatEntryList *rmn_disk_entries(RmnDisk *disk, size_t volume, const char *path, char **error_out);
+
+// Frees a directory listing.
+void rmn_fat_entry_list_free(RmnFatEntryList *list);
+
+// Number of entries in the listing.
+size_t rmn_fat_entry_count(const RmnFatEntryList *list);
+
+// An entry's 8.3 name.
+const char *rmn_fat_entry_name(const RmnFatEntryList *list, size_t index);
+
+// Whether an entry is a file or a directory.
+RmnFatEntryKind rmn_fat_entry_kind(const RmnFatEntryList *list, size_t index);
+
+// An entry's size in bytes (0 for directories).
+uint64_t rmn_fat_entry_size_bytes(const RmnFatEntryList *list, size_t index);
+
+// Copies a file's bytes out of volume `volume`. Free with
+// `rmn_file_data_free`.
+RmnFileData *rmn_disk_read_file(RmnDisk *disk, size_t volume, const char *path, char **error_out);
+
+// The bytes of a read-out file; valid until the handle is freed.
+const uint8_t *rmn_file_data_bytes(const RmnFileData *data, size_t *length_out);
+
+// Frees read-out file bytes.
+void rmn_file_data_free(RmnFileData *data);
+
+// Writes a file into volume `volume`. Buffered until `rmn_disk_commit`.
+bool rmn_disk_write_file(RmnDisk *disk,
+                         size_t volume,
+                         const char *path,
+                         const uint8_t *bytes,
+                         size_t length,
+                         char **error_out);
+
+// Creates a directory in volume `volume`. Buffered until commit.
+bool rmn_disk_make_directory(RmnDisk *disk, size_t volume, const char *path, char **error_out);
+
+// The commit point (P2): everything buffered reaches the image, then a
+// flush. Until this call, nothing has touched the file.
+bool rmn_disk_commit(RmnDisk *disk, char **error_out);
+
+// Discards everything buffered; the image is untouched.
+void rmn_disk_rollback(RmnDisk *disk);
+
+// Which P7 mode the session's open obtained on its source file.
+RmnAccessMode rmn_session_access_mode(const RmnSession *session);
+
+// Reads a cataloged HDOS file's contents out of raw image bytes. Free
+// with `rmn_file_data_free`.
+RmnFileData *rmn_read_hdos_file(const uint8_t *bytes,
+                                size_t length,
+                                const char *name,
+                                char **error_out);
+
+// Reads a cataloged HDOS file out of a session's image bytes. Free with
+// `rmn_file_data_free`.
+RmnFileData *rmn_session_read_hdos_file(const RmnSession *session,
+                                        const char *name,
+                                        char **error_out);
 
 #ifdef __cplusplus
 }  // extern "C"

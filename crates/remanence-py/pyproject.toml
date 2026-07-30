@@ -8,10 +8,13 @@ description = "Disk image analysis library for Remanence Workbench"
 requires-python = ">=3.10"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
-version = "0.0.1.dev0"
+# The version is derived from the Cargo (lib) version and converted to
+# PEP 440 by maturin; see AGENTS.md "Versioning and releases".
+dynamic = ["version"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: Microsoft :: Windows",
     "Topic :: System :: Filesystems",
 ]
 

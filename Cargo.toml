@@ -13,9 +13,9 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 edition = "2024"
 license = "GPL-3.0-only"
 
 [workspace.dependencies]
-remanence = { path = "crates/remanence", version = "0.1.0" }
+remanence = { path = "crates/remanence", version = "0.0.1-alpha.1" }

@@ -48,12 +48,12 @@ than a separate one, since what settles them is an entry below.
 Nothing here binds anything; a question leaves this section by
 becoming a D-number, and the commit that moves it is the record.
 
-- **The vision is not yet dictated** — no use cases, no
-  architectural principles. What turns on it: the surface-change
-  rule cannot triage against lists that do not exist, so
-  significant decisions are flagged to the owner case by case.
-  Settled by the owner dictating the first lists, in the owner's
-  voice.
+- **Readers during the physical save (P7)** — on platforms where
+  other processes' reads are admitted, they remain admitted during
+  the physical write-through at commit, so a reader arriving
+  mid-commit can observe a torn file. The alternative is a brief
+  full exclusion around the commit. As implemented, reads stay
+  admitted throughout. Settled by an owner ruling either way.
 - **CLA legal review** — [CLA.md](../CLA.md) states intended terms
   but has not been reviewed by a lawyer, and its governing-law
   clause is deliberately unfilled. What turns on it: no external
@@ -61,6 +61,54 @@ becoming a D-number, and the commit that moves it is the record.
   that review.
 
 ## Decisions
+
+### D3 — One upstream version; packaging versions derive; repacks are post-releases
+
+**Decided** Paul Galbraith, 2026-07-30. **Supports** (none) — release
+machinery; no numbered vision entry demands it.
+
+The workspace SemVer is the sole upstream version. The PyPI version
+is derived from it by maturin (`0.0.1-alpha.1` → `0.0.1a1`), never
+hand-written. Repackaging an unchanged upstream — the distro-revision
+case — is spelled as a PEP 440 post-release by appending `.post.N` to
+the Python packaging crate's own Cargo version (`0.0.1a1.post1`);
+whether a repack is warranted is the releaser's judgment, and only
+the spelling is mechanized.
+
+**Weighed and declined:** PEP 440 local versions (`+r1`, the true
+distro-revision analog — PyPI rejects them on upload); a static
+hand-maintained pyproject version (drifts from the lib; replaced by
+derivation); bumping the upstream version for packaging-only changes
+(misstates the library). PEP 440's discouragement of post-releases
+on pre-releases was seen and consciously overridden — the
+distro-revision model is the point.
+
+**Folded into:** AGENTS.md "Versioning and releases";
+`crates/remanence-py/pyproject.toml` (dynamic version).
+
+### D2 — The commit point is an in-memory overlay, not qcow2 internal snapshots
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-07-30. **Supports** P2, U3.
+
+P2's commit point is implemented as an in-memory write overlay over
+the virtual disk: every write buffers, reads see the buffered state,
+`commit` writes through and flushes, `rollback` discards. The drafted
+alternative — reproducing reliquary's qcow2-internal-snapshot
+protocol natively (the feature drafted as F4) — was superseded before
+it was pledged.
+
+**Weighed and declined:** internal snapshots as the commit point.
+The overlay is uniform across raw and qcow2 images where snapshots
+exist only for qcow2; it means **nothing whatever touches the host
+file before commit** (stronger than snapshot-then-write under P6);
+and it removes the snapshot-table machinery from the write claim
+entirely — the write path refuses images carrying internal snapshots,
+keeping the all-refcounts-are-one invariant checkable.
+
+**Folded into:** root [ARCHITECTURE.md](../ARCHITECTURE.md) P2's
+in-force text; `crates/remanence/src/device.rs` (the overlay) and
+`disk.rs` (commit/rollback).
 
 ### D1 — The HDOS fixture images leave git and every published artifact
 

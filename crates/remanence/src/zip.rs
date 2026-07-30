@@ -4,8 +4,6 @@
 //! Minimal ZIP central-directory reader supporting STORE (0) and DEFLATE (8),
 //! mirroring the subset of the ZIP format the archive resolver relies on.
 
-use std::path::Path;
-
 use crate::error::{Error, Result};
 use crate::inflate::inflate;
 
@@ -39,10 +37,7 @@ fn read_u32(data: &[u8], pos: usize) -> u32 {
 }
 
 impl ZipArchive {
-    pub fn open(path: &Path) -> Result<Self> {
-        let data = std::fs::read(path)
-            .map_err(|_| Error::io(format!("failed to open '{}'", path.display())))?;
-
+    pub fn from_bytes(data: Vec<u8>) -> Result<Self> {
         if data.len() < 22 {
             return Err(Error::archive("zip", "file is too small"));
         }

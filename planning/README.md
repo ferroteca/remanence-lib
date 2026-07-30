@@ -77,15 +77,16 @@ none of them has a lifecycle state to be in:
   work it in.
 
 The in-force artifacts live at the **repository root**, not here,
-because they are claims about the code as it exists today. Root
-[ARCHITECTURE.md](../ARCHITECTURE.md) holds the whole-system view
-and the application surface inventory (S1–S4). **The rest of the
-vision is not yet dictated**: there is no root `USE-CASES.md` and no
-armed architectural principles — the use cases and principles are
-the owner's to state, in the owner's voice, and the lists start when
-that dictation happens. Until then nothing claims them, and the
-mirrored `proposed/`/`pledged/` artifacts appear when the first
-draft does.
+because they are claims about the code as it exists today:
+[USE-CASES.md](../USE-CASES.md) (U1–U5, every entry met by the
+code) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the whole-system
+view, the application surface inventory S1–S4, and the
+architectural principles P1–P8, every principle honored by the
+code). Together with the norms — currently the defining code, as
+root ARCHITECTURE.md states — they are the project's **vision**.
+What sits under `proposed/` and `pledged/` here is vision that has
+not arrived yet; both directories appear when they next have
+content.
 
 Use cases and principles run through **three** states, not two:
 drafted (`proposed/`) → pledged (`pledged/`) → in force (the root

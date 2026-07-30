@@ -477,6 +477,13 @@ impl Session {
         self.inner.is_modified()
     }
 
+    /// `"read-write"` or `"read-only"`: which mode the deny-write claim
+    /// on the source file was obtained in.
+    #[getter]
+    fn access_mode(&self) -> &'static str {
+        mode_str(self.inner.access_mode())
+    }
+
     /// Identifies the image's container layers and probable filesystem.
     fn identify(&self, py: Python<'_>) -> PyResult<Identification> {
         let identification = self.inner.identify();
@@ -499,10 +506,237 @@ impl Session {
             .map_err(to_py_err)
     }
 
+    /// Reads a cataloged HDOS file's contents out of the session's image.
+    fn read_hdos_file<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes =
+            remanence::read_hdos_file(self.inner.bytes(), name).map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
     #[doc(hidden)]
     #[pyo3(name = "_mark_modified_for_test")]
     fn mark_modified_for_test(&mut self) {
         self.inner.mark_modified_for_test();
+    }
+}
+
+/// One discovered MBR partition.
+#[pyclass(frozen, get_all, module = "remanence")]
+#[derive(Clone)]
+pub struct PartitionInfo {
+    pub number: u32,
+    pub type_byte: u8,
+    pub type_name: String,
+    pub start_bytes: u64,
+    pub length_bytes: u64,
+}
+
+/// One FAT volume actually read from a disk.
+#[pyclass(frozen, get_all, module = "remanence")]
+#[derive(Clone)]
+pub struct VolumeInfo {
+    pub partition_number: Option<u32>,
+    pub kind: String,
+    pub label: Option<String>,
+    pub offset_bytes: u64,
+    pub length_bytes: u64,
+    pub cluster_bytes: u64,
+    pub cluster_count: u64,
+    pub sectors_per_track: Option<u16>,
+    pub heads: Option<u16>,
+}
+
+/// A disk's partitions and volumes, as they actually are.
+#[pyclass(frozen, get_all, module = "remanence")]
+pub struct DiskGeometry {
+    pub partitions: Vec<PartitionInfo>,
+    pub volumes: Vec<VolumeInfo>,
+}
+
+/// One FAT directory entry; `kind` is `"file"` or `"directory"`.
+#[pyclass(frozen, get_all, module = "remanence")]
+#[derive(Clone)]
+pub struct FatEntry {
+    pub name: String,
+    pub kind: String,
+    pub size_bytes: u64,
+}
+
+fn mode_str(mode: remanence::AccessMode) -> &'static str {
+    match mode {
+        remanence::AccessMode::ReadWrite => "read-write",
+        remanence::AccessMode::ReadOnly => "read-only",
+    }
+}
+
+/// An open at-rest disk image (raw or qcow2), held under the deny-write
+/// claim until the object is closed or dropped.
+#[pyclass(module = "remanence")]
+pub struct Disk {
+    inner: Option<remanence::Disk>,
+}
+
+impl Disk {
+    fn get(&mut self) -> PyResult<&mut remanence::Disk> {
+        self.inner
+            .as_mut()
+            .ok_or_else(|| RemanenceError::new_err("disk is closed"))
+    }
+}
+
+#[pymethods]
+impl Disk {
+    /// Opens `path` under the deny-write claim: read/write preferred,
+    /// read-only fallback, immediate failure when another process holds
+    /// write access.
+    #[new]
+    fn new(path: PathBuf) -> PyResult<Self> {
+        remanence::Disk::open(path)
+            .map(|inner| Self { inner: Some(inner) })
+            .map_err(to_py_err)
+    }
+
+    /// `"read-write"` or `"read-only"`.
+    #[getter]
+    fn mode(&mut self) -> PyResult<&'static str> {
+        Ok(mode_str(self.get()?.mode()))
+    }
+
+    /// `"raw"` or `"qcow2"`.
+    #[getter]
+    fn format(&mut self) -> PyResult<&'static str> {
+        Ok(match self.get()?.format() {
+            remanence::DiskFormat::Raw => "raw",
+            remanence::DiskFormat::Qcow2 { .. } => "qcow2",
+        })
+    }
+
+    /// The qcow2 version, or `None` for a raw image.
+    #[getter]
+    fn qcow2_version(&mut self) -> PyResult<Option<u32>> {
+        Ok(match self.get()?.format() {
+            remanence::DiskFormat::Qcow2 { version } => Some(version),
+            remanence::DiskFormat::Raw => None,
+        })
+    }
+
+    /// The virtual disk size in bytes.
+    #[getter]
+    fn size(&mut self) -> PyResult<u64> {
+        Ok(self.get()?.size())
+    }
+
+    /// Whether uncommitted changes exist.
+    #[getter]
+    fn is_modified(&mut self) -> PyResult<bool> {
+        Ok(self.get()?.is_modified())
+    }
+
+    /// The disk's partitions and volumes, as they actually are.
+    fn geometry(&mut self) -> PyResult<DiskGeometry> {
+        let geometry = self.get()?.geometry().map_err(to_py_err)?;
+        Ok(DiskGeometry {
+            partitions: geometry
+                .partitions
+                .iter()
+                .map(|partition| PartitionInfo {
+                    number: partition.number,
+                    type_byte: partition.type_byte,
+                    type_name: partition.type_name.clone(),
+                    start_bytes: partition.start_bytes,
+                    length_bytes: partition.length_bytes,
+                })
+                .collect(),
+            volumes: geometry
+                .volumes
+                .iter()
+                .map(|volume| VolumeInfo {
+                    partition_number: volume.partition_number,
+                    kind: volume.kind.name().to_owned(),
+                    label: volume.label.clone(),
+                    offset_bytes: volume.offset_bytes,
+                    length_bytes: volume.length_bytes,
+                    cluster_bytes: volume.cluster_bytes,
+                    cluster_count: volume.cluster_count,
+                    sectors_per_track: volume.sectors_per_track,
+                    heads: volume.heads,
+                })
+                .collect(),
+        })
+    }
+
+    /// Lists a directory in volume `volume` ("" = root, "A/B" descends).
+    #[pyo3(signature = (volume, path = ""))]
+    fn entries(&mut self, volume: usize, path: &str) -> PyResult<Vec<FatEntry>> {
+        Ok(self
+            .get()?
+            .entries(volume, path)
+            .map_err(to_py_err)?
+            .iter()
+            .map(|entry| FatEntry {
+                name: entry.name.clone(),
+                kind: match entry.kind {
+                    remanence::FatEntryKind::File => "file".to_owned(),
+                    remanence::FatEntryKind::Directory => "directory".to_owned(),
+                },
+                size_bytes: entry.size_bytes,
+            })
+            .collect())
+    }
+
+    /// Copies a file's bytes out of volume `volume`.
+    fn read_file<'py>(
+        &mut self,
+        py: Python<'py>,
+        volume: usize,
+        path: &str,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = self.get()?.read_file(volume, path).map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Writes a file into volume `volume`. Buffered until `commit()`.
+    fn write_file(&mut self, volume: usize, path: &str, contents: &[u8]) -> PyResult<()> {
+        self.get()?.write_file(volume, path, contents).map_err(to_py_err)
+    }
+
+    /// Creates a directory in volume `volume`. Buffered until `commit()`.
+    fn make_directory(&mut self, volume: usize, path: &str) -> PyResult<()> {
+        self.get()?.make_directory(volume, path).map_err(to_py_err)
+    }
+
+    /// The commit point: everything buffered reaches the image, flushed.
+    fn commit(&mut self) -> PyResult<()> {
+        self.get()?.commit().map_err(to_py_err)
+    }
+
+    /// Discards everything buffered; the image is untouched.
+    fn rollback(&mut self) -> PyResult<()> {
+        self.get()?.rollback();
+        Ok(())
+    }
+
+    /// Releases the claim. Uncommitted changes are discarded.
+    fn close(&mut self) {
+        self.inner = None;
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exception_type: Bound<'_, PyAny>,
+        _exception: Bound<'_, PyAny>,
+        _traceback: Bound<'_, PyAny>,
+    ) -> bool {
+        self.inner = None;
+        false
     }
 }
 
@@ -512,6 +746,17 @@ fn list_hdos_files(image: Vec<u8>) -> PyResult<Vec<HdosFile>> {
     remanence::list_hdos_files(&image)
         .map(|files| files.iter().map(HdosFile::new).collect())
         .map_err(to_py_err)
+}
+
+/// Reads a cataloged HDOS file's contents out of raw image bytes.
+#[pyfunction]
+fn read_hdos_file<'py>(
+    py: Python<'py>,
+    image: Vec<u8>,
+    name: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let bytes = remanence::read_hdos_file(&image, name).map_err(to_py_err)?;
+    Ok(PyBytes::new(py, &bytes))
 }
 
 /// Parses the built-in starter format definitions.
@@ -547,7 +792,13 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ContainerFormat>()?;
     m.add_class::<FilesystemFormat>()?;
     m.add_class::<HdosFile>()?;
+    m.add_class::<Disk>()?;
+    m.add_class::<DiskGeometry>()?;
+    m.add_class::<PartitionInfo>()?;
+    m.add_class::<VolumeInfo>()?;
+    m.add_class::<FatEntry>()?;
     m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
+    m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;
     m.add_function(wrap_pyfunction!(default_format_registry, m)?)?;
     Ok(())
 }

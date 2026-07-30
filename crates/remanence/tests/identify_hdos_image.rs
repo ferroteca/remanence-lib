@@ -17,6 +17,15 @@ fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
 }
 
+/// The session holds the P7 deny-write claim on its source for its whole
+/// lifetime, so tests that open the same fixture concurrently would
+/// collide by design — each takes a private copy instead.
+fn private_copy(name: &str, tag: &str) -> PathBuf {
+    let target = std::env::temp_dir().join(format!("{tag}-{}-{name}", std::process::id()));
+    std::fs::copy(fixture_path(name), &target).expect("fixture copies");
+    target
+}
+
 fn assert_hdos_identification(identification: &Identification) {
     assert!(!identification.modified);
     let count = identification.containers.len();
@@ -69,7 +78,7 @@ fn identifies_hdos_fixture_image() {
 
 #[test]
 fn identifies_single_image_inside_zip_fixture() {
-    let zip_path = fixture_path(ZIP_NAME);
+    let zip_path = private_copy(ZIP_NAME, "single");
 
     let session = Session::open(&zip_path).expect("session opens");
     let identification = session.identify();
@@ -83,11 +92,15 @@ fn identifies_single_image_inside_zip_fixture() {
     assert_eq!(session.path(), zip_path);
     assert_eq!(session.image_path(), PathBuf::from(IMAGE_NAME));
     assert_hdos_identification(&identification);
+
+    drop(session);
+    std::fs::remove_file(&zip_path).ok();
 }
 
 #[test]
 fn identifies_explicit_image_inside_zip_fixture() {
-    let image_path = fixture_path(ZIP_NAME).join(IMAGE_NAME);
+    let zip_path = private_copy(ZIP_NAME, "explicit");
+    let image_path = zip_path.join(IMAGE_NAME);
 
     let session = Session::open(&image_path).expect("session opens");
     let identification = session.identify();
@@ -96,4 +109,7 @@ fn identifies_explicit_image_inside_zip_fixture() {
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(identification.containers.len(), 4);
     assert_hdos_identification(&identification);
+
+    drop(session);
+    std::fs::remove_file(&zip_path).ok();
 }

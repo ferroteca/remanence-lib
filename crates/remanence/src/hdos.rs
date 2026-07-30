@@ -176,6 +176,109 @@ fn file_size_sectors(
     Some(size)
 }
 
+/// Reads a cataloged HDOS file's contents out through its GRT chain.
+///
+/// `name` is matched against each file's display name ("NAME.EXT"),
+/// ASCII-case-insensitively.
+pub fn read_hdos_file(image: &[u8], name: &str) -> Result<Vec<u8>> {
+    let label = parse_label(image)?;
+    let num_clusters = label.volume_sectors / u16::from(label.sectors_per_group);
+    let grt_sector = sector_bytes(image, label.grt_sector, label.volume_sectors)?;
+    let grt = &grt_sector[..usize::from(num_clusters).min(SECTOR_SIZE)];
+
+    let mut cluster_sector = label.dir_sector;
+    let mut depth = 0;
+    while depth < 64 && cluster_sector != 0 {
+        let first = sector_bytes(image, cluster_sector, label.volume_sectors)?;
+        let second = sector_bytes(image, cluster_sector + 1, label.volume_sectors)?;
+        let mut cluster = [0u8; SECTOR_SIZE * 2];
+        cluster[..SECTOR_SIZE].copy_from_slice(first);
+        cluster[SECTOR_SIZE..].copy_from_slice(second);
+
+        let mut end_of_directory = false;
+        for i in 0..ENTRIES_PER_CLUSTER {
+            let entry = &cluster[i * DIR_ENTRY_SIZE..(i + 1) * DIR_ENTRY_SIZE];
+            if entry[0] == END_OF_DIRECTORY {
+                end_of_directory = true;
+                break;
+            }
+            if entry[0] == DELETED_OR_EMPTY {
+                continue;
+            }
+
+            let file_name = trim_field(&entry[..8]);
+            let extension = trim_field(&entry[8..11]);
+            let display = if extension.is_empty() {
+                file_name.clone()
+            } else {
+                format!("{file_name}.{extension}")
+            };
+            if !display.eq_ignore_ascii_case(name) {
+                continue;
+            }
+
+            // Walk the GRT chain, collecting each group's sectors; the
+            // final group contributes only up to last_sector_index.
+            let first_group = entry[16];
+            let last_group = entry[17];
+            let last_sector_index = u64::from(entry[18]);
+            let mut contents = Vec::new();
+            let mut pos = u16::from(first_group);
+            let mut hops: u16 = 0;
+            loop {
+                let is_last = pos == u16::from(last_group);
+                if !is_last && hops >= num_clusters {
+                    return Err(Error::invalid_image(
+                        "hdos",
+                        format!("corrupt GRT chain for file {display}"),
+                    ));
+                }
+                if pos >= num_clusters {
+                    return Err(Error::invalid_image(
+                        "hdos",
+                        format!("corrupt GRT chain for file {display}"),
+                    ));
+                }
+                let group_sectors = if is_last {
+                    last_sector_index
+                } else {
+                    u64::from(label.sectors_per_group)
+                };
+                let base = u64::from(pos) * u64::from(label.sectors_per_group);
+                for sector in 0..group_sectors {
+                    let absolute = base + sector;
+                    let bytes = sector_bytes(
+                        image,
+                        u16::try_from(absolute).map_err(|_| {
+                            Error::invalid_image(
+                                "hdos",
+                                format!("corrupt GRT chain for file {display}"),
+                            )
+                        })?,
+                        label.volume_sectors,
+                    )?;
+                    contents.extend_from_slice(bytes);
+                }
+                if is_last {
+                    break;
+                }
+                pos = u16::from(grt[usize::from(pos)]);
+                hops += 1;
+            }
+            return Ok(contents);
+        }
+
+        let next_cluster = read_le16(&cluster, 510);
+        if end_of_directory || next_cluster == 0 {
+            break;
+        }
+        cluster_sector = next_cluster;
+        depth += 1;
+    }
+
+    Err(Error::invalid_image("hdos", format!("file '{name}' not found")))
+}
+
 /// Parse the HDOS directory from a raw hard-sectored image (e.g. `.h8d`).
 ///
 /// Returns a flat file list. Deleted and unused directory slots are omitted.

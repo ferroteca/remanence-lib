@@ -1,0 +1,43 @@
+// The remanence-lib partition-test rig: FreeDOS 1.4 installed onto a
+// disk deliberately cut into multiple primaries plus an extended chain
+// of logicals, so remanence's at-rest stack has a real, QEMU-authored
+// qcow2 to test against (U3/U4; testing/freedos-rig/README.md).
+//
+// Media pins mirror reliquary's codex freedos entry: same LiveCD, same
+// hashes — the version knobs turn there and are copied here.
+[
+  {
+    "type": "machine",
+    "name": "remanence-parttest",
+    "platform": "dos",
+    "memory": "32M",
+    "description": "FreeDOS 1.4 on a multi-partition disk for remanence-lib at-rest testing",
+    "drives": {
+      // Large enough for two primaries plus an extended partition
+      // holding two logical drives, all FAT12/FAT16-sized.
+      "hdd0": { "type": "media", "size": "64M" },
+      "cdrom0": null
+    },
+    "boot": ["hdd0", "cdrom0"],
+    "scripts": {
+      "install": "remanence-parttest-install"
+    }
+  },
+
+  {
+    "type": "media",
+    "name": "freedos-livecd-zip",
+    "location": "https://download.freedos.org/1.4/FD14-LiveCD.zip",
+    "sha256": "2020ff6bb681967fd6eff8f51ad2e5cd5ab4421165948cef4246e4f7fcaf6339",
+    "children": [
+      {
+        "type": "media",
+        "path": "FD14LIVE.iso",
+        "name": "freedos-livecd",
+        "description": "The FreeDOS 1.4 LiveCD installer ISO",
+        "read-only": true,
+        "sha256": "c48a9dcf4b8e22f44e268a9879745f0bd88c061195ac584e6ef2deb0477f81fb"
+      }
+    ]
+  }
+]

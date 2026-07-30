@@ -6,23 +6,24 @@
 > surfaces" (S1–S4) — that enumeration is this rule's scope,
 > answered by lookup — and norms today are the defining code, as
 > that document states. This document says how a surface-changing
-> decision is weighed: against the use cases and the architectural
-> principles, which carry equal weight. **Neither list is in force
-> yet** (the vision awaits the owner's dictation), so until they
-> exist the triage below cannot be run to completion — a
-> surface-changing proposal is flagged to the owner rather than
-> self-approved, and the owner may compress the steps as authority
-> always may.
+> decision is weighed: against the use cases
+> ([USE-CASES.md](../USE-CASES.md)) and the architectural
+> principles ([ARCHITECTURE.md](../ARCHITECTURE.md)), which carry
+> equal weight. When a design document and these lists disagree,
+> the principles and use cases govern: the design is realigned to
+> them, never the other way around.
 
 ## The decision surface
 
-The numbered use cases and the P-numbered principles are the
-decision surface, once dictated: numbered so a decision, review, or
-specification section can cite what it serves — and so a proposed
-change can be rejected by naming what it costs. The root lists hold
-only what is in force; proposed changes are tracked under
-`proposed/`, numbering from the same global sequences and moving
-over when adopted. A number is never reused.
+The numbered use cases live in root
+[USE-CASES.md](../USE-CASES.md); the architectural principles are
+itemized as P-numbers in root
+[ARCHITECTURE.md](../ARCHITECTURE.md). They are numbered so a
+decision, review, or specification section can cite what it
+serves — and so a proposed change can be rejected by naming what it
+costs. The root lists hold only what is in force; proposed changes
+are tracked under `proposed/`, numbering from the same global
+sequences and moving over when adopted. A number is never reused.
 
 ## The housekeeping boundary
 

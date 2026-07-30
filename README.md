@@ -12,7 +12,18 @@ An HDOS directory lister reads the file catalog out of Heathkit `.h8d`
 images.
 
 The library is dependency-free at runtime, including its own ZIP
-central-directory reader and RFC 1951 (DEFLATE) decompressor.
+central-directory reader, RFC 1951 (DEFLATE) decompressor, and native
+qcow2 v2/v3 driver.
+
+Beyond identification, the at-rest `Disk` surface opens a raw or qcow2
+disk image under a deny-write claim — other processes may read, none may
+write, and an image held by a running VM is refused outright — reports
+its MBR partitions and FAT12/FAT16 volumes as they actually are, and
+reads and writes files in those volumes with a commit point: nothing
+touches the image until `commit`, and `rollback` discards everything.
+The in-force vision — what the library is for (U-numbers) and the rules
+it holds itself to (P-numbers) — is in [USE-CASES.md](USE-CASES.md) and
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Layout
 
@@ -44,7 +55,10 @@ uv build crates/remanence-py
 
 uv drives the maturin build backend in an isolated environment, so no
 tooling beyond uv itself needs installing. Publishing is `uv publish`
-from that `dist/`, and is owner-gated.
+from that `dist/`, and is owner-gated. **The Python package is tested
+on Windows only, for now**, and its packaging classifiers say so; the
+POSIX code paths exist and should stay correct, but they are
+unexercised and unclaimed.
 
 An example C consumer is at
 [crates/remanence-ffi/examples/identify.c](crates/remanence-ffi/examples/identify.c),

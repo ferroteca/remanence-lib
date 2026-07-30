@@ -15,3 +15,9 @@ cylinders = 40
 sides = 1
 sectors_per_track = 10
 filesystem_candidates = hdos, cpm
+
+[qcow2]
+name = QEMU copy-on-write disk image
+extensions = qcow2, qcow
+media_kind = hard_disk
+magic = 514649fb

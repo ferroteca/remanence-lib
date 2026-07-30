@@ -13,9 +13,21 @@ fn fixture_h8d() -> PathBuf {
         .join("HDOS_1-0_Issue_#50-00-00_890-1.h8d")
 }
 
+/// The session holds the P7 deny-write claim for its lifetime, so tests
+/// opening the fixture concurrently take private copies.
+fn private_copy(tag: &str) -> PathBuf {
+    let target = std::env::temp_dir().join(format!(
+        "remanence-hdos-{tag}-{}.h8d",
+        std::process::id()
+    ));
+    std::fs::copy(fixture_h8d(), &target).expect("fixture copies");
+    target
+}
+
 #[test]
 fn lists_files_from_hdos_fixture_image() {
-    let session = Session::open(fixture_h8d()).expect("session opens");
+    let path = private_copy("list");
+    let session = Session::open(&path).expect("session opens");
 
     let files = list_hdos_files(session.bytes()).expect("directory parses");
     assert_eq!(files.len(), 31);
@@ -68,6 +80,35 @@ fn lists_files_from_hdos_fixture_image() {
     for (file, expected) in files.iter().zip(expected_names) {
         assert_eq!(file.display_name(), expected);
     }
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn reads_a_file_out_through_the_grt_chain() {
+    let path = private_copy("read");
+    let session = Session::open(&path).expect("session opens");
+
+    let contents =
+        remanence::read_hdos_file(session.bytes(), "DEMO.BAS").expect("file reads");
+    // 3 sectors cataloged: two full groups of 2 plus a final partial group
+    // truncates to the last_sector_index — the byte size is
+    // sector-granular in HDOS terms.
+    assert!(!contents.is_empty());
+    assert_eq!(contents.len() % 256, 0);
+    // BASIC source: the bytes should be dominated by printable ASCII.
+    let printable = contents
+        .iter()
+        .filter(|&&byte| byte == 0 || byte == b'\r' || byte == b'\n' || (0x20..0x7f).contains(&byte))
+        .count();
+    assert!(printable * 10 >= contents.len() * 9, "mostly text/zero bytes");
+
+    let missing = remanence::read_hdos_file(session.bytes(), "NOPE.NOP");
+    assert!(missing.is_err());
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
 }
 
 #[test]

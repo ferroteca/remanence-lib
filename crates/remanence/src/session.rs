@@ -3,11 +3,15 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::archive::{self, ArchiveLayer};
+use crate::archive::{self, ArchiveLayer, SourceClaim};
 use crate::container;
+use crate::device::{AccessMode, SliceDevice};
 use crate::error::Result;
+use crate::fat::FatVolume;
 use crate::filesystem;
 use crate::image::DiskImage;
+use crate::mbr;
+use crate::qcow2::Qcow2;
 use crate::registry::{ContainerFormat, FormatRegistry};
 
 /// What role a detected container plays in the image's layering.
@@ -228,7 +232,10 @@ fn container_from_layer(layer: ArchiveLayer) -> Container {
 }
 
 /// An open analysis session over one disk image.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The session holds the P7 claim on its source file — writes denied to
+/// every other process — from open until it is dropped.
+#[derive(Debug)]
 pub struct Session {
     path: PathBuf,
     image_path: PathBuf,
@@ -236,6 +243,7 @@ pub struct Session {
     registry: FormatRegistry,
     containers: Vec<Container>,
     modified: bool,
+    claim: SourceClaim,
 }
 
 impl Session {
@@ -261,7 +269,15 @@ impl Session {
             registry,
             containers,
             modified: false,
+            claim: resolved.claim,
         })
+    }
+
+    /// Which P7 mode the open obtained on the source file: `ReadWrite`
+    /// normally, `ReadOnly` when the file or media denies us write
+    /// permission (writes are still denied to every other process).
+    pub fn access_mode(&self) -> AccessMode {
+        self.claim.mode
     }
 
     pub fn path(&self) -> &Path {
@@ -414,15 +430,95 @@ impl Session {
             _ => unknown_filesystem(),
         };
 
+        // A qcow2 container gets its virtual-disk layers reported too
+        // (pledged U5): the partitions inside the virtual disk and the
+        // FAT volumes inside those, through the same evidence model.
+        let mut extra = vec![image_container, physical_media];
+        if container_id == "qcow2" {
+            match self.qcow2_layers(&mut evidence) {
+                Ok(mut volumes) => extra.append(&mut volumes),
+                Err(error) => evidence.push(format!(
+                    "qcow2 virtual disk not walked: {error}"
+                )),
+            }
+        }
+        extra.push(filesystem_container);
+
         Identification {
-            containers: self.containers_with(vec![
-                image_container,
-                physical_media,
-                filesystem_container,
-            ]),
+            containers: self.containers_with(extra),
             modified: self.modified,
             evidence,
         }
+    }
+
+    /// Walks a qcow2 session's virtual disk — header, partitions, FAT
+    /// volumes — and returns one Filesystem container per volume read.
+    fn qcow2_layers(&self, evidence: &mut Vec<String>) -> Result<Vec<Container>> {
+        let mut qcow2 = Qcow2::open(SliceDevice::new(&self.bytes))?;
+        let header = qcow2.header().clone();
+        evidence.push(format!(
+            "qcow2 version {}, virtual size {} bytes",
+            header.version, header.virtual_size
+        ));
+
+        let partitions = mbr::discover(&mut qcow2)?;
+        if !partitions.is_empty() {
+            evidence.push(format!(
+                "found {} partition(s) in the virtual disk",
+                partitions.len()
+            ));
+        }
+
+        let mut containers = Vec::new();
+        let spans: Vec<(Option<u32>, u64, u64)> = if partitions.is_empty() {
+            vec![(None, 0, header.virtual_size)]
+        } else {
+            partitions
+                .iter()
+                .filter(|partition| !partition.type_name.starts_with("extended"))
+                .map(|partition| {
+                    (Some(partition.number), partition.start_bytes, partition.length_bytes)
+                })
+                .collect()
+        };
+
+        for (partition, offset, length) in spans {
+            let Ok(volume) = FatVolume::open(&mut qcow2, offset) else {
+                continue;
+            };
+            let info = volume.info(&mut qcow2, partition, length)?;
+            let kind_name = info.kind.name();
+            evidence.push(match (&info.label, partition) {
+                (Some(label), Some(number)) => format!(
+                    "{kind_name} volume '{label}' in partition {number}"
+                ),
+                (Some(label), None) => format!("{kind_name} volume '{label}'"),
+                (None, Some(number)) => {
+                    format!("{kind_name} volume in partition {number}")
+                }
+                (None, None) => format!("{kind_name} volume"),
+            });
+            containers.push(Container {
+                kind: ContainerKind::Filesystem,
+                id: kind_name.to_ascii_lowercase(),
+                name: match &info.label {
+                    Some(label) => format!("{kind_name} volume '{label}'"),
+                    None => format!("{kind_name} volume"),
+                },
+                confidence: 100,
+                known: true,
+                size: SizeInformation {
+                    current_bytes: Some(info.length_bytes),
+                    expected_bytes: None,
+                },
+                layout: ContainerLayout::Filesystem(FilesystemLayout {
+                    offset_bytes: Some(info.offset_bytes),
+                    length_bytes: Some(info.length_bytes),
+                }),
+            });
+        }
+
+        Ok(containers)
     }
 }
 

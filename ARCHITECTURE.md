@@ -1,8 +1,9 @@
 # ARCHITECTURE
 
-The whole-system view, and the application surface inventory. This document
-describes the project **as it exists today**; vision that has not arrived
-yet lives under [planning/](planning/README.md).
+The whole-system view, the application surface inventory, and the
+architectural principles. This document describes the project **as it
+exists today**; vision that has not arrived yet lives under
+[planning/](planning/README.md).
 
 ## The system
 
@@ -11,9 +12,13 @@ One core, two bindings:
 - **`crates/remanence`** — the analysis library, pure Rust, zero runtime
   dependencies. Everything the project knows lives here: the
   format-definition parser and registry, container/filesystem detection,
-  the session and identification model, the HDOS directory lister, and the
-  self-contained ZIP/DEFLATE reader that lets `Session::open` reach inside
-  archives.
+  the session and identification model, the HDOS directory lister and
+  file extractor, the self-contained ZIP/DEFLATE reader that lets
+  `Session::open` reach inside archives, and the at-rest disk stack —
+  the deny-write claim ladder, the native qcow2 v2/v3 driver, MBR
+  partition discovery, FAT12/FAT16 volume read/write, and the
+  commit-point overlay that keeps every write bufferable and revocable
+  until committed.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
   accessor functions, borrowed strings owned by their handle. The header
   `include/remanence.h` is generated from the Rust signatures by cbindgen
@@ -62,7 +67,99 @@ single norm for its surface and this section names it.
 
 ## The architectural principles
 
-None are armed yet. The P-numbered list is the owner's to dictate, and an
-in-force entry asserts the code honors it today — so this list stays empty
-rather than carrying placeholders. Drafts will appear under
-`planning/proposed/ARCHITECTURE.md` when dictated.
+> **Status: in force.** Every principle on this list is honored by the
+> code as it exists today, and **a divergence between a principle here
+> and the code is a bug** — not unbuilt work, a defect to fix. Numbers
+> come from the one global P-sequence and are never reused.
+
+### P1 — Self-contained format implementations
+
+Every format the library claims, it implements itself — from published
+format documentation, in the library, with no external tool, helper
+process, or runtime dependency behind any claim. A ZIP is read by our
+reader, a DEFLATE stream by our decompressor, a qcow2 by our driver —
+never by shelling out. This is what makes the library embeddable from C
+and Python without an environment around it.
+
+### P2 — Reading is harmless
+
+Opening, identifying, listing, and extracting never mutate an image —
+not a byte. Write access is a separate, explicit request, and every
+write path offers a commit point that can be rolled back until it is
+committed: writes buffer in memory and nothing reaches the file before
+the commit. An archivist's tool that damages what it examines has
+failed at the door.
+
+### P3 — Claims are enumerated and refusals fail closed
+
+What the library recognizes is a named, enumerated claim — formats,
+versions, feature subsets — and anything outside the claim is a named
+refusal, never a guess, a silent skip, or an untested approximation. A
+partition type we cannot read is refused rather than skipped, because
+skipping renumbers every volume after it; a qcow2 feature bit we do not
+honor names itself in the error.
+
+### P4 — Identification carries its evidence
+
+No verdict without the observations that produced it. Every
+identification names its evidence in human-readable terms, and
+confidence is bounded and comparable. "h8d, confidence 100" is not an
+answer; "matched expected size of 102400 bytes; matched file extension
+'.h8d'" is.
+
+### P5 — One semantic surface, three presentations
+
+Every core capability is reachable from Rust, from C, and from Python,
+with the same semantics, and a change to the surface lands on all three
+presentations in the same change — never deferred. No capability is
+binding-private.
+
+### P6 — Unexpected means stop: fail immediately, write nothing, say why
+
+When the library meets a situation it does not expect — a structure
+that contradicts itself, a value no claim covers, a state an operation
+cannot account for — it **fails immediately**: it writes nothing, and
+it gives a clear indication of the reason. No partial update, no
+best-effort continuation, no repair attempted on the caller's behalf,
+and no error that names a symptom when the cause is known. Two
+consequences make the rule operative: surprises are sought before
+mutation begins (a mutating operation validates everything it can up
+front), and the reason is a diagnostic — what was expected, what was
+found, where. P2's commit point is the backstop, not the excuse:
+roll-back exists for the interruptions the world inflicts, never as
+license to start writing before the checks are done.
+
+### P7 — The file must never change under our feet
+
+The library cannot support a file changing underneath it while it
+works — not while writing, not while merely reading. **Denying write
+permission to every other process is mandatory in all scenarios**, from
+the moment a file is opened, and a file for which that denial cannot be
+obtained is not opened at all: fail fast, with the reason named. A disk
+image held open for writing by a running VM is the designed refusal.
+With the denial secured, the library's own access decides the session's
+mode: read/write preferred; read-only — every remanence write action
+refused by name — when the file or media denies us write permission.
+The claim is held from open until the session or disk is completely
+done: no claim-on-modify, no release-on-save. On Windows the mapping is
+native and kernel-enforced (share modes, `FILE_SHARE_READ`); on POSIX
+both modes take the exclusive advisory lock, which binds cooperating
+processes and is asserted as protocol against the rest.
+
+### P8 — Versioned formats are supported by explicit version, or refused
+
+Where a container format or filesystem declares its version — a version
+field, a feature bitmap, anything the format provides for saying "this
+is newer than you know" — the library validates it against the versions
+it explicitly claims, **before touching anything else**, and a version
+or feature bit beyond the claim fails immediately, naming what it found
+and what it supports. Read and write alike. Support for a new version
+is a deliberate release: understand what changed, implement it, widen
+the stated claim, publish. Where the version is not stamped but
+versions are known to exist, the library determines the version by
+every available means, declares its ceiling all the same, and fails
+fast above it — an undeterminable version on a format known to have
+them is itself a named refusal. Where a format genuinely carries no
+versioning, the claim is structural and P3 governs: FAT width is
+decided by cluster count because the format says so, and FAT32 is
+refused by name, never guessed at.

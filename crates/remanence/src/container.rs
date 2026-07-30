@@ -44,6 +44,16 @@ pub(crate) fn detect(
             }
         }
 
+        if let Some(magic) = &container.magic {
+            if bytes.starts_with(magic) {
+                confidence = confidence.saturating_add(80);
+                evidence.push(format!(
+                    "matched {}-byte magic signature",
+                    magic.len()
+                ));
+            }
+        }
+
         if let Some(extension) = &extension {
             let matched = container
                 .extensions
