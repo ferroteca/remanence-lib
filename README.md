@@ -37,11 +37,14 @@ The Python module is excluded from default builds so a Python toolchain is
 never required for library work:
 
 ```bash
-cargo build -p remanence-py            # needs Python >= 3.10
-# or, for an installable wheel:
-pip install maturin
-maturin build -m crates/remanence-py/Cargo.toml
+cargo build -p remanence-py    # needs Python >= 3.10
+# or, for distributable artifacts (sdist + abi3 wheel into crates/remanence-py/dist/):
+uv build crates/remanence-py
 ```
+
+uv drives the maturin build backend in an isolated environment, so no
+tooling beyond uv itself needs installing. Publishing is `uv publish`
+from that `dist/`, and is owner-gated.
 
 An example C consumer is at
 [crates/remanence-ffi/examples/identify.c](crates/remanence-ffi/examples/identify.c),

@@ -1,4 +1,6 @@
 /target
+dist/
+.venv/
 *.pyd
 __pycache__/
 .idea/

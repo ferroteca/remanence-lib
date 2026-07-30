@@ -41,8 +41,10 @@ cargo test      # the full suite
 ```
 
 The Python bindings (`crates/remanence-py`) are excluded from default
-workspace builds; building them needs Python 3.10+ and, for wheels,
-maturin. See [README.md](README.md).
+workspace builds; building them needs Python 3.10+. Distributable
+artifacts are built with uv (`uv build crates/remanence-py`), which
+drives the maturin build backend in an isolated environment. See
+[README.md](README.md).
 
 - The core crate (`crates/remanence`) is **dependency-free at runtime**,
   deliberately — it carries its own ZIP reader and DEFLATE decompressor.

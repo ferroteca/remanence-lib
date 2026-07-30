@@ -33,8 +33,11 @@ C ABI. The Rust code here is now the authoritative implementation.
   `examples/identify.c` is the example C consumer and doubles as the ABI
   smoke test (build instructions in its header comment).
 - `crates/remanence-py/` — the Python module (PyO3, abi3, Python ≥ 3.10),
-  built with maturin, excluded from default workspace members so plain
-  `cargo build`/`cargo test` never needs a Python toolchain.
+  excluded from default workspace members so plain `cargo build`/
+  `cargo test` never needs a Python toolchain. Distribution artifacts
+  are built with **uv** (`uv build crates/remanence-py` → sdist + abi3
+  wheel in its `dist/`), which drives the maturin build backend in an
+  isolated environment; publishing is `uv publish` and is owner-gated.
 - `planning/README.md` is the map of the maintainer-facing planning
   machinery, and the place to start. `planning/SURFACES.md` is the
   surface-change rule; the application surface inventory it scopes over is
@@ -174,8 +177,9 @@ compiled into the wheel.
   images used as test fixtures. **They are third-party material and are
   not covered by the project's copyright claim** — their status is
   unresolved and flagged in `planning/DECISIONS.md`. They are test-only
-  today, but `cargo package` would bundle them into a published crate;
-  resolve the question before any crates.io publish.
+  today, but `cargo package` would bundle them into a published crate
+  and the maturin sdist (`uv build`) bundles them likewise — verified;
+  resolve the question before any publish, crates.io or PyPI.
 
 ## Required checks
 
@@ -188,4 +192,5 @@ git diff --check
 When the C ABI changed, rebuild and commit the regenerated header, and
 recompile `examples/identify.c` against it (instructions in the file
 header). When the Python surface changed, build `-p remanence-py` (needs
-Python ≥ 3.10) and smoke-test the module.
+Python ≥ 3.10) and smoke-test the module; for release artifacts,
+`uv build crates/remanence-py` produces the sdist and abi3 wheel.
