@@ -2,20 +2,51 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! The block device seam: the byte-addressed surface the disk stack
-//! works over, the P7 lock ladder, and the commit-point overlay (P2).
+//! works over, the P7 claims — declared intent for the disk stack, the
+//! discovery ladder for identification sessions — and the commit-point
+//! overlay (P2).
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
 use crate::error::{Error, Result};
 
-/// How a file was claimed under the P7 ladder.
+/// The caller's declared intent when opening a disk (P7): the session's
+/// mode is declared at open, never discovered by fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessIntent {
+    /// Read the disk. The open takes no write access for itself, denies
+    /// writes to every other process, and keeps admitting other readers.
+    Read,
+    /// Read and write the disk. The claim excludes every other reader
+    /// and writer for the session's whole life; an open that cannot
+    /// secure it fails at the open, never by silent fallback.
+    Write,
+}
+
+impl AccessIntent {
+    /// The mode a disk opened with this intent reports — an echo of the
+    /// declaration.
+    pub(crate) fn mode(self) -> AccessMode {
+        match self {
+            Self::Read => AccessMode::ReadOnly,
+            Self::Write => AccessMode::ReadWrite,
+        }
+    }
+}
+
+/// A session's access mode. On the disk stack this echoes the declared
+/// [`AccessIntent`]; on an identification session it reports what the
+/// P7 ladder obtained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessMode {
-    /// Write permission for us, writes denied to every other process.
+    /// Write permission for us. For a disk session the claim is
+    /// exclusive — no other reader or writer for its whole life; for an
+    /// identification session writes are denied to others and readers
+    /// stay admitted.
     ReadWrite,
-    /// Read-only for us (the file or media denies us write permission),
-    /// writes still denied to every other process.
+    /// Read-only for us, writes denied to every other process, other
+    /// readers admitted.
     ReadOnly,
 }
 
@@ -27,10 +58,12 @@ pub(crate) trait Device {
     fn flush(&mut self) -> Result<()>;
 }
 
-/// Opens `path` under the P7 ladder: read/write with writes denied to
-/// others (preferred); read-only with writes still denied to others when
-/// our own write permission cannot be had; fail fast when deny-write
-/// cannot be obtained at all.
+/// Opens `path` under the identification session's P7 ladder: read/write
+/// with writes denied to others (preferred); read-only with writes still
+/// denied to others when our own write permission cannot be had; fail
+/// fast when deny-write cannot be obtained at all. The disk stack does
+/// not ladder — it opens per the caller's declared intent
+/// ([`open_declared`]).
 pub(crate) fn open_locked(path: &Path) -> Result<(File, AccessMode)> {
     match open_claimed(path, true) {
         Ok(file) => Ok((file, AccessMode::ReadWrite)),
@@ -46,6 +79,36 @@ pub(crate) fn open_locked(path: &Path) -> Result<(File, AccessMode)> {
             ))),
         },
     }
+}
+
+/// Opens `path` per the caller's declared intent (P7): a `Write` open
+/// takes read/write access and excludes every other reader and writer
+/// for its whole life; a `Read` open takes read access only, denies
+/// writes to every other process, and keeps admitting other readers.
+/// Either open fails immediately, naming the reason, when its claim
+/// cannot be secured — never by falling back to a weaker mode.
+pub(crate) fn open_declared(path: &Path, intent: AccessIntent) -> Result<File> {
+    open_exact(path, intent).map_err(|error| {
+        let verb = match intent {
+            AccessIntent::Read => "reading",
+            AccessIntent::Write => "writing",
+        };
+        if is_sharing_conflict(&error) {
+            let holder = match intent {
+                AccessIntent::Read => "another process holds write access",
+                AccessIntent::Write => "another process has the file open",
+            };
+            Error::io(format!(
+                "cannot claim '{}' for {verb}: {holder}",
+                path.display()
+            ))
+        } else {
+            Error::io(format!(
+                "cannot open '{}' for {verb}: {error}",
+                path.display()
+            ))
+        }
+    })
 }
 
 fn is_sharing_conflict(error: &std::io::Error) -> bool {
@@ -79,7 +142,7 @@ fn open_claimed(path: &Path, writable: bool) -> std::io::Result<File> {
     use std::os::fd::AsRawFd;
     // POSIX has no sharing modes; the exclusive advisory lock is the
     // deny-write claim, asserted as protocol (it also holds off
-    // cooperating readers, which P7 tolerates).
+    // cooperating readers, which the identification session tolerates).
     let file = OpenOptions::new().read(true).write(writable).open(path)?;
     const LOCK_EX: i32 = 2;
     const LOCK_NB: i32 = 4;
@@ -92,7 +155,49 @@ fn open_claimed(path: &Path, writable: bool) -> std::io::Result<File> {
     Ok(file)
 }
 
-/// A raw image file opened where it lies, claimed per P7.
+#[cfg(windows)]
+fn open_exact(path: &Path, intent: AccessIntent) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // Read intent shares reads: other readers stay admitted, any open
+    // for writing is refused by the kernel, and this open is refused
+    // while a writer holds the file. Write intent shares nothing — the
+    // session admits no observers.
+    const FILE_SHARE_READ: u32 = 0x1;
+    let (writable, share_mode) = match intent {
+        AccessIntent::Read => (false, FILE_SHARE_READ),
+        AccessIntent::Write => (true, 0),
+    };
+    OpenOptions::new()
+        .read(true)
+        .write(writable)
+        .share_mode(share_mode)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_exact(path: &Path, intent: AccessIntent) -> std::io::Result<File> {
+    use std::os::fd::AsRawFd;
+    // POSIX has no sharing modes; the advisory lock is the claim,
+    // asserted as protocol — shared for a read open (other readers
+    // admitted, writers held off), exclusive for a writable session
+    // (no observers).
+    let writable = intent == AccessIntent::Write;
+    let file = OpenOptions::new().read(true).write(writable).open(path)?;
+    const LOCK_SH: i32 = 1;
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    unsafe extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+    let operation = if writable { LOCK_EX } else { LOCK_SH } | LOCK_NB;
+    if unsafe { flock(file.as_raw_fd(), operation) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
+/// A raw image file opened where it lies, claimed per the caller's
+/// declared intent (P7).
 #[derive(Debug)]
 pub(crate) struct FileDevice {
     file: File,
@@ -102,15 +207,15 @@ pub(crate) struct FileDevice {
 }
 
 impl FileDevice {
-    pub fn open(path: &Path) -> Result<Self> {
-        let (file, mode) = open_locked(path)?;
+    pub fn open(path: &Path, intent: AccessIntent) -> Result<Self> {
+        let file = open_declared(path, intent)?;
         let len = file
             .metadata()
             .map_err(|error| {
                 Error::io(format!("failed to stat '{}': {error}", path.display()))
             })?
             .len();
-        Ok(Self { file, len, mode, path: path.display().to_string() })
+        Ok(Self { file, len, mode: intent.mode(), path: path.display().to_string() })
     }
 
     pub fn mode(&self) -> AccessMode {

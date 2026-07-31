@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{AccessMode, Disk, DiskFormat, FatEntryKind, FatKind};
+use remanence::{AccessIntent, AccessMode, Disk, DiskFormat, FatEntryKind, FatKind};
 
 fn temp_path(tag: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -82,8 +82,8 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     let path = temp_path("bare");
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
-    let mut disk = Disk::open(&path).expect("disk opens");
-    assert_eq!(disk.mode(), AccessMode::ReadWrite);
+    let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+    assert_eq!(disk.mode(), AccessMode::ReadWrite, "the mode echoes the intent");
     assert_eq!(disk.format(), DiskFormat::Raw);
 
     let geometry = disk.geometry().expect("geometry reads");
@@ -119,7 +119,8 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert!(!disk.is_modified());
     drop(disk);
 
-    let mut reopened = Disk::open(&path).expect("reopens");
+    let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+    assert_eq!(reopened.mode(), AccessMode::ReadOnly, "the mode echoes the intent");
     assert_eq!(reopened.read_file(0, "KEPT.TXT").expect("read"), b"kept bytes");
     drop(reopened);
 
@@ -131,7 +132,7 @@ fn fat16_behind_an_mbr_partition() {
     let path = temp_path("mbr");
     std::fs::write(&path, synthetic_mbr_disk(&synthetic_fat16())).expect("image writes");
 
-    let mut disk = Disk::open(&path).expect("disk opens");
+    let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
     let geometry = disk.geometry().expect("geometry reads");
     assert_eq!(geometry.partitions.len(), 1);
     assert_eq!(geometry.partitions[0].type_byte, 0x06);
@@ -144,7 +145,7 @@ fn fat16_behind_an_mbr_partition() {
     disk.commit().expect("commit");
     drop(disk);
 
-    let mut reopened = Disk::open(&path).expect("reopens");
+    let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
     assert_eq!(
         reopened.read_file(0, "ROOT.TXT").expect("read"),
         b"in the partition"
@@ -155,29 +156,51 @@ fn fat16_behind_an_mbr_partition() {
 }
 
 #[test]
-fn p7_second_writer_fails_fast_and_read_only_falls_back() {
+fn p7_declared_intent_claims_and_refusals() {
     let path = temp_path("lock");
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
-    // While one Disk holds the claim, a second open fails fast: the
-    // deny-write invariant cannot be obtained at all.
-    let disk = Disk::open(&path).expect("first open");
-    let second = Disk::open(&path);
-    assert!(second.is_err(), "second open must fail while the claim is held");
-    drop(disk);
+    // A writable session admits no observers: while it holds the claim,
+    // a second open fails fast whatever its intent.
+    let writer = Disk::open(&path, AccessIntent::Write).expect("writable open");
+    assert!(
+        Disk::open(&path, AccessIntent::Read).is_err(),
+        "a reader is excluded while a writable session lives"
+    );
+    assert!(
+        Disk::open(&path, AccessIntent::Write).is_err(),
+        "a second writer is excluded"
+    );
+    drop(writer);
 
-    // A read-only file denies *us* write permission: the open falls back
-    // to read-only and write actions are refused by name.
+    // A read session keeps admitting other readers and still denies
+    // every writer.
+    let reader = Disk::open(&path, AccessIntent::Read).expect("read open");
+    let second = Disk::open(&path, AccessIntent::Read).expect("second reader admitted");
+    assert!(
+        Disk::open(&path, AccessIntent::Write).is_err(),
+        "a writer is refused while readers hold the file"
+    );
+    drop(second);
+    drop(reader);
+
+    // A read-only file denies us write permission: a writable open
+    // fails at the open — never a silent fallback — while a read open
+    // proceeds and write actions are refused by name.
     let mut permissions =
         std::fs::metadata(&path).expect("metadata").permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(&path, permissions.clone()).expect("set readonly");
 
-    let mut readonly = Disk::open(&path).expect("read-only fallback opens");
+    assert!(
+        Disk::open(&path, AccessIntent::Write).is_err(),
+        "a writable open on a read-only file fails at the open"
+    );
+    let mut readonly = Disk::open(&path, AccessIntent::Read).expect("read open proceeds");
     assert_eq!(readonly.mode(), AccessMode::ReadOnly);
-    assert!(readonly.geometry().is_ok(), "analysis proceeds read-only");
+    assert!(readonly.geometry().is_ok(), "analysis proceeds");
     let refused = readonly.write_file(0, "NO.TXT", b"denied");
-    assert!(refused.is_err(), "write actions are denied in the fallback");
+    assert!(refused.is_err(), "write actions are denied on a read session");
     drop(readonly);
 
     permissions.set_readonly(false);
@@ -194,7 +217,7 @@ fn p8_refuses_a_future_qcow2_version_by_name() {
     header[4..8].copy_from_slice(&9u32.to_be_bytes());
     std::fs::write(&path, header).expect("image writes");
 
-    let error = Disk::open(&path).expect_err("future version refused");
+    let error = Disk::open(&path, AccessIntent::Read).expect_err("future version refused");
     let message = error.to_string();
     assert!(
         message.contains("version 9") && message.contains("ceiling"),

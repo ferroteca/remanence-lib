@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use remanence::{Disk, DiskFormat};
+use remanence::{AccessIntent, Disk, DiskFormat};
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -165,7 +165,7 @@ fn private_artifact(tag: &str) -> PathBuf {
 #[ignore = "builds and tests the reliquary rig artifact; needs rlq + QEMU (testing/freedos-rig)"]
 fn geometry_reports_primaries_extended_and_logicals() {
     let path = private_artifact("geometry");
-    let mut disk = Disk::open(&path).expect("rig artifact opens");
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
     assert!(matches!(disk.format(), DiskFormat::Qcow2 { .. }));
 
     let geometry = disk.geometry().expect("geometry reads");
@@ -193,7 +193,7 @@ fn geometry_reports_primaries_extended_and_logicals() {
 #[ignore = "builds and tests the reliquary rig artifact; needs rlq + QEMU (testing/freedos-rig)"]
 fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
-    let mut disk = Disk::open(&path).expect("rig artifact opens");
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
     let volumes = disk.geometry().expect("geometry").volumes.len();
     for volume in 0..volumes {
         let marker = disk
@@ -213,7 +213,7 @@ fn marker_files_read_out_of_every_volume() {
 #[ignore = "builds and tests the reliquary rig artifact; needs rlq + QEMU (testing/freedos-rig)"]
 fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let path = private_artifact("roundtrip");
-    let mut disk = Disk::open(&path).expect("rig artifact opens");
+    let mut disk = Disk::open(&path, AccessIntent::Write).expect("rig artifact opens");
 
     disk.write_file(0, "RMNDIR/RTRIP.BIN", b"buffered write on a real image")
         .expect("write buffers");

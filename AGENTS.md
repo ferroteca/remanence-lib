@@ -24,8 +24,10 @@ C ABI. The Rust code here is now the authoritative implementation.
   session's lifetime; `hdos.rs` the HDOS directory lister and file
   extractor; `archive.rs` `.zip[/entry]` path resolution under the claim;
   `zip.rs` + `inflate.rs` the self-contained ZIP reader and DEFLATE
-  decompressor; `device.rs` the block-device seam, the P7 open ladder,
-  and the P2 commit-point overlay; `qcow2.rs` the native qcow2 v2/v3
+  decompressor; `device.rs` the block-device seam, the P7 claims
+  (declared intent for the disk stack, the discovery ladder for
+  identification sessions), and the P2 commit-point overlay;
+  `qcow2.rs` the native qcow2 v2/v3
   driver (P8 version gate first; write path refuses snapshots and
   non-16-bit refcounts by name); `mbr.rs` partition discovery with
   pinned types; `fat.rs` FAT12/16 volume read/write; `disk.rs` the

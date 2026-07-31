@@ -45,27 +45,15 @@ The initial set, covering every refusal the library makes today:
 `locked`, `invalid-image`, `unsupported`, `read-only`, `not-found`,
 `not-directory`, `is-directory`, `no-space`, `io`.
 
-## Amendment — P7 takes the caller's intent, and the claim covers the chain
+## Amendment — the P7 claim covers the chain
 
 P7's core is untouched: denying write permission to every other
 process is mandatory in all scenarios, from open, and a file for
 which the denial cannot be obtained is not opened at all,
-immediately, with the reason named. Three clauses change or arrive:
+immediately, with the reason named. One clause arrives (the
+declared-intent and no-observers clauses pledged beside it are
+delivered and in force at root P7):
 
-- **The session's mode is declared, not discovered.** Today the
-  library's own access decides the mode — read/write preferred,
-  read-only fallback. Amended: the caller declares read or write
-  intent at open. A writable open that cannot secure its own write
-  access fails **at the open**, never by silent fallback, so a
-  refused write claim surfaces before the first mutation rather
-  than at it. A read open takes no stronger access than it needs.
-- **A writable session admits no observers.** A write claim
-  excludes every other read or write that could observe a partial
-  mutation, for the session's whole life; a read session keeps
-  admitting other readers, as today. *(This settled the formerly
-  open question in [DECISIONS.md](../DECISIONS.md) — readers during
-  the physical save — in the direction of exclusion; the commit
-  that pledged this amendment is the record.)*
 - **The claim covers every file of a backing chain, consistently.**
   The top image is claimed per the declared intent; every backing
   file is claimed immutable through this access — writes denied to

@@ -16,11 +16,14 @@ central-directory reader, RFC 1951 (DEFLATE) decompressor, and native
 qcow2 v2/v3 driver.
 
 Beyond identification, the `Disk` surface opens a raw or qcow2
-disk image under a deny-write claim — other processes may read, none may
-write, and an image held by a running VM is refused outright — reports
-its MBR partitions and FAT12/FAT16 volumes as they actually are, and
-reads and writes files in those volumes with a commit point: nothing
-touches the image until `commit`, and `rollback` discards everything.
+disk image with a declared intent: a read session denies writes to
+every other process while admitting other readers; a writable session
+admits no observers at all; and an image whose claim cannot be secured —
+one held by a running VM, say — is refused outright at the open. It
+reports the disk's MBR partitions and FAT12/FAT16 volumes as they
+actually are, and reads and writes files in those volumes with a commit
+point: nothing touches the image until `commit`, and `rollback`
+discards everything.
 The in-force vision — what the library is for (U-numbers) and the rules
 it holds itself to (P-numbers) — is in [USE-CASES.md](USE-CASES.md) and
 [ARCHITECTURE.md](ARCHITECTURE.md).

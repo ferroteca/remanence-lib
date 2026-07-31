@@ -951,11 +951,20 @@ pub unsafe extern "C" fn rmn_hdos_file_modified_date(
 // commit point.
 
 use remanence::{
-    AccessMode, Disk, DiskFormat, DiskGeometry, FatEntry, FatEntryKind,
-    read_hdos_file,
+    AccessIntent, AccessMode, Disk, DiskFormat, DiskGeometry, FatEntry,
+    FatEntryKind, read_hdos_file,
 };
 
-/// Which P7 mode an open obtained.
+/// The caller's declared intent when opening a disk (P7).
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RmnAccessIntent {
+    Read,
+    Write,
+}
+
+/// A session's access mode. For a disk this echoes the declared intent;
+/// for an identification session it reports what the P7 ladder obtained.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RmnAccessMode {
@@ -1040,13 +1049,17 @@ unsafe fn utf8_arg<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
     Some(String::from_utf8_lossy(unsafe { CStr::from_ptr(value) }.to_bytes()))
 }
 
-/// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected
-/// by magic — under the P7 claim: read/write with writes denied to others
-/// (preferred), read-only fallback, fail fast when deny-write cannot be
-/// obtained. Returns null on failure with a message in `error_out`.
+/// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected by
+/// magic — with the caller's declared intent (P7). A `Write` open
+/// claims the image exclusively for the session's whole life and fails
+/// at the open, naming the reason, when the claim cannot be secured —
+/// never by falling back; a `Read` open takes read access only, denies
+/// writes to others, and admits other readers. Returns null on failure
+/// with a message in `error_out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_open(
     path: *const c_char,
+    intent: RmnAccessIntent,
     error_out: *mut *mut c_char,
 ) -> *mut RmnDisk {
     unsafe { clear_error(error_out) };
@@ -1055,7 +1068,11 @@ pub unsafe extern "C" fn rmn_disk_open(
         unsafe { set_error(error_out, &error) };
         return ptr::null_mut();
     };
-    match Disk::open(path.as_ref()) {
+    let intent = match intent {
+        RmnAccessIntent::Read => AccessIntent::Read,
+        RmnAccessIntent::Write => AccessIntent::Write,
+    };
+    match Disk::open(path.as_ref(), intent) {
         Ok(disk) => Box::into_raw(Box::new(RmnDisk { disk })),
         Err(error) => {
             unsafe { set_error(error_out, &error) };
@@ -1073,7 +1090,7 @@ pub unsafe extern "C" fn rmn_disk_free(disk: *mut RmnDisk) {
     }
 }
 
-/// Which P7 mode the open obtained.
+/// The disk session's access mode — an echo of the declared intent.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_mode(disk: *const RmnDisk) -> RmnAccessMode {
     unsafe { disk.as_ref() }

@@ -19,13 +19,14 @@
 > sideways or down the lifecycle, never up.
 >
 > **Most of the demand is already in force.** The shipped U3/U4
-> stack covers the P7 deny-write ladder, MBR discovery with the
-> extended chain and pinned types, FAT12/FAT16/FAT16B read and
-> write with both FAT copies maintained, path semantics (`/` or
-> `\`, case-insensitive DOS names, `.` ignored, `..` refused), the
-> commit-point overlay with rollback, and the native qcow2 v2/v3
-> driver including compressed-cluster reads. The cut below is the
-> delta, in dependency order — nothing about it is a schedule.
+> stack covers the P7 claim with declared access intent at open,
+> MBR discovery with the extended chain and pinned types,
+> FAT12/FAT16/FAT16B read and write with both FAT copies
+> maintained, path semantics (`/` or `\`, case-insensitive DOS
+> names, `.` ignored, `..` refused), the commit-point overlay with
+> rollback, and the native qcow2 v2/v3 driver including
+> compressed-cluster reads. The cut below is the delta, in
+> dependency order — nothing about it is a schedule.
 >
 > Deliberately absent, named so their absence is a decision:
 > **streaming file contents** (whole-`bytes` moves are what the
@@ -35,19 +36,6 @@
 > bytes beside it would invite a second partition/FAT
 > implementation above the library); **identification of backing
 > chains** (U5 untouched, per U6's note).
-
-## F10 — Declared access intent at open
-
-The amended P7's mechanics. Opening a disk takes the caller's
-intent: read, or write. A writable open that cannot secure the
-write claim fails at the open with a `locked` refusal; a read open
-takes read-only access for itself while still denying writes to
-others; a writable session excludes other readers for its whole
-life. The mode report remains, now an echo of the declaration
-rather than a discovery. Lands across S1 (`Disk::open` gains the
-intent), S2 (`rmn_disk_open` gains it), and S3 (`Disk(path,
-writable=)`), the one-argument spelling deleted in the same change.
-Needs: the P7 amendment pledged.
 
 ## F11 — Error categories
 
@@ -112,7 +100,7 @@ image where v2/v3 semantics require it; compressed clusters
 decompress wherever in the chain they sit. Raw and qcow2 backing
 files are claimed. Named refusals, per P3 and P8: missing backing
 file, cycle, depth beyond the claim, encryption, external data
-files, unknown feature bits anywhere in the chain. Needs: F10.
+files, unknown feature bits anywhere in the chain.
 
 ## F16 — Copy-on-write into the top image
 

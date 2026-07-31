@@ -39,7 +39,14 @@ typedef enum {
   RMN_SECTOR_LAYOUT_KIND_VARIABLE,
 } RmnSectorLayoutKind;
 
-// Which P7 mode an open obtained.
+// The caller's declared intent when opening a disk (P7).
+typedef enum {
+  RMN_ACCESS_INTENT_READ,
+  RMN_ACCESS_INTENT_WRITE,
+} RmnAccessIntent;
+
+// A session's access mode. For a disk this echoes the declared intent;
+// for an identification session it reports what the P7 ladder obtained.
 typedef enum {
   RMN_ACCESS_MODE_READ_WRITE,
   RMN_ACCESS_MODE_READ_ONLY,
@@ -279,17 +286,20 @@ const char *rmn_hdos_file_flags(const RmnHdosFileList *list, size_t index);
 // HDOS catalog date, e.g. "09-May-78", or "No-Date".
 const char *rmn_hdos_file_modified_date(const RmnHdosFileList *list, size_t index);
 
-// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected
-// by magic — under the P7 claim: read/write with writes denied to others
-// (preferred), read-only fallback, fail fast when deny-write cannot be
-// obtained. Returns null on failure with a message in `error_out`.
-RmnDisk *rmn_disk_open(const char *path, char **error_out);
+// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected by
+// magic — with the caller's declared intent (P7). A `Write` open
+// claims the image exclusively for the session's whole life and fails
+// at the open, naming the reason, when the claim cannot be secured —
+// never by falling back; a `Read` open takes read access only, denies
+// writes to others, and admits other readers. Returns null on failure
+// with a message in `error_out`.
+RmnDisk *rmn_disk_open(const char *path, RmnAccessIntent intent, char **error_out);
 
 // Frees a disk handle, releasing the P7 claim. Uncommitted changes are
 // discarded (the commit point never reached the file).
 void rmn_disk_free(RmnDisk *disk);
 
-// Which P7 mode the open obtained.
+// The disk session's access mode — an echo of the declared intent.
 RmnAccessMode rmn_disk_mode(const RmnDisk *disk);
 
 // The detected container format.

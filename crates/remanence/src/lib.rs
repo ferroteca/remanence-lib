@@ -24,7 +24,7 @@ mod registry;
 mod session;
 mod zip;
 
-pub use device::AccessMode;
+pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat, DiskGeometry};
 pub use error::{Error, Result};
 pub use fat::{FatEntry, FatEntryKind, FatKind, VolumeInfo};

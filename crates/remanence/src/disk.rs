@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use crate::device::{AccessMode, Device, FileDevice, Overlay};
+use crate::device::{AccessIntent, AccessMode, Device, FileDevice, Overlay};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeInfo};
 use crate::mbr::{self, PartitionInfo};
@@ -79,14 +79,17 @@ pub struct Disk {
 }
 
 impl Disk {
-    /// Opens `path` under the P7 ladder — read/write with writes denied
-    /// to others (preferred); read-only with writes still denied to
-    /// others; fail fast when deny-write cannot be obtained (a running
-    /// VM holding the image is the designed refusal). The container is
-    /// detected by magic: qcow2, else raw.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    /// Opens `path` with the caller's declared intent (P7). A `Write`
+    /// open claims the image exclusively — no other reader or writer
+    /// for the session's whole life — and an open that cannot secure
+    /// that claim fails at the open, naming the reason, never by
+    /// falling back to read-only (a running VM holding the image is
+    /// the designed refusal). A `Read` open takes read access only,
+    /// denies writes to every other process, and keeps admitting other
+    /// readers. The container is detected by magic: qcow2, else raw.
+    pub fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
         let path = path.as_ref();
-        let mut file = FileDevice::open(path)?;
+        let mut file = FileDevice::open(path, intent)?;
         let mode = file.mode();
 
         let mut magic = [0u8; 4];
@@ -115,7 +118,7 @@ impl Disk {
         })
     }
 
-    /// Which P7 mode the open obtained.
+    /// The session's access mode — an echo of the declared intent.
     pub fn mode(&self) -> AccessMode {
         self.mode
     }
@@ -241,7 +244,7 @@ impl Disk {
     fn require_writable(&self) -> Result<()> {
         if self.mode == AccessMode::ReadOnly {
             return Err(Error::io(format!(
-                "'{}' is open read-only (P7 fallback); write actions are denied",
+                "'{}' was opened for reading; write actions are denied",
                 self.path
             )));
         }
@@ -330,7 +333,8 @@ mod tests {
         // Format the virtual disk: write a FAT16 volume into guest space
         // through the crate's own qcow2 writer.
         {
-            let file = crate::device::FileDevice::open(&path).expect("opens");
+            let file = crate::device::FileDevice::open(&path, AccessIntent::Write)
+                .expect("opens");
             let mut qcow2 = crate::qcow2::Qcow2::open(file).expect("parses");
             let volume = fat16_volume_bytes();
             assert_eq!(volume.len() as u64, virtual_size);
@@ -339,7 +343,7 @@ mod tests {
         }
 
         // Now the public path.
-        let mut disk = Disk::open(&path).expect("disk opens");
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
         assert!(matches!(disk.format(), DiskFormat::Qcow2 { version: 3 }));
         assert_eq!(disk.size(), virtual_size);
 
@@ -353,7 +357,7 @@ mod tests {
         disk.commit().expect("commit");
         drop(disk);
 
-        let mut reopened = Disk::open(&path).expect("reopens");
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened.read_file(0, "GUEST/PAYLOAD.BIN").expect("read"),
             b"through the mapping"

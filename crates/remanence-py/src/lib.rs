@@ -573,8 +573,8 @@ fn mode_str(mode: remanence::AccessMode) -> &'static str {
     }
 }
 
-/// An open disk image (raw or qcow2), held under the deny-write
-/// claim until the object is closed or dropped.
+/// An open disk image (raw or qcow2), held under the claim the
+/// declared intent takes until the object is closed or dropped.
 #[pyclass(module = "remanence")]
 pub struct Disk {
     inner: Option<remanence::Disk>,
@@ -590,17 +590,26 @@ impl Disk {
 
 #[pymethods]
 impl Disk {
-    /// Opens `path` under the deny-write claim: read/write preferred,
-    /// read-only fallback, immediate failure when another process holds
-    /// write access.
+    /// Opens `path` with the caller's declared intent (P7).
+    /// `writable=True` claims the image exclusively — no other reader
+    /// or writer for the session's whole life — and fails at the open,
+    /// naming the reason, when the claim cannot be secured, never by
+    /// falling back to read-only. `writable=False` takes read access
+    /// only, denies writes to others, and admits other readers.
     #[new]
-    fn new(path: PathBuf) -> PyResult<Self> {
-        remanence::Disk::open(path)
+    #[pyo3(signature = (path, *, writable))]
+    fn new(path: PathBuf, writable: bool) -> PyResult<Self> {
+        let intent = if writable {
+            remanence::AccessIntent::Write
+        } else {
+            remanence::AccessIntent::Read
+        };
+        remanence::Disk::open(path, intent)
             .map(|inner| Self { inner: Some(inner) })
             .map_err(to_py_err)
     }
 
-    /// `"read-write"` or `"read-only"`.
+    /// `"read-write"` or `"read-only"` — an echo of the declared intent.
     #[getter]
     fn mode(&mut self) -> PyResult<&'static str> {
         Ok(mode_str(self.get()?.mode()))

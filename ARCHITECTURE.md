@@ -15,8 +15,8 @@ One core, two bindings:
   the session and identification model, the HDOS directory lister and
   file extractor, the self-contained ZIP/DEFLATE reader that lets
   `Session::open` reach inside archives, and the disk stack —
-  the deny-write claim ladder, the native qcow2 v2/v3 driver, MBR
-  partition discovery, FAT12/FAT16 volume read/write, and the
+  the declared-intent deny-write claim, the native qcow2 v2/v3 driver,
+  MBR partition discovery, FAT12/FAT16 volume read/write, and the
   commit-point overlay that keeps every write bufferable and revocable
   until committed.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
@@ -137,14 +137,23 @@ permission to every other process is mandatory in all scenarios**, from
 the moment a file is opened, and a file for which that denial cannot be
 obtained is not opened at all: fail fast, with the reason named. A disk
 image held open for writing by a running VM is the designed refusal.
-With the denial secured, the library's own access decides the session's
-mode: read/write preferred; read-only — every remanence write action
-refused by name — when the file or media denies us write permission.
-The claim is held from open until the session or disk is completely
-done: no claim-on-modify, no release-on-save. On Windows the mapping is
-native and kernel-enforced (share modes, `FILE_SHARE_READ`); on POSIX
-both modes take the exclusive advisory lock, which binds cooperating
-processes and is asserted as protocol against the rest.
+On the disk stack the caller declares the session's mode at open —
+read, or write — and the mode report echoes the declaration. A
+writable open that cannot secure its own write access fails at the
+open, never by silent fallback, and **a writable session admits no
+observers**: its claim excludes every other read or write for the
+session's whole life. A read open takes no stronger access than it
+needs and keeps admitting other readers, every remanence write action
+refused by name. An identification session, which only reads, still
+takes the strongest access the file grants — read/write preferred,
+read-only otherwise — with writes denied to others either way. The
+claim is held from open until the session or disk is completely done:
+no claim-on-modify, no release-on-save. On Windows the mapping is
+native and kernel-enforced (share modes: a writable disk session
+shares nothing; every other open shares reads only); on POSIX the
+advisory lock is the claim — shared for a disk read open, exclusive
+otherwise — binding cooperating processes and asserted as protocol
+against the rest.
 
 ### P8 — Versioned formats are supported by explicit version, or refused
 
