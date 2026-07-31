@@ -251,15 +251,12 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert!(!disk.is_modified());
     assert!(disk.entries("superfloppy:0", "SUB").is_err());
 
-    // Write again and commit this time.
-    disk.write_file("superfloppy:0", "KEPT.TXT", b"kept bytes")
+    // Write again and commit this time; overwriting replaces the
+    // contents rather than refusing (U3).
+    disk.write_file("superfloppy:0", "KEPT.TXT", b"the first draft, rather longer")
         .expect("write");
-    assert_eq!(
-        disk.write_file("superfloppy:0", "KEPT.TXT", b"replacement")
-            .expect_err("overwrite is outside the current claim")
-            .category(),
-        ErrorCategory::Unsupported
-    );
+    disk.write_file("superfloppy:0", "KEPT.TXT", b"kept bytes")
+        .expect("overwrite");
     disk.commit().expect("commit");
     assert!(!disk.is_modified());
     drop(disk);
@@ -310,6 +307,221 @@ fn fat16_behind_an_mbr_partition() {
         reopened.read_file("partition:1", "ROOT.TXT").expect("read"),
         b"in the partition"
     );
+    drop(reopened);
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn stat_answers_presence_and_absence_distinctly() {
+    let path = temp_path("stat");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+
+    let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+    disk.make_directory("superfloppy:0", "SUB").expect("mkdir");
+    disk.write_file("superfloppy:0", "SUB/FILE.BIN", b"1234567890")
+        .expect("write");
+
+    let file = disk
+        .stat("superfloppy:0", "sub/file.bin")
+        .expect("stat succeeds")
+        .expect("the file exists");
+    assert_eq!(file.name, "FILE.BIN");
+    assert_eq!(file.kind, FatEntryKind::File);
+    assert_eq!(file.size_bytes, 10);
+
+    let directory = disk
+        .stat("superfloppy:0", "SUB")
+        .expect("stat succeeds")
+        .expect("the directory exists");
+    assert_eq!(directory.kind, FatEntryKind::Directory);
+
+    // Absence is an answer, not a failure: a missing leaf, a missing
+    // parent, and a parent that is a file all answer None.
+    assert_eq!(
+        disk.stat("superfloppy:0", "SUB/MISSING.BIN")
+            .expect("an answer"),
+        None
+    );
+    assert_eq!(
+        disk.stat("superfloppy:0", "NOWHERE/FILE.BIN")
+            .expect("an answer"),
+        None
+    );
+    assert_eq!(
+        disk.stat("superfloppy:0", "SUB/FILE.BIN/DEEPER.BIN")
+            .expect("an answer"),
+        None
+    );
+
+    // Failure stays failure: a missing volume identity, an empty path.
+    assert_eq!(
+        disk.stat("missing:9", "FILE.BIN")
+            .expect_err("no such volume")
+            .category(),
+        ErrorCategory::NotFound
+    );
+    assert!(
+        disk.stat("superfloppy:0", "").is_err(),
+        "the root has no entry to answer with"
+    );
+    drop(disk);
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn overwrite_releases_and_reclaims_clusters() {
+    let path = temp_path("overwrite");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+
+    let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+    // 7000 of the volume's 7903 data clusters: two of these can never
+    // coexist, so each rewrite below only fits by releasing the last.
+    let big = vec![0xabu8; 7000 * 512];
+    disk.write_file("superfloppy:0", "BIG.BIN", &big)
+        .expect("first write");
+
+    let replacement = vec![0xcdu8; 7000 * 512];
+    disk.write_file("superfloppy:0", "BIG.BIN", &replacement)
+        .expect("overwriting releases the old clusters first");
+    assert_eq!(
+        disk.read_file("superfloppy:0", "BIG.BIN").expect("read"),
+        replacement
+    );
+
+    // Shrinking releases clusters for other files to claim.
+    disk.write_file("superfloppy:0", "BIG.BIN", b"now tiny")
+        .expect("shrinking overwrite");
+    disk.write_file("superfloppy:0", "OTHER.BIN", &big)
+        .expect("the released clusters are claimable again");
+
+    // Overwriting a directory is refused by name.
+    disk.make_directory("superfloppy:0", "DIR").expect("mkdir");
+    assert_eq!(
+        disk.write_file("superfloppy:0", "DIR", b"not a file")
+            .expect_err("a directory is not overwritable")
+            .category(),
+        ErrorCategory::IsDirectory
+    );
+
+    disk.commit().expect("commit");
+    drop(disk);
+
+    let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+    assert_eq!(
+        reopened.read_file("superfloppy:0", "BIG.BIN").expect("read"),
+        b"now tiny"
+    );
+    assert_eq!(
+        reopened.read_file("superfloppy:0", "OTHER.BIN").expect("read"),
+        big
+    );
+    drop(reopened);
+
+    // Both FAT copies were kept in step through release and reclaim.
+    let image = std::fs::read(&path).expect("image reads");
+    let fat_bytes = 32 * 512;
+    let first = &image[512..512 + fat_bytes];
+    let second = &image[512 + fat_bytes..512 + 2 * fat_bytes];
+    assert_eq!(first, second, "both FAT copies stay consistent");
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn make_directory_creates_parents_and_is_idempotent() {
+    let path = temp_path("mkdirs");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+
+    let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+
+    // Missing parents are created in one call.
+    disk.make_directory("superfloppy:0", "A/B/C")
+        .expect("missing parents are created");
+    assert_eq!(
+        disk.stat("superfloppy:0", "A/B/C")
+            .expect("stat")
+            .expect("exists")
+            .kind,
+        FatEntryKind::Directory
+    );
+
+    // Already existing — wholly, partly, or the root itself — succeeds
+    // unchanged, and the chain extends from wherever it stops.
+    disk.make_directory("superfloppy:0", "A/B/C")
+        .expect("idempotent");
+    disk.make_directory("superfloppy:0", "A/B")
+        .expect("an existing prefix succeeds");
+    disk.make_directory("superfloppy:0", "")
+        .expect("the root already exists");
+    disk.make_directory("superfloppy:0", "A/B/C/D")
+        .expect("extends the existing chain");
+
+    // The created directories hold files like any other.
+    disk.write_file("superfloppy:0", "A/B/C/D/DEEP.TXT", b"nested payload")
+        .expect("write");
+
+    // A file in the way is refused by name, at the leaf or mid-path.
+    assert_eq!(
+        disk.make_directory("superfloppy:0", "A/B/C/D/DEEP.TXT")
+            .expect_err("a file at the leaf is refused")
+            .category(),
+        ErrorCategory::NotDirectory
+    );
+    assert_eq!(
+        disk.make_directory("superfloppy:0", "A/B/C/D/DEEP.TXT/E")
+            .expect_err("a file mid-path is refused")
+            .category(),
+        ErrorCategory::NotDirectory
+    );
+
+    disk.commit().expect("commit");
+    drop(disk);
+
+    let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+    assert_eq!(
+        reopened
+            .read_file("superfloppy:0", "A/B/C/D/DEEP.TXT")
+            .expect("read"),
+        b"nested payload"
+    );
+    drop(reopened);
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_growing_subdirectory_never_collides_with_file_clusters() {
+    let path = temp_path("dir-growth");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+
+    let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+    disk.make_directory("superfloppy:0", "SUB").expect("mkdir");
+
+    // One 512-byte cluster holds 16 records; "." and ".." take two, so
+    // the fifteenth file forces the directory to grow mid-write, and
+    // the grown cluster must never collide with a file's data clusters.
+    let names: Vec<String> = (0..20).map(|n| format!("FILE{n:02}.BIN")).collect();
+    for (n, name) in names.iter().enumerate() {
+        disk.write_file("superfloppy:0", &format!("SUB/{name}"), &vec![n as u8; 700])
+            .expect("write");
+    }
+    disk.commit().expect("commit");
+    drop(disk);
+
+    let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+    let entries = reopened.entries("superfloppy:0", "SUB").expect("list");
+    assert_eq!(entries.len(), 20);
+    for (n, name) in names.iter().enumerate() {
+        assert_eq!(
+            reopened
+                .read_file("superfloppy:0", &format!("SUB/{name}"))
+                .expect("read"),
+            vec![n as u8; 700],
+            "{name} reads back intact"
+        );
+    }
     drop(reopened);
 
     std::fs::remove_file(&path).ok();

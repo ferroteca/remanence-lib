@@ -6,9 +6,8 @@
 > disk-access implementation and stand wholly on this library,
 > pinning one exact prerelease at a time. P10 is now in force at
 > root [ARCHITECTURE.md](../../ARCHITECTURE.md); the remaining demand
-> is pledged beside this file — [USE-CASES.md](USE-CASES.md) (U6 and
-> the U3/U4 amendments) and [ARCHITECTURE.md](ARCHITECTURE.md) (P9
-> and the P7 amendment).
+> is pledged beside this file — [USE-CASES.md](USE-CASES.md) (U6) and
+> [ARCHITECTURE.md](ARCHITECTURE.md) (P9 and the P7 amendment).
 > Every feature here is owed by the project, with no promise of
 > order or time; a feature's number evaporates on delivery, and a
 > split retires the parent number. Each feature is cut to one
@@ -25,8 +24,10 @@
 > complete geometry report (blank an answer distinct from
 > unreadable, every declared row kept with a structured issue where
 > it cannot be read, partition kinds, cylinders only where exact),
-> FAT12/FAT16/FAT16B read and write with both FAT copies
-> maintained, path semantics (`/` or `\`, case-insensitive DOS
+> FAT12/FAT16/FAT16B read and write with both FAT copies maintained
+> and the file verbs complete (stat with absence an answer,
+> overwrite releasing and reclaiming clusters, recursive idempotent
+> directories), path semantics (`/` or `\`, case-insensitive DOS
 > names, `.` ignored, `..` refused), the commit-point overlay with
 > rollback, and the native qcow2 v2/v3 driver including
 > compressed-cluster reads. The cut below is the delta, in
@@ -40,16 +41,6 @@
 > bytes beside it would invite a second partition/FAT
 > implementation above the library); **identification of backing
 > chains** (U5 untouched, per U6's note).
-
-## F14 — Stat, overwrite, recursive directories
-
-The amended U3's verb completion. `stat` answers one path with its
-entry or with an is-absent answer distinguished from failure.
-`write_file` overwrites an existing file, shorter or longer,
-releasing and reclaiming clusters, both FAT copies kept consistent.
-`make_directory` creates missing parents and succeeds when the
-directory already exists. Validation still precedes the first
-mutating write (P6).
 
 ## F15 — qcow2 backing-chain read
 

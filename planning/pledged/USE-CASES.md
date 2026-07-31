@@ -5,9 +5,8 @@
 > embedding consumer that U3 and U4 serve — raw intake arriving as
 > conversation with the owner, the first lane in
 > [README.md](../README.md). U6 reaches the root list on full
-> delivery; the U3 amendment lands on the root list only through
-> the surface-change rule ([SURFACES.md](../SURFACES.md)). Numbers
-> come from the one global U-sequence and are never reused.
+> delivery. Numbers come from the one global U-sequence and are
+> never reused.
 
 ## U6 — Differencing images are first-class disks
 
@@ -32,18 +31,3 @@ image identifies as the qcow2 container it is. This entry is about
 the `Disk` surface reaching through the chain — the write half is
 where the consumer's stopped-machine workflow lives today and
 cannot move here without it.)*
-
-## Amendment — U3 verbs complete
-
-U3 gains three capabilities its consumer needs before it can
-replace its own implementation with this library:
-- **Stat.** Alongside listing, I ask after one path and get its
-  entry — or the answer that it does not exist, distinguished from
-  failure.
-- **Overwrite.** Writing a file that already exists replaces its
-  contents, shorter or longer, releasing and reclaiming clusters;
-  today's refusal to overwrite is a gap the consumer cannot work
-  around.
-- **Recursive, idempotent directories.** Creating a directory
-  creates missing parents and succeeds when the directory already
-  exists.

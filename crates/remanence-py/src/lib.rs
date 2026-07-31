@@ -587,6 +587,19 @@ pub struct FatEntry {
     pub size_bytes: u64,
 }
 
+impl FatEntry {
+    fn new(entry: &remanence::FatEntry) -> Self {
+        Self {
+            name: entry.name.clone(),
+            kind: match entry.kind {
+                remanence::FatEntryKind::File => "file".to_owned(),
+                remanence::FatEntryKind::Directory => "directory".to_owned(),
+            },
+            size_bytes: entry.size_bytes,
+        }
+    }
+}
+
 fn mode_str(mode: remanence::AccessMode) -> &'static str {
     match mode {
         remanence::AccessMode::ReadWrite => "read-write",
@@ -721,15 +734,21 @@ impl Disk {
             .entries(volume_id, path)
             .map_err(to_py_err)?
             .iter()
-            .map(|entry| FatEntry {
-                name: entry.name.clone(),
-                kind: match entry.kind {
-                    remanence::FatEntryKind::File => "file".to_owned(),
-                    remanence::FatEntryKind::Directory => "directory".to_owned(),
-                },
-                size_bytes: entry.size_bytes,
-            })
+            .map(FatEntry::new)
             .collect())
+    }
+
+    /// Answers one path in `volume_id` with its entry, or `None` when
+    /// nothing exists at that path — a missing leaf, a missing parent,
+    /// or a parent that is a file alike. Absence is an answer,
+    /// distinguished from failure, which raises.
+    fn stat(&mut self, volume_id: &str, path: &str) -> PyResult<Option<FatEntry>> {
+        Ok(self
+            .get()?
+            .stat(volume_id, path)
+            .map_err(to_py_err)?
+            .as_ref()
+            .map(FatEntry::new))
     }
 
     /// Copies a file's bytes out of `volume_id`.
@@ -743,14 +762,19 @@ impl Disk {
         Ok(PyBytes::new(py, &bytes))
     }
 
-    /// Writes a file into `volume_id`. Buffered until `commit()`.
+    /// Writes a file into `volume_id`. An existing file is overwritten —
+    /// shorter or longer, its old clusters released and reclaimed —
+    /// while an existing directory is refused. Buffered until
+    /// `commit()`.
     fn write_file(&mut self, volume_id: &str, path: &str, contents: &[u8]) -> PyResult<()> {
         self.get()?
             .write_file(volume_id, path, contents)
             .map_err(to_py_err)
     }
 
-    /// Creates a directory in `volume_id`. Buffered until `commit()`.
+    /// Ensures a directory exists in `volume_id`: missing parents are
+    /// created, and a path that already leads to a directory succeeds
+    /// unchanged. Buffered until `commit()`.
     fn make_directory(&mut self, volume_id: &str, path: &str) -> PyResult<()> {
         self.get()?
             .make_directory(volume_id, path)

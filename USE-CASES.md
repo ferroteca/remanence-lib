@@ -29,12 +29,17 @@ Reliquary, my QEMU automation layer, needs to reach inside a stopped
 machine's disk image on the host — qcow2 or raw — and work with the
 files in its FAT12/FAT16/FAT16B volumes, whether those volumes sit
 behind an MBR or bare on a partitionless image: list a directory's
-entries, copy a file out to the host, write a file in, create a
-directory. The library addresses a volume by the stable identifier
-its geometry report gave it, and a path within it — mapping volumes
-to guest drive letters stays reliquary's job, standing on U4's
-volume enumeration. All of this without booting
-the guest and without any external helper process: the library does
+entries, ask after one path and get its entry — or the answer that
+it does not exist, distinguished from failure — copy a file out to
+the host, write a file in, create a directory. Writing a file that
+already exists replaces its contents, shorter or longer, releasing
+and reclaiming clusters; creating a directory creates missing
+parents and succeeds when the directory already exists. The library
+addresses a volume by the stable identifier its geometry report gave
+it, and a path within it — mapping volumes to guest drive letters
+stays reliquary's job, standing on U4's volume enumeration. All of
+this without booting the guest and without any external helper
+process: the library does
 the format work itself. Reading never changes the image. Writing is
 a separate, explicit mode with a commit point: until I commit,
 everything I wrote can be rolled back cleanly.

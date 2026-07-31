@@ -1088,6 +1088,19 @@ struct FatEntryView {
     size_bytes: u64,
 }
 
+impl FatEntryView {
+    fn new(entry: &FatEntry) -> Self {
+        Self {
+            name: to_cstring(&entry.name),
+            kind: match entry.kind {
+                FatEntryKind::File => RmnFatEntryKind::File,
+                FatEntryKind::Directory => RmnFatEntryKind::Directory,
+            },
+            size_bytes: entry.size_bytes,
+        }
+    }
+}
+
 /// Bytes read out of a volume or catalog.
 pub struct RmnFileData {
     bytes: Vec<u8>,
@@ -1527,17 +1540,46 @@ pub unsafe extern "C" fn rmn_disk_entries(
     let path = unsafe { utf8_arg(path) }.unwrap_or_default();
     match disk.disk.entries(volume_id.as_ref(), path.as_ref()) {
         Ok(entries) => {
-            let entries = entries
-                .iter()
-                .map(|entry: &FatEntry| FatEntryView {
-                    name: to_cstring(&entry.name),
-                    kind: match entry.kind {
-                        FatEntryKind::File => RmnFatEntryKind::File,
-                        FatEntryKind::Directory => RmnFatEntryKind::Directory,
-                    },
-                    size_bytes: entry.size_bytes,
-                })
-                .collect();
+            let entries = entries.iter().map(FatEntryView::new).collect();
+            Box::into_raw(Box::new(RmnFatEntryList { entries }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Answers one path in `volume_id` (U3): a one-entry listing when
+/// something exists there, an empty listing when nothing does — a
+/// missing leaf, a missing parent, or a parent that is a file alike.
+/// Absence is an answer, distinguished from failure, which returns null
+/// with the error set. Free with `rmn_fat_entry_list_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmn_disk_stat(
+    disk: *mut RmnDisk,
+    volume_id: *const c_char,
+    path: *const c_char,
+    error_category_out: *mut RmnErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RmnFatEntryList {
+    unsafe { clear_error(error_out) };
+    let Some(disk) = (unsafe { disk.as_mut() }) else {
+        return ptr::null_mut();
+    };
+    let Some(volume_id) = (unsafe { utf8_arg(volume_id) }) else {
+        let error = remanence::Error::io("null volume identifier");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match disk.disk.stat(volume_id.as_ref(), path.as_ref()) {
+        Ok(entry) => {
+            let entries = entry.iter().map(FatEntryView::new).collect();
             Box::into_raw(Box::new(RmnFatEntryList { entries }))
         }
         Err(error) => {
@@ -1658,7 +1700,9 @@ pub unsafe extern "C" fn rmn_file_data_free(data: *mut RmnFileData) {
     }
 }
 
-/// Writes a file into `volume_id`. Buffered until `rmn_disk_commit`.
+/// Writes a file into `volume_id`. An existing file is overwritten —
+/// shorter or longer, its old clusters released and reclaimed — while
+/// an existing directory is refused. Buffered until `rmn_disk_commit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_write_file(
     disk: *mut RmnDisk,
@@ -1705,7 +1749,9 @@ pub unsafe extern "C" fn rmn_disk_write_file(
     }
 }
 
-/// Creates a directory in `volume_id`. Buffered until commit.
+/// Ensures a directory exists in `volume_id`: missing parents are
+/// created, and a path that already leads to a directory succeeds
+/// unchanged. Buffered until commit.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_make_directory(
     disk: *mut RmnDisk,

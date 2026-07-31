@@ -216,11 +216,13 @@ pub(crate) struct FatVolume {
     kind: FatKind,
 }
 
-/// One located directory record: its attributes, first cluster, and size.
+/// One located directory record: its attributes, first cluster, size,
+/// and where the record itself sits.
 struct Located {
     attributes: u8,
     first_cluster: u64,
     size: u64,
+    record_offset: u64,
 }
 
 impl FatVolume {
@@ -416,7 +418,7 @@ impl FatVolume {
         first_cluster: u64,
     ) -> Result<Vec<(FatEntry, Located)>> {
         let mut out = Vec::new();
-        for (_, record) in self.read_records(device, first_cluster)? {
+        for (record_offset, record) in self.read_records(device, first_cluster)? {
             if record[0] == FREE {
                 break;
             }
@@ -447,6 +449,7 @@ impl FatVolume {
                     attributes,
                     first_cluster: first,
                     size,
+                    record_offset,
                 },
             ));
         }
@@ -528,6 +531,34 @@ impl FatVolume {
             .collect())
     }
 
+    /// Answers one path with its entry, or `None` when nothing exists at
+    /// that path — a missing leaf, a missing parent, or a parent that is
+    /// a file all mean the path names nothing, an answer distinguished
+    /// from failure to read the volume.
+    pub fn stat(&self, device: &mut dyn Device, segments: &[&str]) -> Result<Option<FatEntry>> {
+        let Some((leaf, dirs)) = segments.split_last() else {
+            return Err(io("a path is required"));
+        };
+        let mut current = 0u64;
+        for dir in dirs {
+            let found = self
+                .entries_of(device, current)?
+                .into_iter()
+                .find(|(entry, _)| entry.name.eq_ignore_ascii_case(dir));
+            match found {
+                Some((entry, located)) if entry.kind == FatEntryKind::Directory => {
+                    current = located.first_cluster;
+                }
+                _ => return Ok(None),
+            }
+        }
+        Ok(self
+            .entries_of(device, current)?
+            .into_iter()
+            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
+            .map(|(entry, _)| entry))
+    }
+
     /// Reads a file's bytes out.
     pub fn read_file(&self, device: &mut dyn Device, segments: &[&str]) -> Result<Vec<u8>> {
         let located = self.locate(device, segments)?;
@@ -579,6 +610,20 @@ impl FatVolume {
             )));
         }
         Ok(free)
+    }
+
+    /// Counts free clusters, stopping once `cap` are found.
+    fn free_cluster_count(&self, device: &mut dyn Device, cap: u64) -> Result<u64> {
+        let max = self.bpb.cluster_count() + 2;
+        let mut found = 0u64;
+        let mut cluster = 2;
+        while found < cap && cluster < max {
+            if self.fat_entry(device, cluster)? == 0 {
+                found += 1;
+            }
+            cluster += 1;
+        }
+        Ok(found)
     }
 
     fn validated_short_name(name: &str) -> Result<([u8; 11], String)> {
@@ -658,16 +703,21 @@ impl FatVolume {
         (date, time)
     }
 
-    fn free_record_slot(&self, device: &mut dyn Device, parent_cluster: u64) -> Result<u64> {
+    /// Finds a free directory record slot without mutating; `None` means
+    /// the directory is full and must grow to take another record.
+    fn find_free_record(&self, device: &mut dyn Device, parent_cluster: u64) -> Result<Option<u64>> {
         for (record_offset, record) in self.read_records(device, parent_cluster)? {
             if record[0] == FREE || record[0] == DELETED {
-                return Ok(record_offset);
+                return Ok(Some(record_offset));
             }
         }
-        if parent_cluster == 0 {
-            return Err(no_space("root directory is full"));
-        }
-        // Grow the directory by one cluster.
+        Ok(None)
+    }
+
+    /// Grows a (non-root) directory by one cluster and returns the offset
+    /// of the new cluster's first record. Mutating: claim its cluster
+    /// only after every validation has passed (P6).
+    fn grow_directory(&self, device: &mut dyn Device, parent_cluster: u64) -> Result<u64> {
         let new = self.claim_clusters(device, 1)?[0];
         let chain = self.chain(device, parent_cluster)?;
         let last = *chain
@@ -700,7 +750,11 @@ impl FatVolume {
         device.write_at(record_offset, &record)
     }
 
-    /// Writes a file (P6: everything validated before the first mutation).
+    /// Writes a file. An existing file is overwritten — shorter or
+    /// longer — its old clusters released and the new contents' claimed,
+    /// every FAT copy kept in step; an existing directory is refused.
+    /// P6: everything validated before the first mutation, the released
+    /// clusters counted toward the space the new contents need.
     pub fn write_file(
         &self,
         device: &mut dyn Device,
@@ -709,21 +763,53 @@ impl FatVolume {
     ) -> Result<()> {
         let (parent, leaf) = self.walk_to_parent(device, segments)?;
         let (raw_name, _) = Self::validated_short_name(leaf)?;
-        if self
+        let existing = self
             .entries_of(device, parent)?
-            .iter()
-            .any(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
-        {
-            return Err(unsupported(format!(
-                "'{leaf}' already exists; overwriting is not part of this claim"
-            )));
+            .into_iter()
+            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf));
+        let old_chain = match &existing {
+            Some((entry, located)) => {
+                if entry.kind == FatEntryKind::Directory {
+                    return Err(is_directory(format!("'{leaf}' is a directory")));
+                }
+                if located.first_cluster >= 2 {
+                    self.chain(device, located.first_cluster)?
+                } else {
+                    Vec::new()
+                }
+            }
+            None => Vec::new(),
+        };
+        // The record slot: the overwritten file's own, or a free one in
+        // the parent — absent both, the parent must grow by one cluster.
+        let slot = match &existing {
+            Some((_, located)) => Some(located.record_offset),
+            None => self.find_free_record(device, parent)?,
+        };
+        let growth = u64::from(slot.is_none());
+        if growth != 0 && parent == 0 {
+            return Err(no_space("root directory is full"));
         }
         let cluster_bytes = self.bpb.cluster_bytes() as usize;
-        let needed = contents.len().div_ceil(cluster_bytes);
-        let clusters = self.claim_clusters(device, needed)?;
-        let slot = self.free_record_slot(device, parent)?;
+        let needed = contents.len().div_ceil(cluster_bytes) as u64;
+        let available =
+            self.free_cluster_count(device, needed + growth)? + old_chain.len() as u64;
+        if available < needed + growth {
+            return Err(no_space(format!(
+                "volume full: {} clusters needed, {available} available",
+                needed + growth
+            )));
+        }
 
         // All checks passed; now mutate (into the overlay above us).
+        for &cluster in &old_chain {
+            self.set_fat_entry(device, cluster, 0)?;
+        }
+        let slot = match slot {
+            Some(offset) => offset,
+            None => self.grow_directory(device, parent)?,
+        };
+        let clusters = self.claim_clusters(device, needed as usize)?;
         for (i, &cluster) in clusters.iter().enumerate() {
             let next = clusters
                 .get(i + 1)
@@ -740,25 +826,21 @@ impl FatVolume {
         self.write_record(device, slot, raw_name, 0x20, first, contents.len() as u64)
     }
 
-    /// Creates a directory (P6-ordered like `write_file`).
-    pub fn make_directory(&self, device: &mut dyn Device, segments: &[&str]) -> Result<()> {
-        let (parent, leaf) = self.walk_to_parent(device, segments)?;
-        let (raw_name, _) = Self::validated_short_name(leaf)?;
-        if self
-            .entries_of(device, parent)?
-            .iter()
-            .any(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
-        {
-            return Err(io(format!("'{leaf}' already exists")));
-        }
+    /// Creates one directory: claims its cluster, writes its "." and
+    /// ".." records, and records it at `slot` in the parent. Returns the
+    /// new directory's first cluster. Mutating.
+    fn create_directory(
+        &self,
+        device: &mut dyn Device,
+        parent: u64,
+        slot: u64,
+        raw_name: [u8; 11],
+    ) -> Result<u64> {
         let cluster = self.claim_clusters(device, 1)?[0];
-        let slot = self.free_record_slot(device, parent)?;
-
         self.set_fat_entry(device, cluster, self.end_marker())?;
         let zeroes = vec![0u8; self.bpb.cluster_bytes() as usize];
-        device.write_at(self.cluster_offset(cluster), &zeroes)?;
-        // "." and ".." records.
         let offset = self.cluster_offset(cluster);
+        device.write_at(offset, &zeroes)?;
         let mut dot = [b' '; 11];
         dot[0] = b'.';
         self.write_record(device, offset, dot, ATTR_DIRECTORY, cluster, 0)?;
@@ -773,7 +855,77 @@ impl FatVolume {
             parent,
             0,
         )?;
+        self.write_record(device, slot, raw_name, ATTR_DIRECTORY, cluster, 0)?;
+        Ok(cluster)
+    }
 
-        self.write_record(device, slot, raw_name, ATTR_DIRECTORY, cluster, 0)
+    /// Ensures a directory path exists: missing parents are created, and
+    /// a path that already leads to a directory — the root included —
+    /// succeeds unchanged. A segment that exists as a file is refused.
+    /// P6-ordered like `write_file`: every name to create, the record
+    /// slot, and the cluster budget are validated before the first
+    /// mutation.
+    pub fn make_directory(&self, device: &mut dyn Device, segments: &[&str]) -> Result<()> {
+        // Walk the prefix that already exists.
+        let mut current = 0u64;
+        let mut index = 0;
+        while index < segments.len() {
+            let name = segments[index];
+            let found = self
+                .entries_of(device, current)?
+                .into_iter()
+                .find(|(entry, _)| entry.name.eq_ignore_ascii_case(name));
+            match found {
+                Some((entry, located)) => {
+                    if entry.kind != FatEntryKind::Directory {
+                        return Err(not_directory(format!(
+                            "'{name}' exists and is not a directory"
+                        )));
+                    }
+                    current = located.first_cluster;
+                    index += 1;
+                }
+                None => break,
+            }
+        }
+        let missing = &segments[index..];
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let raw_names = missing
+            .iter()
+            .map(|name| Ok(Self::validated_short_name(name)?.0))
+            .collect::<Result<Vec<_>>>()?;
+        let slot = self.find_free_record(device, current)?;
+        let growth = u64::from(slot.is_none());
+        if growth != 0 && current == 0 {
+            return Err(no_space("root directory is full"));
+        }
+        // One cluster per directory created, plus one if the existing
+        // parent must grow to take the first record; a freshly created
+        // directory always has room for its child's record.
+        let needed = missing.len() as u64 + growth;
+        let free = self.free_cluster_count(device, needed)?;
+        if free < needed {
+            return Err(no_space(format!(
+                "volume full: {needed} clusters needed, {free} free"
+            )));
+        }
+
+        // All checks passed; now mutate (into the overlay above us).
+        for (i, raw_name) in raw_names.iter().enumerate() {
+            let slot = if i == 0 {
+                match slot {
+                    Some(offset) => offset,
+                    None => self.grow_directory(device, current)?,
+                }
+            } else {
+                // A freshly created directory: "." and ".." fill its
+                // first two records, and the third is free.
+                self.cluster_offset(current) + 2 * RECORD as u64
+            };
+            current = self.create_directory(device, current, slot, *raw_name)?;
+        }
+        Ok(())
     }
 }

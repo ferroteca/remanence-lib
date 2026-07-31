@@ -254,6 +254,20 @@ impl Disk {
         fat.entries(&mut composed, &segments)
     }
 
+    /// Answers one path in the volume identified by `volume_id` with its
+    /// entry, or `None` when nothing exists at that path — a missing
+    /// leaf, a missing parent, or a parent that is a file alike. Absence
+    /// is an answer, distinguished from failure to read the volume (U3).
+    pub fn stat(&mut self, volume_id: &str, path: &str) -> Result<Option<FatEntry>> {
+        let segments = Self::split_path(path)?;
+        if segments.is_empty() {
+            return Err(Error::io("a path is required".to_owned()));
+        }
+        let (_, fat) = self.volume_at(volume_id)?;
+        let mut composed = self.composed();
+        fat.stat(&mut composed, &segments)
+    }
+
     /// Copies a file's bytes out of the volume identified by `volume_id`.
     pub fn read_file(&mut self, volume_id: &str, path: &str) -> Result<Vec<u8>> {
         let segments = Self::split_path(path)?;
@@ -275,8 +289,11 @@ impl Disk {
         Ok(())
     }
 
-    /// Writes a file into the volume identified by `volume_id`. Buffered
-    /// until [`Disk::commit`].
+    /// Writes a file into the volume identified by `volume_id`. An
+    /// existing file is overwritten — shorter or longer, its old
+    /// clusters released and reclaimed, every FAT copy kept in step —
+    /// while an existing directory is refused. Buffered until
+    /// [`Disk::commit`].
     pub fn write_file(&mut self, volume_id: &str, path: &str, contents: &[u8]) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
@@ -288,14 +305,13 @@ impl Disk {
         fat.write_file(&mut composed, &segments, contents)
     }
 
-    /// Creates a directory in the volume identified by `volume_id`.
+    /// Ensures a directory exists in the volume identified by
+    /// `volume_id`: missing parents are created, and a path that already
+    /// leads to a directory — the root included — succeeds unchanged.
     /// Buffered until commit.
     pub fn make_directory(&mut self, volume_id: &str, path: &str) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
-        if segments.is_empty() {
-            return Err(Error::io("a directory path is required".to_owned()));
-        }
         let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.make_directory(&mut composed, &segments)
@@ -377,6 +393,16 @@ mod tests {
             .expect("mkdir");
         disk.write_file("superfloppy:0", "GUEST/PAYLOAD.BIN", b"through the mapping")
             .expect("write");
+        assert_eq!(
+            disk.stat("superfloppy:0", "GUEST/PAYLOAD.BIN")
+                .expect("stat")
+                .map(|entry| entry.size_bytes),
+            Some(b"through the mapping".len() as u64)
+        );
+        assert_eq!(
+            disk.stat("superfloppy:0", "GUEST/ABSENT.BIN").expect("stat"),
+            None
+        );
         disk.commit().expect("commit");
         drop(disk);
 

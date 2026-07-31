@@ -447,6 +447,17 @@ RmnFatEntryList *rmn_disk_entries(RmnDisk *disk,
                                   RmnErrorCategory *error_category_out,
                                   char **error_out);
 
+// Answers one path in `volume_id` (U3): a one-entry listing when
+// something exists there, an empty listing when nothing does — a
+// missing leaf, a missing parent, or a parent that is a file alike.
+// Absence is an answer, distinguished from failure, which returns null
+// with the error set. Free with `rmn_fat_entry_list_free`.
+RmnFatEntryList *rmn_disk_stat(RmnDisk *disk,
+                               const char *volume_id,
+                               const char *path,
+                               RmnErrorCategory *error_category_out,
+                               char **error_out);
+
 // Frees a directory listing.
 void rmn_fat_entry_list_free(RmnFatEntryList *list);
 
@@ -476,7 +487,9 @@ const uint8_t *rmn_file_data_bytes(const RmnFileData *data, size_t *length_out);
 // Frees read-out file bytes.
 void rmn_file_data_free(RmnFileData *data);
 
-// Writes a file into `volume_id`. Buffered until `rmn_disk_commit`.
+// Writes a file into `volume_id`. An existing file is overwritten —
+// shorter or longer, its old clusters released and reclaimed — while
+// an existing directory is refused. Buffered until `rmn_disk_commit`.
 bool rmn_disk_write_file(RmnDisk *disk,
                          const char *volume_id,
                          const char *path,
@@ -485,7 +498,9 @@ bool rmn_disk_write_file(RmnDisk *disk,
                          RmnErrorCategory *error_category_out,
                          char **error_out);
 
-// Creates a directory in `volume_id`. Buffered until commit.
+// Ensures a directory exists in `volume_id`: missing parents are
+// created, and a path that already leads to a directory succeeds
+// unchanged. Buffered until commit.
 bool rmn_disk_make_directory(RmnDisk *disk,
                              const char *volume_id,
                              const char *path,
