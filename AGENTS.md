@@ -202,7 +202,7 @@ compiled into the wheel.
 
 The **workspace SemVer is the single upstream version** —
 `workspace.package.version`, inherited by every crate (currently
-`0.0.1-alpha.1`). Pre-releases follow SemVer's ladder (`-alpha.N` →
+`0.0.1-alpha.2`). Pre-releases follow SemVer's ladder (`-alpha.N` →
 `-beta.N` → `-rc.N` → bare); nothing below `-alpha.1` is ever
 published to a registry — unpublished git is the dev channel.
 
