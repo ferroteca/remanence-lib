@@ -573,7 +573,7 @@ fn mode_str(mode: remanence::AccessMode) -> &'static str {
     }
 }
 
-/// An open at-rest disk image (raw or qcow2), held under the deny-write
+/// An open disk image (raw or qcow2), held under the deny-write
 /// claim until the object is closed or dropped.
 #[pyclass(module = "remanence")]
 pub struct Disk {

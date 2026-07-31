@@ -62,6 +62,37 @@ becoming a D-number, and the commit that moves it is the record.
 
 ## Decisions
 
+### D4 — "At rest" leaves the library's vocabulary; the surface is the `Disk` stack
+
+**Decided** Paul Galbraith, 2026-07-30. **Supports** (none) — a
+vocabulary ruling; no numbered vision entry demands it.
+
+The term "at rest" is retired from library-side prose and comments.
+It borrowed its meaning from the consumer's frame — a disk not held
+by a running machine — a contrast this library cannot represent (it
+has no concept of a machine); inside the library it distinguished
+nothing, since every operation here works on an image as a file;
+and it collides with the security-jargon sense of "data at rest".
+The geometry/volumes/files read-write stack is named by its own
+API: **the `Disk` surface** (in prose, the disk stack). Use cases
+keep the consumer's voice, but "a stopped machine's" already
+carries the whole meaning, so U3 and U4 drop the term too — a
+wording-only amendment, landed under authority compression: no
+claim, contract, or symbol changed, and no public symbol ever
+carried the term.
+
+**Weighed and declined:** keeping "at rest" as an established
+project word (it was established by inheritance from the consumer's
+design vocabulary, not by a decision here); "offline" (relative to
+the same machine concept the library lacks).
+
+**Folded into:** the U3/U4 rewording in root
+[USE-CASES.md](../USE-CASES.md); root
+[ARCHITECTURE.md](../ARCHITECTURE.md) "The system"; README.md;
+AGENTS.md; doc comments in the three crates (the C header
+regenerates from them); `tests/at_rest.rs` renamed `tests/disk.rs`;
+the freedos-rig prose; the drafts under `proposed/`.
+
 ### D3 — One upstream version; packaging versions derive; repacks are post-releases
 
 **Decided** Paul Galbraith, 2026-07-30. **Supports** (none) — release

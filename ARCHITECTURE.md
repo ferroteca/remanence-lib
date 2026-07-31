@@ -14,7 +14,7 @@ One core, two bindings:
   format-definition parser and registry, container/filesystem detection,
   the session and identification model, the HDOS directory lister and
   file extractor, the self-contained ZIP/DEFLATE reader that lets
-  `Session::open` reach inside archives, and the at-rest disk stack —
+  `Session::open` reach inside archives, and the disk stack —
   the deny-write claim ladder, the native qcow2 v2/v3 driver, MBR
   partition discovery, FAT12/FAT16 volume read/write, and the
   commit-point overlay that keeps every write bufferable and revocable

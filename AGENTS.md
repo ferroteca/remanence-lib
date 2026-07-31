@@ -29,7 +29,7 @@ C ABI. The Rust code here is now the authoritative implementation.
   driver (P8 version gate first; write path refuses snapshots and
   non-16-bit refcounts by name); `mbr.rs` partition discovery with
   pinned types; `fat.rs` FAT12/16 volume read/write; `disk.rs` the
-  public at-rest `Disk` API (open/geometry/entries/read/write/mkdir/
+  public `Disk` API (open/geometry/entries/read/write/mkdir/
   commit/rollback). `formats/` holds the starter container/filesystem
   definitions, embedded with `include_str!`. Unit tests live in their
   modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2

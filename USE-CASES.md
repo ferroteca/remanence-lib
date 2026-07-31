@@ -23,7 +23,7 @@ with the real names, sizes, dates and flags, and I copy a chosen
 file's bytes out to the host, without ever booting anything or
 mutating the image.
 
-## U3 — Reliquary reads and writes a stopped machine's files at rest
+## U3 — Reliquary reads and writes a stopped machine's files
 
 Reliquary, my QEMU automation layer, needs to reach inside a stopped
 machine's disk image on the host — qcow2 or raw — and work with the
@@ -51,7 +51,7 @@ boot record states, where it states one; and the volume count per
 disk, because letters are assigned one per volume actually read on
 the host — a disk holding none takes none, and a disk that cannot
 be read answers with the reason it could not be read, never the
-symptom. All of it from the image at rest, booting nothing.
+symptom. All of it from the image alone, booting nothing.
 
 ## U5 — qcow2 images are first-class citizens of identification
 

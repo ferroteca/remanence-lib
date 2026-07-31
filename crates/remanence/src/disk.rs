@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The at-rest disk surface (pledged U3 and U4): open a raw or qcow2
+//! The `Disk` surface (U3 and U4): open a raw or qcow2
 //! image under the P7 claim, report its partitions and volumes as they
 //! actually are, and read/write files in its FAT volumes with a commit
 //! point (P2) — everything rolls back until `commit`.
@@ -68,7 +68,7 @@ impl Device for Composed<'_> {
     }
 }
 
-/// An open at-rest disk image.
+/// An open disk image.
 #[derive(Debug)]
 pub struct Disk {
     virtual_disk: Virtual,

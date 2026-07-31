@@ -15,7 +15,7 @@ The library is dependency-free at runtime, including its own ZIP
 central-directory reader, RFC 1951 (DEFLATE) decompressor, and native
 qcow2 v2/v3 driver.
 
-Beyond identification, the at-rest `Disk` surface opens a raw or qcow2
+Beyond identification, the `Disk` surface opens a raw or qcow2
 disk image under a deny-write claim — other processes may read, none may
 write, and an image held by a running VM is refused outright — reports
 its MBR partitions and FAT12/FAT16 volumes as they actually are, and

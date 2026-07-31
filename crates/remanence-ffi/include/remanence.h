@@ -57,7 +57,7 @@ typedef enum {
   RMN_FAT_ENTRY_KIND_DIRECTORY,
 } RmnFatEntryKind;
 
-// An open at-rest disk image.
+// An open disk image.
 typedef struct RmnDisk RmnDisk;
 
 // A snapshot of a disk's partitions and volumes.
@@ -279,7 +279,7 @@ const char *rmn_hdos_file_flags(const RmnHdosFileList *list, size_t index);
 // HDOS catalog date, e.g. "09-May-78", or "No-Date".
 const char *rmn_hdos_file_modified_date(const RmnHdosFileList *list, size_t index);
 
-// Opens `path` (UTF-8) as an at-rest disk image — raw or qcow2, detected
+// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected
 // by magic — under the P7 claim: read/write with writes denied to others
 // (preferred), read-only fallback, fail fast when deny-write cannot be
 // obtained. Returns null on failure with a message in `error_out`.

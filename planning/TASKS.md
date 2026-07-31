@@ -106,7 +106,7 @@ blueprint and install script for reliquary to build a FreeDOS 1.4
 qcow2 whose disk carries two primary partitions and an extended
 chain of two logicals, each FAT volume labeled and marked — real
 QEMU allocation patterns and installer-authored filesystems for the
-at-rest stack (U3/U4). The install script is a first draft: the
+disk stack (U3/U4). The install script is a first draft: the
 LiveCD prompt texts and the FDISK/FORMAT sequences are annotated
 `to-converge` and need live iteration in reliquary's driving loop.
 Converge it, build the artifact into

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! At-rest integration tests over synthetic images the project owns
-//! outright: a hand-built FAT16 volume, bare and behind an MBR, on raw
-//! disks. (qcow2 round-trips are unit-tested inside the crate, where the
+//! `Disk`-surface integration tests over synthetic images the project
+//! owns outright: a hand-built FAT16 volume, bare and behind an MBR, on
+//! raw disks. (qcow2 round-trips are unit-tested inside the crate, where the
 //! writer can build the image.)
 
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ fn temp_path(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "remanence-at-rest-{tag}-{}-{nonce}.img",
+        "remanence-disk-{tag}-{}-{nonce}.img",
         std::process::id()
     ))
 }

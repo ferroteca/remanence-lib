@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The block device seam: the byte-addressed surface everything at-rest
+//! The block device seam: the byte-addressed surface the disk stack
 //! works over, the P7 lock ladder, and the commit-point overlay (P2).
 
 use std::fs::{File, OpenOptions};

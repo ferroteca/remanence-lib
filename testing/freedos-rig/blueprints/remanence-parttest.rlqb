@@ -1,6 +1,6 @@
 // The remanence-lib partition-test rig: FreeDOS 1.4 installed onto a
 // disk deliberately cut into multiple primaries plus an extended chain
-// of logicals, so remanence's at-rest stack has a real, QEMU-authored
+// of logicals, so remanence's disk stack has a real, QEMU-authored
 // qcow2 to test against (U3/U4; testing/freedos-rig/README.md).
 //
 // Media pins mirror reliquary's codex freedos entry: same LiveCD, same
@@ -11,7 +11,7 @@
     "name": "remanence-parttest",
     "platform": "dos",
     "memory": "32M",
-    "description": "FreeDOS 1.4 on a multi-partition disk for remanence-lib at-rest testing",
+    "description": "FreeDOS 1.4 on a multi-partition disk for remanence-lib disk-stack testing",
     "drives": {
       // Large enough for two primaries plus an extended partition
       // holding two logical drives, all FAT12/FAT16-sized.

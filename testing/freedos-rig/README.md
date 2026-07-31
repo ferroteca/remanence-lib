@@ -2,7 +2,7 @@
 
 Reliquary builds this rig's test artifact: a FreeDOS 1.4 system
 installed into a qcow2 whose disk carries **multiple primary
-partitions and an extended chain of logical drives**, so the at-rest
+partitions and an extended chain of logical drives**, so the disk
 stack (U3/U4) is exercised against a QEMU-authored image with real
 allocation patterns and a real installer's FAT volumes — not only the
 synthetic images the unit tests build.

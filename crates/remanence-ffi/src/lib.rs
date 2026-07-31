@@ -946,7 +946,7 @@ pub unsafe extern "C" fn rmn_hdos_file_modified_date(
 }
 
 // ---------------------------------------------------------------------------
-// At-rest disk access (pledged U3/U4): open a raw or qcow2 image under the
+// The Disk surface (U3/U4): open a raw or qcow2 image under the
 // P7 claim, report partitions and volumes, read/write FAT files with a
 // commit point.
 
@@ -986,7 +986,7 @@ fn access_mode(mode: AccessMode) -> RmnAccessMode {
     }
 }
 
-/// An open at-rest disk image.
+/// An open disk image.
 pub struct RmnDisk {
     disk: Disk,
 }
@@ -1040,7 +1040,7 @@ unsafe fn utf8_arg<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
     Some(String::from_utf8_lossy(unsafe { CStr::from_ptr(value) }.to_bytes()))
 }
 
-/// Opens `path` (UTF-8) as an at-rest disk image — raw or qcow2, detected
+/// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected
 /// by magic — under the P7 claim: read/write with writes denied to others
 /// (preferred), read-only fallback, fail fast when deny-write cannot be
 /// obtained. Returns null on failure with a message in `error_out`.
