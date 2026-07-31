@@ -1,0 +1,3 @@
+# Reliquary's media cache (the LiveCD zip and its extracted ISO,
+# hash-pinned by the blueprints): regenerable, never tracked.
+cache/

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Integration tests over the HDOS fixture image, raw and inside a ZIP.
+//! Unit tests over the HDOS fixture image, raw and inside a ZIP.
 
 use std::path::PathBuf;
 
@@ -10,11 +10,13 @@ use remanence::{
     PhysicalMediaLayout, SectorLayout, Session,
 };
 
+mod common;
+
 const IMAGE_NAME: &str = "HDOS_1-0_Issue_#50-00-00_890-1.h8d";
 const ZIP_NAME: &str = "HDOS_1-0_Issue_#50-00-00_890-1.zip";
 
 fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    common::ensure_fixture(name)
 }
 
 /// The session holds the P7 deny-write claim on its source for its whole

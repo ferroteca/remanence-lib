@@ -5,10 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-# The HDOS fixture images are third-party media with unresolved status
-# (planning/DECISIONS.md); they are test-only and stay out of every
-# published artifact — cargo packages and Python sdists alike.
-exclude = ["tests/fixtures/"]
+# Extracted and generated fixture files stay out of published
+# artifacts; the globs mirror tests/fixtures/.gitignore.
+exclude = [
+    "tests/fixtures/HDOS_*",
+    "tests/fixtures/freedos-parttest.qcow2",
+]
 
 [dependencies]
 # Intentionally none: the library is dependency-free, including its own

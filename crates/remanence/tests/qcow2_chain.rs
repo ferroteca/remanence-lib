@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Backing-chain integration tests (U6) over synthetic images the
+//! Backing-chain unit tests (U6) over synthetic images the
 //! project owns outright: hand-built qcow2 overlays whose chains bottom
 //! out in a hand-built FAT16 volume. Everything runs through the public
 //! `Disk` surface; cluster-level composition semantics are unit-tested

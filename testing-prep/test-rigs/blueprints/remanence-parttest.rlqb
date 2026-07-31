@@ -1,16 +1,20 @@
 // The remanence-lib partition-test rig: FreeDOS 1.4 installed onto a
 // disk deliberately cut into multiple primaries plus an extended chain
 // of logicals, so remanence's disk stack has a real, QEMU-authored
-// qcow2 to test against (U3/U4; testing/freedos-rig/README.md).
+// qcow2 to test against (U3/U4; testing-prep/test-rigs/README.md).
 //
 // Media pins mirror reliquary's codex freedos entry: same LiveCD, same
-// hashes — the version knobs turn there and are copied here.
+// hashes — the version knobs turn there and are copied here. The zip
+// downloads through reliquary's own media mechanism into
+// test-rigs/cache/media (the prep script pins the media cache there).
 [
   {
     "type": "machine",
     "name": "remanence-parttest",
     "platform": "dos",
-    "memory": "32M",
+    // DOS itself runs in conventional memory and wants almost none of
+    // this; the headroom is for the LiveCD's RAM drive.
+    "memory": "16M",
     "description": "FreeDOS 1.4 on a multi-partition disk for remanence-lib disk-stack testing",
     "drives": {
       // Large enough for two primaries plus an extended partition
@@ -18,7 +22,11 @@
       "hdd0": { "type": "media", "size": "64M" },
       "cdrom0": null
     },
-    "boot": ["hdd0", "cdrom0"],
+    // The CD boots throughout the build: the rig partitions and
+    // formats hdd0 from the LiveCD's live environment, and hdd0
+    // carries an active-but-empty partition for most of that. The
+    // artifact is still made bootable (SYS) at the end.
+    "boot": ["cdrom0", "hdd0"],
     "scripts": {
       "install": "remanence-parttest-install"
     }

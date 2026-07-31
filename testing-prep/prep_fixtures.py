@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Paul Galbraith
+# SPDX-License-Identifier: GPL-3.0-only
+
+"""Prepares test fixtures for remanence-lib unit tests.
+
+The HDOS 1.0 distribution zip downloads sha256-pinned straight into
+crates/remanence/tests/fixtures/ — a multi-image zip, test material
+in its own right. The one disk image the tests read extracts beside
+it, joined by a generated single-image zip fixture. (Downloads that
+are not fixtures at all would land in testing-prep/downloads/.)
+
+The FreeDOS rig artifact is built by driving reliquary through its
+Python API. The LiveCD downloads through the blueprint's own media
+spec; the prep script pins reliquary's media cache to
+testing-prep/test-rigs/cache/media, so the download survives
+`cargo clean` and machine rebuilds.
+
+Reliquary comes from the testing-prep venv (pinned in
+testing-prep/requirements.txt); run the script from it:
+
+    python -m venv testing-prep/.venv
+    testing-prep\\.venv\\Scripts\\Activate.ps1
+    pip install -r testing-prep/requirements.txt
+    python testing-prep/prep_fixtures.py
+"""
+
+import hashlib
+import os
+import shutil
+import sys
+import urllib.request
+import zipfile
+from pathlib import Path
+
+try:
+    import reliquary
+except ImportError:
+    # Bound on both paths so the name is unconditionally defined at
+    # module scope; exiting from inside the handler would leave every
+    # later `reliquary.*` reading as possibly-unbound.
+    reliquary = None
+
+if reliquary is None:
+    sys.exit(
+        "reliquary is not importable — run this script from the "
+        "testing-prep venv:\n"
+        "  python -m venv testing-prep/.venv\n"
+        "  testing-prep\\.venv\\Scripts\\Activate.ps1\n"
+        "  pip install -r testing-prep/requirements.txt\n"
+        "  python testing-prep/prep_fixtures.py"
+    )
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FIXTURES_DIR = REPO_ROOT / "crates" / "remanence" / "tests" / "fixtures"
+RIG_DIR = REPO_ROOT / "testing-prep" / "test-rigs"
+
+HDOS_URL = "https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip"
+# The SEBHC archive publishes no hash; this pin records the archive as
+# first fetched (2026-07-31), so a changed upstream is caught, not
+# silently adopted.
+HDOS_ZIP_SHA256 = \
+    "84c3217491ed9330eec3134c4809134e68c6e6048a857587750a6571aa81ffe2"
+HDOS_IMAGE_NAME = "HDOS_1-0_Issue_#50-00-00_890-1.h8d"
+HDOS_ZIP_NAME = "HDOS_1-0_Issue_#50-00-00_890-1.zip"
+
+RIG_BLUEPRINT = "remanence-parttest"
+FREEDOS_QCOW2_NAME = "freedos-parttest.qcow2"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_archive(target: Path, url: str, sha256: str) -> None:
+    """Download ``url`` to ``target`` unless a verified copy is present."""
+    if target.exists():
+        if _sha256(target) == sha256:
+            print(f"{target.name} already downloaded")
+            return
+        print(f"{target.name} fails verification; refetching...")
+        target.unlink()
+
+    print(f"Downloading {url}...")
+
+    def report(blocks: int, block_size: int, total: int) -> None:
+        done = blocks * block_size
+        if total >> 20 and blocks % 512 == 0:
+            print(f"\r  {done >> 20} / {total >> 20} MiB", end="", flush=True)
+
+    partial = target.with_suffix(target.suffix + ".part")
+    urllib.request.urlretrieve(url, partial, reporthook=report)
+    print()
+    actual = _sha256(partial)
+    if actual != sha256:
+        partial.unlink()
+        sys.exit(
+            f"{url} downloaded with SHA-256 {actual}, but "
+            f"{sha256} is pinned; refusing the archive."
+        )
+    partial.replace(target)
+
+
+def download_archives() -> None:
+    print("==> Downloading external archives...")
+    FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+    _download_archive(FIXTURES_DIR / "HDOS_1-0.zip", HDOS_URL,
+                      HDOS_ZIP_SHA256)
+
+
+def prepare_hdos_fixtures() -> None:
+    print("==> Preparing HDOS fixture images...")
+    FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+
+    hdos_zip = FIXTURES_DIR / "HDOS_1-0.zip"
+    hdos_8d_target = FIXTURES_DIR / HDOS_IMAGE_NAME
+    hdos_zip_target = FIXTURES_DIR / HDOS_ZIP_NAME
+
+    if not hdos_8d_target.exists():
+        # Only the one image the tests read; the archive's other disks
+        # stay in the zip until a test wants them.
+        print(f"Extracting {HDOS_IMAGE_NAME} into fixtures directory...")
+        with zipfile.ZipFile(hdos_zip, "r") as zip_ref:
+            zip_ref.extract(HDOS_IMAGE_NAME, FIXTURES_DIR)
+
+    if not hdos_zip_target.exists():
+        print(f"Packaging single image ZIP fixture ({hdos_zip_target.name})...")
+        with zipfile.ZipFile(hdos_zip_target, "w", zipfile.ZIP_STORED) as zip_out:
+            zip_out.write(hdos_8d_target, arcname=hdos_8d_target.name)
+
+
+def rig_context():
+    """The rig home, assigned once; every other directory derives.
+
+    A scoped Context pins the rig's directories without touching
+    reliquary's process-global assignments. The rig tree *is* a
+    reliquary home, so `blueprints`, `scripts` and `cache` derive from
+    it, and `media` and `machines` from that cache — which is why the
+    checked-in blueprints/ and scripts/ sit where they do.
+
+    The home itself is not overridable: it holds checked-in files, so
+    moving it would only point the run at blueprints and scripts that
+    are not there. The **cache** is the part worth relocating, being
+    the only part that is bulky and regenerable, and assigning it
+    leaves the derivation above it untouched.
+    """
+    return reliquary.Context(
+        home_dir=str(RIG_DIR),
+        # None keeps the derived <home>/cache.
+        cache_dir=os.environ.get("REMANENCE_TEST_RIG_CACHE_DIR"),
+    )
+
+
+def build_rig_machine(context) -> tuple[str, Path]:
+    """Drive the rig's install script; return its machine and directory.
+
+    Returning from inside the `try` is what keeps the caller's names
+    unconditionally bound: the only other way out is `sys.exit`, which
+    never reaches a caller at all.
+    """
+    try:
+        # run_script creates the machine from the blueprint when none
+        # exists, fetches the pinned LiveCD through the blueprint's
+        # media spec, and drives the install script; failures raise by
+        # error class.
+        reliquary.run_script("install", blueprint=RIG_BLUEPRINT, context=context)
+        machine_id = reliquary.resolve_machine(
+            blueprint=RIG_BLUEPRINT, context=context
+        )
+        machine_dir = reliquary.get_machine_dir(
+            machine=machine_id, context=context
+        )
+        return machine_id, Path(machine_dir)
+    except reliquary.ReliquaryError as error:
+        sys.exit(
+            f"reliquary install run failed: {error}\n"
+            "(QEMU missing? A LiveCD whose prompts have moved under the\n"
+            "install script? See testing-prep/test-rigs/README.md — the\n"
+            "script records which screen texts it depends on.)"
+        )
+
+
+def prepare_freedos_fixture(context) -> None:
+    print("==> Preparing FreeDOS qcow2 rig artifact...")
+    target = FIXTURES_DIR / FREEDOS_QCOW2_NAME
+    if target.exists():
+        print(f"FreeDOS fixture already present at {target}")
+        return
+
+    print(f"Building {target.name} with reliquary...")
+    machine_id, machine_dir = build_rig_machine(context)
+
+    # Harvest the machine's hdd0 image.
+    media_dir = machine_dir / "media"
+    image = next(iter(sorted(media_dir.glob("*.qcow2"))), None)
+    if image is None:
+        sys.exit(
+            f"no qcow2 image found under {media_dir} — if reliquary "
+            "materialized hdd0 as another format, the rig blueprint needs "
+            "adjusting"
+        )
+    shutil.copy(image, target)
+    print(f"Harvested {image.name} to {target}")
+    reclaim_machine(machine_id, context)
+
+
+def reclaim_machine(machine_id: str, context) -> None:
+    """Retire one rig machine once its artifact is harvested.
+
+    Destroy, then prune. Pruning is the *safe* reclaim: it drops only
+    what falls outside the remaining attachment closure, so media a
+    machine still to run would attach survives untouched — which is
+    what makes this correct to call per machine rather than once at
+    the end. For this rig it reclaims the LiveCD zip, whose extracted
+    ISO is already cached and which is one download away if the
+    closure ever needs it again.
+
+    Reached only after a successful harvest: a failed run leaves the
+    machine, its screenshots and every cached payload exactly where
+    they are, because that wreckage is the whole diagnostic.
+
+    Reclaiming never fails the run — the deliverable is already on
+    disk, so anything that will not go says so and nothing more.
+    """
+    print(f"Retiring {machine_id} (its artifact is harvested)...")
+    try:
+        reliquary.destroy_machine(machine_id, context)
+        print(f"  destroyed machine {machine_id}")
+    except reliquary.ReliquaryError as error:
+        print(f"  warning: could not destroy {machine_id}: {error}",
+              file=sys.stderr)
+    try:
+        for name in reliquary.prune_media(context=context):
+            print(f"  pruned media {name}")
+    except reliquary.ReliquaryError as error:
+        print(f"  warning: could not prune media: {error}", file=sys.stderr)
+
+
+def clean_rig_media(context) -> None:
+    """The blunt final reclaim, once every rig has had its turn.
+
+    Prune keeps whatever the catalog could still attach, which is the
+    right answer between machines and the wrong one after the last:
+    nothing further is going to run, so the whole cache goes. It is
+    all fetchable again from pinned locations.
+    """
+    try:
+        reclaimed = reliquary.clean_media(context=context)
+    except reliquary.ReliquaryError as error:
+        print(f"warning: could not clean media: {error}", file=sys.stderr)
+        return
+    if reclaimed:
+        print("==> Reclaiming the rig media cache...")
+        for name in reclaimed:
+            print(f"  cleaned media {name}")
+
+
+def main() -> None:
+    download_archives()
+    prepare_hdos_fixtures()
+
+    # Every rig machine builds, harvests and retires in turn; the
+    # media cache is emptied only once the last of them is done.
+    context = rig_context()
+    prepare_freedos_fixture(context)
+    clean_rig_media(context)
+
+    print(f"==> Test fixtures ready in {FIXTURES_DIR}")
+
+
+if __name__ == "__main__":
+    main()

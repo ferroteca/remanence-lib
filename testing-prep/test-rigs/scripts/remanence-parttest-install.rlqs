@@ -1,0 +1,145 @@
+# SPDX-FileCopyrightText: 2026 Paul Galbraith
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Converged against the FreeDOS 1.4 LiveCD. Three things this script
+# learned the hard way, all of them load-bearing:
+#
+# 1. The LiveCD boot menu has no "Return to DOS" item. The live shell
+#    is "Use FreeDOS 1.4 in Live Environment mode", which is also the
+#    default the menu auto-boots after ~48s; selecting it is merely
+#    faster and deterministic.
+#
+# 2. **Drive letters move.** Before partitioning the CD-ROM is D: and
+#    C: is a RAM drive; afterwards the four volumes take C:-F: and the
+#    CD-ROM becomes G:. So no phase may assume the shell's own drive,
+#    and every file target below names its letter explicitly. DOS
+#    orders the volumes primary-first-per-disk, then logicals, then
+#    the remaining primaries — which is why C: and F: are the two
+#    primaries while D: and E: are the logicals inside the extended.
+#
+# 3. **FDISK is silent on success**, so there is no output to wait on.
+#    Each step is followed by an echoed sentinel and a start-anchored
+#    regex: the typed line begins with the prompt, so only the echo's
+#    own output can match. The sentinels are short deliberately —
+#    they are typed while FDISK may still hold the keyboard, and the
+#    BIOS buffer is 15 keystrokes.
+
+description "FreeDOS 1.4 onto multiple primaries + extended/logicals, for remanence-lib"
+platform    dos
+machine     stopped
+entry       startup
+timeout     30s
+deadline    45m
+
+phase startup {
+    insert cdrom0 @freedos-livecd
+    start
+    goto cd-boot
+}
+
+phase cd-boot timeout=4m {
+    wait   "Welcome to FreeDOS 1.4 (LiveCD)"
+    select "Use FreeDOS 1.4 in Live Environment mode"
+    # The boot log is a fresh screen carrying no earlier prompt, so a
+    # bare-prompt match here is unambiguous — the one place in this
+    # script where waiting on the prompt itself is sound.
+    wait   /^[A-Z]:.>$/ timeout=4m
+    goto   partitioning
+}
+
+# Two primaries, one extended carrying two logicals, on a 64M disk.
+# FDISK picks the FAT width by size; everything here lands FAT-12.
+phase partitioning timeout=4m {
+    enter "fdisk /pri:16"
+    enter "echo RQP1"
+    wait  /^RQP1/
+
+    enter "fdisk /pri:12"
+    enter "echo RQP2"
+    wait  /^RQP2/
+
+    enter "fdisk /ext:32"
+    enter "echo RQE"
+    wait  /^RQE/
+
+    enter "fdisk /log:16"
+    enter "echo RQL1"
+    wait  /^RQL1/
+
+    enter "fdisk /log:12"
+    enter "echo RQL2"
+    wait  /^RQL2/
+
+    enter "fdisk /activate:1"
+    enter "echo RQA"
+    wait  /^RQA/
+
+    # The new table is only read at boot. The blueprint boots the CD
+    # first, so this comes back to the LiveCD menu rather than to the
+    # active-but-empty partition.
+    enter "fdisk /reboot"
+    goto  cd-reboot
+}
+
+phase cd-reboot timeout=4m {
+    wait   "Welcome to FreeDOS 1.4 (LiveCD)"
+    select "Use FreeDOS 1.4 in Live Environment mode"
+    wait   /^[A-Z]:.>$/ timeout=4m
+    goto   formatting
+}
+
+# Format every volume with the label its test asserts. /U is required:
+# these partitions have never held a filesystem. FORMAT wants the word
+# YES spelled out, not a keypress.
+phase formatting timeout=10m {
+    enter "format c: /q /u /v:RMNPRI1"
+    wait  "Proceed with Format (YES/NO)?"
+    enter "YES"
+    wait  "QuickFormat complete."
+
+    enter "format d: /q /u /v:RMNLOG1"
+    wait  "Proceed with Format (YES/NO)?"
+    enter "YES"
+    wait  "QuickFormat complete."
+
+    enter "format e: /q /u /v:RMNLOG2"
+    wait  "Proceed with Format (YES/NO)?"
+    enter "YES"
+    wait  "QuickFormat complete."
+
+    enter "format f: /q /u /v:RMNPRI2"
+    wait  "Proceed with Format (YES/NO)?"
+    enter "YES"
+    wait  "QuickFormat complete."
+
+    goto  markers
+}
+
+# A marker file per volume, and the directory the write round-trip
+# test writes into. `echo` prints what it wrote, so each wait matches
+# real output rather than the typed line.
+phase markers timeout=5m {
+    enter "echo remanence marker: first primary > c:\RMNMARK.TXT"
+    enter "md c:\RMNDIR"
+    enter "echo remanence marker: first logical > d:\RMNMARK.TXT"
+    enter "echo remanence marker: second logical > e:\RMNMARK.TXT"
+    enter "echo remanence marker: second primary > f:\RMNMARK.TXT"
+    enter "type c:\RMNMARK.TXT"
+    wait  /^remanence marker: first primary/
+    goto  install-dos
+}
+
+# SYS makes the artifact a bootable disk in its own right, which is
+# what a real installer would have left behind.
+phase install-dos timeout=5m {
+    enter "sys c:"
+    wait  "System transferred."
+    goto  shutdown
+}
+
+phase shutdown {
+    enter "fdapm poweroff"
+    wait  machine=stopped timeout=2m
+    eject cdrom0
+    finish
+}

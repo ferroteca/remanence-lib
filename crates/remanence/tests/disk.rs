@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! `Disk`-surface integration tests over synthetic images the project
+//! `Disk`-surface unit tests over synthetic images the project
 //! owns outright: a hand-built FAT16 volume, bare and behind an MBR, on
 //! raw disks. (qcow2 round-trips are unit-tested inside the crate, where the
 //! writer can build the image.)

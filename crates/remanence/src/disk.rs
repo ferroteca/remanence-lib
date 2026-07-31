@@ -1003,7 +1003,7 @@ mod tests {
         std::fs::remove_file(&base).ok();
     }
 
-    /// The same synthetic FAT16 volume the integration tests build.
+    /// The same synthetic FAT16 volume the unit tests build.
     fn fat16_volume_bytes() -> Vec<u8> {
         const TOTAL_SECTORS: usize = 8000;
         let mut image = vec![0u8; TOTAL_SECTORS * 512];

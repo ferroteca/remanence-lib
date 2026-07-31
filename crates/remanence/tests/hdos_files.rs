@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Integration tests for the HDOS directory lister over the fixture image.
+//! Unit tests for the HDOS directory lister over the fixture image.
 
 use std::path::PathBuf;
 
 use remanence::{Error, Session, list_hdos_files};
 
+mod common;
+
 fn fixture_h8d() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join("HDOS_1-0_Issue_#50-00-00_890-1.h8d")
+    common::ensure_fixture("HDOS_1-0_Issue_#50-00-00_890-1.h8d")
 }
 
 /// The session holds the P7 deny-write claim for its lifetime, so tests

@@ -193,16 +193,23 @@ compiled into the wheel.
   implementation of RFC 1951 following that published structure, written
   from the project's own C++ lineage, not from puff.c. Keep the
   attribution comment in the file.
-- `crates/remanence/tests/fixtures/` is **local-only test data** and is
-  deliberately empty in a fresh checkout: the vintage HDOS distribution
-  disk images used by the integration tests are third-party material
-  the project cannot account for, so per D1 (`planning/DECISIONS.md`)
-  they are excluded from git (history rewritten before any remote
-  existed), from cargo packages (`package.exclude`), and from Python
-  sdists. The fixture-driven integration tests fail without the local
-  files — a knowingly accepted state; `planning/TASKS.md` T5 tracks
-  the repair. Never re-add the images to git or to any published
-  artifact.
+- `crates/remanence/tests/fixtures/` holds the test fixtures.
+  `testing-prep/prep_fixtures.py` (run from the testing-prep venv;
+  testing-prep/test-rigs/README.md) prepares them: it downloads the
+  sha256-pinned HDOS 1.0 distribution zip straight into
+  `tests/fixtures/` (a multi-image zip, test material in its own
+  right), extracts only the one disk image the tests read beside it
+  plus a generated single-image zip, and builds the FreeDOS qcow2
+  rig artifact there. The FreeDOS LiveCD downloads through
+  reliquary's own media mechanism into
+  `testing-prep/test-rigs/cache/media`; downloads that are not
+  fixtures at all belong in `testing-prep/downloads/`. Downloaded,
+  extracted, and generated fixture files are never tracked: the
+  fixtures directory's own `.gitignore` names each one, and
+  `package.exclude` keeps them out of published artifacts.
+  Checked-in fixtures may sit alongside them. Unit tests expect
+  required fixtures to be present and fail with diagnostic
+  instructions to run the prep script when missing.
 
 ## Versioning and releases
 

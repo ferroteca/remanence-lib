@@ -6,5 +6,5 @@ __pycache__/
 .idea/
 .vscode/
 crates/remanence-py/dist/
-# Vintage HDOS fixture images: local-only test data, never tracked (D1).
-crates/remanence/tests/fixtures/
+# Downloaded and generated test fixtures are named by
+# crates/remanence/tests/fixtures/.gitignore, beside the files.

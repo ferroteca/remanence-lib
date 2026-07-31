@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Paul Galbraith
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# The test-prep environment: what testing-prep/prep_fixtures.py
+# imports, installed into a venv beside it —
+#   python -m venv testing-prep/.venv
+#   testing-prep\.venv\Scripts\Activate.ps1
+#   pip install -r testing-prep/requirements.txt
+#
+# Reliquary builds the FreeDOS rig artifact
+# (testing-prep/test-rigs/); pinned to the latest published
+# pre-release so builds are reproducible.
+reliquary==0.1.0a1

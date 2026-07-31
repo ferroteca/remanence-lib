@@ -87,7 +87,7 @@ the same machine concept the library lacks).
 [ARCHITECTURE.md](../ARCHITECTURE.md) "The system"; README.md;
 AGENTS.md; doc comments in the three crates (the C header
 regenerates from them); `tests/at_rest.rs` renamed `tests/disk.rs`;
-the freedos-rig prose; the drafts under `proposed/`.
+the test-rigs prose; the drafts under `proposed/`.
 
 ### D3 — One upstream version; packaging versions derive; repacks are post-releases
 
@@ -155,11 +155,27 @@ data. Implemented as `package.exclude` on the core crate (governing
 maturin sdists and `cargo publish` alike), the `.gitignore` entry,
 and the history rewrite.
 
-**Accepted cost, stated by the owner:** a fresh checkout cannot run
-the fixture-driven integration tests — better to commit a broken
-build than to commit something the project should not carry. T5
-tracks the repair. *(T-numbers evaporate; once that task is struck,
-its commit is the record.)*
+**Amended** Paul Galbraith, 2026-07-31. The exclusion was a whole
+directory, which cost the project a fixtures directory it could use
+at all. It is now **per file**: `crates/remanence/tests/fixtures/`
+holds checked-in fixtures the project owns, and the third-party and
+generated material sits beside them, named file by file in that
+directory's own `.gitignore` — the ignore rule lives with the files
+it governs, so adding a fixture is a local act. Nothing about what
+D1 refuses to distribute changes; only the granularity does, and
+`package.exclude` mirrors the same names.
+
+**And the material is fetched, not carried.**
+`testing-prep/prep_fixtures.py` downloads the HDOS 1.0 distribution
+zip from `https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip`
+under a pinned SHA-256, extracting only the image the tests read;
+the FreeDOS LiveCD downloads through the rig blueprint's own
+reliquary media spec, likewise pinned, into
+`testing-prep/test-rigs/cache/media` (git-ignored, outside the
+crate). The FreeDOS qcow2 the rig builds lands in the fixtures
+directory as a generated artifact. So a fresh checkout carries none
+of it and can obtain all of it, which closes the accepted cost this
+decision took on — the repair T5 tracked, struck with this change.
 
 **Weighed and declined:** publishing the wheel without an sdist
 (with no public repository, GPL object code would ship with no
@@ -169,7 +185,9 @@ keeping them in git as local-only history (any future push would
 distribute the blobs).
 
 **Folded into:** `crates/remanence/Cargo.toml` (`package.exclude`),
-`.gitignore`, AGENTS.md "Prior art and provenance notes".
+`crates/remanence/tests/fixtures/.gitignore`, root `.gitignore`,
+`testing-prep/prep_fixtures.py`, AGENTS.md "Prior art and provenance
+notes".
 
 ## Retired decisions
 
