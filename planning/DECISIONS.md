@@ -44,9 +44,11 @@ and its discovery are part of the record.
 ## Open questions
 
 Questions awaiting adjudication — the front of this record rather
-than a separate one, since what settles them is an entry below.
-Nothing here binds anything; a question leaves this section by
-becoming a D-number, and the commit that moves it is the record.
+than a separate one. Nothing here binds anything; a question leaves
+this section when it is adjudicated — as a D-number only where the
+ruling has no normative home, otherwise absorbed by the pledged or
+in-force entry whose text carries the ruling — and the commit that
+removes it is the record either way.
 
 - **CLA legal review** — [CLA.md](../CLA.md) states intended terms
   but has not been reviewed by a lawyer, and its governing-law
