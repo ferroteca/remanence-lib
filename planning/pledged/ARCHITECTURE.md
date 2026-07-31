@@ -1,13 +1,13 @@
-# ARCHITECTURE (proposed)
+# ARCHITECTURE (pledged)
 
-> **Status:** drafted 2026-07-30 at the owner's direction, from the
-> same demand as the use-case drafts beside this file
-> ([USE-CASES.md](USE-CASES.md)). These are candidate principles and
-> one amendment to an in-force principle; nothing here binds. A
-> principle is pledged by moving to `pledged/` and **armed** only
-> when it reaches root [ARCHITECTURE.md](../../ARCHITECTURE.md) —
-> at which point a divergence in the code becomes a bug. Numbers
-> come from the one global P-sequence and are never reused.
+> **Status:** drafted 2026-07-30 and pledged 2026-07-31, both at
+> the owner's direction, from the same demand as the use cases
+> beside this file ([USE-CASES.md](USE-CASES.md)). Two principles
+> and one amendment to an in-force principle, owed by the project;
+> a principle is **armed** only when it reaches root
+> [ARCHITECTURE.md](../../ARCHITECTURE.md) — at which point a
+> divergence in the code becomes a bug. Numbers come from the one
+> global P-sequence and are never reused.
 
 ## P9 — Interruption never invents a third state
 
@@ -62,10 +62,10 @@ immediately, with the reason named. Three clauses change or arrive:
 - **A writable session admits no observers.** A write claim
   excludes every other read or write that could observe a partial
   mutation, for the session's whole life; a read session keeps
-  admitting other readers, as today. *(This settles the open
-  question in [DECISIONS.md](../DECISIONS.md) — readers during the
-  physical save — in the direction of exclusion, and wants its
-  D-entry when adjudicated.)*
+  admitting other readers, as today. *(This settled the formerly
+  open question in [DECISIONS.md](../DECISIONS.md) — readers during
+  the physical save — in the direction of exclusion; the commit
+  that pledged this amendment is the record.)*
 - **The claim covers every file of a backing chain, consistently.**
   The top image is claimed per the declared intent; every backing
   file is claimed immutable through this access — writes denied to

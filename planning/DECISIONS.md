@@ -48,12 +48,6 @@ than a separate one, since what settles them is an entry below.
 Nothing here binds anything; a question leaves this section by
 becoming a D-number, and the commit that moves it is the record.
 
-- **Readers during the physical save (P7)** — on platforms where
-  other processes' reads are admitted, they remain admitted during
-  the physical write-through at commit, so a reader arriving
-  mid-commit can observe a torn file. The alternative is a brief
-  full exclusion around the commit. As implemented, reads stay
-  admitted throughout. Settled by an owner ruling either way.
 - **CLA legal review** — [CLA.md](../CLA.md) states intended terms
   but has not been reviewed by a lawyer, and its governing-law
   clause is deliberately unfilled. What turns on it: no external

@@ -1,15 +1,13 @@
-# USE-CASES (proposed)
+# USE-CASES (pledged)
 
-> **Status:** drafted 2026-07-30 at the owner's direction, from
-> demand raised by the downstream embedding consumer that U3 and U4
-> serve — raw intake arriving as conversation with the owner, the
-> first lane in [README.md](../README.md). Nothing here binds. A new
-> entry is pledged by moving to `pledged/` and reaches the root list
-> on full delivery; an amendment to an in-force entry is argued here
-> and lands on the root list only through the surface-change rule
-> ([SURFACES.md](../SURFACES.md)). Numbers come from the one global
-> U-sequence and are never reused. The owner's voice governs — these
-> drafts are raw material for him to reword, split, or reject.
+> **Status:** drafted 2026-07-30 and pledged 2026-07-31, both at
+> the owner's direction, from demand raised by the downstream
+> embedding consumer that U3 and U4 serve — raw intake arriving as
+> conversation with the owner, the first lane in
+> [README.md](../README.md). U6 reaches the root list on full
+> delivery; the U3/U4 amendments land on the root list only through
+> the surface-change rule ([SURFACES.md](../SURFACES.md)). Numbers
+> come from the one global U-sequence and are never reused.
 
 ## U6 — Differencing images are first-class disks
 
