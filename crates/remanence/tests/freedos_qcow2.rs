@@ -169,13 +169,29 @@ fn geometry_reports_primaries_extended_and_logicals() {
     assert!(matches!(disk.format(), DiskFormat::Qcow2 { .. }));
 
     let geometry = disk.geometry().expect("geometry reads");
+    assert!(!geometry.blank, "an installed disk is not blank");
+    assert!(
+        geometry.partitions.iter().all(|partition| partition.issue.is_none()),
+        "every declared row reads cleanly"
+    );
     let extended = geometry
         .partitions
         .iter()
-        .filter(|partition| partition.type_name.starts_with("extended"))
+        .filter(|partition| {
+            partition
+                .type_name
+                .as_deref()
+                .is_some_and(|name| name.starts_with("extended"))
+        })
+        .count();
+    let logicals = geometry
+        .partitions
+        .iter()
+        .filter(|partition| partition.kind == remanence::PartitionKind::Logical)
         .count();
     let data_partitions = geometry.partitions.len() - extended;
     assert_eq!(extended, 1, "one extended partition");
+    assert!(logicals >= 2, "the chain's rows report as logical");
     assert!(data_partitions >= 4, "two primaries and two logicals");
     assert!(geometry.volumes.len() >= 4, "every data partition readable");
 

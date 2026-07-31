@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! MBR partition discovery: the four primary entries and the
-//! extended-partition chain, partition types pinned value by value. An
-//! entry outside the pinned set is refused rather than skipped, because
-//! skipping renumbers every volume behind it (pledged U4).
+//! extended-partition chain, partition types pinned value by value. The
+//! report is complete (pledged U4): an entry outside the pinned claim,
+//! or a chain the walk cannot follow, stays in the report carrying a
+//! structured issue instead of failing the whole disk or vanishing, so
+//! the rows behind it never renumber. Blank is an answer, kept distinct
+//! from an unreadable image.
 
 use crate::device::Device;
 use crate::error::{Error, Result};
@@ -12,16 +15,58 @@ use crate::error::{Error, Result};
 const SECTOR: u64 = 512;
 const BOOT_SIGNATURE: [u8; 2] = [0x55, 0xaa];
 
-/// One discovered partition.
+/// Where a partition row sits: an MBR slot, or the extended chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartitionKind {
+    /// An MBR slot — the extended container included.
+    Primary,
+    /// A row of the extended chain.
+    Logical,
+}
+
+impl PartitionKind {
+    /// The stable cross-language spelling of this kind.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Logical => "logical",
+        }
+    }
+}
+
+/// One discovered partition row. Every entry the table declares is
+/// reported (pledged U4): a row the library cannot read stays here
+/// carrying its [`issue`](Self::issue) instead of vanishing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartitionInfo {
     /// 1-based partition number in discovery order (primaries first, then
-    /// logicals along the extended chain).
+    /// logicals along the extended chain). A row carrying an issue keeps
+    /// its number, so the rows behind it never renumber.
     pub number: u32,
+    pub kind: PartitionKind,
     pub type_byte: u8,
-    pub type_name: String,
+    /// The pinned type name; `None` when the type byte is outside the
+    /// claim — the issue then names the refusal.
+    pub type_name: Option<String>,
     pub start_bytes: u64,
     pub length_bytes: u64,
+    /// The structured refusal — a stable category plus its diagnostic —
+    /// that keeps this row in the report when its type is outside the
+    /// claim or its volume cannot be read; `None` for a row read cleanly.
+    pub issue: Option<Error>,
+}
+
+/// What sector 0 turned out to be (pledged U4). Blank is an answer;
+/// non-zero data that is none of these is a named refusal from
+/// [`discover`], kept distinct from blank.
+#[derive(Debug)]
+pub(crate) enum Discovery {
+    /// An MBR partition table: the discovered rows.
+    Partitioned(Vec<PartitionInfo>),
+    /// A filesystem boot record: the whole device is one bare volume.
+    BareVolume,
+    /// Sector 0 is all zero: a blank disk with zero volumes.
+    Blank,
 }
 
 fn invalid(reason: impl Into<String>) -> Error {
@@ -45,7 +90,7 @@ fn pinned_type_name(type_byte: u8) -> Option<&'static str> {
     }
 }
 
-fn is_extended(type_byte: u8) -> bool {
+pub(crate) fn is_extended(type_byte: u8) -> bool {
     matches!(type_byte, 0x05 | 0x0f)
 }
 
@@ -91,109 +136,154 @@ pub(crate) fn looks_like_bpb(sector: &[u8]) -> bool {
     jump_ok && bps_ok && spc_ok && fats_ok
 }
 
-/// Discovers the partitions of `device`. Returns an empty list when the
-/// device is partitionless (its first sector is a bare volume).
-pub(crate) fn discover(device: &mut dyn Device) -> Result<Vec<PartitionInfo>> {
+/// Reads sector 0 and answers what the device is (pledged U4): a blank
+/// disk, one bare volume, or an MBR with every declared row reported —
+/// rows outside the pinned claim included, each carrying its issue.
+/// Non-zero data that is none of these is a named refusal, kept
+/// distinct from blank.
+pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
     if device.len() < SECTOR {
         return Err(invalid("device too small for a boot sector"));
     }
     let mbr = read_sector(device, 0)?;
+    if mbr.iter().all(|&byte| byte == 0) {
+        return Ok(Discovery::Blank);
+    }
     if mbr[510..512] != BOOT_SIGNATURE {
-        return Err(invalid("missing boot signature"));
+        return Err(invalid(
+            "sector 0 carries data but no boot signature: neither a blank \
+             disk, a supported filesystem boot record, nor a partition \
+             table — corruption, or a format outside this release's claim",
+        ));
     }
     if looks_like_bpb(&mbr) {
-        return Ok(Vec::new());
+        return Ok(Discovery::BareVolume);
     }
 
     let mut partitions = Vec::new();
     let mut number = 0u32;
-    let mut extended_chain: Option<(u64, u64)> = None; // (base, current)
+    // (extended base, next EBR, container row index)
+    let mut chain: Option<(u64, u64, usize)> = None;
 
     for entry in parse_entries(&mbr) {
         if entry.type_byte == 0x00 {
             continue;
         }
-        let Some(type_name) = pinned_type_name(entry.type_byte) else {
-            return Err(unsupported(format!(
-                "partition type 0x{:02x} is outside this release's claim; \
-                 refusing rather than skipping (skipping would renumber \
-                 every volume behind it)",
-                entry.type_byte
-            )));
-        };
         number += 1;
+        let type_name = pinned_type_name(entry.type_byte);
+        let mut issue = type_name.is_none().then(|| {
+            unsupported(format!(
+                "partition type 0x{:02x} is outside this release's claim; \
+                 the row is reported and no volume is read from it",
+                entry.type_byte
+            ))
+        });
         if is_extended(entry.type_byte) {
-            if extended_chain.is_some() {
-                return Err(invalid("more than one extended partition"));
+            if chain.is_some() {
+                issue = Some(invalid(
+                    "a second extended partition; an MBR holds at most one, \
+                     and only the first chain's logical partitions are read",
+                ));
+            } else {
+                chain = Some((
+                    entry.start_lba as u64,
+                    entry.start_lba as u64,
+                    partitions.len(),
+                ));
             }
-            extended_chain = Some((entry.start_lba as u64, entry.start_lba as u64));
-            partitions.push(PartitionInfo {
-                number,
-                type_byte: entry.type_byte,
-                type_name: type_name.to_owned(),
-                start_bytes: entry.start_lba as u64 * SECTOR,
-                length_bytes: entry.sectors as u64 * SECTOR,
-            });
-        } else {
-            partitions.push(PartitionInfo {
-                number,
-                type_byte: entry.type_byte,
-                type_name: type_name.to_owned(),
-                start_bytes: entry.start_lba as u64 * SECTOR,
-                length_bytes: entry.sectors as u64 * SECTOR,
-            });
         }
+        partitions.push(PartitionInfo {
+            number,
+            kind: PartitionKind::Primary,
+            type_byte: entry.type_byte,
+            type_name: type_name.map(str::to_owned),
+            start_bytes: entry.start_lba as u64 * SECTOR,
+            length_bytes: entry.sectors as u64 * SECTOR,
+            issue,
+        });
     }
 
     // Walk the extended chain: each EBR names one logical partition
     // (relative to the EBR) and optionally the next EBR (relative to the
-    // extended base).
+    // extended base). A chain the walk cannot follow attaches its issue
+    // to the container row and stops: the logicals already found stay,
+    // and nothing renumbers.
     let mut hops = 0;
-    while let Some((base, current)) = extended_chain {
+    while let Some((base, current, container)) = chain {
         hops += 1;
         if hops > 128 {
-            return Err(invalid("extended partition chain does not terminate"));
+            partitions[container].issue = Some(invalid(
+                "extended partition chain does not terminate within 128 \
+                 links; its remaining logical partitions are not read",
+            ));
+            break;
         }
-        let ebr = read_sector(device, current)?;
+        let ebr = match read_sector(device, current) {
+            Ok(sector) => sector,
+            Err(error) => {
+                partitions[container].issue = Some(invalid(format!(
+                    "extended boot record at sector {current} could not be \
+                     read ({error}); the chain's remaining logical \
+                     partitions are not read"
+                )));
+                break;
+            }
+        };
         if ebr[510..512] != BOOT_SIGNATURE {
-            return Err(invalid("extended boot record missing its signature"));
+            partitions[container].issue = Some(invalid(format!(
+                "extended boot record at sector {current} is missing its \
+                 signature; the chain's remaining logical partitions are \
+                 not read"
+            )));
+            break;
         }
         let entries = parse_entries(&ebr);
 
         let logical = &entries[0];
         if logical.type_byte != 0x00 {
-            let Some(type_name) = pinned_type_name(logical.type_byte) else {
-                return Err(unsupported(format!(
-                    "logical partition type 0x{:02x} is outside this release's \
-                     claim; refusing rather than skipping",
-                    logical.type_byte
-                )));
-            };
-            if is_extended(logical.type_byte) {
-                return Err(invalid("extended partition nested inside the chain"));
-            }
             number += 1;
+            let type_name = pinned_type_name(logical.type_byte);
+            let issue = if is_extended(logical.type_byte) {
+                Some(invalid(
+                    "an extended partition nested in the chain's logical \
+                     slot; the row is reported and no volume is read from it",
+                ))
+            } else {
+                type_name.is_none().then(|| {
+                    unsupported(format!(
+                        "logical partition type 0x{:02x} is outside this \
+                         release's claim; the row is reported and no volume \
+                         is read from it",
+                        logical.type_byte
+                    ))
+                })
+            };
             partitions.push(PartitionInfo {
                 number,
+                kind: PartitionKind::Logical,
                 type_byte: logical.type_byte,
-                type_name: type_name.to_owned(),
+                type_name: type_name.map(str::to_owned),
                 start_bytes: (current + logical.start_lba as u64) * SECTOR,
                 length_bytes: logical.sectors as u64 * SECTOR,
+                issue,
             });
         }
 
         let next = &entries[1];
-        extended_chain = if next.type_byte == 0x00 {
+        chain = if next.type_byte == 0x00 {
             None
         } else if is_extended(next.type_byte) {
-            Some((base, base + next.start_lba as u64))
+            Some((base, base + next.start_lba as u64, container))
         } else {
-            return Err(invalid(format!(
-                "unexpected type 0x{:02x} in the extended chain's link slot",
+            partitions[container].issue = Some(invalid(format!(
+                "type 0x{:02x} in the extended chain's link slot where an \
+                 extended type or an empty entry belongs; the chain's \
+                 remaining logical partitions are not read",
                 next.type_byte
             )));
+            None
         };
     }
 
-    Ok(partitions)
+    Ok(Discovery::Partitioned(partitions))
 }

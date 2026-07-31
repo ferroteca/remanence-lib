@@ -461,25 +461,32 @@ impl Session {
             header.version, header.virtual_size
         ));
 
-        let partitions = mbr::discover(&mut qcow2)?;
-        if !partitions.is_empty() {
-            evidence.push(format!(
-                "found {} partition(s) in the virtual disk",
-                partitions.len()
-            ));
-        }
-
         let mut containers = Vec::new();
-        let spans: Vec<(Option<u32>, u64, u64)> = if partitions.is_empty() {
-            vec![(None, 0, header.virtual_size)]
-        } else {
-            partitions
-                .iter()
-                .filter(|partition| !partition.type_name.starts_with("extended"))
-                .map(|partition| {
-                    (Some(partition.number), partition.start_bytes, partition.length_bytes)
-                })
-                .collect()
+        let spans: Vec<(Option<u32>, u64, u64)> = match mbr::discover(&mut qcow2)? {
+            mbr::Discovery::Blank => {
+                evidence.push("virtual disk is blank (sector 0 all zero)".to_owned());
+                Vec::new()
+            }
+            mbr::Discovery::BareVolume => vec![(None, 0, header.virtual_size)],
+            mbr::Discovery::Partitioned(partitions) => {
+                if !partitions.is_empty() {
+                    evidence.push(format!(
+                        "found {} partition(s) in the virtual disk",
+                        partitions.len()
+                    ));
+                }
+                partitions
+                    .iter()
+                    .filter(|partition| !mbr::is_extended(partition.type_byte))
+                    .map(|partition| {
+                        (
+                            Some(partition.number),
+                            partition.start_bytes,
+                            partition.length_bytes,
+                        )
+                    })
+                    .collect()
+            }
         };
 
         for (partition, offset, length) in spans {

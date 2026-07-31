@@ -180,6 +180,15 @@ impl Bpb {
             self.total_sectors.saturating_sub(self.data_offset() / self.bytes_per_sector);
         data_sectors / self.sectors_per_cluster
     }
+
+    /// Cylinders, only where the derivation is exact: the boot record
+    /// states track geometry and it divides the total sector count with
+    /// no remainder. Never invented (pledged U4).
+    fn cylinders(&self) -> Option<u64> {
+        let track = self.sectors_per_track as u64 * self.heads as u64;
+        (track != 0 && self.total_sectors % track == 0)
+            .then(|| self.total_sectors / track)
+    }
 }
 
 /// A recognized FAT volume: facts for the reporting lane (pledged U4).
@@ -197,6 +206,10 @@ pub struct VolumeInfo {
     /// Geometry the boot record states, where it states one.
     pub sectors_per_track: Option<u16>,
     pub heads: Option<u16>,
+    /// Cylinders, only where an exact derivation exists: the stated
+    /// track geometry divides the total sector count with no remainder.
+    /// Omitted otherwise — never invented (pledged U4).
+    pub cylinders: Option<u64>,
 }
 
 /// A FAT volume over a byte range of a device.
@@ -252,6 +265,7 @@ impl FatVolume {
             sectors_per_track: (self.bpb.sectors_per_track != 0)
                 .then_some(self.bpb.sectors_per_track),
             heads: (self.bpb.heads != 0).then_some(self.bpb.heads),
+            cylinders: self.bpb.cylinders(),
         })
     }
 

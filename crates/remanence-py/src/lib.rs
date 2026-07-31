@@ -538,18 +538,28 @@ impl Session {
     }
 }
 
-/// One discovered MBR partition.
+/// One discovered partition row; every entry the table declares is
+/// reported. `kind` is `"primary"` or `"logical"`; `type_name` is `None`
+/// when the type byte is outside the claim. A row the library cannot
+/// read stays here carrying `issue_category` (a stable category string)
+/// and `issue` (the diagnostic) instead of vanishing — no volume is read
+/// from it, and the rows behind it never renumber.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct PartitionInfo {
     pub number: u32,
+    pub kind: String,
     pub type_byte: u8,
-    pub type_name: String,
+    pub type_name: Option<String>,
     pub start_bytes: u64,
     pub length_bytes: u64,
+    pub issue_category: Option<String>,
+    pub issue: Option<String>,
 }
 
-/// One FAT volume actually read from a disk.
+/// One FAT volume actually read from a disk. `cylinders` is present only
+/// where an exact derivation exists — the boot record's track geometry
+/// divides the total sector count with no remainder — never invented.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct VolumeInfo {
@@ -562,11 +572,15 @@ pub struct VolumeInfo {
     pub cluster_count: u64,
     pub sectors_per_track: Option<u16>,
     pub heads: Option<u16>,
+    pub cylinders: Option<u64>,
 }
 
-/// A disk's partitions and volumes, as they actually are.
+/// A disk's complete report, as it actually is: `blank` marks an
+/// all-zero sector 0 — a blank disk with zero volumes, an answer rather
+/// than an error.
 #[pyclass(frozen, get_all, module = "remanence")]
 pub struct DiskGeometry {
+    pub blank: bool,
     pub partitions: Vec<PartitionInfo>,
     pub volumes: Vec<VolumeInfo>,
 }
@@ -661,19 +675,31 @@ impl Disk {
         Ok(self.get()?.is_modified())
     }
 
-    /// The disk's partitions and volumes, as they actually are.
+    /// The disk's complete report (pledged U4): its partitions and
+    /// volumes as they actually are. Blank is an answer — zero volumes,
+    /// `blank` set — while non-zero data that is neither a supported
+    /// filesystem nor a partition table raises by name, kept distinct
+    /// from blank. A partition row the library cannot read stays in the
+    /// report carrying its issue instead of failing the whole disk.
     fn geometry(&mut self) -> PyResult<DiskGeometry> {
         let geometry = self.get()?.geometry().map_err(to_py_err)?;
         Ok(DiskGeometry {
+            blank: geometry.blank,
             partitions: geometry
                 .partitions
                 .iter()
                 .map(|partition| PartitionInfo {
                     number: partition.number,
+                    kind: partition.kind.name().to_owned(),
                     type_byte: partition.type_byte,
                     type_name: partition.type_name.clone(),
                     start_bytes: partition.start_bytes,
                     length_bytes: partition.length_bytes,
+                    issue_category: partition
+                        .issue
+                        .as_ref()
+                        .map(|issue| issue.category().as_str().to_owned()),
+                    issue: partition.issue.as_ref().map(|issue| issue.to_string()),
                 })
                 .collect(),
             volumes: geometry
@@ -689,6 +715,7 @@ impl Disk {
                     cluster_count: volume.cluster_count,
                     sectors_per_track: volume.sectors_per_track,
                     heads: volume.heads,
+                    cylinders: volume.cylinders,
                 })
                 .collect(),
         })

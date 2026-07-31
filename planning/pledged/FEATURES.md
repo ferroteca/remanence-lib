@@ -21,7 +21,10 @@
 >
 > **Most of the demand is already in force.** The shipped U3/U4
 > stack covers the P7 claim with declared access intent at open,
-> MBR discovery with the extended chain and pinned types,
+> MBR discovery with the extended chain and pinned types, the
+> complete geometry report (blank an answer distinct from
+> unreadable, every declared row kept with a structured issue where
+> it cannot be read, partition kinds, cylinders only where exact),
 > FAT12/FAT16/FAT16B read and write with both FAT copies
 > maintained, path semantics (`/` or `\`, case-insensitive DOS
 > names, `.` ignored, `..` refused), the commit-point overlay with
@@ -38,20 +41,6 @@
 > implementation above the library); **identification of backing
 > chains** (U5 untouched, per U6's note).
 
-## F12 — The complete geometry report
-
-The amended U4's report. Blank is an answer: an all-zero boot
-sector reports a blank disk with zero volumes; a valid
-unpartitioned filesystem reports one volume, as today; non-zero
-data that is neither reports an unreadable image, a refusal kept
-distinct from blank. Partition rows gain their kind (primary or
-logical); a row outside the pinned claim, or one whose volume
-cannot be read, stays in the report carrying a structured issue —
-category plus diagnostic — instead of failing the whole disk or
-vanishing, and the volumes behind it never renumber. Cylinders are
-reported where the disk states them or an exact derivation exists,
-omitted otherwise.
-
 ## F13 — Stable volume identity
 
 The amended U3/U4 addressing. Every reported volume carries an
@@ -64,7 +53,7 @@ that it named in the geometry report; an unreadable partition never
 shifts a later volume's identity; an identifier absent on a later
 open is a named refusal, not a renumbering. This retires the
 present drift hazard where the report's volume list and the verbs'
-index space disagree about an unreadable partition. Needs: F12.
+index space disagree about an unreadable partition.
 
 ## F14 — Stat, overwrite, recursive directories
 

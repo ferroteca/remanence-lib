@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::device::{AccessIntent, AccessMode, Device, FileDevice, Overlay};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeInfo};
-use crate::mbr::{self, PartitionInfo};
+use crate::mbr::{self, Discovery, PartitionInfo};
 use crate::qcow2::{QCOW2_MAGIC, Qcow2};
 
 /// The container format a disk image turned out to be.
@@ -21,9 +21,12 @@ pub enum DiskFormat {
     Qcow2 { version: u32 },
 }
 
-/// The host-side facts of one disk, as they actually are (pledged U4).
+/// The complete report of one disk, as it actually is (pledged U4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskGeometry {
+    /// Sector 0 is all zero: a blank disk with zero volumes — an answer,
+    /// not an error.
+    pub blank: bool,
     pub partitions: Vec<PartitionInfo>,
     pub volumes: Vec<VolumeInfo>,
 }
@@ -174,52 +177,69 @@ impl Disk {
 
     fn volume_offsets(&mut self) -> Result<Vec<u64>> {
         let mut composed = self.composed();
-        let partitions = mbr::discover(&mut composed)?;
-        if partitions.is_empty() {
-            return Ok(vec![0]);
-        }
-        Ok(partitions
-            .iter()
-            .filter(|partition| !partition.type_name.starts_with("extended"))
-            .map(|partition| partition.start_bytes)
-            .collect())
+        Ok(match mbr::discover(&mut composed)? {
+            Discovery::Blank => Vec::new(),
+            Discovery::BareVolume => vec![0],
+            Discovery::Partitioned(partitions) => partitions
+                .iter()
+                .filter(|partition| !mbr::is_extended(partition.type_byte))
+                .map(|partition| partition.start_bytes)
+                .collect(),
+        })
     }
 
-    /// The disk's partitions and readable volumes, as they actually are
-    /// (pledged U4). One volume entry per FAT volume actually read; a
-    /// partition whose volume cannot be read contributes no volume and
-    /// the reason is carried in the error when nothing at all is
-    /// readable.
+    /// The complete report (pledged U4): the disk's partitions and
+    /// volumes as they actually are. Blank is an answer — an all-zero
+    /// sector 0 reports a blank disk with zero volumes — and non-zero
+    /// data that is neither a supported filesystem nor a partition
+    /// table is a named refusal kept distinct from blank. A partition
+    /// row outside the pinned claim, or one whose volume cannot be
+    /// read, stays in the report carrying its structured issue instead
+    /// of failing the whole disk or vanishing, and the volumes behind
+    /// it never renumber.
     pub fn geometry(&mut self) -> Result<DiskGeometry> {
         let mut composed = self.composed();
-        let partitions = mbr::discover(&mut composed)?;
-
-        let mut volumes = Vec::new();
-        if partitions.is_empty() {
-            let volume = FatVolume::open(&mut composed, 0)?;
-            let length = composed.len();
-            volumes.push(volume.info(&mut composed, None, length)?);
-        } else {
-            for partition in &partitions {
-                if partition.type_name.starts_with("extended") {
-                    continue;
+        match mbr::discover(&mut composed)? {
+            Discovery::Blank => Ok(DiskGeometry {
+                blank: true,
+                partitions: Vec::new(),
+                volumes: Vec::new(),
+            }),
+            Discovery::BareVolume => {
+                let volume = FatVolume::open(&mut composed, 0)?;
+                let length = composed.len();
+                let info = volume.info(&mut composed, None, length)?;
+                Ok(DiskGeometry {
+                    blank: false,
+                    partitions: Vec::new(),
+                    volumes: vec![info],
+                })
+            }
+            Discovery::Partitioned(mut partitions) => {
+                let mut volumes = Vec::new();
+                for partition in &mut partitions {
+                    if partition.issue.is_some()
+                        || mbr::is_extended(partition.type_byte)
+                    {
+                        continue;
+                    }
+                    match FatVolume::open(&mut composed, partition.start_bytes)
+                        .and_then(|volume| {
+                            volume.info(
+                                &mut composed,
+                                Some(partition.number),
+                                partition.length_bytes,
+                            )
+                        }) {
+                        Ok(info) => volumes.push(info),
+                        // The row stays, carrying why (pledged U4); the
+                        // volumes behind it never renumber.
+                        Err(error) => partition.issue = Some(error),
+                    }
                 }
-                match FatVolume::open(&mut composed, partition.start_bytes) {
-                    Ok(volume) => volumes.push(volume.info(
-                        &mut composed,
-                        Some(partition.number),
-                        partition.length_bytes,
-                    )?),
-                    // A declared partition whose volume is unreadable
-                    // takes no letter; per U4 it simply contributes no
-                    // volume here, and the caller sees the partition row
-                    // without one.
-                    Err(_) => continue,
-                }
+                Ok(DiskGeometry { blank: false, partitions, volumes })
             }
         }
-
-        Ok(DiskGeometry { partitions, volumes })
     }
 
     /// Lists a directory in volume `volume` ("" = root; "A/B" descends).

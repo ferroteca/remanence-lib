@@ -1044,18 +1044,23 @@ pub struct RmnDisk {
     disk: Disk,
 }
 
-/// A snapshot of a disk's partitions and volumes.
+/// A snapshot of a disk's complete report (pledged U4): blank is an
+/// answer, and every declared partition row stays, issues and all.
 pub struct RmnDiskGeometry {
+    blank: bool,
     partitions: Vec<PartitionView>,
     volumes: Vec<VolumeView>,
 }
 
 struct PartitionView {
     number: u32,
+    kind_name: CString,
     type_byte: u8,
-    type_name: CString,
+    type_name: Option<CString>,
     start_bytes: u64,
     length_bytes: u64,
+    issue_category: Option<RmnErrorCategory>,
+    issue: Option<CString>,
 }
 
 struct VolumeView {
@@ -1068,6 +1073,7 @@ struct VolumeView {
     cluster_count: u64,
     sectors_per_track: Option<u16>,
     heads: Option<u16>,
+    cylinders: Option<u64>,
 }
 
 /// A directory listing.
@@ -1172,8 +1178,13 @@ pub unsafe extern "C" fn rmn_disk_is_modified(disk: *const RmnDisk) -> bool {
     unsafe { disk.as_ref() }.is_some_and(|disk| disk.disk.is_modified())
 }
 
-/// Reads the disk's partitions and volumes as they actually are. Free the
-/// result with `rmn_disk_geometry_free`.
+/// Reads the disk's complete report (pledged U4): its partitions and
+/// volumes as they actually are. Blank is an answer (zero volumes, see
+/// `rmn_geometry_is_blank`), a partition row the library cannot read
+/// stays in the report carrying its issue, and non-zero data that is
+/// neither a supported filesystem nor a partition table fails by name,
+/// kept distinct from blank. Free the result with
+/// `rmn_disk_geometry_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_geometry(
     disk: *mut RmnDisk,
@@ -1185,15 +1196,24 @@ pub unsafe extern "C" fn rmn_disk_geometry(
         return ptr::null_mut();
     };
     match disk.disk.geometry() {
-        Ok(DiskGeometry { partitions, volumes }) => {
+        Ok(DiskGeometry { blank, partitions, volumes }) => {
             let partitions = partitions
                 .iter()
                 .map(|partition| PartitionView {
                     number: partition.number,
+                    kind_name: to_cstring(partition.kind.name()),
                     type_byte: partition.type_byte,
-                    type_name: to_cstring(&partition.type_name),
+                    type_name: partition.type_name.as_deref().map(to_cstring),
                     start_bytes: partition.start_bytes,
                     length_bytes: partition.length_bytes,
+                    issue_category: partition
+                        .issue
+                        .as_ref()
+                        .map(|issue| issue.category().into()),
+                    issue: partition
+                        .issue
+                        .as_ref()
+                        .map(|issue| to_cstring(&issue.to_string())),
                 })
                 .collect();
             let volumes = volumes
@@ -1208,9 +1228,10 @@ pub unsafe extern "C" fn rmn_disk_geometry(
                     cluster_count: volume.cluster_count,
                     sectors_per_track: volume.sectors_per_track,
                     heads: volume.heads,
+                    cylinders: volume.cylinders,
                 })
                 .collect();
-            Box::into_raw(Box::new(RmnDiskGeometry { partitions, volumes }))
+            Box::into_raw(Box::new(RmnDiskGeometry { blank, partitions, volumes }))
         }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1241,6 +1262,15 @@ unsafe fn volume_view<'a>(
     unsafe { geometry.as_ref() }?.volumes.get(index)
 }
 
+/// Whether sector 0 was all zero: a blank disk with zero volumes — an
+/// answer, not an error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmn_geometry_is_blank(
+    geometry: *const RmnDiskGeometry,
+) -> bool {
+    unsafe { geometry.as_ref() }.is_some_and(|geometry| geometry.blank)
+}
+
 /// Number of partitions (0 for a partitionless image).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_geometry_partition_count(
@@ -1267,14 +1297,27 @@ pub unsafe extern "C" fn rmn_geometry_partition_type_byte(
     unsafe { partition_view(geometry, index) }.map_or(0, |partition| partition.type_byte)
 }
 
-/// A partition's pinned type name.
+/// A partition row's kind: "primary" (an MBR slot, the extended
+/// container included) or "logical" (a row of the extended chain).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmn_geometry_partition_kind(
+    geometry: *const RmnDiskGeometry,
+    index: usize,
+) -> *const c_char {
+    unsafe { partition_view(geometry, index) }
+        .map_or(ptr::null(), |partition| partition.kind_name.as_ptr())
+}
+
+/// A partition's pinned type name, or null when the type byte is outside
+/// the claim — the row's issue then names the refusal.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_geometry_partition_type_name(
     geometry: *const RmnDiskGeometry,
     index: usize,
 ) -> *const c_char {
     unsafe { partition_view(geometry, index) }
-        .map_or(ptr::null(), |partition| partition.type_name.as_ptr())
+        .and_then(|partition| partition.type_name.as_ref())
+        .map_or(ptr::null(), |type_name| type_name.as_ptr())
 }
 
 /// A partition's start offset in bytes.
@@ -1295,6 +1338,41 @@ pub unsafe extern "C" fn rmn_geometry_partition_length_bytes(
 ) -> u64 {
     unsafe { partition_view(geometry, index) }
         .map_or(0, |partition| partition.length_bytes)
+}
+
+/// Stores a partition row's issue category and returns true; returns
+/// false when the row was read cleanly (or the index is out of range).
+/// A row carrying an issue stays in the report with no volume read from
+/// it, and the rows behind it never renumber (pledged U4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmn_geometry_partition_issue_category(
+    geometry: *const RmnDiskGeometry,
+    index: usize,
+    category_out: *mut RmnErrorCategory,
+) -> bool {
+    match unsafe { partition_view(geometry, index) }
+        .and_then(|partition| partition.issue_category)
+    {
+        Some(category) => {
+            if !category_out.is_null() {
+                unsafe { *category_out = category };
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// A partition row's issue diagnostic — why no volume was read from the
+/// row — or null when the row was read cleanly.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmn_geometry_partition_issue(
+    geometry: *const RmnDiskGeometry,
+    index: usize,
+) -> *const c_char {
+    unsafe { partition_view(geometry, index) }
+        .and_then(|partition| partition.issue.as_ref())
+        .map_or(ptr::null(), |issue| issue.as_ptr())
 }
 
 /// Number of volumes actually read (one guest drive letter each).
@@ -1399,6 +1477,21 @@ pub unsafe extern "C" fn rmn_geometry_volume_heads(
     let value = unsafe { volume_view(geometry, index) }
         .and_then(|volume| volume.heads.map(u32::from));
     unsafe { write_opt_u32(value, out) }
+}
+
+/// The volume's cylinder count, only where an exact derivation exists —
+/// the boot record's track geometry divides the total sector count with
+/// no remainder; returns false otherwise, never an invented value
+/// (pledged U4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmn_geometry_volume_cylinders(
+    geometry: *const RmnDiskGeometry,
+    index: usize,
+    out: *mut u64,
+) -> bool {
+    let value =
+        unsafe { volume_view(geometry, index) }.and_then(|volume| volume.cylinders);
+    unsafe { write_opt_u64(value, out) }
 }
 
 /// Lists a directory in volume `volume` ("" = root, "A/B" descends). Free

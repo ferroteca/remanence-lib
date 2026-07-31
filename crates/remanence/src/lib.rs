@@ -30,7 +30,7 @@ pub use error::{Error, ErrorCategory, Result};
 pub use fat::{FatEntry, FatEntryKind, FatKind, VolumeInfo};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
 pub use image::DiskImage;
-pub use mbr::PartitionInfo;
+pub use mbr::{PartitionInfo, PartitionKind};
 pub use registry::{ContainerFormat, FilesystemFormat, FormatRegistry};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout,

@@ -81,7 +81,8 @@ typedef enum {
 // An open disk image.
 typedef struct RmnDisk RmnDisk;
 
-// A snapshot of a disk's partitions and volumes.
+// A snapshot of a disk's complete report (pledged U4): blank is an
+// answer, and every declared partition row stays, issues and all.
 typedef struct RmnDiskGeometry RmnDiskGeometry;
 
 // A directory listing.
@@ -338,14 +339,23 @@ uint64_t rmn_disk_size(const RmnDisk *disk);
 // Whether uncommitted changes exist.
 bool rmn_disk_is_modified(const RmnDisk *disk);
 
-// Reads the disk's partitions and volumes as they actually are. Free the
-// result with `rmn_disk_geometry_free`.
+// Reads the disk's complete report (pledged U4): its partitions and
+// volumes as they actually are. Blank is an answer (zero volumes, see
+// `rmn_geometry_is_blank`), a partition row the library cannot read
+// stays in the report carrying its issue, and non-zero data that is
+// neither a supported filesystem nor a partition table fails by name,
+// kept distinct from blank. Free the result with
+// `rmn_disk_geometry_free`.
 RmnDiskGeometry *rmn_disk_geometry(RmnDisk *disk,
                                    RmnErrorCategory *error_category_out,
                                    char **error_out);
 
 // Frees a geometry snapshot.
 void rmn_disk_geometry_free(RmnDiskGeometry *geometry);
+
+// Whether sector 0 was all zero: a blank disk with zero volumes — an
+// answer, not an error.
+bool rmn_geometry_is_blank(const RmnDiskGeometry *geometry);
 
 // Number of partitions (0 for a partitionless image).
 size_t rmn_geometry_partition_count(const RmnDiskGeometry *geometry);
@@ -356,7 +366,12 @@ uint32_t rmn_geometry_partition_number(const RmnDiskGeometry *geometry, size_t i
 // A partition's MBR type byte.
 uint8_t rmn_geometry_partition_type_byte(const RmnDiskGeometry *geometry, size_t index);
 
-// A partition's pinned type name.
+// A partition row's kind: "primary" (an MBR slot, the extended
+// container included) or "logical" (a row of the extended chain).
+const char *rmn_geometry_partition_kind(const RmnDiskGeometry *geometry, size_t index);
+
+// A partition's pinned type name, or null when the type byte is outside
+// the claim — the row's issue then names the refusal.
 const char *rmn_geometry_partition_type_name(const RmnDiskGeometry *geometry, size_t index);
 
 // A partition's start offset in bytes.
@@ -364,6 +379,18 @@ uint64_t rmn_geometry_partition_start_bytes(const RmnDiskGeometry *geometry, siz
 
 // A partition's length in bytes.
 uint64_t rmn_geometry_partition_length_bytes(const RmnDiskGeometry *geometry, size_t index);
+
+// Stores a partition row's issue category and returns true; returns
+// false when the row was read cleanly (or the index is out of range).
+// A row carrying an issue stays in the report with no volume read from
+// it, and the rows behind it never renumber (pledged U4).
+bool rmn_geometry_partition_issue_category(const RmnDiskGeometry *geometry,
+                                           size_t index,
+                                           RmnErrorCategory *category_out);
+
+// A partition row's issue diagnostic — why no volume was read from the
+// row — or null when the row was read cleanly.
+const char *rmn_geometry_partition_issue(const RmnDiskGeometry *geometry, size_t index);
 
 // Number of volumes actually read (one guest drive letter each).
 size_t rmn_geometry_volume_count(const RmnDiskGeometry *geometry);
@@ -401,6 +428,12 @@ bool rmn_geometry_volume_sectors_per_track(const RmnDiskGeometry *geometry,
 // The BPB-stated head count; returns false where the boot record states
 // none.
 bool rmn_geometry_volume_heads(const RmnDiskGeometry *geometry, size_t index, uint32_t *out);
+
+// The volume's cylinder count, only where an exact derivation exists —
+// the boot record's track geometry divides the total sector count with
+// no remainder; returns false otherwise, never an invented value
+// (pledged U4).
+bool rmn_geometry_volume_cylinders(const RmnDiskGeometry *geometry, size_t index, uint64_t *out);
 
 // Lists a directory in volume `volume` ("" = root, "A/B" descends). Free
 // with `rmn_fat_entry_list_free`.
