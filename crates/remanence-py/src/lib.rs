@@ -629,7 +629,11 @@ impl Disk {
     /// or writer for the session's whole life — and fails at the open,
     /// naming the reason, when the claim cannot be secured, never by
     /// falling back to read-only. `writable=False` takes read access
-    /// only, denies writes to others, and admits other readers.
+    /// only, denies writes to others, and admits other readers. An
+    /// interrupted commit left by an earlier session is reconciled
+    /// before the disk is exposed (P9): the image comes back wholly
+    /// the old state or wholly the committed new one, never a partial
+    /// third state.
     #[new]
     #[pyo3(signature = (path, *, writable))]
     fn new(path: PathBuf, writable: bool) -> PyResult<Self> {
@@ -782,6 +786,10 @@ impl Disk {
     }
 
     /// The commit point: everything buffered reaches the image, flushed.
+    /// The commit is durable (P9): a private recovery journal is armed
+    /// before the first byte of the file changes, so an interruption at
+    /// any point leaves state the next open reconciles to wholly the
+    /// old image or wholly the committed new one.
     fn commit(&mut self) -> PyResult<()> {
         self.get()?.commit().map_err(to_py_err)
     }

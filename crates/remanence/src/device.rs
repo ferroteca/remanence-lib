@@ -3,13 +3,16 @@
 
 //! The block device seam: the byte-addressed surface the disk stack
 //! works over, the P7 claims — declared intent for the disk stack, the
-//! discovery ladder for identification sessions — and the commit-point
-//! overlay (P2).
+//! discovery ladder for identification sessions — the commit-point
+//! overlay (P2), and the host-write capture a durable commit stages
+//! into before the recovery journal is armed (P9).
 
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
 use crate::error::{Error, Result};
+use crate::journal::UndoRecord;
 
 /// The caller's declared intent when opening a disk (P7): the session's
 /// mode is declared at open, never discovered by fallback.
@@ -204,6 +207,17 @@ pub(crate) struct FileDevice {
     len: u64,
     mode: AccessMode,
     path: String,
+    capture: Option<Capture>,
+}
+
+/// A commit's staging area (P9): while a capture is active, every write
+/// buffers here and the file itself is untouched, so the whole set of
+/// host writes is known — and journaled — before the first one lands.
+#[derive(Debug)]
+struct Capture {
+    overlay: Overlay,
+    /// The device length as the buffered writes would leave it.
+    len: u64,
 }
 
 impl FileDevice {
@@ -215,15 +229,111 @@ impl FileDevice {
                 Error::io(format!("failed to stat '{}': {error}", path.display()))
             })?
             .len();
-        Ok(Self { file, len, mode: intent.mode(), path: path.display().to_string() })
+        Ok(Self {
+            file,
+            len,
+            mode: intent.mode(),
+            path: path.display().to_string(),
+            capture: None,
+        })
     }
 
     pub fn mode(&self) -> AccessMode {
         self.mode
     }
 
+    /// Starts capturing: until [`FileDevice::take_capture`], writes
+    /// buffer in memory, reads compose over them, and the file is not
+    /// touched.
+    pub fn begin_capture(&mut self) {
+        debug_assert!(self.capture.is_none(), "a capture is already active");
+        self.capture = Some(Capture { overlay: Overlay::new(), len: self.len });
+    }
+
+    /// Ends the capture, returning the buffered blocks and the length
+    /// the device would have once they are applied. Dropping the result
+    /// discards the staged writes; the file was never touched.
+    pub fn take_capture(&mut self) -> (BTreeMap<u64, Vec<u8>>, u64) {
+        let capture = self.capture.take().expect("a capture is active");
+        (capture.overlay.blocks, capture.len)
+    }
+
+    /// Writes captured blocks through to the file — each clamped to
+    /// `new_len`, the length the capture recorded — and flushes.
+    pub fn apply(&mut self, blocks: &BTreeMap<u64, Vec<u8>>, new_len: u64) -> Result<()> {
+        debug_assert!(self.capture.is_none(), "cannot apply during a capture");
+        for (&offset, block) in blocks {
+            let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
+            if take > 0 {
+                self.write_at(offset, &block[..take])?;
+            }
+        }
+        self.flush()
+    }
+
+    /// Restores the image to wholly the old state an undo journal
+    /// records: every record's original bytes written back, the file
+    /// truncated to its original length, and the result flushed.
+    /// Idempotent, so an interruption partway means restoring again.
+    pub fn restore(&mut self, records: &[UndoRecord], original_len: u64) -> Result<()> {
+        debug_assert!(self.capture.is_none(), "cannot restore during a capture");
+        debug_assert!(self.mode == AccessMode::ReadWrite, "restore needs write access");
+        for record in records {
+            write_all_at(&self.file, record.offset, &record.bytes)
+                .map_err(|error| self.io_error("write to", error))?;
+        }
+        self.file
+            .set_len(original_len)
+            .map_err(|error| self.io_error("truncate", error))?;
+        self.file
+            .sync_all()
+            .map_err(|error| self.io_error("flush", error))?;
+        self.len = original_len;
+        Ok(())
+    }
+
     fn io_error(&self, action: &str, error: std::io::Error) -> Error {
         Error::io(format!("{action} '{}' failed: {error}", self.path))
+    }
+}
+
+/// The real file beneath an active capture: reads clamp to the file's
+/// true length and zero-fill past it, because captured growth has no
+/// underlying bytes yet.
+struct RawFile<'a> {
+    file: &'a File,
+    len: u64,
+    path: &'a str,
+}
+
+impl Device for RawFile<'_> {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let take = if offset >= self.len {
+            0
+        } else {
+            ((self.len - offset) as usize).min(buf.len())
+        };
+        if take > 0 {
+            read_exact_at(self.file, offset, &mut buf[..take]).map_err(|error| {
+                Error::io(format!("read from '{}' failed: {error}", self.path))
+            })?;
+        }
+        buf[take..].fill(0);
+        Ok(())
+    }
+
+    fn write_at(&mut self, _offset: u64, _data: &[u8]) -> Result<()> {
+        Err(Error::io(
+            "the file beneath a capture is never written directly".to_owned(),
+        ))
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -269,16 +379,20 @@ fn write_all_at(file: &File, offset: u64, data: &[u8]) -> std::io::Result<()> {
 
 impl Device for FileDevice {
     fn len(&self) -> u64 {
-        self.len
+        self.capture.as_ref().map_or(self.len, |capture| capture.len)
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        if offset + buf.len() as u64 > self.len {
+        if offset + buf.len() as u64 > self.len() {
             return Err(Error::io(format!(
                 "read past end of '{}' (offset {offset}, length {})",
                 self.path,
                 buf.len()
             )));
+        }
+        if let Some(capture) = &self.capture {
+            let mut raw = RawFile { file: &self.file, len: self.len, path: &self.path };
+            return capture.overlay.read_at(&mut raw, offset, buf);
         }
         read_exact_at(&self.file, offset, buf)
             .map_err(|error| self.io_error("read from", error))
@@ -291,6 +405,12 @@ impl Device for FileDevice {
                 self.path
             )));
         }
+        if let Some(capture) = &mut self.capture {
+            let mut raw = RawFile { file: &self.file, len: self.len, path: &self.path };
+            capture.overlay.write_at(&mut raw, offset, data)?;
+            capture.len = capture.len.max(offset + data.len() as u64);
+            return Ok(());
+        }
         write_all_at(&self.file, offset, data)
             .map_err(|error| self.io_error("write to", error))?;
         self.len = self.len.max(offset + data.len() as u64);
@@ -298,6 +418,10 @@ impl Device for FileDevice {
     }
 
     fn flush(&mut self) -> Result<()> {
+        if self.capture.is_some() {
+            // Nothing has reached the file; there is nothing to flush.
+            return Ok(());
+        }
         self.file.sync_data().map_err(|error| self.io_error("flush", error))
     }
 }
@@ -342,22 +466,24 @@ impl Device for SliceDevice<'_> {
 const OVERLAY_BLOCK: u64 = 4096;
 
 /// The commit point (P2): writes land in an in-memory overlay and reach
-/// the underlying device only on `commit`; `rollback` discards them all.
+/// the underlying device only when the commit writes them through;
+/// clearing discards them all. The same structure is the staging area a
+/// capture buffers host writes in (P9).
 #[derive(Debug)]
 pub(crate) struct Overlay {
-    blocks: std::collections::BTreeMap<u64, Vec<u8>>,
+    blocks: BTreeMap<u64, Vec<u8>>,
 }
 
 impl Overlay {
     pub fn new() -> Self {
-        Self { blocks: std::collections::BTreeMap::new() }
+        Self { blocks: BTreeMap::new() }
     }
 
     pub fn modified(&self) -> bool {
         !self.blocks.is_empty()
     }
 
-    pub fn rollback(&mut self) {
+    pub fn clear(&mut self) {
         self.blocks.clear();
     }
 
@@ -415,10 +541,11 @@ impl Overlay {
         Ok(())
     }
 
-    /// Writes every buffered block through to `base` and clears the
-    /// overlay. The base is flushed before the overlay is dropped, so an
-    /// interruption can only lose uncommitted work, never committed work.
-    pub fn commit(&mut self, base: &mut dyn Device) -> Result<()> {
+    /// Writes every buffered block through to `base`. The overlay keeps
+    /// its blocks — the commit clears them only once the write-through
+    /// is durably applied, so a failure anywhere leaves the buffered
+    /// state intact.
+    pub fn write_through(&self, base: &mut dyn Device) -> Result<()> {
         for (&offset, block) in &self.blocks {
             let take = if offset + OVERLAY_BLOCK > base.len() {
                 // The device may legitimately end mid-block.
@@ -430,8 +557,48 @@ impl Overlay {
                 base.write_at(offset, &block[..take])?;
             }
         }
-        base.flush()?;
-        self.blocks.clear();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_capture_buffers_host_writes_until_applied() {
+        let path = std::env::temp_dir().join(format!(
+            "remanence-capture-{}.img",
+            std::process::id()
+        ));
+        std::fs::write(&path, vec![0xAAu8; 8192]).expect("image writes");
+
+        let mut device = FileDevice::open(&path, AccessIntent::Write).expect("opens");
+        device.begin_capture();
+        device.write_at(4090, &[1, 2, 3, 4, 5, 6, 7, 8]).expect("buffers");
+        device.write_at(8192, &[9; 100]).expect("buffers growth");
+        assert_eq!(device.len(), 8292, "the capture reports the grown length");
+
+        // Reads compose the buffered writes over the untouched file.
+        let mut back = [0u8; 12];
+        device.read_at(4088, &mut back).expect("reads");
+        assert_eq!(back, [0xAA, 0xAA, 1, 2, 3, 4, 5, 6, 7, 8, 0xAA, 0xAA]);
+        assert_eq!(
+            std::fs::metadata(&path).expect("stat").len(),
+            8192,
+            "the file is untouched while the capture is active"
+        );
+
+        let (blocks, new_len) = device.take_capture();
+        assert_eq!(new_len, 8292);
+        assert_eq!(device.len(), 8192, "discarding the capture restores the length");
+
+        device.apply(&blocks, new_len).expect("applies");
+        drop(device);
+        let bytes = std::fs::read(&path).expect("reads back");
+        assert_eq!(bytes.len(), 8292);
+        assert_eq!(&bytes[4090..4098], &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&bytes[8192..], &[9u8; 100]);
+        std::fs::remove_file(&path).ok();
     }
 }

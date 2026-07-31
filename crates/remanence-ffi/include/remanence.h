@@ -313,8 +313,11 @@ const char *rmn_hdos_file_modified_date(const RmnHdosFileList *list, size_t inde
 // claims the image exclusively for the session's whole life and fails
 // at the open, naming the reason, when the claim cannot be secured —
 // never by falling back; a `Read` open takes read access only, denies
-// writes to others, and admits other readers. Returns null on failure
-// with a message in `error_out`.
+// writes to others, and admits other readers. An interrupted commit
+// left by an earlier session is reconciled before the disk is exposed
+// (P9): the image comes back wholly the old state or wholly the
+// committed new one, never a partial third state. Returns null on
+// failure with a message in `error_out`.
 RmnDisk *rmn_disk_open(const char *path,
                        RmnAccessIntent intent,
                        RmnErrorCategory *error_category_out,
@@ -508,7 +511,11 @@ bool rmn_disk_make_directory(RmnDisk *disk,
                              char **error_out);
 
 // The commit point (P2): everything buffered reaches the image, then a
-// flush. Until this call, nothing has touched the file.
+// flush. Until this call, nothing has touched the file. The commit is
+// durable (P9): a private recovery journal is armed before the first
+// byte of the file changes, so an interruption at any point leaves
+// state the next open reconciles to wholly the old image or wholly
+// the committed new one.
 bool rmn_disk_commit(RmnDisk *disk, RmnErrorCategory *error_category_out, char **error_out);
 
 // Discards everything buffered; the image is untouched.

@@ -44,20 +44,10 @@
 > implementation above the library); **identification of backing
 > chains** (U5 untouched, per U6's note).
 
-## F17 — Durable commit
-
-P9's mechanism. The overlay's write-through gains a durability
-boundary — a durable undo journal or equivalent, beneath the commit
-point D2 settled — such that interruption at any point leaves
-state the next open reconciles before exposing the disk: wholly the
-old image or wholly the committed new one. Recovery artifacts are
-private transient state, no user-owned path and no cleanup verb.
-Covers raw, standalone qcow2, and chains alike. Needs: P9 pledged.
-
 ## F18 — The crash harness
 
 P9's evidence. A fault-injection harness terminates a separate
 process after each durability boundary in commit and asserts the
 next open reconciles to wholly-old or wholly-new — run for raw,
 standalone qcow2, and backing-chain images. In-process rollback
-tests are explicitly not evidence here. Needs: F17.
+tests are explicitly not evidence here.

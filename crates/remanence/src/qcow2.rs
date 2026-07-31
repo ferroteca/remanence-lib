@@ -300,6 +300,24 @@ impl<D: Device> Qcow2<D> {
         &self.header
     }
 
+    /// The host device the image lives in — for a chain, the top image
+    /// alone, which is the only member writes ever reach.
+    pub(crate) fn host_mut(&mut self) -> &mut D {
+        &mut self.device
+    }
+
+    /// The cached L1 table, snapshotted before a commit stages writes so
+    /// a commit that does not land can put the cache back (P9): the
+    /// write path updates the cache alongside the staged host writes,
+    /// and a discarded staging must discard both.
+    pub(crate) fn l1_snapshot(&self) -> Vec<u64> {
+        self.l1.clone()
+    }
+
+    pub(crate) fn restore_l1(&mut self, l1: Vec<u64>) {
+        self.l1 = l1;
+    }
+
     #[cfg(test)]
     fn into_device(self) -> D {
         self.device
@@ -610,6 +628,11 @@ fn open_member(
         )));
     }
     visited.push(canonical);
+
+    // A backing file once used as a writable top image may carry an
+    // interrupted commit of its own; it is reconciled before the chain
+    // composes over it (P9), exactly as at a top-level open.
+    crate::journal::reconcile_at(&resolved)?;
 
     // The immutability claim (P7); contention is an immediate, named
     // failure inside this open.

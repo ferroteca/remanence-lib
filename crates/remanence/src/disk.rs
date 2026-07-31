@@ -4,16 +4,21 @@
 //! The `Disk` surface (U3 and U4): open a raw or qcow2
 //! image under the P7 claim, report its partitions and volumes as they
 //! actually are, and read/write files in its FAT volumes with a commit
-//! point (P2) — everything rolls back until `commit`. A qcow2 whose
-//! content lives partly in a backing chain opens as one composed disk
-//! (U6), every member claimed for the session's life and writes
-//! allocated copy-on-write into the top image only.
+//! point (P2) — everything rolls back until `commit`. The commit is
+//! durable (P9): a recovery journal is armed beneath the write-through,
+//! so an interruption at any point leaves state the next open
+//! reconciles — wholly the old image or wholly the committed new one —
+//! before the disk is exposed. A qcow2 whose content lives partly in a
+//! backing chain opens as one composed disk (U6), every member claimed
+//! for the session's life and writes allocated copy-on-write into the
+//! top image only.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::device::{AccessIntent, AccessMode, Device, FileDevice, Overlay};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeInfo};
+use crate::journal;
 use crate::mbr::{self, Discovery, PartitionInfo, PartitionKind};
 use crate::qcow2::{self, QCOW2_MAGIC, Qcow2};
 
@@ -45,6 +50,29 @@ impl Virtual {
         match self {
             Self::Raw(device) => device,
             Self::Qcow2(device) => device,
+        }
+    }
+
+    /// The host file commits land in: the image itself, or a chain's
+    /// top image — the only member writes ever reach (U6).
+    fn host(&mut self) -> &mut FileDevice {
+        match self {
+            Self::Raw(device) => device,
+            Self::Qcow2(device) => device.host_mut(),
+        }
+    }
+
+    /// Driver cache state a staged-but-unlanded commit must put back.
+    fn cache_snapshot(&self) -> Option<Vec<u64>> {
+        match self {
+            Self::Raw(_) => None,
+            Self::Qcow2(device) => Some(device.l1_snapshot()),
+        }
+    }
+
+    fn restore_cache(&mut self, snapshot: Option<Vec<u64>>) {
+        if let (Self::Qcow2(device), Some(l1)) = (self, snapshot) {
+            device.restore_l1(l1);
         }
     }
 }
@@ -82,6 +110,13 @@ pub struct Disk {
     format: DiskFormat,
     mode: AccessMode,
     path: String,
+    /// The recovery sidecar's derived path (P9) — private transient
+    /// state, never a user-owned file.
+    journal_path: PathBuf,
+    /// Set when a commit failed partway and its in-process undo failed
+    /// too: the session's caches no longer describe the file, so every
+    /// verb refuses until a fresh open reconciles the image.
+    failed: Option<String>,
 }
 
 impl Disk {
@@ -92,14 +127,33 @@ impl Disk {
     /// falling back to read-only (a running VM holding the image is
     /// the designed refusal). A `Read` open takes read access only,
     /// denies writes to every other process, and keeps admitting other
-    /// readers. The container is detected by magic: qcow2, else raw.
+    /// readers. An interrupted commit left by an earlier session is
+    /// reconciled here, before the disk is exposed (P9): the image
+    /// comes back wholly the old state or wholly the committed new
+    /// one, never a partial third state. The container is detected by
+    /// magic: qcow2, else raw.
     /// A qcow2 naming a backing file opens with its whole chain
     /// composed, every backing file claimed immutable for the session's
     /// life (U6). Writes allocate copy-on-write into the top image only;
     /// commit preserves the backing relationship.
     pub fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
         let path = path.as_ref();
+        let recovery = journal::sidecar_path(path);
         let mut file = FileDevice::open(path, intent)?;
+        // The sidecar check runs under our claim, so no live commit can
+        // be mid-flight — a sidecar here is an interrupted one (P9).
+        if recovery.exists() {
+            match intent {
+                AccessIntent::Write => journal::reconcile(&recovery, &mut file, path)?,
+                AccessIntent::Read => {
+                    // Reconciling writes; trade the read claim for a
+                    // moment of exclusive access, then take it back.
+                    drop(file);
+                    journal::reconcile_at(path)?;
+                    file = FileDevice::open(path, intent)?;
+                }
+            }
+        }
         let mode = file.mode();
 
         let mut magic = [0u8; 4];
@@ -129,6 +183,8 @@ impl Disk {
             format,
             mode,
             path: path.display().to_string(),
+            journal_path: recovery,
+            failed: None,
         })
     }
 
@@ -206,6 +262,7 @@ impl Disk {
     /// of failing the whole disk or vanishing, and the volumes behind
     /// it never renumber.
     pub fn geometry(&mut self) -> Result<DiskGeometry> {
+        self.require_usable()?;
         let mut composed = self.composed();
         match mbr::discover(&mut composed)? {
             Discovery::Blank => Ok(DiskGeometry {
@@ -296,6 +353,13 @@ impl Disk {
         Ok(())
     }
 
+    fn require_usable(&self) -> Result<()> {
+        match &self.failed {
+            Some(reason) => Err(Error::io(reason.clone())),
+            None => Ok(()),
+        }
+    }
+
     /// Writes a file into the volume identified by `volume_id`. An
     /// existing file is overwritten — shorter or longer, its old
     /// clusters released and reclaimed, every FAT copy kept in step —
@@ -326,14 +390,99 @@ impl Disk {
 
     /// The commit point (P2): writes everything buffered since open (or
     /// the last commit/rollback) through to the image, then flushes.
+    /// The commit is durable (P9): every host write is staged in memory
+    /// first, the bytes it will overwrite are made durable in a private
+    /// recovery journal, and only then does the file change — so an
+    /// interruption at any point leaves state the next open reconciles
+    /// to wholly the old image or wholly the committed new one. A
+    /// write-through refusal (P6) likewise surfaces before a single
+    /// byte of the file has moved.
     pub fn commit(&mut self) -> Result<()> {
+        self.require_usable()?;
         self.require_writable()?;
-        self.overlay.commit(self.virtual_disk.device())
+        if !self.overlay.modified() {
+            return self.virtual_disk.device().flush();
+        }
+
+        // Stage: the write-through runs against a capture of the host
+        // file, so the complete set of host writes is known while the
+        // file is still untouched. A refusal discards the staging —
+        // the driver's caches put back alongside it — and keeps the
+        // buffered state for the caller.
+        let cache_snapshot = self.virtual_disk.cache_snapshot();
+        self.virtual_disk.host().begin_capture();
+        let staged = self.overlay.write_through(self.virtual_disk.device());
+        let (blocks, new_len) = self.virtual_disk.host().take_capture();
+        if let Err(error) = staged {
+            self.virtual_disk.restore_cache(cache_snapshot);
+            return Err(error);
+        }
+        if blocks.is_empty() {
+            self.overlay.clear();
+            return self.virtual_disk.device().flush();
+        }
+
+        // The durability boundary (P9): the bytes the apply will
+        // overwrite are durable in the recovery journal before the
+        // first of them changes.
+        let journal = match journal::record(
+            &self.journal_path,
+            self.virtual_disk.host(),
+            &blocks,
+            new_len,
+        ) {
+            Ok(journal) => journal,
+            Err(error) => {
+                let _ = journal::retire(&self.journal_path);
+                self.virtual_disk.restore_cache(cache_snapshot);
+                return Err(error);
+            }
+        };
+
+        // Apply, then retire the journal. Should either fail, the
+        // in-process undo puts the image back to wholly the old state;
+        // should even that fail, the armed journal remains for the
+        // next open to reconcile.
+        let applied = self
+            .virtual_disk
+            .host()
+            .apply(&blocks, new_len)
+            .and_then(|()| {
+                journal::retire(&self.journal_path).map_err(|error| {
+                    Error::io(format!(
+                        "cannot retire the commit's recovery journal '{}': {error}",
+                        self.journal_path.display()
+                    ))
+                })
+            });
+        if let Err(error) = applied {
+            match self
+                .virtual_disk
+                .host()
+                .restore(&journal.records, journal.original_len)
+            {
+                Ok(()) => {
+                    let _ = journal::retire(&self.journal_path);
+                    self.virtual_disk.restore_cache(cache_snapshot);
+                }
+                Err(_) => {
+                    self.failed = Some(format!(
+                        "a commit on '{}' failed partway and could not be undone \
+                         in this session; reopen the disk to reconcile it",
+                        self.path
+                    ));
+                }
+            }
+            return Err(error);
+        }
+
+        self.overlay.clear();
+        Ok(())
     }
 
     /// Discards everything buffered; the image is untouched.
     pub fn rollback(&mut self) {
-        self.overlay.rollback();
+        self.overlay.clear();
     }
 }
 
@@ -342,17 +491,12 @@ mod tests {
     use super::*;
     use crate::qcow2::QCOW2_MAGIC;
 
-    /// Builds a qcow2 file on disk whose virtual disk carries a FAT16
-    /// volume, using the crate's own writer — then exercises the whole
-    /// public path reliquary runs: open, geometry, write, commit, reopen,
-    /// read back.
-    #[test]
-    fn fat16_inside_qcow2_end_to_end() {
+    /// A minimal empty v3 qcow2 sized for the synthetic FAT16 volume
+    /// (mirrors the qcow2 unit-test builder).
+    fn empty_qcow2_bytes(virtual_size: u64) -> Vec<u8> {
         const CLUSTER_BITS: u32 = 12;
         const CLUSTER: u64 = 1 << CLUSTER_BITS;
 
-        // A minimal empty v3 qcow2 (mirrors the qcow2 unit-test builder).
-        let virtual_size = 4_096_000u64; // the synthetic FAT16 volume size
         let l2_entries = CLUSTER / 8;
         let l1_size = virtual_size.div_ceil(CLUSTER * l2_entries) as u32;
         let mut image = vec![0u8; 4 * CLUSTER as usize];
@@ -371,21 +515,33 @@ mod tests {
             let at = 2 * CLUSTER as usize + cluster * 2;
             image[at..at + 2].copy_from_slice(&1u16.to_be_bytes());
         }
+        image
+    }
 
-        let path =
-            std::env::temp_dir().join(format!("remanence-qcow2-e2e-{}.qcow2", std::process::id()));
-        std::fs::write(&path, image).expect("qcow2 writes");
+    /// Builds a qcow2 file at `path` whose virtual disk carries the
+    /// synthetic FAT16 volume, using the crate's own writer.
+    fn build_fat16_qcow2(path: &std::path::Path) -> u64 {
+        let virtual_size = 4_096_000u64; // the synthetic FAT16 volume size
+        std::fs::write(path, empty_qcow2_bytes(virtual_size)).expect("qcow2 writes");
 
         // Format the virtual disk: write a FAT16 volume into guest space
         // through the crate's own qcow2 writer.
-        {
-            let file = crate::device::FileDevice::open(&path, AccessIntent::Write).expect("opens");
-            let mut qcow2 = crate::qcow2::Qcow2::open(file).expect("parses");
-            let volume = fat16_volume_bytes();
-            assert_eq!(volume.len() as u64, virtual_size);
-            qcow2.write_at(0, &volume).expect("formats");
-            qcow2.flush().expect("flushes");
-        }
+        let file = crate::device::FileDevice::open(path, AccessIntent::Write).expect("opens");
+        let mut qcow2 = crate::qcow2::Qcow2::open(file).expect("parses");
+        let volume = fat16_volume_bytes();
+        assert_eq!(volume.len() as u64, virtual_size);
+        qcow2.write_at(0, &volume).expect("formats");
+        qcow2.flush().expect("flushes");
+        virtual_size
+    }
+
+    /// Exercises the whole public qcow2 path reliquary runs: open,
+    /// geometry, write, commit, reopen, read back.
+    #[test]
+    fn fat16_inside_qcow2_end_to_end() {
+        let path =
+            std::env::temp_dir().join(format!("remanence-qcow2-e2e-{}.qcow2", std::process::id()));
+        let virtual_size = build_fat16_qcow2(&path);
 
         // Now the public path.
         let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
@@ -422,6 +578,273 @@ mod tests {
         );
         drop(reopened);
         std::fs::remove_file(&path).ok();
+    }
+
+    fn temp_image(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "remanence-durable-{tag}-{}.img",
+            std::process::id()
+        ))
+    }
+
+    /// A raw FAT16 image at `path` holding `OLD.BIN` = `old_content()`,
+    /// committed and closed — the wholly-old state the durability tests
+    /// expect an interrupted commit to come back to.
+    fn build_committed_raw(path: &std::path::Path) {
+        std::fs::write(path, fat16_volume_bytes()).expect("image writes");
+        let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+            .expect("writes");
+        disk.commit().expect("commits");
+    }
+
+    fn old_content() -> Vec<u8> {
+        (0..48 * 1024u32).map(|n| (n % 240) as u8).collect()
+    }
+
+    fn new_content() -> Vec<u8> {
+        (0..64 * 1024u32).map(|n| (n % 251) as u8).collect()
+    }
+
+    /// Runs a commit's staging and journal phases exactly as
+    /// [`Disk::commit`] does, stopping at the durability boundary: the
+    /// journal is armed, the file untouched. Returns the staged host
+    /// writes so a test can apply any prefix of them before "crashing".
+    fn stage_and_arm(disk: &mut Disk) -> (std::collections::BTreeMap<u64, Vec<u8>>, u64) {
+        disk.virtual_disk.host().begin_capture();
+        disk.overlay
+            .write_through(disk.virtual_disk.device())
+            .expect("stages");
+        let (blocks, new_len) = disk.virtual_disk.host().take_capture();
+        crate::journal::record(&disk.journal_path, disk.virtual_disk.host(), &blocks, new_len)
+            .expect("journals");
+        (blocks, new_len)
+    }
+
+    #[test]
+    fn a_commit_retires_its_recovery_journal() {
+        let path = temp_image("retires");
+        build_committed_raw(&path);
+
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "NEW.BIN", &new_content())
+            .expect("writes");
+        disk.commit().expect("commits");
+        assert!(
+            !crate::journal::sidecar_path(&path).exists(),
+            "a completed commit leaves no recovery sidecar behind"
+        );
+        drop(disk);
+
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        assert_eq!(
+            reopened.read_file("superfloppy:0", "NEW.BIN").expect("reads"),
+            new_content()
+        );
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_torn_journal_proves_the_image_was_never_touched() {
+        let path = temp_image("torn");
+        build_committed_raw(&path);
+
+        // A crash before the durability boundary leaves a torn sidecar
+        // and an untouched image; the next open discards the one and
+        // exposes the other unchanged — through the read-intent route,
+        // which must trade its claim for the reconciliation.
+        let sidecar = crate::journal::sidecar_path(&path);
+        std::fs::write(&sidecar, b"torn mid-write, never sealed").expect("sidecar writes");
+
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
+        assert!(!sidecar.exists(), "the torn sidecar is discarded");
+        assert_eq!(
+            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            old_content()
+        );
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_interruption_mid_apply_reconciles_to_the_old_image() {
+        let path = temp_image("mid-apply");
+        build_committed_raw(&path);
+
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+            .expect("overwrites");
+        let (blocks, new_len) = stage_and_arm(&mut disk);
+        assert!(blocks.len() >= 2, "the staged write set spans blocks");
+
+        // The crash: half the staged writes land, the rest never do,
+        // and the process vanishes without retiring the journal.
+        for (&offset, block) in blocks.iter().take(blocks.len() / 2) {
+            let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
+            disk.virtual_disk
+                .host()
+                .write_at(offset, &block[..take])
+                .expect("applies");
+        }
+        drop(disk);
+
+        let mut reopened = Disk::open(&path, AccessIntent::Write).expect("reconciles and opens");
+        assert!(!crate::journal::sidecar_path(&path).exists());
+        assert_eq!(
+            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            old_content(),
+            "the image reconciles to wholly the old state"
+        );
+
+        // The reconciled disk is fully usable: the same overwrite
+        // commits durably this time.
+        reopened
+            .write_file("superfloppy:0", "OLD.BIN", &new_content())
+            .expect("overwrites");
+        reopened.commit().expect("commits");
+        drop(reopened);
+        let mut committed = Disk::open(&path, AccessIntent::Read).expect("opens");
+        assert_eq!(
+            committed.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            new_content()
+        );
+        drop(committed);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_interruption_before_retirement_reconciles_to_the_old_image() {
+        let path = temp_image("unretired");
+        build_committed_raw(&path);
+
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "NEW.BIN", &new_content())
+            .expect("writes");
+        let (blocks, new_len) = stage_and_arm(&mut disk);
+
+        // The crash: the apply completes, but the journal is never
+        // retired — the commit never returned, so the armed journal
+        // governs and the next open rolls the image back.
+        disk.virtual_disk.host().apply(&blocks, new_len).expect("applies");
+        drop(disk);
+
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
+        assert!(!crate::journal::sidecar_path(&path).exists());
+        assert_eq!(
+            reopened.stat("superfloppy:0", "NEW.BIN").expect("stats"),
+            None,
+            "the interrupted commit's file never existed"
+        );
+        assert_eq!(
+            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            old_content()
+        );
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_interrupted_qcow2_commit_reconciles_before_the_disk_is_exposed() {
+        let path = std::env::temp_dir().join(format!(
+            "remanence-durable-qcow2-{}.qcow2",
+            std::process::id()
+        ));
+        build_fat16_qcow2(&path);
+
+        // The wholly-old state: one committed file inside the qcow2.
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+            .expect("writes");
+        disk.commit().expect("commits");
+        assert!(!crate::journal::sidecar_path(&path).exists());
+        drop(disk);
+
+        // An interrupted commit: cluster allocations and metadata
+        // updates land partially, then the process vanishes.
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "NEW.BIN", &new_content())
+            .expect("writes");
+        let (blocks, new_len) = stage_and_arm(&mut disk);
+        assert!(blocks.len() >= 2, "the staged write set spans blocks");
+        for (&offset, block) in blocks.iter().take(blocks.len() / 2) {
+            let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
+            disk.virtual_disk
+                .host()
+                .write_at(offset, &block[..take])
+                .expect("applies");
+        }
+        drop(disk);
+
+        // The next open reconciles to wholly the old image: metadata
+        // consistent, the old file intact, the interrupted one absent.
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
+        assert!(!crate::journal::sidecar_path(&path).exists());
+        let geometry = reopened.geometry().expect("geometry");
+        assert_eq!(geometry.volumes.len(), 1);
+        assert_eq!(
+            reopened.stat("superfloppy:0", "NEW.BIN").expect("stats"),
+            None
+        );
+        assert_eq!(
+            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            old_content()
+        );
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_backing_member_reconciles_before_the_chain_composes() {
+        let base = std::env::temp_dir().join(format!(
+            "remanence-durable-chain-base-{}.qcow2",
+            std::process::id()
+        ));
+        let top = std::env::temp_dir().join(format!(
+            "remanence-durable-chain-top-{}.qcow2",
+            std::process::id()
+        ));
+        let virtual_size = build_fat16_qcow2(&base);
+        let mut disk = Disk::open(&base, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+            .expect("writes");
+        disk.commit().expect("commits");
+        drop(disk);
+
+        // An interrupted commit on the base, left behind before it
+        // became a backing file.
+        let mut disk = Disk::open(&base, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+            .expect("overwrites");
+        let (blocks, new_len) = stage_and_arm(&mut disk);
+        for (&offset, block) in blocks.iter().take(blocks.len() / 2) {
+            let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
+            disk.virtual_disk
+                .host()
+                .write_at(offset, &block[..take])
+                .expect("applies");
+        }
+        drop(disk);
+
+        // A fresh top image naming the base as its backing file.
+        let mut image = empty_qcow2_bytes(virtual_size);
+        let name = base.to_str().expect("utf-8 temp path").as_bytes();
+        image[0x200..0x200 + name.len()].copy_from_slice(name);
+        image[8..16].copy_from_slice(&0x200u64.to_be_bytes());
+        image[16..20].copy_from_slice(&(name.len() as u32).to_be_bytes());
+        std::fs::write(&top, image).expect("top writes");
+
+        // Composing the chain reconciles the base first (P9): its
+        // sidecar is gone and wholly the old bytes show through.
+        let mut chained = Disk::open(&top, AccessIntent::Read).expect("reconciles and composes");
+        assert!(!crate::journal::sidecar_path(&base).exists());
+        assert_eq!(
+            chained.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            old_content()
+        );
+        drop(chained);
+        std::fs::remove_file(&top).ok();
+        std::fs::remove_file(&base).ok();
     }
 
     /// The same synthetic FAT16 volume the integration tests build.

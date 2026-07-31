@@ -18,6 +18,7 @@ mod filesystem;
 mod hdos;
 mod image;
 mod inflate;
+mod journal;
 mod mbr;
 mod qcow2;
 mod registry;
