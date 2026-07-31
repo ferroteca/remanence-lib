@@ -15,8 +15,9 @@ One core, two bindings:
   the session and identification model, the HDOS directory lister and
   file extractor, the self-contained ZIP/DEFLATE reader that lets
   `Session::open` reach inside archives, and the disk stack —
-  the declared-intent deny-write claim, the native qcow2 v2/v3 driver,
-  MBR partition discovery, FAT12/FAT16 volume read/write, and the
+  the declared-intent deny-write claim, the native qcow2 v2/v3 driver
+  with read composition through backing chains, MBR partition discovery,
+  FAT12/FAT16 volume read/write, and the
   commit-point overlay that keeps every write bufferable and revocable
   until committed.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
@@ -147,6 +148,11 @@ needs and keeps admitting other readers, every remanence write action
 refused by name. An identification session, which only reads, still
 takes the strongest access the file grants — read/write preferred,
 read-only otherwise — with writes denied to others either way. The
+claim covers every file of a backing chain, consistently: the top
+image is claimed per the declared intent, and every backing file is
+claimed immutable through this access — writes denied to others, the
+library's own access read-only. Contention anywhere in the chain is
+an immediate, named failure, never a hidden wait. The
 claim is held from open until the session or disk is completely done:
 no claim-on-modify, no release-on-save. On Windows the mapping is
 native and kernel-enforced (share modes: a writable disk session

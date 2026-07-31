@@ -4,15 +4,17 @@
 //! The `Disk` surface (U3 and U4): open a raw or qcow2
 //! image under the P7 claim, report its partitions and volumes as they
 //! actually are, and read/write files in its FAT volumes with a commit
-//! point (P2) — everything rolls back until `commit`.
+//! point (P2) — everything rolls back until `commit`. A qcow2 whose
+//! content lives partly in a backing chain opens for reading as one
+//! composed disk (U6), every member claimed for the session's life.
 
 use std::path::Path;
 
 use crate::device::{AccessIntent, AccessMode, Device, FileDevice, Overlay};
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorCategory, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeInfo};
 use crate::mbr::{self, Discovery, PartitionInfo, PartitionKind};
-use crate::qcow2::{QCOW2_MAGIC, Qcow2};
+use crate::qcow2::{self, QCOW2_MAGIC, Qcow2};
 
 /// The container format a disk image turned out to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +92,10 @@ impl Disk {
     /// the designed refusal). A `Read` open takes read access only,
     /// denies writes to every other process, and keeps admitting other
     /// readers. The container is detected by magic: qcow2, else raw.
+    /// A qcow2 naming a backing file opens with its whole chain
+    /// composed for reading, every backing file claimed immutable for
+    /// the session's life (U6); writing through a chain is beyond this
+    /// release's support and a `Write` open refuses it at the door.
     pub fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
         let path = path.as_ref();
         let mut file = FileDevice::open(path, intent)?;
@@ -110,7 +116,19 @@ impl Disk {
         let (virtual_disk, format) = match format {
             Some(raw) => (Virtual::Raw(file), raw),
             None => {
-                let qcow2 = Qcow2::open(file)?;
+                let qcow2 = qcow2::open_chain(file, path)?;
+                if intent == AccessIntent::Write && qcow2.backed() {
+                    return Err(Error::categorized_image(
+                        ErrorCategory::Unsupported,
+                        "qcow2",
+                        format!(
+                            "'{}' reads through a backing chain; writing \
+                             through a chain is beyond this release's \
+                             support — open it for reading",
+                            path.display()
+                        ),
+                    ));
+                }
                 let version = qcow2.header().version;
                 (Virtual::Qcow2(qcow2), DiskFormat::Qcow2 { version })
             }

@@ -25,7 +25,12 @@ actually are, gives each reported volume an opaque stable identifier,
 and uses that identifier to work with files — list, stat, read, write
 (overwriting in place), and create directories with their missing
 parents — under a commit point: nothing touches the image until
-`commit`, and `rollback` discards everything.
+`commit`, and `rollback` discards everything. A qcow2 whose content
+lives partly in a backing chain — raw or qcow2 members, relative
+paths resolved from the image that names them — opens for reading as
+one composed disk, every member claimed immutable for the session's
+life; a missing member, a cycle, or a chain past the claimed depth is
+refused by name.
 The in-force vision — what the library is for (U-numbers) and the rules
 it holds itself to (P-numbers) — is in [USE-CASES.md](USE-CASES.md) and
 [ARCHITECTURE.md](ARCHITECTURE.md).

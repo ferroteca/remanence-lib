@@ -2,8 +2,8 @@
 
 > **Status:** drafted 2026-07-30 and pledged 2026-07-31, both at
 > the owner's direction, from the same demand as the use cases
-> beside this file ([USE-CASES.md](USE-CASES.md)). One principle
-> and one amendment to an in-force principle, owed by the project;
+> beside this file ([USE-CASES.md](USE-CASES.md)). One principle,
+> owed by the project;
 > a principle is **armed** only when it reaches root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md) — at which point a
 > divergence in the code becomes a bug. Numbers come from the one
@@ -30,18 +30,3 @@ Evidence is out-of-process, by definition: an in-process rollback
 test proves nothing about the crash case. Fault injection
 terminates a separate process after each durability boundary in
 commit and proves the next open reconciles correctly.
-
-## Amendment — the P7 claim covers the chain
-
-P7's core is untouched: denying write permission to every other
-process is mandatory in all scenarios, from open, and a file for
-which the denial cannot be obtained is not opened at all,
-immediately, with the reason named. One clause arrives (the
-declared-intent and no-observers clauses pledged beside it are
-delivered and in force at root P7):
-
-- **The claim covers every file of a backing chain, consistently.**
-  The top image is claimed per the declared intent; every backing
-  file is claimed immutable through this access — writes denied to
-  others, the library's own access read-only. Contention anywhere
-  in the chain is an immediate, named failure, never a hidden wait.

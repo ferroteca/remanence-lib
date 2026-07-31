@@ -4,12 +4,18 @@
 //! Native qcow2 v2/v3 driver, written from the published format
 //! documentation (QEMU `docs/interop/qcow2`). Presents the virtual disk as
 //! a [`Device`]. The support claim, per P8, is validated before anything
-//! else is touched: versions 2 and 3, standalone images only — no backing
-//! file, no external data file, no encryption, no unknown incompatible
-//! feature bits. Writing additionally requires refcount width 16 and an
-//! image without internal snapshots.
+//! else is touched — versions 2 and 3, no encryption, no external data
+//! file, no unknown incompatible feature bits — for every file of a
+//! backing chain alike. A chain composes for reading (U6): members are
+//! raw or qcow2, a relative backing path resolves from the image that
+//! names it, and every backing file is claimed immutable (P7). A missing
+//! member, a cycle, a chain past [`MAX_CHAIN_LENGTH`] files, and a
+//! backing format beyond the claim are refused by name. Writing claims
+//! standalone images only, refcount width 16, and no internal snapshots.
 
-use crate::device::Device;
+use std::path::{Path, PathBuf};
+
+use crate::device::{AccessIntent, Device, FileDevice};
 use crate::error::{Error, Result};
 use crate::inflate::inflate;
 
@@ -17,6 +23,16 @@ pub(crate) const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
 
 /// The highest qcow2 version this release explicitly supports (P8).
 const SUPPORTED_VERSION_CEILING: u32 = 3;
+
+/// The longest backing chain this release claims, counted in files with
+/// the top image included. A deeper chain is refused by name (P3), never
+/// walked partway.
+pub(crate) const MAX_CHAIN_LENGTH: usize = 16;
+
+/// The "backing file format name" header extension (0xe2792aca): the
+/// spec's way of pinning the backing file's container so it is never
+/// probed wrong.
+const BACKING_FORMAT_EXTENSION: u32 = 0xe279_2aca;
 
 const OFLAG_COPIED: u64 = 1 << 63;
 const OFLAG_COMPRESSED: u64 = 1 << 62;
@@ -50,6 +66,11 @@ pub(crate) struct Qcow2Header {
     pub refcount_table_clusters: u32,
     pub nb_snapshots: u32,
     pub refcount_order: u32,
+    /// The backing file name the header records, exactly as written.
+    pub backing_file: Option<String>,
+    /// The backing file's format where the image pins one ("raw",
+    /// "qcow2", ...) via the header extension; absent, the magic decides.
+    pub backing_format: Option<String>,
 }
 
 impl Qcow2Header {
@@ -81,9 +102,7 @@ impl Qcow2Header {
         }
 
         let backing_file_offset = be64(&raw, 8);
-        if backing_file_offset != 0 {
-            return Err(unsupported("backing files are not supported"));
-        }
+        let backing_file_size = be32(&raw, 16);
         let cluster_bits = be32(&raw, 20);
         if !(9..=21).contains(&cluster_bits) {
             return Err(invalid(format!("implausible cluster_bits {cluster_bits}")));
@@ -118,6 +137,45 @@ impl Qcow2Header {
             be32(&raw, 96)
         };
 
+        // The backing chain fields (U6), read only once every gate above
+        // has passed for this member.
+        let (backing_file, backing_format) = if backing_file_offset == 0 {
+            (None, None)
+        } else {
+            if backing_file_size == 0 || backing_file_size > 1023 {
+                return Err(invalid(format!(
+                    "implausible backing file name length {backing_file_size}"
+                )));
+            }
+            let end = backing_file_offset
+                .checked_add(backing_file_size as u64)
+                .filter(|&end| end <= device.len());
+            if end.is_none() {
+                return Err(invalid("backing file name lies past the end of the file"));
+            }
+            let mut name = vec![0u8; backing_file_size as usize];
+            device.read_at(backing_file_offset, &mut name)?;
+            let name = String::from_utf8(name)
+                .map_err(|_| invalid("backing file name is not valid UTF-8"))?;
+
+            // Extensions sit between the header and the backing file
+            // name, both inside the first cluster.
+            let extensions_start = if version == 2 {
+                72
+            } else {
+                let header_length = be32(&raw, 100) as u64;
+                if header_length < 104 {
+                    return Err(invalid(format!(
+                        "implausible v3 header length {header_length}"
+                    )));
+                }
+                header_length
+            };
+            let bound = backing_file_offset.min(1u64 << cluster_bits);
+            let format = backing_format_extension(device, extensions_start, bound)?;
+            (Some(name), format)
+        };
+
         Ok(Self {
             version,
             cluster_bits,
@@ -128,11 +186,72 @@ impl Qcow2Header {
             refcount_table_clusters,
             nb_snapshots,
             refcount_order,
+            backing_file,
+            backing_format,
         })
     }
 
     pub fn cluster_size(&self) -> u64 {
         1u64 << self.cluster_bits
+    }
+}
+
+/// Scans the header extension area for the backing-format extension.
+/// Unknown extension types are ignored, as the spec requires; an entry
+/// running past its area is a contradiction and fails (P6).
+fn backing_format_extension(
+    device: &mut dyn Device,
+    extensions_start: u64,
+    bound: u64,
+) -> Result<Option<String>> {
+    let mut at = extensions_start;
+    while at + 8 <= bound {
+        let mut entry = [0u8; 8];
+        device.read_at(at, &mut entry)?;
+        let kind = be32(&entry, 0);
+        if kind == 0 {
+            break; // The end-of-extensions marker.
+        }
+        let length = be32(&entry, 4) as u64;
+        if at + 8 + length > bound {
+            return Err(invalid("header extension runs past its area"));
+        }
+        if kind == BACKING_FORMAT_EXTENSION {
+            let mut name = vec![0u8; length as usize];
+            device.read_at(at + 8, &mut name)?;
+            let name = String::from_utf8(name).map_err(|_| {
+                invalid("backing file format name is not valid UTF-8")
+            })?;
+            return Ok(Some(name));
+        }
+        at += 8 + length.div_ceil(8) * 8; // Entries pad to 8 bytes.
+    }
+    Ok(None)
+}
+
+/// One backing member of a chain: its bytes show through wherever the
+/// image above leaves a cluster unallocated (U6).
+#[derive(Debug)]
+pub(crate) enum Backing<D: Device> {
+    /// A raw image: the file's bytes are the virtual disk.
+    Raw(D),
+    /// A qcow2 image, possibly carrying its own backing in turn.
+    Qcow2(Box<Qcow2<D>>),
+}
+
+impl<D: Device> Backing<D> {
+    fn len(&self) -> u64 {
+        match self {
+            Self::Raw(device) => device.len(),
+            Self::Qcow2(qcow2) => qcow2.header.virtual_size,
+        }
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        match self {
+            Self::Raw(device) => device.read_at(offset, buf),
+            Self::Qcow2(qcow2) => qcow2.read_at(offset, buf),
+        }
     }
 }
 
@@ -143,22 +262,51 @@ pub(crate) struct Qcow2<D: Device> {
     header: Qcow2Header,
     l1: Vec<u64>,
     writable_checked: bool,
+    backing: Option<Backing<D>>,
 }
 
 impl<D: Device> Qcow2<D> {
+    /// Opens a standalone image. An image naming a backing file is
+    /// refused here: composing the chain takes the containing file's
+    /// path, which only [`open_chain`] has.
     pub fn open(mut device: D) -> Result<Self> {
         let header = Qcow2Header::parse(&mut device)?;
+        if let Some(name) = &header.backing_file {
+            return Err(unsupported(format!(
+                "image names backing file '{name}'; a standalone open does \
+                 not compose the backing chain"
+            )));
+        }
+        Self::assemble(device, header, None)
+    }
 
+    /// Builds the driver over an already-parsed header and, for a chain
+    /// member, the backing image its unallocated clusters fall through to.
+    fn assemble(
+        mut device: D,
+        header: Qcow2Header,
+        backing: Option<Backing<D>>,
+    ) -> Result<Self> {
         let l1_bytes = header.l1_size as usize * 8;
         let mut raw = vec![0u8; l1_bytes];
         device.read_at(header.l1_table_offset, &mut raw)?;
         let l1 = raw.chunks_exact(8).map(|chunk| be64(chunk, 0)).collect();
 
-        Ok(Self { device, header, l1, writable_checked: false })
+        Ok(Self { device, header, l1, writable_checked: false, backing })
     }
 
     pub fn header(&self) -> &Qcow2Header {
         &self.header
+    }
+
+    /// Whether this image reads through a backing chain.
+    pub fn backed(&self) -> bool {
+        self.backing.is_some()
+    }
+
+    #[cfg(test)]
+    fn into_device(self) -> D {
+        self.device
     }
 
     fn cluster_size(&self) -> u64 {
@@ -174,6 +322,12 @@ impl<D: Device> Qcow2<D> {
     fn check_writable(&mut self) -> Result<()> {
         if self.writable_checked {
             return Ok(());
+        }
+        if self.backing.is_some() {
+            return Err(unsupported(
+                "writing through a backing chain is beyond this release's \
+                 support; open the image for reading",
+            ));
         }
         if self.header.nb_snapshots != 0 {
             return Err(unsupported(
@@ -234,12 +388,37 @@ impl<D: Device> Qcow2<D> {
             return Ok(());
         }
 
-        let host_offset = entry & L2_OFFSET_MASK;
-        if host_offset == 0 || entry & OFLAG_ZERO != 0 {
+        if entry & OFLAG_ZERO != 0 {
+            // An explicit "reads as zero" cluster masks any backing
+            // content behind it.
             buf.fill(0);
             return Ok(());
         }
+        let host_offset = entry & L2_OFFSET_MASK;
+        if host_offset == 0 {
+            // Unallocated: the backing image shows through (U6); zeros
+            // with no backing.
+            return self.read_backing(guest_offset, buf);
+        }
         self.device.read_at(host_offset + within, buf)
+    }
+
+    /// Reads from the backing image, zero-filling wherever the chain has
+    /// no bytes: with no backing at all, and past a shorter backing's end.
+    fn read_backing(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let Some(backing) = self.backing.as_mut() else {
+            buf.fill(0);
+            return Ok(());
+        };
+        let backing_len = backing.len();
+        if offset >= backing_len {
+            buf.fill(0);
+            return Ok(());
+        }
+        let take = (backing_len - offset).min(buf.len() as u64) as usize;
+        backing.read_at(offset, &mut buf[..take])?;
+        buf[take..].fill(0);
+        Ok(())
     }
 
     // Refcount plumbing (write path; 16-bit entries only, no snapshots,
@@ -379,11 +558,107 @@ impl<D: Device> Qcow2<D> {
     }
 }
 
+/// Opens the image at `path` with its whole backing chain composed
+/// (U6). `device` is the top file, already claimed per the caller's
+/// declared intent; every backing file is claimed immutable for the
+/// chain's life (P7) — writes denied to every other process, the
+/// library's own access read-only. A relative backing path resolves
+/// from the image that names it. A missing member, a cycle, a chain
+/// past [`MAX_CHAIN_LENGTH`] files, and a backing format beyond raw and
+/// qcow2 are refused by name (P3).
+pub(crate) fn open_chain(device: FileDevice, path: &Path) -> Result<Qcow2<FileDevice>> {
+    let canonical_top = std::fs::canonicalize(path).map_err(|error| {
+        Error::io(format!("cannot resolve '{}': {error}", path.display()))
+    })?;
+    open_member(device, path, &mut vec![canonical_top])
+}
+
+fn open_member(
+    mut device: FileDevice,
+    path: &Path,
+    visited: &mut Vec<PathBuf>,
+) -> Result<Qcow2<FileDevice>> {
+    let header = Qcow2Header::parse(&mut device)?;
+    let Some(name) = header.backing_file.clone() else {
+        return Qcow2::assemble(device, header, None);
+    };
+
+    // A relative backing path resolves from the containing image (U6).
+    let named = Path::new(&name);
+    let resolved = if named.is_absolute() {
+        named.to_path_buf()
+    } else {
+        path.parent().unwrap_or(Path::new("")).join(named)
+    };
+
+    let canonical = match std::fs::canonicalize(&resolved) {
+        Ok(canonical) => canonical,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Error::not_found(format!(
+                "backing file '{name}' of '{}' does not exist (resolved to '{}')",
+                path.display(),
+                resolved.display()
+            )));
+        }
+        Err(error) => {
+            return Err(Error::io(format!(
+                "cannot resolve backing file '{}': {error}",
+                resolved.display()
+            )));
+        }
+    };
+    if visited.contains(&canonical) {
+        return Err(invalid(format!(
+            "the backing chain cycles: '{}' is already a member",
+            resolved.display()
+        )));
+    }
+    if visited.len() >= MAX_CHAIN_LENGTH {
+        return Err(unsupported(format!(
+            "the backing chain runs past the {MAX_CHAIN_LENGTH} files this \
+             release claims; refusing to open it partway"
+        )));
+    }
+    visited.push(canonical);
+
+    // The immutability claim (P7); contention is an immediate, named
+    // failure inside this open.
+    let mut backing_device = FileDevice::open(&resolved, AccessIntent::Read)?;
+
+    // The parent pins its backing file's format where the image records
+    // one; otherwise the magic decides, exactly as at the top.
+    let is_qcow2 = match header.backing_format.as_deref() {
+        Some("qcow2") => true,
+        Some("raw") => false,
+        Some(other) => {
+            return Err(unsupported(format!(
+                "backing file format '{other}' is beyond this release's \
+                 support (raw and qcow2 are claimed)"
+            )));
+        }
+        None => {
+            let mut magic = [0u8; 4];
+            if backing_device.len() >= 4 {
+                backing_device.read_at(0, &mut magic)?;
+            }
+            magic == QCOW2_MAGIC
+        }
+    };
+
+    let backing = if is_qcow2 {
+        Backing::Qcow2(Box::new(open_member(backing_device, &resolved, visited)?))
+    } else {
+        Backing::Raw(backing_device)
+    };
+    Qcow2::assemble(device, header, Some(backing))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// A growable in-memory device for building images in tests.
+    #[derive(Debug)]
     struct VecDevice(Vec<u8>);
 
     impl Device for VecDevice {
@@ -470,8 +745,9 @@ mod tests {
         assert!(edge.iter().all(|&byte| byte == 0));
     }
 
-    #[test]
-    fn reads_a_compressed_cluster() {
+    /// A device carrying one compressed cluster at guest cluster 9, and
+    /// the content it decompresses to.
+    fn compressed_qcow2() -> (VecDevice, Vec<u8>) {
         let mut device = empty_qcow2(64 * CLUSTER);
 
         // An L2 table at cluster 4 for L1 index 0.
@@ -492,6 +768,12 @@ mod tests {
         let entry = OFLAG_COMPRESSED | ((sectors - 1) << x) | (5 * CLUSTER);
         device.write_at(4 * CLUSTER + 9 * 8, &entry.to_be_bytes()).unwrap();
 
+        (device, content)
+    }
+
+    #[test]
+    fn reads_a_compressed_cluster() {
+        let (device, content) = compressed_qcow2();
         let mut qcow2 = Qcow2::open(device).expect("opens");
         let mut back = vec![0u8; CLUSTER as usize];
         qcow2.read_at(9 * CLUSTER, &mut back).expect("reads compressed");
@@ -513,13 +795,155 @@ mod tests {
             panic!("unknown feature bit must be refused")
         };
         assert!(error.to_string().contains("incompatible feature"));
+    }
 
+    /// Attaches `backing` beneath an image the builders above produced.
+    fn with_backing(mut device: VecDevice, backing: Backing<VecDevice>) -> Qcow2<VecDevice> {
+        let header = Qcow2Header::parse(&mut device).expect("parses");
+        Qcow2::assemble(device, header, Some(backing)).expect("assembles")
+    }
+
+    #[test]
+    fn reads_compose_through_the_chain() {
+        let virtual_size = 64 * CLUSTER;
+        let deep: Vec<u8> = (0..CLUSTER as u32).map(|n| (n % 251) as u8).collect();
+        let shadowed = vec![0x5au8; CLUSTER as usize];
+        let top_own = vec![0xa5u8; CLUSTER as usize];
+
+        // The base holds clusters 3 and 5; the top shadows cluster 5
+        // with its own allocation; a middle image allocates nothing.
+        let mut base = Qcow2::open(empty_qcow2(virtual_size)).expect("base opens");
+        base.write_at(3 * CLUSTER, &deep).expect("base writes");
+        base.write_at(5 * CLUSTER, &shadowed).expect("base writes");
+
+        let mid = with_backing(
+            empty_qcow2(virtual_size),
+            Backing::Qcow2(Box::new(base)),
+        );
+
+        let mut top_builder = Qcow2::open(empty_qcow2(virtual_size)).expect("top opens");
+        top_builder.write_at(5 * CLUSTER, &top_own).expect("top writes");
+        let mut top = with_backing(top_builder.into_device(), Backing::Qcow2(Box::new(mid)));
+
+        // Unallocated falls through two members; allocated shadows; a
+        // cluster nobody holds is zero.
+        let mut buf = vec![0u8; CLUSTER as usize];
+        top.read_at(3 * CLUSTER, &mut buf).expect("reads");
+        assert_eq!(buf, deep);
+        top.read_at(5 * CLUSTER, &mut buf).expect("reads");
+        assert_eq!(buf, top_own);
+        top.read_at(7 * CLUSTER, &mut buf).expect("reads");
+        assert!(buf.iter().all(|&byte| byte == 0));
+
+        // One read spanning a fall-through cluster and a zero one
+        // composes byte-exactly across the boundary.
+        let mut span = vec![0xffu8; CLUSTER as usize];
+        top.read_at(3 * CLUSTER + CLUSTER / 2, &mut span).expect("reads");
+        assert_eq!(span[..CLUSTER as usize / 2], deep[CLUSTER as usize / 2..]);
+        assert!(span[CLUSTER as usize / 2..].iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn a_zero_cluster_masks_the_backing() {
+        let virtual_size = 64 * CLUSTER;
+        let mut base = Qcow2::open(empty_qcow2(virtual_size)).expect("base opens");
+        base.write_at(3 * CLUSTER, &vec![0xEEu8; CLUSTER as usize])
+            .expect("base writes");
+
+        // The top marks guest cluster 3 "reads as zero" by hand: an L2
+        // table at cluster 4, its entry 3 carrying only the zero flag.
+        let mut device = empty_qcow2(virtual_size);
+        device
+            .write_at(3 * CLUSTER, &((4 * CLUSTER) | OFLAG_COPIED).to_be_bytes())
+            .unwrap();
+        device.write_at(5 * CLUSTER - 1, &[0]).unwrap();
+        device
+            .write_at(4 * CLUSTER + 3 * 8, &OFLAG_ZERO.to_be_bytes())
+            .unwrap();
+
+        let mut top = with_backing(device, Backing::Qcow2(Box::new(base)));
+        let mut buf = vec![0xffu8; CLUSTER as usize];
+        top.read_at(3 * CLUSTER, &mut buf).expect("reads");
+        assert!(
+            buf.iter().all(|&byte| byte == 0),
+            "the zero cluster masks the backing content"
+        );
+    }
+
+    #[test]
+    fn a_short_backing_reads_zero_past_its_end() {
+        // A raw backing member half a cluster short of two clusters.
+        let raw_len = 2 * CLUSTER as usize - CLUSTER as usize / 2;
+        let raw: Vec<u8> = (0..raw_len as u32).map(|n| (n % 249 + 1) as u8).collect();
+        let mut top = with_backing(
+            empty_qcow2(64 * CLUSTER),
+            Backing::Raw(VecDevice(raw.clone())),
+        );
+
+        // A read spanning the backing's end: its bytes, then zeros.
+        let mut buf = vec![0xffu8; CLUSTER as usize];
+        top.read_at(CLUSTER, &mut buf).expect("reads");
+        assert_eq!(buf[..CLUSTER as usize / 2], raw[CLUSTER as usize..]);
+        assert!(buf[CLUSTER as usize / 2..].iter().all(|&byte| byte == 0));
+
+        // Far past the backing: all zero.
+        let mut far = vec![0xffu8; 64];
+        top.read_at(10 * CLUSTER, &mut far).expect("reads");
+        assert!(far.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn compressed_clusters_decompress_wherever_they_sit() {
+        let (device, content) = compressed_qcow2();
+        let base = Qcow2::open(device).expect("base opens");
+        let mut top = with_backing(
+            empty_qcow2(64 * CLUSTER),
+            Backing::Qcow2(Box::new(base)),
+        );
+
+        let mut back = vec![0u8; CLUSTER as usize];
+        top.read_at(9 * CLUSTER, &mut back).expect("reads through");
+        assert_eq!(back, content, "the backing's compressed cluster decompresses");
+    }
+
+    #[test]
+    fn writing_through_a_chain_is_refused() {
+        let mut top = with_backing(
+            empty_qcow2(64 * CLUSTER),
+            Backing::Raw(VecDevice(vec![0u8; CLUSTER as usize])),
+        );
+        let error = top
+            .write_at(0, &[1, 2, 3])
+            .expect_err("chain writes are beyond the claim");
+        assert_eq!(error.category(), crate::ErrorCategory::Unsupported);
+        assert!(error.to_string().contains("backing chain"));
+    }
+
+    #[test]
+    fn the_header_carries_the_backing_name_and_pinned_format() {
         let mut device = empty_qcow2(CLUSTER);
-        device.write_at(8, &(2 * CLUSTER).to_be_bytes()).unwrap();
-        let Err(error) = Qcow2::open(device) else {
-            panic!("backing file must be refused")
-        };
-        assert!(error.to_string().contains("backing"));
+        let name = b"base.img";
+        device.write_at(0x200, name).unwrap();
+        device.write_at(8, &0x200u64.to_be_bytes()).unwrap();
+        device
+            .write_at(16, &(name.len() as u32).to_be_bytes())
+            .unwrap();
+        // The backing-format extension right after the v3 header: type,
+        // length 3, "raw" padded to 8.
+        device
+            .write_at(112, &BACKING_FORMAT_EXTENSION.to_be_bytes())
+            .unwrap();
+        device.write_at(116, &3u32.to_be_bytes()).unwrap();
+        device.write_at(120, b"raw").unwrap();
+
+        let header = Qcow2Header::parse(&mut device).expect("parses");
+        assert_eq!(header.backing_file.as_deref(), Some("base.img"));
+        assert_eq!(header.backing_format.as_deref(), Some("raw"));
+
+        // The standalone open names what it will not compose.
+        let error = Qcow2::open(device).expect_err("standalone open refuses");
+        assert!(error.to_string().contains("base.img"));
+        assert!(error.to_string().contains("standalone"));
     }
 }
 

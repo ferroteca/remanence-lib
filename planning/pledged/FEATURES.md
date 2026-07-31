@@ -4,10 +4,11 @@
 > the owner's direction: the feature cut that would let the
 > downstream embedding consumer that U3 and U4 serve delete its own
 > disk-access implementation and stand wholly on this library,
-> pinning one exact prerelease at a time. P10 is now in force at
+> pinning one exact prerelease at a time. P10 and the amended P7 are
+> now in force at
 > root [ARCHITECTURE.md](../../ARCHITECTURE.md); the remaining demand
 > is pledged beside this file — [USE-CASES.md](USE-CASES.md) (U6) and
-> [ARCHITECTURE.md](ARCHITECTURE.md) (P9 and the P7 amendment).
+> [ARCHITECTURE.md](ARCHITECTURE.md) (P9).
 > Every feature here is owed by the project, with no promise of
 > order or time; a feature's number evaporates on delivery, and a
 > split retires the parent number. Each feature is cut to one
@@ -30,7 +31,9 @@
 > directories), path semantics (`/` or `\`, case-insensitive DOS
 > names, `.` ignored, `..` refused), the commit-point overlay with
 > rollback, and the native qcow2 v2/v3 driver including
-> compressed-cluster reads. The cut below is the delta, in
+> compressed-cluster reads and backing-chain read composition — U6's
+> read half, every member claimed per the amended P7. The cut below
+> is the delta, in
 > dependency order — nothing about it is a schedule.
 >
 > Deliberately absent, named so their absence is a decision:
@@ -42,20 +45,6 @@
 > implementation above the library); **identification of backing
 > chains** (U5 untouched, per U6's note).
 
-## F15 — qcow2 backing-chain read
-
-U6's read half. The backing-file header fields are parsed; a
-relative backing path resolves from the containing image; the chain
-opens to a bounded maximum depth with cycle detection; every member
-is claimed per the amended P7 — the top image per the declared
-intent, every backing file immutable. Reads compose through the
-chain: unallocated and zero clusters read through to the backing
-image where v2/v3 semantics require it; compressed clusters
-decompress wherever in the chain they sit. Raw and qcow2 backing
-files are claimed. Named refusals, per P3 and P8: missing backing
-file, cycle, depth beyond the claim, encryption, external data
-files, unknown feature bits anywhere in the chain.
-
 ## F16 — Copy-on-write into the top image
 
 U6's write half. Writing through a chain allocates into the top
@@ -64,7 +53,7 @@ flattened; commit preserves the backing relationship. Evidence
 includes hypervisor-authored fixtures: after commit, the
 hypervisor's own tooling still reports the same backing file and
 reads the changed guest bytes — the library's claim is only as wide
-as what those fixtures exercise on the delivered host. Needs: F15.
+as what those fixtures exercise on the delivered host.
 
 ## F17 — Durable commit
 
