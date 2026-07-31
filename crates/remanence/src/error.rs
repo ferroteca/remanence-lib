@@ -100,6 +100,10 @@ impl Error {
         Self::categorized_io(ErrorCategory::ReadOnly, reason)
     }
 
+    pub(crate) fn not_found(reason: impl Into<String>) -> Self {
+        Self::categorized_io(ErrorCategory::NotFound, reason)
+    }
+
     fn categorized_io(category: ErrorCategory, reason: impl Into<String>) -> Self {
         Self::Io {
             category,

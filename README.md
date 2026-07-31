@@ -21,9 +21,10 @@ every other process while admitting other readers; a writable session
 admits no observers at all; and an image whose claim cannot be secured —
 one held by a running VM, say — is refused outright at the open. It
 reports the disk's MBR partitions and FAT12/FAT16 volumes as they
-actually are, and reads and writes files in those volumes with a commit
-point: nothing touches the image until `commit`, and `rollback`
-discards everything.
+actually are, gives each reported volume an opaque stable identifier,
+and uses that identifier to read and write files with a commit point:
+nothing touches the image until `commit`, and `rollback` discards
+everything.
 The in-force vision — what the library is for (U-numbers) and the rules
 it holds itself to (P-numbers) — is in [USE-CASES.md](USE-CASES.md) and
 [ARCHITECTURE.md](ARCHITECTURE.md).

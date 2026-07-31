@@ -81,7 +81,7 @@ typedef enum {
 // An open disk image.
 typedef struct RmnDisk RmnDisk;
 
-// A snapshot of a disk's complete report (pledged U4): blank is an
+// A snapshot of a disk's complete report (U4): blank is an
 // answer, and every declared partition row stays, issues and all.
 typedef struct RmnDiskGeometry RmnDiskGeometry;
 
@@ -339,7 +339,7 @@ uint64_t rmn_disk_size(const RmnDisk *disk);
 // Whether uncommitted changes exist.
 bool rmn_disk_is_modified(const RmnDisk *disk);
 
-// Reads the disk's complete report (pledged U4): its partitions and
+// Reads the disk's complete report (U4): its partitions and
 // volumes as they actually are. Blank is an answer (zero volumes, see
 // `rmn_geometry_is_blank`), a partition row the library cannot read
 // stays in the report carrying its issue, and non-zero data that is
@@ -383,7 +383,7 @@ uint64_t rmn_geometry_partition_length_bytes(const RmnDiskGeometry *geometry, si
 // Stores a partition row's issue category and returns true; returns
 // false when the row was read cleanly (or the index is out of range).
 // A row carrying an issue stays in the report with no volume read from
-// it, and the rows behind it never renumber (pledged U4).
+// it, and the rows behind it never renumber (U4).
 bool rmn_geometry_partition_issue_category(const RmnDiskGeometry *geometry,
                                            size_t index,
                                            RmnErrorCategory *category_out);
@@ -394,6 +394,10 @@ const char *rmn_geometry_partition_issue(const RmnDiskGeometry *geometry, size_t
 
 // Number of volumes actually read (one guest drive letter each).
 size_t rmn_geometry_volume_count(const RmnDiskGeometry *geometry);
+
+// A volume's opaque stable identifier. The borrowed string is owned by
+// `geometry`.
+const char *rmn_geometry_volume_id(const RmnDiskGeometry *geometry, size_t index);
 
 // The 1-based partition number a volume sits in; returns false for a
 // partitionless image.
@@ -432,13 +436,13 @@ bool rmn_geometry_volume_heads(const RmnDiskGeometry *geometry, size_t index, ui
 // The volume's cylinder count, only where an exact derivation exists —
 // the boot record's track geometry divides the total sector count with
 // no remainder; returns false otherwise, never an invented value
-// (pledged U4).
+// (U4).
 bool rmn_geometry_volume_cylinders(const RmnDiskGeometry *geometry, size_t index, uint64_t *out);
 
-// Lists a directory in volume `volume` ("" = root, "A/B" descends). Free
+// Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
 // with `rmn_fat_entry_list_free`.
 RmnFatEntryList *rmn_disk_entries(RmnDisk *disk,
-                                  size_t volume,
+                                  const char *volume_id,
                                   const char *path,
                                   RmnErrorCategory *error_category_out,
                                   char **error_out);
@@ -458,10 +462,10 @@ RmnFatEntryKind rmn_fat_entry_kind(const RmnFatEntryList *list, size_t index);
 // An entry's size in bytes (0 for directories).
 uint64_t rmn_fat_entry_size_bytes(const RmnFatEntryList *list, size_t index);
 
-// Copies a file's bytes out of volume `volume`. Free with
+// Copies a file's bytes out of `volume_id`. Free with
 // `rmn_file_data_free`.
 RmnFileData *rmn_disk_read_file(RmnDisk *disk,
-                                size_t volume,
+                                const char *volume_id,
                                 const char *path,
                                 RmnErrorCategory *error_category_out,
                                 char **error_out);
@@ -472,18 +476,18 @@ const uint8_t *rmn_file_data_bytes(const RmnFileData *data, size_t *length_out);
 // Frees read-out file bytes.
 void rmn_file_data_free(RmnFileData *data);
 
-// Writes a file into volume `volume`. Buffered until `rmn_disk_commit`.
+// Writes a file into `volume_id`. Buffered until `rmn_disk_commit`.
 bool rmn_disk_write_file(RmnDisk *disk,
-                         size_t volume,
+                         const char *volume_id,
                          const char *path,
                          const uint8_t *bytes,
                          size_t length,
                          RmnErrorCategory *error_category_out,
                          char **error_out);
 
-// Creates a directory in volume `volume`. Buffered until commit.
+// Creates a directory in `volume_id`. Buffered until commit.
 bool rmn_disk_make_directory(RmnDisk *disk,
-                             size_t volume,
+                             const char *volume_id,
                              const char *path,
                              RmnErrorCategory *error_category_out,
                              char **error_out);

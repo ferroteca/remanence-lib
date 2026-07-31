@@ -18,8 +18,8 @@ use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 
 use remanence::{
-    Container, ContainerKind, ContainerLayout, DiskLayout, ErrorCategory, HdosFile,
-    Identification, PhysicalMediaLayout, SectorLayout, Session, list_hdos_files,
+    Container, ContainerKind, ContainerLayout, DiskLayout, ErrorCategory, HdosFile, Identification,
+    PhysicalMediaLayout, SectorLayout, Session, list_hdos_files,
 };
 
 /// Stable, machine-readable classification of a library refusal. A fallible
@@ -381,7 +381,11 @@ pub unsafe extern "C" fn rmn_session_open(
         Ok(session) => {
             let path = to_cstring(&session.path().display().to_string());
             let image_path = to_cstring(&session.image_path().display().to_string());
-            Box::into_raw(Box::new(RmnSession { session, path, image_path }))
+            Box::into_raw(Box::new(RmnSession {
+                session,
+                path,
+                image_path,
+            }))
         }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -409,9 +413,7 @@ pub unsafe extern "C" fn rmn_session_path(session: *const RmnSession) -> *const 
 
 /// The resolved image path (the entry name for ZIP inputs).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rmn_session_image_path(
-    session: *const RmnSession,
-) -> *const c_char {
+pub unsafe extern "C" fn rmn_session_image_path(session: *const RmnSession) -> *const c_char {
     match unsafe { session.as_ref() } {
         Some(session) => session.image_path.as_ptr(),
         None => ptr::null(),
@@ -456,7 +458,11 @@ pub unsafe extern "C" fn rmn_session_identify(
     let Some(session) = (unsafe { session.as_ref() }) else {
         return ptr::null_mut();
     };
-    let Identification { containers, modified, evidence } = session.session.identify();
+    let Identification {
+        containers,
+        modified,
+        evidence,
+    } = session.session.identify();
 
     Box::into_raw(Box::new(RmnIdentification {
         modified,
@@ -467,9 +473,7 @@ pub unsafe extern "C" fn rmn_session_identify(
 
 /// Frees an identification handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rmn_identification_free(
-    identification: *mut RmnIdentification,
-) {
+pub unsafe extern "C" fn rmn_identification_free(identification: *mut RmnIdentification) {
     if !identification.is_null() {
         drop(unsafe { Box::from_raw(identification) });
     }
@@ -488,8 +492,7 @@ pub unsafe extern "C" fn rmn_identification_modified(
 pub unsafe extern "C" fn rmn_identification_container_count(
     identification: *const RmnIdentification,
 ) -> usize {
-    unsafe { identification.as_ref() }
-        .map_or(0, |identification| identification.containers.len())
+    unsafe { identification.as_ref() }.map_or(0, |identification| identification.containers.len())
 }
 
 /// Number of evidence lines.
@@ -497,8 +500,7 @@ pub unsafe extern "C" fn rmn_identification_container_count(
 pub unsafe extern "C" fn rmn_identification_evidence_count(
     identification: *const RmnIdentification,
 ) -> usize {
-    unsafe { identification.as_ref() }
-        .map_or(0, |identification| identification.evidence.len())
+    unsafe { identification.as_ref() }.map_or(0, |identification| identification.evidence.len())
 }
 
 /// One evidence line, or null when out of range.
@@ -548,8 +550,7 @@ pub unsafe extern "C" fn rmn_container_confidence(
     identification: *const RmnIdentification,
     index: usize,
 ) -> u8 {
-    unsafe { container_view(identification, index) }
-        .map_or(0, |container| container.confidence)
+    unsafe { container_view(identification, index) }.map_or(0, |container| container.confidence)
 }
 
 /// Whether the container matched a known format.
@@ -558,8 +559,7 @@ pub unsafe extern "C" fn rmn_container_known(
     identification: *const RmnIdentification,
     index: usize,
 ) -> bool {
-    unsafe { container_view(identification, index) }
-        .is_some_and(|container| container.known)
+    unsafe { container_view(identification, index) }.is_some_and(|container| container.known)
 }
 
 /// Current size in bytes; returns false when unknown.
@@ -569,8 +569,7 @@ pub unsafe extern "C" fn rmn_container_current_bytes(
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value =
-        unsafe { container_view(identification, index) }.and_then(|c| c.current_bytes);
+    let value = unsafe { container_view(identification, index) }.and_then(|c| c.current_bytes);
     unsafe { write_opt_u64(value, out) }
 }
 
@@ -581,8 +580,7 @@ pub unsafe extern "C" fn rmn_container_expected_bytes(
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value =
-        unsafe { container_view(identification, index) }.and_then(|c| c.expected_bytes);
+    let value = unsafe { container_view(identification, index) }.and_then(|c| c.expected_bytes);
     unsafe { write_opt_u64(value, out) }
 }
 
@@ -592,16 +590,15 @@ pub unsafe extern "C" fn rmn_container_layout_kind(
     identification: *const RmnIdentification,
     index: usize,
 ) -> RmnLayoutKind {
-    unsafe { container_view(identification, index) }.map_or(
-        RmnLayoutKind::Unknown,
-        |container| match &container.layout {
+    unsafe { container_view(identification, index) }.map_or(RmnLayoutKind::Unknown, |container| {
+        match &container.layout {
             LayoutView::Unknown => RmnLayoutKind::Unknown,
             LayoutView::Archive { .. } => RmnLayoutKind::Archive,
             LayoutView::Image { .. } => RmnLayoutKind::Image,
             LayoutView::PhysicalMedia(_) => RmnLayoutKind::PhysicalMedia,
             LayoutView::Filesystem { .. } => RmnLayoutKind::Filesystem,
-        },
-    )
+        }
+    })
 }
 
 /// Archive layout: the archive file path; null for other layouts.
@@ -636,7 +633,9 @@ pub unsafe extern "C" fn rmn_container_archive_compressed_size(
     out: *mut u64,
 ) -> bool {
     let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
-        Some(LayoutView::Archive { compressed_size, .. }) => *compressed_size,
+        Some(LayoutView::Archive {
+            compressed_size, ..
+        }) => *compressed_size,
         _ => None,
     };
     unsafe { write_opt_u64(value, out) }
@@ -650,7 +649,9 @@ pub unsafe extern "C" fn rmn_container_archive_uncompressed_size(
     out: *mut u64,
 ) -> bool {
     let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
-        Some(LayoutView::Archive { uncompressed_size, .. }) => *uncompressed_size,
+        Some(LayoutView::Archive {
+            uncompressed_size, ..
+        }) => *uncompressed_size,
         _ => None,
     };
     unsafe { write_opt_u64(value, out) }
@@ -664,7 +665,10 @@ pub unsafe extern "C" fn rmn_container_image_payload_offset(
     out: *mut u64,
 ) -> bool {
     let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
-        Some(LayoutView::Image { payload_offset_bytes, .. }) => *payload_offset_bytes,
+        Some(LayoutView::Image {
+            payload_offset_bytes,
+            ..
+        }) => *payload_offset_bytes,
         _ => None,
     };
     unsafe { write_opt_u64(value, out) }
@@ -678,7 +682,10 @@ pub unsafe extern "C" fn rmn_container_image_payload_length(
     out: *mut u64,
 ) -> bool {
     let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
-        Some(LayoutView::Image { payload_length_bytes, .. }) => *payload_length_bytes,
+        Some(LayoutView::Image {
+            payload_length_bytes,
+            ..
+        }) => *payload_length_bytes,
         _ => None,
     };
     unsafe { write_opt_u64(value, out) }
@@ -789,8 +796,8 @@ pub unsafe extern "C" fn rmn_container_disk_track(
     has_sector_size: *mut bool,
     sector_size: *mut u64,
 ) -> bool {
-    let Some(track) = unsafe { disk_view(identification, index) }
-        .and_then(|disk| disk.tracks.get(track_index))
+    let Some(track) =
+        unsafe { disk_view(identification, index) }.and_then(|disk| disk.tracks.get(track_index))
     else {
         return false;
     };
@@ -822,8 +829,7 @@ pub unsafe extern "C" fn rmn_container_disk_total_sectors(
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value =
-        unsafe { disk_view(identification, index) }.and_then(|disk| disk.total_sectors);
+    let value = unsafe { disk_view(identification, index) }.and_then(|disk| disk.total_sectors);
     unsafe { write_opt_u64(value, out) }
 }
 
@@ -920,8 +926,7 @@ pub unsafe extern "C" fn rmn_hdos_file_extension(
     list: *const RmnHdosFileList,
     index: usize,
 ) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }
-        .map_or(ptr::null(), |file| file.extension.as_ptr())
+    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.extension.as_ptr())
 }
 
 /// `"NAME.EXT"`, or `"NAME"` when the extension is empty.
@@ -930,8 +935,7 @@ pub unsafe extern "C" fn rmn_hdos_file_display_name(
     list: *const RmnHdosFileList,
     index: usize,
 ) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }
-        .map_or(ptr::null(), |file| file.display_name.as_ptr())
+    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.display_name.as_ptr())
 }
 
 /// Size in 256-byte sectors.
@@ -963,10 +967,7 @@ pub unsafe extern "C" fn rmn_hdos_file_modified_date_raw(
 
 /// Raw HDOS flag byte.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rmn_hdos_file_flags_raw(
-    list: *const RmnHdosFileList,
-    index: usize,
-) -> u8 {
+pub unsafe extern "C" fn rmn_hdos_file_flags_raw(list: *const RmnHdosFileList, index: usize) -> u8 {
     unsafe { hdos_file_view(list, index) }.map_or(0, |file| file.flags_raw)
 }
 
@@ -985,8 +986,7 @@ pub unsafe extern "C" fn rmn_hdos_file_modified_date(
     list: *const RmnHdosFileList,
     index: usize,
 ) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }
-        .map_or(ptr::null(), |file| file.modified_date.as_ptr())
+    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.modified_date.as_ptr())
 }
 
 // ---------------------------------------------------------------------------
@@ -995,8 +995,8 @@ pub unsafe extern "C" fn rmn_hdos_file_modified_date(
 // commit point.
 
 use remanence::{
-    AccessIntent, AccessMode, Disk, DiskFormat, DiskGeometry, FatEntry,
-    FatEntryKind, read_hdos_file,
+    AccessIntent, AccessMode, Disk, DiskFormat, DiskGeometry, FatEntry, FatEntryKind,
+    read_hdos_file,
 };
 
 /// The caller's declared intent when opening a disk (P7).
@@ -1044,7 +1044,7 @@ pub struct RmnDisk {
     disk: Disk,
 }
 
-/// A snapshot of a disk's complete report (pledged U4): blank is an
+/// A snapshot of a disk's complete report (U4): blank is an
 /// answer, and every declared partition row stays, issues and all.
 pub struct RmnDiskGeometry {
     blank: bool,
@@ -1064,6 +1064,7 @@ struct PartitionView {
 }
 
 struct VolumeView {
+    id: CString,
     partition_number: Option<u32>,
     kind_name: CString,
     label: Option<CString>,
@@ -1096,7 +1097,9 @@ unsafe fn utf8_arg<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
     if value.is_null() {
         return None;
     }
-    Some(String::from_utf8_lossy(unsafe { CStr::from_ptr(value) }.to_bytes()))
+    Some(String::from_utf8_lossy(
+        unsafe { CStr::from_ptr(value) }.to_bytes(),
+    ))
 }
 
 /// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected by
@@ -1144,8 +1147,9 @@ pub unsafe extern "C" fn rmn_disk_free(disk: *mut RmnDisk) {
 /// The disk session's access mode — an echo of the declared intent.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_mode(disk: *const RmnDisk) -> RmnAccessMode {
-    unsafe { disk.as_ref() }
-        .map_or(RmnAccessMode::ReadOnly, |disk| access_mode(disk.disk.mode()))
+    unsafe { disk.as_ref() }.map_or(RmnAccessMode::ReadOnly, |disk| {
+        access_mode(disk.disk.mode())
+    })
 }
 
 /// The detected container format.
@@ -1178,7 +1182,7 @@ pub unsafe extern "C" fn rmn_disk_is_modified(disk: *const RmnDisk) -> bool {
     unsafe { disk.as_ref() }.is_some_and(|disk| disk.disk.is_modified())
 }
 
-/// Reads the disk's complete report (pledged U4): its partitions and
+/// Reads the disk's complete report (U4): its partitions and
 /// volumes as they actually are. Blank is an answer (zero volumes, see
 /// `rmn_geometry_is_blank`), a partition row the library cannot read
 /// stays in the report carrying its issue, and non-zero data that is
@@ -1196,7 +1200,11 @@ pub unsafe extern "C" fn rmn_disk_geometry(
         return ptr::null_mut();
     };
     match disk.disk.geometry() {
-        Ok(DiskGeometry { blank, partitions, volumes }) => {
+        Ok(DiskGeometry {
+            blank,
+            partitions,
+            volumes,
+        }) => {
             let partitions = partitions
                 .iter()
                 .map(|partition| PartitionView {
@@ -1219,6 +1227,7 @@ pub unsafe extern "C" fn rmn_disk_geometry(
             let volumes = volumes
                 .iter()
                 .map(|volume| VolumeView {
+                    id: to_cstring(&volume.id),
                     partition_number: volume.partition_number,
                     kind_name: to_cstring(volume.kind.name()),
                     label: volume.label.as_deref().map(to_cstring),
@@ -1231,7 +1240,11 @@ pub unsafe extern "C" fn rmn_disk_geometry(
                     cylinders: volume.cylinders,
                 })
                 .collect();
-            Box::into_raw(Box::new(RmnDiskGeometry { blank, partitions, volumes }))
+            Box::into_raw(Box::new(RmnDiskGeometry {
+                blank,
+                partitions,
+                volumes,
+            }))
         }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1265,17 +1278,13 @@ unsafe fn volume_view<'a>(
 /// Whether sector 0 was all zero: a blank disk with zero volumes — an
 /// answer, not an error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rmn_geometry_is_blank(
-    geometry: *const RmnDiskGeometry,
-) -> bool {
+pub unsafe extern "C" fn rmn_geometry_is_blank(geometry: *const RmnDiskGeometry) -> bool {
     unsafe { geometry.as_ref() }.is_some_and(|geometry| geometry.blank)
 }
 
 /// Number of partitions (0 for a partitionless image).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rmn_geometry_partition_count(
-    geometry: *const RmnDiskGeometry,
-) -> usize {
+pub unsafe extern "C" fn rmn_geometry_partition_count(geometry: *const RmnDiskGeometry) -> usize {
     unsafe { geometry.as_ref() }.map_or(0, |geometry| geometry.partitions.len())
 }
 
@@ -1326,8 +1335,7 @@ pub unsafe extern "C" fn rmn_geometry_partition_start_bytes(
     geometry: *const RmnDiskGeometry,
     index: usize,
 ) -> u64 {
-    unsafe { partition_view(geometry, index) }
-        .map_or(0, |partition| partition.start_bytes)
+    unsafe { partition_view(geometry, index) }.map_or(0, |partition| partition.start_bytes)
 }
 
 /// A partition's length in bytes.
@@ -1336,22 +1344,20 @@ pub unsafe extern "C" fn rmn_geometry_partition_length_bytes(
     geometry: *const RmnDiskGeometry,
     index: usize,
 ) -> u64 {
-    unsafe { partition_view(geometry, index) }
-        .map_or(0, |partition| partition.length_bytes)
+    unsafe { partition_view(geometry, index) }.map_or(0, |partition| partition.length_bytes)
 }
 
 /// Stores a partition row's issue category and returns true; returns
 /// false when the row was read cleanly (or the index is out of range).
 /// A row carrying an issue stays in the report with no volume read from
-/// it, and the rows behind it never renumber (pledged U4).
+/// it, and the rows behind it never renumber (U4).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_geometry_partition_issue_category(
     geometry: *const RmnDiskGeometry,
     index: usize,
     category_out: *mut RmnErrorCategory,
 ) -> bool {
-    match unsafe { partition_view(geometry, index) }
-        .and_then(|partition| partition.issue_category)
+    match unsafe { partition_view(geometry, index) }.and_then(|partition| partition.issue_category)
     {
         Some(category) => {
             if !category_out.is_null() {
@@ -1377,10 +1383,18 @@ pub unsafe extern "C" fn rmn_geometry_partition_issue(
 
 /// Number of volumes actually read (one guest drive letter each).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rmn_geometry_volume_count(
-    geometry: *const RmnDiskGeometry,
-) -> usize {
+pub unsafe extern "C" fn rmn_geometry_volume_count(geometry: *const RmnDiskGeometry) -> usize {
     unsafe { geometry.as_ref() }.map_or(0, |geometry| geometry.volumes.len())
+}
+
+/// A volume's opaque stable identifier. The borrowed string is owned by
+/// `geometry`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmn_geometry_volume_id(
+    geometry: *const RmnDiskGeometry,
+    index: usize,
+) -> *const c_char {
+    unsafe { volume_view(geometry, index) }.map_or(ptr::null(), |volume| volume.id.as_ptr())
 }
 
 /// The 1-based partition number a volume sits in; returns false for a
@@ -1391,8 +1405,7 @@ pub unsafe extern "C" fn rmn_geometry_volume_partition_number(
     index: usize,
     out: *mut u32,
 ) -> bool {
-    let value =
-        unsafe { volume_view(geometry, index) }.and_then(|volume| volume.partition_number);
+    let value = unsafe { volume_view(geometry, index) }.and_then(|volume| volume.partition_number);
     unsafe { write_opt_u32(value, out) }
 }
 
@@ -1402,8 +1415,7 @@ pub unsafe extern "C" fn rmn_geometry_volume_kind(
     geometry: *const RmnDiskGeometry,
     index: usize,
 ) -> *const c_char {
-    unsafe { volume_view(geometry, index) }
-        .map_or(ptr::null(), |volume| volume.kind_name.as_ptr())
+    unsafe { volume_view(geometry, index) }.map_or(ptr::null(), |volume| volume.kind_name.as_ptr())
 }
 
 /// The volume label, or null when it has none.
@@ -1474,32 +1486,31 @@ pub unsafe extern "C" fn rmn_geometry_volume_heads(
     index: usize,
     out: *mut u32,
 ) -> bool {
-    let value = unsafe { volume_view(geometry, index) }
-        .and_then(|volume| volume.heads.map(u32::from));
+    let value =
+        unsafe { volume_view(geometry, index) }.and_then(|volume| volume.heads.map(u32::from));
     unsafe { write_opt_u32(value, out) }
 }
 
 /// The volume's cylinder count, only where an exact derivation exists —
 /// the boot record's track geometry divides the total sector count with
 /// no remainder; returns false otherwise, never an invented value
-/// (pledged U4).
+/// (U4).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_geometry_volume_cylinders(
     geometry: *const RmnDiskGeometry,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value =
-        unsafe { volume_view(geometry, index) }.and_then(|volume| volume.cylinders);
+    let value = unsafe { volume_view(geometry, index) }.and_then(|volume| volume.cylinders);
     unsafe { write_opt_u64(value, out) }
 }
 
-/// Lists a directory in volume `volume` ("" = root, "A/B" descends). Free
+/// Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
 /// with `rmn_fat_entry_list_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_entries(
     disk: *mut RmnDisk,
-    volume: usize,
+    volume_id: *const c_char,
     path: *const c_char,
     error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
@@ -1508,8 +1519,13 @@ pub unsafe extern "C" fn rmn_disk_entries(
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return ptr::null_mut();
     };
+    let Some(volume_id) = (unsafe { utf8_arg(volume_id) }) else {
+        let error = remanence::Error::io("null volume identifier");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
     let path = unsafe { utf8_arg(path) }.unwrap_or_default();
-    match disk.disk.entries(volume, path.as_ref()) {
+    match disk.disk.entries(volume_id.as_ref(), path.as_ref()) {
         Ok(entries) => {
             let entries = entries
                 .iter()
@@ -1567,8 +1583,7 @@ pub unsafe extern "C" fn rmn_fat_entry_kind(
     list: *const RmnFatEntryList,
     index: usize,
 ) -> RmnFatEntryKind {
-    unsafe { fat_entry_view(list, index) }
-        .map_or(RmnFatEntryKind::File, |entry| entry.kind)
+    unsafe { fat_entry_view(list, index) }.map_or(RmnFatEntryKind::File, |entry| entry.kind)
 }
 
 /// An entry's size in bytes (0 for directories).
@@ -1580,12 +1595,12 @@ pub unsafe extern "C" fn rmn_fat_entry_size_bytes(
     unsafe { fat_entry_view(list, index) }.map_or(0, |entry| entry.size_bytes)
 }
 
-/// Copies a file's bytes out of volume `volume`. Free with
+/// Copies a file's bytes out of `volume_id`. Free with
 /// `rmn_file_data_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_read_file(
     disk: *mut RmnDisk,
-    volume: usize,
+    volume_id: *const c_char,
     path: *const c_char,
     error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
@@ -1594,12 +1609,17 @@ pub unsafe extern "C" fn rmn_disk_read_file(
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return ptr::null_mut();
     };
+    let Some(volume_id) = (unsafe { utf8_arg(volume_id) }) else {
+        let error = remanence::Error::io("null volume identifier");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match disk.disk.read_file(volume, path.as_ref()) {
+    match disk.disk.read_file(volume_id.as_ref(), path.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RmnFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1638,11 +1658,11 @@ pub unsafe extern "C" fn rmn_file_data_free(data: *mut RmnFileData) {
     }
 }
 
-/// Writes a file into volume `volume`. Buffered until `rmn_disk_commit`.
+/// Writes a file into `volume_id`. Buffered until `rmn_disk_commit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_write_file(
     disk: *mut RmnDisk,
-    volume: usize,
+    volume_id: *const c_char,
     path: *const c_char,
     bytes: *const u8,
     length: usize,
@@ -1651,6 +1671,11 @@ pub unsafe extern "C" fn rmn_disk_write_file(
 ) -> bool {
     unsafe { clear_error(error_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
+        return false;
+    };
+    let Some(volume_id) = (unsafe { utf8_arg(volume_id) }) else {
+        let error = remanence::Error::io("null volume identifier");
+        unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -1668,7 +1693,10 @@ pub unsafe extern "C" fn rmn_disk_write_file(
     } else {
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
-    match disk.disk.write_file(volume, path.as_ref(), contents) {
+    match disk
+        .disk
+        .write_file(volume_id.as_ref(), path.as_ref(), contents)
+    {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1677,11 +1705,11 @@ pub unsafe extern "C" fn rmn_disk_write_file(
     }
 }
 
-/// Creates a directory in volume `volume`. Buffered until commit.
+/// Creates a directory in `volume_id`. Buffered until commit.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_make_directory(
     disk: *mut RmnDisk,
-    volume: usize,
+    volume_id: *const c_char,
     path: *const c_char,
     error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
@@ -1690,12 +1718,17 @@ pub unsafe extern "C" fn rmn_disk_make_directory(
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
+    let Some(volume_id) = (unsafe { utf8_arg(volume_id) }) else {
+        let error = remanence::Error::io("null volume identifier");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
         unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     };
-    match disk.disk.make_directory(volume, path.as_ref()) {
+    match disk.disk.make_directory(volume_id.as_ref(), path.as_ref()) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1735,9 +1768,7 @@ pub unsafe extern "C" fn rmn_disk_rollback(disk: *mut RmnDisk) {
 
 /// Which P7 mode the session's open obtained on its source file.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rmn_session_access_mode(
-    session: *const RmnSession,
-) -> RmnAccessMode {
+pub unsafe extern "C" fn rmn_session_access_mode(session: *const RmnSession) -> RmnAccessMode {
     unsafe { session.as_ref() }.map_or(RmnAccessMode::ReadOnly, |session| {
         access_mode(session.session.access_mode())
     })

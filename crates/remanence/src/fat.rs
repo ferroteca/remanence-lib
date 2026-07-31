@@ -106,9 +106,7 @@ impl Bpb {
             return Err(invalid("boot sector too short"));
         }
         let bytes_per_sector = le16(sector, 11);
-        if !(512..=4096).contains(&bytes_per_sector)
-            || !bytes_per_sector.is_power_of_two()
-        {
+        if !(512..=4096).contains(&bytes_per_sector) || !bytes_per_sector.is_power_of_two() {
             return Err(invalid(format!(
                 "implausible bytes-per-sector {bytes_per_sector}"
             )));
@@ -153,9 +151,7 @@ impl Bpb {
     }
 
     fn root_dir_bytes(&self) -> u64 {
-        (self.root_entries * RECORD as u64)
-            .div_ceil(self.bytes_per_sector)
-            * self.bytes_per_sector
+        (self.root_entries * RECORD as u64).div_ceil(self.bytes_per_sector) * self.bytes_per_sector
     }
 
     fn fat_offset(&self) -> u64 {
@@ -163,8 +159,7 @@ impl Bpb {
     }
 
     fn root_dir_offset(&self) -> u64 {
-        self.fat_offset()
-            + self.fat_count * self.sectors_per_fat * self.bytes_per_sector
+        self.fat_offset() + self.fat_count * self.sectors_per_fat * self.bytes_per_sector
     }
 
     fn data_offset(&self) -> u64 {
@@ -176,24 +171,26 @@ impl Bpb {
     }
 
     fn cluster_count(&self) -> u64 {
-        let data_sectors =
-            self.total_sectors.saturating_sub(self.data_offset() / self.bytes_per_sector);
+        let data_sectors = self
+            .total_sectors
+            .saturating_sub(self.data_offset() / self.bytes_per_sector);
         data_sectors / self.sectors_per_cluster
     }
 
     /// Cylinders, only where the derivation is exact: the boot record
     /// states track geometry and it divides the total sector count with
-    /// no remainder. Never invented (pledged U4).
+    /// no remainder. Never invented (U4).
     fn cylinders(&self) -> Option<u64> {
         let track = self.sectors_per_track as u64 * self.heads as u64;
-        (track != 0 && self.total_sectors % track == 0)
-            .then(|| self.total_sectors / track)
+        (track != 0 && self.total_sectors % track == 0).then(|| self.total_sectors / track)
     }
 }
 
-/// A recognized FAT volume: facts for the reporting lane (pledged U4).
+/// A recognized FAT volume: facts for the reporting lane (U4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VolumeInfo {
+    /// Opaque stable identifier used by every file verb.
+    pub id: String,
     /// 1-based partition number this volume sits in; `None` for a
     /// partitionless image.
     pub partition_number: Option<u32>,
@@ -208,7 +205,7 @@ pub struct VolumeInfo {
     pub heads: Option<u16>,
     /// Cylinders, only where an exact derivation exists: the stated
     /// track geometry divides the total sector count with no remainder.
-    /// Omitted otherwise — never invented (pledged U4).
+    /// Omitted otherwise — never invented (U4).
     pub cylinders: Option<u64>,
 }
 
@@ -251,10 +248,12 @@ impl FatVolume {
     pub fn info(
         &self,
         device: &mut dyn Device,
+        id: String,
         partition_number: Option<u32>,
         length_bytes: u64,
     ) -> Result<VolumeInfo> {
         Ok(VolumeInfo {
+            id,
             partition_number,
             kind: self.kind,
             label: self.volume_label(device)?,
@@ -283,17 +282,16 @@ impl FatVolume {
                 let mut raw = [0u8; 2];
                 device.read_at(fat + cluster * 3 / 2, &mut raw)?;
                 let pair = u16::from_le_bytes(raw) as u64;
-                Ok(if cluster % 2 == 0 { pair & 0xfff } else { pair >> 4 })
+                Ok(if cluster % 2 == 0 {
+                    pair & 0xfff
+                } else {
+                    pair >> 4
+                })
             }
         }
     }
 
-    fn set_fat_entry(
-        &self,
-        device: &mut dyn Device,
-        cluster: u64,
-        value: u64,
-    ) -> Result<()> {
+    fn set_fat_entry(&self, device: &mut dyn Device, cluster: u64, value: u64) -> Result<()> {
         // Every FAT copy is kept in step.
         for copy in 0..self.bpb.fat_count {
             let fat = self.offset
@@ -386,7 +384,11 @@ impl FatVolume {
             push_area(device, offset, len)?;
         } else {
             for cluster in self.chain(device, first_cluster)? {
-                push_area(device, self.cluster_offset(cluster), self.bpb.cluster_bytes())?;
+                push_area(
+                    device,
+                    self.cluster_offset(cluster),
+                    self.bpb.cluster_bytes(),
+                )?;
             }
         }
         Ok(records)
@@ -398,8 +400,14 @@ impl FatVolume {
             base[0] = 0xe5; // The 0x05 escape for a leading 0xE5 byte.
         }
         let base = String::from_utf8_lossy(&base).trim_end().to_string();
-        let ext = String::from_utf8_lossy(&record[8..11]).trim_end().to_string();
-        if ext.is_empty() { base } else { format!("{base}.{ext}") }
+        let ext = String::from_utf8_lossy(&record[8..11])
+            .trim_end()
+            .to_string();
+        if ext.is_empty() {
+            base
+        } else {
+            format!("{base}.{ext}")
+        }
     }
 
     fn entries_of(
@@ -416,9 +424,7 @@ impl FatVolume {
                 continue;
             }
             let attributes = record[11];
-            if attributes & ATTR_LONG_NAME == ATTR_LONG_NAME
-                || attributes & ATTR_VOLUME_ID != 0
-            {
+            if attributes & ATTR_LONG_NAME == ATTR_LONG_NAME || attributes & ATTR_VOLUME_ID != 0 {
                 continue;
             }
             let name = Self::short_name(&record);
@@ -437,7 +443,11 @@ impl FatVolume {
                     },
                     size_bytes: size,
                 },
-                Located { attributes, first_cluster: first, size },
+                Located {
+                    attributes,
+                    first_cluster: first,
+                    size,
+                },
             ));
         }
         Ok(out)
@@ -452,11 +462,10 @@ impl FatVolume {
                 continue;
             }
             let attributes = record[11];
-            if attributes & ATTR_LONG_NAME != ATTR_LONG_NAME
-                && attributes & ATTR_VOLUME_ID != 0
-            {
-                let label =
-                    String::from_utf8_lossy(&record[..11]).trim_end().to_string();
+            if attributes & ATTR_LONG_NAME != ATTR_LONG_NAME && attributes & ATTR_VOLUME_ID != 0 {
+                let label = String::from_utf8_lossy(&record[..11])
+                    .trim_end()
+                    .to_string();
                 return Ok((!label.is_empty()).then_some(label));
             }
         }
@@ -499,11 +508,7 @@ impl FatVolume {
     }
 
     /// Lists a directory ("" or "A/B" style path segments; empty = root).
-    pub fn entries(
-        &self,
-        device: &mut dyn Device,
-        segments: &[&str],
-    ) -> Result<Vec<FatEntry>> {
+    pub fn entries(&self, device: &mut dyn Device, segments: &[&str]) -> Result<Vec<FatEntry>> {
         let first_cluster = if segments.is_empty() {
             0
         } else {
@@ -527,13 +532,16 @@ impl FatVolume {
     pub fn read_file(&self, device: &mut dyn Device, segments: &[&str]) -> Result<Vec<u8>> {
         let located = self.locate(device, segments)?;
         if located.attributes & ATTR_DIRECTORY != 0 {
-            return Err(is_directory(format!("'{}' is a directory", segments.join("/"))));
+            return Err(is_directory(format!(
+                "'{}' is a directory",
+                segments.join("/")
+            )));
         }
         let mut out = Vec::with_capacity(located.size as usize);
         if located.size > 0 && located.first_cluster >= 2 {
             for cluster in self.chain(device, located.first_cluster)? {
-                let take = (self.bpb.cluster_bytes() as usize)
-                    .min(located.size as usize - out.len());
+                let take =
+                    (self.bpb.cluster_bytes() as usize).min(located.size as usize - out.len());
                 let mut chunk = vec![0u8; take];
                 device.read_at(self.cluster_offset(cluster), &mut chunk)?;
                 out.extend_from_slice(&chunk);
@@ -588,8 +596,24 @@ impl FatVolume {
         let ok_byte = |byte: u8| {
             byte.is_ascii_uppercase()
                 || byte.is_ascii_digit()
-                || matches!(byte, b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'(' | b')'
-                    | b'-' | b'@' | b'^' | b'_' | b'`' | b'{' | b'}' | b'~')
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'('
+                        | b')'
+                        | b'-'
+                        | b'@'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'{'
+                        | b'}'
+                        | b'~'
+                )
         };
         if !base.bytes().all(ok_byte) || !ext.bytes().all(ok_byte) {
             return Err(io(format!("'{name}' is not a valid 8.3 name")));
@@ -597,8 +621,11 @@ impl FatVolume {
         let mut raw = [b' '; 11];
         raw[..base.len()].copy_from_slice(base.as_bytes());
         raw[8..8 + ext.len()].copy_from_slice(ext.as_bytes());
-        let display =
-            if ext.is_empty() { base.to_string() } else { format!("{base}.{ext}") };
+        let display = if ext.is_empty() {
+            base.to_string()
+        } else {
+            format!("{base}.{ext}")
+        };
         Ok((raw, display))
     }
 
@@ -631,11 +658,7 @@ impl FatVolume {
         (date, time)
     }
 
-    fn free_record_slot(
-        &self,
-        device: &mut dyn Device,
-        parent_cluster: u64,
-    ) -> Result<u64> {
+    fn free_record_slot(&self, device: &mut dyn Device, parent_cluster: u64) -> Result<u64> {
         for (record_offset, record) in self.read_records(device, parent_cluster)? {
             if record[0] == FREE || record[0] == DELETED {
                 return Ok(record_offset);
@@ -647,7 +670,9 @@ impl FatVolume {
         // Grow the directory by one cluster.
         let new = self.claim_clusters(device, 1)?[0];
         let chain = self.chain(device, parent_cluster)?;
-        let last = *chain.last().ok_or_else(|| invalid("empty directory chain"))?;
+        let last = *chain
+            .last()
+            .ok_or_else(|| invalid("empty directory chain"))?;
         self.set_fat_entry(device, last, new)?;
         self.set_fat_entry(device, new, self.end_marker())?;
         let zeroes = vec![0u8; self.bpb.cluster_bytes() as usize];
@@ -700,8 +725,10 @@ impl FatVolume {
 
         // All checks passed; now mutate (into the overlay above us).
         for (i, &cluster) in clusters.iter().enumerate() {
-            let next =
-                clusters.get(i + 1).copied().unwrap_or_else(|| self.end_marker());
+            let next = clusters
+                .get(i + 1)
+                .copied()
+                .unwrap_or_else(|| self.end_marker());
             self.set_fat_entry(device, cluster, next)?;
             let start = i * cluster_bytes;
             let chunk = &contents[start..(start + cluster_bytes).min(contents.len())];
@@ -738,7 +765,14 @@ impl FatVolume {
         let mut dotdot = [b' '; 11];
         dotdot[0] = b'.';
         dotdot[1] = b'.';
-        self.write_record(device, offset + RECORD as u64, dotdot, ATTR_DIRECTORY, parent, 0)?;
+        self.write_record(
+            device,
+            offset + RECORD as u64,
+            dotdot,
+            ATTR_DIRECTORY,
+            parent,
+            0,
+        )?;
 
         self.write_record(device, slot, raw_name, ATTR_DIRECTORY, cluster, 0)
     }

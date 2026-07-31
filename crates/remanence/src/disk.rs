@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::device::{AccessIntent, AccessMode, Device, FileDevice, Overlay};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeInfo};
-use crate::mbr::{self, Discovery, PartitionInfo};
+use crate::mbr::{self, Discovery, PartitionInfo, PartitionKind};
 use crate::qcow2::{QCOW2_MAGIC, Qcow2};
 
 /// The container format a disk image turned out to be.
@@ -21,7 +21,7 @@ pub enum DiskFormat {
     Qcow2 { version: u32 },
 }
 
-/// The complete report of one disk, as it actually is (pledged U4).
+/// The complete report of one disk, as it actually is (U4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskGeometry {
     /// Sector 0 is all zero: a blank disk with zero volumes — an answer,
@@ -98,7 +98,11 @@ impl Disk {
         let mut magic = [0u8; 4];
         let format = if file.len() >= 4 {
             file.read_at(0, &mut magic)?;
-            if magic == QCOW2_MAGIC { None } else { Some(DiskFormat::Raw) }
+            if magic == QCOW2_MAGIC {
+                None
+            } else {
+                Some(DiskFormat::Raw)
+            }
         } else {
             Some(DiskFormat::Raw)
         };
@@ -148,7 +152,10 @@ impl Disk {
     }
 
     fn composed(&mut self) -> Composed<'_> {
-        Composed { base: self.virtual_disk.device(), overlay: &mut self.overlay }
+        Composed {
+            base: self.virtual_disk.device(),
+            overlay: &mut self.overlay,
+        }
     }
 
     fn split_path(path: &str) -> Result<Vec<&str>> {
@@ -162,33 +169,27 @@ impl Disk {
         Ok(segments)
     }
 
-    fn volume_at(&mut self, index: usize) -> Result<(u64, FatVolume)> {
-        let offsets = self.volume_offsets()?;
-        let &offset = offsets.get(index).ok_or_else(|| {
-            Error::io(format!(
-                "volume {index} does not exist ({} volumes)",
-                offsets.len()
-            ))
-        })?;
+    fn volume_at(&mut self, id: &str) -> Result<(u64, FatVolume)> {
+        let geometry = self.geometry()?;
+        let offset = geometry
+            .volumes
+            .iter()
+            .find(|volume| volume.id == id)
+            .map(|volume| volume.offset_bytes)
+            .ok_or_else(|| Error::not_found(format!("volume identifier '{id}' not found")))?;
         let mut composed = self.composed();
         let volume = FatVolume::open(&mut composed, offset)?;
         Ok((offset, volume))
     }
 
-    fn volume_offsets(&mut self) -> Result<Vec<u64>> {
-        let mut composed = self.composed();
-        Ok(match mbr::discover(&mut composed)? {
-            Discovery::Blank => Vec::new(),
-            Discovery::BareVolume => vec![0],
-            Discovery::Partitioned(partitions) => partitions
-                .iter()
-                .filter(|partition| !mbr::is_extended(partition.type_byte))
-                .map(|partition| partition.start_bytes)
-                .collect(),
-        })
+    fn partition_volume_id(partition: &PartitionInfo) -> String {
+        match partition.kind {
+            PartitionKind::Primary => format!("partition:{}", partition.number),
+            PartitionKind::Logical => format!("logical:{}", partition.number),
+        }
     }
 
-    /// The complete report (pledged U4): the disk's partitions and
+    /// The complete report (U4): the disk's partitions and
     /// volumes as they actually are. Blank is an answer — an all-zero
     /// sector 0 reports a blank disk with zero volumes — and non-zero
     /// data that is neither a supported filesystem nor a partition
@@ -208,7 +209,7 @@ impl Disk {
             Discovery::BareVolume => {
                 let volume = FatVolume::open(&mut composed, 0)?;
                 let length = composed.len();
-                let info = volume.info(&mut composed, None, length)?;
+                let info = volume.info(&mut composed, "superfloppy:0".to_owned(), None, length)?;
                 Ok(DiskGeometry {
                     blank: false,
                     partitions: Vec::new(),
@@ -218,45 +219,48 @@ impl Disk {
             Discovery::Partitioned(mut partitions) => {
                 let mut volumes = Vec::new();
                 for partition in &mut partitions {
-                    if partition.issue.is_some()
-                        || mbr::is_extended(partition.type_byte)
-                    {
+                    if partition.issue.is_some() || mbr::is_extended(partition.type_byte) {
                         continue;
                     }
-                    match FatVolume::open(&mut composed, partition.start_bytes)
-                        .and_then(|volume| {
-                            volume.info(
-                                &mut composed,
-                                Some(partition.number),
-                                partition.length_bytes,
-                            )
-                        }) {
+                    match FatVolume::open(&mut composed, partition.start_bytes).and_then(|volume| {
+                        volume.info(
+                            &mut composed,
+                            Self::partition_volume_id(partition),
+                            Some(partition.number),
+                            partition.length_bytes,
+                        )
+                    }) {
                         Ok(info) => volumes.push(info),
-                        // The row stays, carrying why (pledged U4); the
+                        // The row stays, carrying why (U4); the
                         // volumes behind it never renumber.
                         Err(error) => partition.issue = Some(error),
                     }
                 }
-                Ok(DiskGeometry { blank: false, partitions, volumes })
+                Ok(DiskGeometry {
+                    blank: false,
+                    partitions,
+                    volumes,
+                })
             }
         }
     }
 
-    /// Lists a directory in volume `volume` ("" = root; "A/B" descends).
-    pub fn entries(&mut self, volume: usize, path: &str) -> Result<Vec<FatEntry>> {
+    /// Lists a directory in the volume identified by `volume_id`
+    /// ("" = root; "A/B" descends).
+    pub fn entries(&mut self, volume_id: &str, path: &str) -> Result<Vec<FatEntry>> {
         let segments = Self::split_path(path)?;
-        let (_, fat) = self.volume_at(volume)?;
+        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.entries(&mut composed, &segments)
     }
 
-    /// Copies a file's bytes out of volume `volume`.
-    pub fn read_file(&mut self, volume: usize, path: &str) -> Result<Vec<u8>> {
+    /// Copies a file's bytes out of the volume identified by `volume_id`.
+    pub fn read_file(&mut self, volume_id: &str, path: &str) -> Result<Vec<u8>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
-        let (_, fat) = self.volume_at(volume)?;
+        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.read_file(&mut composed, &segments)
     }
@@ -271,26 +275,28 @@ impl Disk {
         Ok(())
     }
 
-    /// Writes a file into volume `volume`. Buffered until [`Disk::commit`].
-    pub fn write_file(&mut self, volume: usize, path: &str, contents: &[u8]) -> Result<()> {
+    /// Writes a file into the volume identified by `volume_id`. Buffered
+    /// until [`Disk::commit`].
+    pub fn write_file(&mut self, volume_id: &str, path: &str, contents: &[u8]) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
-        let (_, fat) = self.volume_at(volume)?;
+        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.write_file(&mut composed, &segments, contents)
     }
 
-    /// Creates a directory in volume `volume`. Buffered until commit.
-    pub fn make_directory(&mut self, volume: usize, path: &str) -> Result<()> {
+    /// Creates a directory in the volume identified by `volume_id`.
+    /// Buffered until commit.
+    pub fn make_directory(&mut self, volume_id: &str, path: &str) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a directory path is required".to_owned()));
         }
-        let (_, fat) = self.volume_at(volume)?;
+        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.make_directory(&mut composed, &segments)
     }
@@ -337,24 +343,20 @@ mod tests {
         image[56..60].copy_from_slice(&1u32.to_be_bytes());
         image[96..100].copy_from_slice(&4u32.to_be_bytes());
         image[100..104].copy_from_slice(&112u32.to_be_bytes());
-        image[CLUSTER as usize..CLUSTER as usize + 8]
-            .copy_from_slice(&(2 * CLUSTER).to_be_bytes());
+        image[CLUSTER as usize..CLUSTER as usize + 8].copy_from_slice(&(2 * CLUSTER).to_be_bytes());
         for cluster in 0..4usize {
             let at = 2 * CLUSTER as usize + cluster * 2;
             image[at..at + 2].copy_from_slice(&1u16.to_be_bytes());
         }
 
-        let path = std::env::temp_dir().join(format!(
-            "remanence-qcow2-e2e-{}.qcow2",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("remanence-qcow2-e2e-{}.qcow2", std::process::id()));
         std::fs::write(&path, image).expect("qcow2 writes");
 
         // Format the virtual disk: write a FAT16 volume into guest space
         // through the crate's own qcow2 writer.
         {
-            let file = crate::device::FileDevice::open(&path, AccessIntent::Write)
-                .expect("opens");
+            let file = crate::device::FileDevice::open(&path, AccessIntent::Write).expect("opens");
             let mut qcow2 = crate::qcow2::Qcow2::open(file).expect("parses");
             let volume = fat16_volume_bytes();
             assert_eq!(volume.len() as u64, virtual_size);
@@ -371,15 +373,18 @@ mod tests {
         assert_eq!(geometry.volumes.len(), 1);
         assert_eq!(geometry.volumes[0].label.as_deref(), Some("REMANENCE"));
 
-        disk.make_directory(0, "GUEST").expect("mkdir");
-        disk.write_file(0, "GUEST/PAYLOAD.BIN", b"through the mapping")
+        disk.make_directory("superfloppy:0", "GUEST")
+            .expect("mkdir");
+        disk.write_file("superfloppy:0", "GUEST/PAYLOAD.BIN", b"through the mapping")
             .expect("write");
         disk.commit().expect("commit");
         drop(disk);
 
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
-            reopened.read_file(0, "GUEST/PAYLOAD.BIN").expect("read"),
+            reopened
+                .read_file("superfloppy:0", "GUEST/PAYLOAD.BIN")
+                .expect("read"),
             b"through the mapping"
         );
         drop(reopened);

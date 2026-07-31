@@ -31,7 +31,11 @@ fn manifest_dir() -> PathBuf {
 }
 
 fn repo_root() -> PathBuf {
-    manifest_dir().parent().and_then(Path::parent).expect("workspace root").to_path_buf()
+    manifest_dir()
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root")
+        .to_path_buf()
 }
 
 fn run_rlq(home: &Path, args: &[&str]) -> Result<String, String> {
@@ -39,8 +43,7 @@ fn run_rlq(home: &Path, args: &[&str]) -> Result<String, String> {
     // cached tool environment, Python fetched by uv when absent.
     // REMANENCE_RIG_RELIQUARY overrides the package spec (e.g. a local
     // reliquary checkout while iterating on unpublished changes).
-    let spec = std::env::var("REMANENCE_RIG_RELIQUARY")
-        .unwrap_or_else(|_| "reliquary".to_owned());
+    let spec = std::env::var("REMANENCE_RIG_RELIQUARY").unwrap_or_else(|_| "reliquary".to_owned());
     let mut command = Command::new("uv");
     command
         .args(["tool", "run", "--from", &spec, "rlq"])
@@ -117,15 +120,19 @@ fn build_or_reuse() -> Result<PathBuf, String> {
 
     // Harvest the machine's hdd0 image.
     let machine_dir = PathBuf::from(
-        run_rlq(&home, &["get-machine-dir", "--blueprint", "remanence-parttest"])?
-            .trim(),
+        run_rlq(
+            &home,
+            &["get-machine-dir", "--blueprint", "remanence-parttest"],
+        )?
+        .trim(),
     );
     let media = machine_dir.join("media");
     let image = std::fs::read_dir(&media)
         .map_err(|error| format!("cannot read {}: {error}", media.display()))?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .find(|path| {
-            path.extension().is_some_and(|extension| extension == "qcow2")
+            path.extension()
+                .is_some_and(|extension| extension == "qcow2")
         })
         .ok_or_else(|| {
             format!(
@@ -136,7 +143,11 @@ fn build_or_reuse() -> Result<PathBuf, String> {
         })?;
 
     std::fs::copy(&image, &artifact).map_err(|error| {
-        format!("copying {} to {}: {error}", image.display(), artifact.display())
+        format!(
+            "copying {} to {}: {error}",
+            image.display(),
+            artifact.display()
+        )
     })?;
     // The machine stays in the rig home for inspection;
     // `rlq destroy --blueprint remanence-parttest --home-dir <home>`
@@ -171,7 +182,10 @@ fn geometry_reports_primaries_extended_and_logicals() {
     let geometry = disk.geometry().expect("geometry reads");
     assert!(!geometry.blank, "an installed disk is not blank");
     assert!(
-        geometry.partitions.iter().all(|partition| partition.issue.is_none()),
+        geometry
+            .partitions
+            .iter()
+            .all(|partition| partition.issue.is_none()),
         "every declared row reads cleanly"
     );
     let extended = geometry
@@ -195,10 +209,16 @@ fn geometry_reports_primaries_extended_and_logicals() {
     assert!(data_partitions >= 4, "two primaries and two logicals");
     assert!(geometry.volumes.len() >= 4, "every data partition readable");
 
-    let labels: Vec<_> =
-        geometry.volumes.iter().filter_map(|volume| volume.label.clone()).collect();
+    let labels: Vec<_> = geometry
+        .volumes
+        .iter()
+        .filter_map(|volume| volume.label.clone())
+        .collect();
     for expected in ["RMNPRI1", "RMNPRI2", "RMNLOG1", "RMNLOG2"] {
-        assert!(labels.iter().any(|label| label == expected), "label {expected}");
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "label {expected}"
+        );
     }
 
     drop(disk);
@@ -210,14 +230,15 @@ fn geometry_reports_primaries_extended_and_logicals() {
 fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
-    let volumes = disk.geometry().expect("geometry").volumes.len();
-    for volume in 0..volumes {
+    let volumes = disk.geometry().expect("geometry").volumes;
+    for volume in volumes {
         let marker = disk
-            .read_file(volume, "RMNMARK.TXT")
-            .unwrap_or_else(|error| panic!("marker in volume {volume}: {error}"));
+            .read_file(&volume.id, "RMNMARK.TXT")
+            .unwrap_or_else(|error| panic!("marker in volume {}: {error}", volume.id));
         assert!(
             marker.starts_with(b"remanence marker:"),
-            "volume {volume} carries its marker"
+            "volume {} carries its marker",
+            volume.id
         );
     }
 
@@ -231,15 +252,21 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let path = private_artifact("roundtrip");
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("rig artifact opens");
 
-    disk.write_file(0, "RMNDIR/RTRIP.BIN", b"buffered write on a real image")
-        .expect("write buffers");
+    let volume_id = disk.geometry().expect("geometry").volumes[0].id.clone();
+    disk.write_file(
+        &volume_id,
+        "RMNDIR/RTRIP.BIN",
+        b"buffered write on a real image",
+    )
+    .expect("write buffers");
     assert_eq!(
-        disk.read_file(0, "RMNDIR/RTRIP.BIN").expect("reads back"),
+        disk.read_file(&volume_id, "RMNDIR/RTRIP.BIN")
+            .expect("reads back"),
         b"buffered write on a real image"
     );
     disk.rollback();
     assert!(
-        disk.read_file(0, "RMNDIR/RTRIP.BIN").is_err(),
+        disk.read_file(&volume_id, "RMNDIR/RTRIP.BIN").is_err(),
         "rollback leaves the image untouched"
     );
 

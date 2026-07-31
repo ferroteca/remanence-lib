@@ -9,8 +9,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, Disk, DiskFormat, ErrorCategory, FatEntryKind, FatKind,
-    PartitionKind,
+    AccessIntent, AccessMode, Disk, DiskFormat, ErrorCategory, FatEntryKind, FatKind, PartitionKind,
 };
 
 fn temp_path(tag: &str) -> PathBuf {
@@ -147,21 +146,17 @@ fn synthetic_extended_disk(volume: &[u8], corrupt_second_ebr: bool) -> Vec<u8> {
     disk[462 + 12..462 + 16].copy_from_slice(&(ext_len as u32).to_le_bytes());
     disk[510] = 0x55;
     disk[511] = 0xaa;
-    disk[primary_start * 512..primary_start * 512 + volume.len()]
-        .copy_from_slice(volume);
+    disk[primary_start * 512..primary_start * 512 + volume.len()].copy_from_slice(volume);
 
     // EBR 1: logical 1 at +2048 (relative to this EBR), link to EBR 2
     // (relative to the extended base).
     let ebr1 = ext_base * 512;
     disk[ebr1 + 446 + 4] = 0x06;
     disk[ebr1 + 446 + 8..ebr1 + 446 + 12].copy_from_slice(&2048u32.to_le_bytes());
-    disk[ebr1 + 446 + 12..ebr1 + 446 + 16]
-        .copy_from_slice(&(sectors as u32).to_le_bytes());
+    disk[ebr1 + 446 + 12..ebr1 + 446 + 16].copy_from_slice(&(sectors as u32).to_le_bytes());
     disk[ebr1 + 462 + 4] = 0x05;
-    disk[ebr1 + 462 + 8..ebr1 + 462 + 12]
-        .copy_from_slice(&(link_span as u32).to_le_bytes());
-    disk[ebr1 + 462 + 12..ebr1 + 462 + 16]
-        .copy_from_slice(&(link_span as u32).to_le_bytes());
+    disk[ebr1 + 462 + 8..ebr1 + 462 + 12].copy_from_slice(&(link_span as u32).to_le_bytes());
+    disk[ebr1 + 462 + 12..ebr1 + 462 + 16].copy_from_slice(&(link_span as u32).to_le_bytes());
     disk[ebr1 + 510] = 0x55;
     disk[ebr1 + 511] = 0xaa;
     let logical1 = (ext_base + 2048) * 512;
@@ -172,8 +167,7 @@ fn synthetic_extended_disk(volume: &[u8], corrupt_second_ebr: bool) -> Vec<u8> {
     let ebr2 = ebr2_lba * 512;
     disk[ebr2 + 446 + 4] = 0x06;
     disk[ebr2 + 446 + 8..ebr2 + 446 + 12].copy_from_slice(&2048u32.to_le_bytes());
-    disk[ebr2 + 446 + 12..ebr2 + 446 + 16]
-        .copy_from_slice(&(sectors as u32).to_le_bytes());
+    disk[ebr2 + 446 + 12..ebr2 + 446 + 16].copy_from_slice(&(sectors as u32).to_le_bytes());
     if !corrupt_second_ebr {
         disk[ebr2 + 510] = 0x55;
         disk[ebr2 + 511] = 0xaa;
@@ -190,7 +184,11 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
-    assert_eq!(disk.mode(), AccessMode::ReadWrite, "the mode echoes the intent");
+    assert_eq!(
+        disk.mode(),
+        AccessMode::ReadWrite,
+        "the mode echoes the intent"
+    );
     assert_eq!(disk.format(), DiskFormat::Raw);
 
     let geometry = disk.geometry().expect("geometry reads");
@@ -198,6 +196,7 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert!(geometry.partitions.is_empty());
     assert_eq!(geometry.volumes.len(), 1);
     let volume = &geometry.volumes[0];
+    assert_eq!(volume.id, "superfloppy:0");
     assert_eq!(volume.kind, FatKind::Fat16);
     assert_eq!(volume.label.as_deref(), Some("REMANENCE"));
     assert_eq!(volume.sectors_per_track, Some(18));
@@ -206,35 +205,42 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert_eq!(volume.cylinders, None);
 
     // Write a directory and a file; read them back through the overlay.
-    disk.make_directory(0, "SUB").expect("mkdir");
+    disk.make_directory("superfloppy:0", "SUB").expect("mkdir");
     let payload: Vec<u8> = (0..2000u32).flat_map(|n| n.to_le_bytes()).collect();
-    disk.write_file(0, "SUB/HELLO.BIN", &payload).expect("write");
+    disk.write_file("superfloppy:0", "SUB/HELLO.BIN", &payload)
+        .expect("write");
     assert!(disk.is_modified());
 
-    let entries = disk.entries(0, "SUB").expect("list");
+    let entries = disk.entries("superfloppy:0", "SUB").expect("list");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "HELLO.BIN");
     assert_eq!(entries[0].kind, FatEntryKind::File);
     assert_eq!(entries[0].size_bytes, payload.len() as u64);
-    assert_eq!(disk.read_file(0, "SUB/HELLO.BIN").expect("read"), payload);
     assert_eq!(
-        disk.read_file(0, "SUB").expect_err("directory is not a file").category(),
+        disk.read_file("superfloppy:0", "SUB/HELLO.BIN")
+            .expect("read"),
+        payload
+    );
+    assert_eq!(
+        disk.read_file("superfloppy:0", "SUB")
+            .expect_err("directory is not a file")
+            .category(),
         ErrorCategory::IsDirectory
     );
     assert_eq!(
-        disk.entries(0, "SUB/HELLO.BIN")
+        disk.entries("superfloppy:0", "SUB/HELLO.BIN")
             .expect_err("file is not a directory")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        disk.read_file(0, "SUB/MISSING.BIN")
+        disk.read_file("superfloppy:0", "SUB/MISSING.BIN")
             .expect_err("missing file is refused")
             .category(),
         ErrorCategory::NotFound
     );
     assert_eq!(
-        disk.write_file(0, "TOO-BIG.BIN", &vec![0u8; 5_000_000])
+        disk.write_file("superfloppy:0", "TOO-BIG.BIN", &vec![0u8; 5_000_000],)
             .expect_err("allocation exhaustion is refused")
             .category(),
         ErrorCategory::NoSpace
@@ -243,12 +249,13 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     // Rollback: the image is untouched.
     disk.rollback();
     assert!(!disk.is_modified());
-    assert!(disk.entries(0, "SUB").is_err());
+    assert!(disk.entries("superfloppy:0", "SUB").is_err());
 
     // Write again and commit this time.
-    disk.write_file(0, "KEPT.TXT", b"kept bytes").expect("write");
+    disk.write_file("superfloppy:0", "KEPT.TXT", b"kept bytes")
+        .expect("write");
     assert_eq!(
-        disk.write_file(0, "KEPT.TXT", b"replacement")
+        disk.write_file("superfloppy:0", "KEPT.TXT", b"replacement")
             .expect_err("overwrite is outside the current claim")
             .category(),
         ErrorCategory::Unsupported
@@ -258,8 +265,17 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     drop(disk);
 
     let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
-    assert_eq!(reopened.mode(), AccessMode::ReadOnly, "the mode echoes the intent");
-    assert_eq!(reopened.read_file(0, "KEPT.TXT").expect("read"), b"kept bytes");
+    assert_eq!(
+        reopened.mode(),
+        AccessMode::ReadOnly,
+        "the mode echoes the intent"
+    );
+    assert_eq!(
+        reopened
+            .read_file("superfloppy:0", "KEPT.TXT")
+            .expect("read"),
+        b"kept bytes"
+    );
     drop(reopened);
 
     std::fs::remove_file(&path).ok();
@@ -280,16 +296,18 @@ fn fat16_behind_an_mbr_partition() {
     assert_eq!(geometry.partitions[0].start_bytes, 2048 * 512);
     assert_eq!(geometry.partitions[0].issue, None);
     assert_eq!(geometry.volumes.len(), 1);
+    assert_eq!(geometry.volumes[0].id, "partition:1");
     assert_eq!(geometry.volumes[0].partition_number, Some(1));
     assert_eq!(geometry.volumes[0].label.as_deref(), Some("REMANENCE"));
 
-    disk.write_file(0, "ROOT.TXT", b"in the partition").expect("write");
+    disk.write_file("partition:1", "ROOT.TXT", b"in the partition")
+        .expect("write");
     disk.commit().expect("commit");
     drop(disk);
 
     let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
     assert_eq!(
-        reopened.read_file(0, "ROOT.TXT").expect("read"),
+        reopened.read_file("partition:1", "ROOT.TXT").expect("read"),
         b"in the partition"
     );
     drop(reopened);
@@ -309,7 +327,12 @@ fn a_blank_disk_is_an_answer_with_zero_volumes() {
     assert!(geometry.volumes.is_empty());
 
     // Zero volumes means every volume address is a named refusal.
-    assert!(disk.entries(0, "").is_err());
+    assert_eq!(
+        disk.entries("superfloppy:0", "")
+            .expect_err("missing identifier is refused")
+            .category(),
+        ErrorCategory::NotFound
+    );
     drop(disk);
 
     std::fs::remove_file(&path).ok();
@@ -325,7 +348,9 @@ fn an_empty_partition_table_is_not_blank() {
     std::fs::write(&path, image).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("an empty table is a complete answer");
+    let geometry = disk
+        .geometry()
+        .expect("an empty table is a complete answer");
     assert!(!geometry.blank);
     assert!(geometry.partitions.is_empty());
     assert!(geometry.volumes.is_empty());
@@ -366,31 +391,57 @@ fn a_row_outside_the_claim_stays_and_nothing_renumbers() {
     .expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("one foreign row does not fail the disk");
+    let geometry = disk
+        .geometry()
+        .expect("one foreign row does not fail the disk");
 
     assert_eq!(geometry.partitions.len(), 3);
-    let numbers: Vec<u32> =
-        geometry.partitions.iter().map(|partition| partition.number).collect();
+    let numbers: Vec<u32> = geometry
+        .partitions
+        .iter()
+        .map(|partition| partition.number)
+        .collect();
     assert_eq!(numbers, [1, 2, 3], "rows never renumber");
 
     let foreign_row = &geometry.partitions[1];
     assert_eq!(foreign_row.kind, PartitionKind::Primary);
     assert_eq!(foreign_row.type_byte, 0x83);
-    assert_eq!(foreign_row.type_name, None, "no pinned name outside the claim");
-    let issue = foreign_row.issue.as_ref().expect("the row carries its issue");
+    assert_eq!(
+        foreign_row.type_name, None,
+        "no pinned name outside the claim"
+    );
+    let issue = foreign_row
+        .issue
+        .as_ref()
+        .expect("the row carries its issue");
     assert_eq!(issue.category(), ErrorCategory::Unsupported);
-    assert!(issue.to_string().contains("0x83"), "the refusal names the type");
+    assert!(
+        issue.to_string().contains("0x83"),
+        "the refusal names the type"
+    );
     assert!(geometry.partitions[0].issue.is_none());
     assert!(geometry.partitions[2].issue.is_none());
 
-    let referenced: Vec<Option<u32>> =
-        geometry.volumes.iter().map(|volume| volume.partition_number).collect();
-    assert_eq!(referenced, [Some(1), Some(3)], "the volumes behind it keep their rows");
+    let referenced: Vec<Option<u32>> = geometry
+        .volumes
+        .iter()
+        .map(|volume| volume.partition_number)
+        .collect();
+    assert_eq!(
+        referenced,
+        [Some(1), Some(3)],
+        "the volumes behind it keep their rows"
+    );
 
     // The file verbs still address the readable slots on either side.
-    assert!(disk.entries(0, "").is_ok());
-    assert!(disk.entries(1, "").is_err(), "the foreign slot is a named refusal");
-    assert!(disk.entries(2, "").is_ok());
+    assert!(disk.entries("partition:1", "").is_ok());
+    assert_eq!(
+        disk.entries("partition:2", "")
+            .expect_err("the foreign slot has no volume identifier")
+            .category(),
+        ErrorCategory::NotFound
+    );
+    assert!(disk.entries("partition:3", "").is_ok());
     drop(disk);
 
     std::fs::remove_file(&path).ok();
@@ -401,21 +452,40 @@ fn an_unreadable_volume_keeps_its_row_with_the_issue() {
     let fat = synthetic_fat16();
     let garbage = vec![0x51u8; 8000 * 512]; // claimed FAT16B, no BPB inside
     let path = temp_path("unreadable-volume");
-    std::fs::write(&path, synthetic_multi_mbr(&[(0x06, &garbage), (0x06, &fat)]))
-        .expect("image writes");
+    std::fs::write(
+        &path,
+        synthetic_multi_mbr(&[(0x06, &garbage), (0x06, &fat)]),
+    )
+    .expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("one unreadable volume does not fail the disk");
+    let geometry = disk
+        .geometry()
+        .expect("one unreadable volume does not fail the disk");
 
     assert_eq!(geometry.partitions.len(), 2);
     let broken = &geometry.partitions[0];
     assert_eq!(broken.type_name.as_deref(), Some("FAT16B"));
-    let issue = broken.issue.as_ref().expect("the row carries why it has no volume");
+    let issue = broken
+        .issue
+        .as_ref()
+        .expect("the row carries why it has no volume");
     assert_eq!(issue.category(), ErrorCategory::InvalidImage);
     assert!(geometry.partitions[1].issue.is_none());
 
     assert_eq!(geometry.volumes.len(), 1);
     assert_eq!(geometry.volumes[0].partition_number, Some(2));
+    assert_eq!(geometry.volumes[0].id, "partition:2");
+    assert_eq!(
+        disk.entries("partition:1", "")
+            .expect_err("an unreadable row has no volume identifier")
+            .category(),
+        ErrorCategory::NotFound
+    );
+    assert!(
+        disk.entries(&geometry.volumes[0].id, "").is_ok(),
+        "the readable volume keeps the identity of partition 2"
+    );
     drop(disk);
 
     std::fs::remove_file(&path).ok();
@@ -431,8 +501,11 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
     let geometry = disk.geometry().expect("geometry reads");
 
     assert_eq!(geometry.partitions.len(), 4);
-    let kinds: Vec<PartitionKind> =
-        geometry.partitions.iter().map(|partition| partition.kind).collect();
+    let kinds: Vec<PartitionKind> = geometry
+        .partitions
+        .iter()
+        .map(|partition| partition.kind)
+        .collect();
     assert_eq!(
         kinds,
         [
@@ -442,16 +515,31 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
             PartitionKind::Logical,
         ]
     );
-    assert_eq!(geometry.partitions[1].type_name.as_deref(), Some("extended"));
-    assert!(geometry.partitions.iter().all(|partition| partition.issue.is_none()));
+    assert_eq!(
+        geometry.partitions[1].type_name.as_deref(),
+        Some("extended")
+    );
+    assert!(
+        geometry
+            .partitions
+            .iter()
+            .all(|partition| partition.issue.is_none())
+    );
 
-    let referenced: Vec<Option<u32>> =
-        geometry.volumes.iter().map(|volume| volume.partition_number).collect();
+    let referenced: Vec<Option<u32>> = geometry
+        .volumes
+        .iter()
+        .map(|volume| volume.partition_number)
+        .collect();
     assert_eq!(referenced, [Some(1), Some(3), Some(4)]);
 
-    // The file verbs reach all three volumes (the container takes no slot).
-    for volume in 0..3 {
-        assert!(disk.entries(volume, "").is_ok(), "volume {volume} readable");
+    // The file verbs use exactly the identifiers the report supplies.
+    for volume in &geometry.volumes {
+        assert!(
+            disk.entries(&volume.id, "").is_ok(),
+            "volume {} readable",
+            volume.id
+        );
     }
     drop(disk);
 
@@ -465,21 +553,35 @@ fn a_broken_chain_keeps_what_it_found() {
     std::fs::write(&path, synthetic_extended_disk(&fat, true)).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("a broken link does not fail the disk");
+    let geometry = disk
+        .geometry()
+        .expect("a broken link does not fail the disk");
 
     // The primary, the container, and the first logical all stay; the
     // container row carries why the walk stopped.
     assert_eq!(geometry.partitions.len(), 3);
-    let numbers: Vec<u32> =
-        geometry.partitions.iter().map(|partition| partition.number).collect();
+    let numbers: Vec<u32> = geometry
+        .partitions
+        .iter()
+        .map(|partition| partition.number)
+        .collect();
     assert_eq!(numbers, [1, 2, 3], "nothing renumbers");
     let container = &geometry.partitions[1];
-    let issue = container.issue.as_ref().expect("the container carries the issue");
+    let issue = container
+        .issue
+        .as_ref()
+        .expect("the container carries the issue");
     assert_eq!(issue.category(), ErrorCategory::InvalidImage);
-    assert!(issue.to_string().contains("signature"), "the refusal says why");
+    assert!(
+        issue.to_string().contains("signature"),
+        "the refusal says why"
+    );
 
-    let referenced: Vec<Option<u32>> =
-        geometry.volumes.iter().map(|volume| volume.partition_number).collect();
+    let referenced: Vec<Option<u32>> = geometry
+        .volumes
+        .iter()
+        .map(|volume| volume.partition_number)
+        .collect();
     assert_eq!(referenced, [Some(1), Some(3)]);
     drop(disk);
 
@@ -552,8 +654,7 @@ fn p7_declared_intent_claims_and_refusals() {
     // A read-only file denies us write permission: a writable open
     // fails at the open — never a silent fallback — while a read open
     // proceeds and write actions are refused by name.
-    let mut permissions =
-        std::fs::metadata(&path).expect("metadata").permissions();
+    let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(&path, permissions.clone()).expect("set readonly");
 
@@ -565,7 +666,7 @@ fn p7_declared_intent_claims_and_refusals() {
     assert_eq!(readonly.mode(), AccessMode::ReadOnly);
     assert!(readonly.geometry().is_ok(), "analysis proceeds");
     let refused = readonly
-        .write_file(0, "NO.TXT", b"denied")
+        .write_file("superfloppy:0", "NO.TXT", b"denied")
         .expect_err("write actions are denied on a read session");
     assert_eq!(refused.category(), ErrorCategory::ReadOnly);
     drop(readonly);

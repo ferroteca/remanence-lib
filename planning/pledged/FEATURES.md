@@ -41,20 +41,6 @@
 > implementation above the library); **identification of backing
 > chains** (U5 untouched, per U6's note).
 
-## F13 — Stable volume identity
-
-The amended U3/U4 addressing. Every reported volume carries an
-opaque stable identifier — a package-defined spelling such as
-`superfloppy:0`, `partition:1`, `logical:5`; callers treat it as
-opaque — and every file verb takes that identifier in place of the
-positional index, which is deleted. The invariant: for one disk
-layout, an identifier names exactly the same region in every verb
-that it named in the geometry report; an unreadable partition never
-shifts a later volume's identity; an identifier absent on a later
-open is a named refusal, not a renumbering. This retires the
-present drift hazard where the report's volume list and the verbs'
-index space disagree about an unreadable partition.
-
 ## F14 — Stat, overwrite, recursive directories
 
 The amended U3's verb completion. `stat` answers one path with its
@@ -63,7 +49,7 @@ entry or with an is-absent answer distinguished from failure.
 releasing and reclaiming clusters, both FAT copies kept consistent.
 `make_directory` creates missing parents and succeeds when the
 directory already exists. Validation still precedes the first
-mutating write (P6). Needs: F13.
+mutating write (P6).
 
 ## F15 — qcow2 backing-chain read
 

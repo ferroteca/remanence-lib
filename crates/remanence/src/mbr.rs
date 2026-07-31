@@ -3,7 +3,7 @@
 
 //! MBR partition discovery: the four primary entries and the
 //! extended-partition chain, partition types pinned value by value. The
-//! report is complete (pledged U4): an entry outside the pinned claim,
+//! report is complete (U4): an entry outside the pinned claim,
 //! or a chain the walk cannot follow, stays in the report carrying a
 //! structured issue instead of failing the whole disk or vanishing, so
 //! the rows behind it never renumber. Blank is an answer, kept distinct
@@ -35,7 +35,7 @@ impl PartitionKind {
 }
 
 /// One discovered partition row. Every entry the table declares is
-/// reported (pledged U4): a row the library cannot read stays here
+/// reported (U4): a row the library cannot read stays here
 /// carrying its [`issue`](Self::issue) instead of vanishing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartitionInfo {
@@ -56,7 +56,7 @@ pub struct PartitionInfo {
     pub issue: Option<Error>,
 }
 
-/// What sector 0 turned out to be (pledged U4). Blank is an answer;
+/// What sector 0 turned out to be (U4). Blank is an answer;
 /// non-zero data that is none of these is a named refusal from
 /// [`discover`], kept distinct from blank.
 #[derive(Debug)]
@@ -127,8 +127,7 @@ pub(crate) fn looks_like_bpb(sector: &[u8]) -> bool {
     let jump_ok = matches!(sector[0], 0xeb | 0xe9);
     // Bytes per sector: a power of two between 512 and 4096.
     let bytes_per_sector = u16::from_le_bytes([sector[11], sector[12]]);
-    let bps_ok = bytes_per_sector.is_power_of_two()
-        && (512..=4096).contains(&bytes_per_sector);
+    let bps_ok = bytes_per_sector.is_power_of_two() && (512..=4096).contains(&bytes_per_sector);
     // Sectors per cluster: a power of two up to 128.
     let spc_ok = sector[13].is_power_of_two();
     // At least one FAT.
@@ -136,7 +135,7 @@ pub(crate) fn looks_like_bpb(sector: &[u8]) -> bool {
     jump_ok && bps_ok && spc_ok && fats_ok
 }
 
-/// Reads sector 0 and answers what the device is (pledged U4): a blank
+/// Reads sector 0 and answers what the device is (U4): a blank
 /// disk, one bare volume, or an MBR with every declared row reported —
 /// rows outside the pinned claim included, each carrying its issue.
 /// Non-zero data that is none of these is a named refusal, kept

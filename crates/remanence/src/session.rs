@@ -117,7 +117,10 @@ pub struct FilesystemLayout {
 
 impl FilesystemLayout {
     pub fn unknown() -> Self {
-        Self { offset_bytes: None, length_bytes: None }
+        Self {
+            offset_bytes: None,
+            length_bytes: None,
+        }
     }
 }
 
@@ -140,7 +143,10 @@ pub struct SizeInformation {
 
 impl SizeInformation {
     pub fn unknown() -> Self {
-        Self { current_bytes: None, expected_bytes: None }
+        Self {
+            current_bytes: None,
+            expected_bytes: None,
+        }
     }
 }
 
@@ -193,7 +199,10 @@ fn physical_media_from_container(
     layout: DiskLayout,
     current_bytes: u64,
 ) -> Container {
-    let media_kind = container.media_kind.clone().unwrap_or_else(|| "unknown".to_owned());
+    let media_kind = container
+        .media_kind
+        .clone()
+        .unwrap_or_else(|| "unknown".to_owned());
     let name = match media_kind.as_str() {
         "floppy" => "Floppy disk",
         "hard_disk" => "Hard disk",
@@ -208,7 +217,10 @@ fn physical_media_from_container(
         name: name.to_owned(),
         confidence: 100,
         known: true,
-        size: SizeInformation { current_bytes: Some(current_bytes), expected_bytes },
+        size: SizeInformation {
+            current_bytes: Some(current_bytes),
+            expected_bytes,
+        },
         layout: ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(layout)),
     }
 }
@@ -226,7 +238,10 @@ fn container_from_layer(layer: ArchiveLayer) -> Container {
         name: layer.name,
         confidence: 100,
         known: true,
-        size: SizeInformation { current_bytes: layer.archive_size, expected_bytes: None },
+        size: SizeInformation {
+            current_bytes: layer.archive_size,
+            expected_bytes: None,
+        },
         layout: ContainerLayout::Archive(layout),
     }
 }
@@ -253,14 +268,14 @@ impl Session {
         Self::open_with_registry(path, crate::default_format_registry()?)
     }
 
-    pub fn open_with_registry(
-        path: impl AsRef<Path>,
-        registry: FormatRegistry,
-    ) -> Result<Self> {
+    pub fn open_with_registry(path: impl AsRef<Path>, registry: FormatRegistry) -> Result<Self> {
         let resolved = archive::resolve_image(path.as_ref())?;
 
-        let containers =
-            resolved.archive_layers.into_iter().map(container_from_layer).collect();
+        let containers = resolved
+            .archive_layers
+            .into_iter()
+            .map(container_from_layer)
+            .collect();
 
         Ok(Self {
             path: resolved.source_path,
@@ -375,10 +390,15 @@ impl Session {
         let image_container = Container {
             kind: ContainerKind::Image,
             id: container_id.clone(),
-            name: container.container_name.unwrap_or_else(|| format.name.clone()),
+            name: container
+                .container_name
+                .unwrap_or_else(|| format.name.clone()),
             confidence: container.confidence,
             known: true,
-            size: SizeInformation { current_bytes: Some(current_bytes), expected_bytes },
+            size: SizeInformation {
+                current_bytes: Some(current_bytes),
+                expected_bytes,
+            },
             layout: ContainerLayout::Image(ImageLayout {
                 payload_offset_bytes: Some(0),
                 payload_length_bytes: Some(current_bytes),
@@ -410,8 +430,7 @@ impl Session {
         let filesystem = filesystem::detect(&image, &self.registry);
         evidence.extend(filesystem.evidence);
 
-        let filesystem_container = match (filesystem.filesystem_id, filesystem.filesystem_name)
-        {
+        let filesystem_container = match (filesystem.filesystem_id, filesystem.filesystem_name) {
             (Some(id), Some(name)) => Container {
                 kind: ContainerKind::Filesystem,
                 id,
@@ -437,9 +456,7 @@ impl Session {
         if container_id == "qcow2" {
             match self.qcow2_layers(&mut evidence) {
                 Ok(mut volumes) => extra.append(&mut volumes),
-                Err(error) => evidence.push(format!(
-                    "qcow2 virtual disk not walked: {error}"
-                )),
+                Err(error) => evidence.push(format!("qcow2 virtual disk not walked: {error}")),
             }
         }
         extra.push(filesystem_container);
@@ -493,12 +510,16 @@ impl Session {
             let Ok(volume) = FatVolume::open(&mut qcow2, offset) else {
                 continue;
             };
-            let info = volume.info(&mut qcow2, partition, length)?;
+            let id = partition.map_or_else(
+                || "superfloppy:0".to_owned(),
+                |number| format!("partition:{number}"),
+            );
+            let info = volume.info(&mut qcow2, id, partition, length)?;
             let kind_name = info.kind.name();
             evidence.push(match (&info.label, partition) {
-                (Some(label), Some(number)) => format!(
-                    "{kind_name} volume '{label}' in partition {number}"
-                ),
+                (Some(label), Some(number)) => {
+                    format!("{kind_name} volume '{label}' in partition {number}")
+                }
                 (Some(label), None) => format!("{kind_name} volume '{label}'"),
                 (None, Some(number)) => {
                     format!("{kind_name} volume in partition {number}")
@@ -537,10 +558,7 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "{name}-{}-{nonce}.{extension}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("{name}-{}-{nonce}.{extension}", std::process::id()))
     }
 
     fn write_file(path: &Path, bytes: &[u8]) {
@@ -569,15 +587,22 @@ mod tests {
 
         let media = &identification.containers[1];
         assert_eq!(media.kind, ContainerKind::PhysicalMedia);
-        let ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout
-        else {
+        let ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout else {
             panic!("expected disk layout, found {:?}", media.layout);
         };
         assert_eq!(disk.cylinders, Some(40));
         assert_eq!(disk.sides, Some(1));
-        assert_eq!(disk.sectors, SectorLayout::Fixed { sectors_per_track: 10 });
+        assert_eq!(
+            disk.sectors,
+            SectorLayout::Fixed {
+                sectors_per_track: 10
+            }
+        );
 
-        let filesystem = identification.containers.last().expect("filesystem container");
+        let filesystem = identification
+            .containers
+            .last()
+            .expect("filesystem container");
         assert_eq!(filesystem.kind, ContainerKind::Filesystem);
         assert_eq!(filesystem.id, "unknown");
 
@@ -598,7 +623,10 @@ mod tests {
         assert_eq!(image.kind, ContainerKind::Image);
         assert_eq!(image.id, "h8d");
 
-        let filesystem = identification.containers.last().expect("filesystem container");
+        let filesystem = identification
+            .containers
+            .last()
+            .expect("filesystem container");
         assert_eq!(filesystem.kind, ContainerKind::Filesystem);
         assert_eq!(filesystem.id, "hdos");
         assert_eq!(filesystem.name, "Heath Disk Operating System");
@@ -630,7 +658,10 @@ mod tests {
         assert_eq!(image.size.expected_bytes, None);
         assert_eq!(image.layout, ContainerLayout::Unknown);
 
-        let filesystem = identification.containers.last().expect("filesystem container");
+        let filesystem = identification
+            .containers
+            .last()
+            .expect("filesystem container");
         assert_eq!(filesystem.kind, ContainerKind::Filesystem);
         assert_eq!(filesystem.id, "unknown");
         assert_eq!(filesystem.name, "Unknown filesystem");

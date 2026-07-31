@@ -30,9 +30,10 @@ machine's disk image on the host — qcow2 or raw — and work with the
 files in its FAT12/FAT16/FAT16B volumes, whether those volumes sit
 behind an MBR or bare on a partitionless image: list a directory's
 entries, copy a file out to the host, write a file in, create a
-directory. The library addresses a volume and a path within it —
-mapping volumes to guest drive letters stays reliquary's job,
-standing on U4's volume enumeration. All of this without booting
+directory. The library addresses a volume by the stable identifier
+its geometry report gave it, and a path within it — mapping volumes
+to guest drive letters stays reliquary's job, standing on U4's
+volume enumeration. All of this without booting
 the guest and without any external helper process: the library does
 the format work itself. Reading never changes the image. Writing is
 a separate, explicit mode with a commit point: until I commit,
@@ -46,12 +47,16 @@ library is where those facts come from. For each disk — qcow2 or
 raw — I need: the partition table as it actually is, types pinned
 value by value, an unreadable entry refused with the reason rather
 than skipped (skipping renumbers every volume behind it); each
-volume with its filesystem kind, its label, and the geometry its
-boot record states, where it states one; and the volume count per
-disk, because letters are assigned one per volume actually read on
-the host — a disk holding none takes none, and a disk that cannot
-be read answers with the reason it could not be read, never the
-symptom. All of it from the image alone, booting nothing.
+volume with its stable identifier, filesystem kind, its label, and
+the geometry its boot record states, where it states one; and the
+volume count per disk, because letters are assigned one per volume
+actually read on the host — a disk holding none takes none, and a
+disk that cannot be read answers with the reason it could not be
+read, never the symptom. For one disk layout, an identifier names
+exactly the same region in every file verb that it named in this
+report. Its spelling belongs to the library and callers treat it as
+opaque; if it is absent on a later open, that volume is gone rather
+than renumbered. All of it from the image alone, booting nothing.
 
 ## U5 — qcow2 images are first-class citizens of identification
 

@@ -23,10 +23,7 @@ create_exception!(
     "Raised when the remanence library reports an error; `category` is stable."
 );
 
-fn categorized_py_err(
-    category: remanence::ErrorCategory,
-    message: impl Into<String>,
-) -> PyErr {
+fn categorized_py_err(category: remanence::ErrorCategory, message: impl Into<String>) -> PyErr {
     let error = RemanenceError::new_err(message.into());
     Python::attach(|py| {
         error
@@ -145,12 +142,9 @@ impl FormatRegistry {
         container_formats_path: PathBuf,
         filesystem_formats_path: PathBuf,
     ) -> PyResult<Self> {
-        remanence::FormatRegistry::from_files(
-            &container_formats_path,
-            &filesystem_formats_path,
-        )
-        .map(|inner| Self { inner })
-        .map_err(to_py_err)
+        remanence::FormatRegistry::from_files(&container_formats_path, &filesystem_formats_path)
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
     }
 
     /// Looks up one container format by id.
@@ -456,7 +450,9 @@ impl Session {
     /// default format registry.
     #[new]
     fn new(path: PathBuf) -> PyResult<Self> {
-        remanence::Session::open(path).map(|inner| Self { inner }).map_err(to_py_err)
+        remanence::Session::open(path)
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
     }
 
     /// Opens `path` with a caller-supplied format registry.
@@ -521,13 +517,8 @@ impl Session {
     }
 
     /// Reads a cataloged HDOS file's contents out of the session's image.
-    fn read_hdos_file<'py>(
-        &self,
-        py: Python<'py>,
-        name: &str,
-    ) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes =
-            remanence::read_hdos_file(self.inner.bytes(), name).map_err(to_py_err)?;
+    fn read_hdos_file<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = remanence::read_hdos_file(self.inner.bytes(), name).map_err(to_py_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
 
@@ -563,6 +554,8 @@ pub struct PartitionInfo {
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct VolumeInfo {
+    /// Opaque stable identifier accepted by every file verb.
+    pub id: String,
     pub partition_number: Option<u32>,
     pub kind: String,
     pub label: Option<String>,
@@ -612,9 +605,7 @@ impl Disk {
     fn get(&mut self) -> PyResult<&mut remanence::Disk> {
         self.inner
             .as_mut()
-            .ok_or_else(|| {
-                categorized_py_err(remanence::ErrorCategory::Io, "disk is closed")
-            })
+            .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "disk is closed"))
     }
 }
 
@@ -675,7 +666,7 @@ impl Disk {
         Ok(self.get()?.is_modified())
     }
 
-    /// The disk's complete report (pledged U4): its partitions and
+    /// The disk's complete report (U4): its partitions and
     /// volumes as they actually are. Blank is an answer — zero volumes,
     /// `blank` set — while non-zero data that is neither a supported
     /// filesystem nor a partition table raises by name, kept distinct
@@ -706,6 +697,7 @@ impl Disk {
                 .volumes
                 .iter()
                 .map(|volume| VolumeInfo {
+                    id: volume.id.clone(),
                     partition_number: volume.partition_number,
                     kind: volume.kind.name().to_owned(),
                     label: volume.label.clone(),
@@ -721,12 +713,12 @@ impl Disk {
         })
     }
 
-    /// Lists a directory in volume `volume` ("" = root, "A/B" descends).
-    #[pyo3(signature = (volume, path = ""))]
-    fn entries(&mut self, volume: usize, path: &str) -> PyResult<Vec<FatEntry>> {
+    /// Lists a directory in `volume_id` ("" = root, "A/B" descends).
+    #[pyo3(signature = (volume_id, path = ""))]
+    fn entries(&mut self, volume_id: &str, path: &str) -> PyResult<Vec<FatEntry>> {
         Ok(self
             .get()?
-            .entries(volume, path)
+            .entries(volume_id, path)
             .map_err(to_py_err)?
             .iter()
             .map(|entry| FatEntry {
@@ -740,25 +732,29 @@ impl Disk {
             .collect())
     }
 
-    /// Copies a file's bytes out of volume `volume`.
+    /// Copies a file's bytes out of `volume_id`.
     fn read_file<'py>(
         &mut self,
         py: Python<'py>,
-        volume: usize,
+        volume_id: &str,
         path: &str,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self.get()?.read_file(volume, path).map_err(to_py_err)?;
+        let bytes = self.get()?.read_file(volume_id, path).map_err(to_py_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
 
-    /// Writes a file into volume `volume`. Buffered until `commit()`.
-    fn write_file(&mut self, volume: usize, path: &str, contents: &[u8]) -> PyResult<()> {
-        self.get()?.write_file(volume, path, contents).map_err(to_py_err)
+    /// Writes a file into `volume_id`. Buffered until `commit()`.
+    fn write_file(&mut self, volume_id: &str, path: &str, contents: &[u8]) -> PyResult<()> {
+        self.get()?
+            .write_file(volume_id, path, contents)
+            .map_err(to_py_err)
     }
 
-    /// Creates a directory in volume `volume`. Buffered until `commit()`.
-    fn make_directory(&mut self, volume: usize, path: &str) -> PyResult<()> {
-        self.get()?.make_directory(volume, path).map_err(to_py_err)
+    /// Creates a directory in `volume_id`. Buffered until `commit()`.
+    fn make_directory(&mut self, volume_id: &str, path: &str) -> PyResult<()> {
+        self.get()?
+            .make_directory(volume_id, path)
+            .map_err(to_py_err)
     }
 
     /// The commit point: everything buffered reaches the image, flushed.
@@ -828,8 +824,14 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .and_then(|version| version.extract::<String>())
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
     m.add("__version__", version)?;
-    m.add("DEFAULT_CONTAINER_FORMATS", remanence::DEFAULT_CONTAINER_FORMATS)?;
-    m.add("DEFAULT_FILESYSTEM_FORMATS", remanence::DEFAULT_FILESYSTEM_FORMATS)?;
+    m.add(
+        "DEFAULT_CONTAINER_FORMATS",
+        remanence::DEFAULT_CONTAINER_FORMATS,
+    )?;
+    m.add(
+        "DEFAULT_FILESYSTEM_FORMATS",
+        remanence::DEFAULT_FILESYSTEM_FORMATS,
+    )?;
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
     m.add_class::<Session>()?;
     m.add_class::<Identification>()?;
