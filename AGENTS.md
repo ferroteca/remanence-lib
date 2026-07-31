@@ -66,9 +66,9 @@ C ABI. The Rust code here is now the authoritative implementation.
   pre-approved task queue: **agents do not add tasks on their own
   initiative, and ask before editing that file at all**; anyone may pick
   up what is already there.
-- **The vision is in force.** Use cases U1–U5 (root
-  [USE-CASES.md](USE-CASES.md)) and architectural principles P1–P8 and
-  P10 (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
+- **The vision is in force.** Use cases U1–U6 (root
+  [USE-CASES.md](USE-CASES.md)) and architectural principles P1–P10
+  (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage
   cites them by number; the surface-change rule in
   [planning/SURFACES.md](planning/SURFACES.md) is fully operable.

@@ -78,14 +78,14 @@ none of them has a lifecycle state to be in:
 
 The in-force artifacts live at the **repository root**, not here,
 because they are claims about the code as it exists today:
-[USE-CASES.md](../USE-CASES.md) (U1–U5, every entry met by the
+[USE-CASES.md](../USE-CASES.md) (U1–U6, every entry met by the
 code) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the whole-system
 view, the application surface inventory S1–S4, and the
-architectural principles P1–P8 and P10, every principle honored by
+architectural principles P1–P10, every principle honored by
 the code). Together with the norms — currently the defining code, as
 root ARCHITECTURE.md states — they are the project's **vision**.
 What sits under `proposed/` and `pledged/` here is vision that has
-not arrived yet; both directories appear when they next have
+not arrived yet; either directory appears when it next has
 content.
 
 Use cases and principles run through **three** states, not two:

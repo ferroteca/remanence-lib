@@ -22,6 +22,17 @@ use crate::journal;
 use crate::mbr::{self, Discovery, PartitionInfo, PartitionKind};
 use crate::qcow2::{self, QCOW2_MAGIC, Qcow2};
 
+#[cfg(test)]
+fn crash_test_process_at(boundary: &str) {
+    if std::env::var_os("REMANENCE_CRASH_TEST_BOUNDARY").as_deref()
+        == Some(std::ffi::OsStr::new(boundary))
+    {
+        // Deliberately bypass destructors: the parent test must observe
+        // exactly what a vanished process leaves on disk.
+        std::process::exit(86);
+    }
+}
+
 /// The container format a disk image turned out to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskFormat {
@@ -438,6 +449,8 @@ impl Disk {
                 return Err(error);
             }
         };
+        #[cfg(test)]
+        crash_test_process_at("journal-armed");
 
         // Apply, then retire the journal. Should either fail, the
         // in-process undo puts the image back to wholly the old state;
@@ -448,12 +461,18 @@ impl Disk {
             .host()
             .apply(&blocks, new_len)
             .and_then(|()| {
+                #[cfg(test)]
+                crash_test_process_at("image-applied");
                 journal::retire(&self.journal_path).map_err(|error| {
                     Error::io(format!(
                         "cannot retire the commit's recovery journal '{}': {error}",
                         self.journal_path.display()
                     ))
                 })
+            })
+            .map(|()| {
+                #[cfg(test)]
+                crash_test_process_at("journal-retired");
             });
         if let Err(error) = applied {
             match self
@@ -490,6 +509,7 @@ impl Disk {
 mod tests {
     use super::*;
     use crate::qcow2::QCOW2_MAGIC;
+    use std::process::Command;
 
     /// A minimal empty v3 qcow2 sized for the synthetic FAT16 volume
     /// (mirrors the qcow2 unit-test builder).
@@ -604,6 +624,142 @@ mod tests {
 
     fn new_content() -> Vec<u8> {
         (0..64 * 1024u32).map(|n| (n % 251) as u8).collect()
+    }
+
+    const CRASH_IMAGE: &str = "REMANENCE_CRASH_TEST_IMAGE";
+
+    /// The subprocess half of the crash harness. It is ignored during an
+    /// ordinary test walk and selected explicitly by the parent below.
+    /// `commit` terminates this process at the requested boundary; if
+    /// it returns, the harness was not attached to that boundary.
+    #[test]
+    #[ignore]
+    fn crash_commit_child() {
+        let path = std::env::var_os(CRASH_IMAGE).expect("the parent supplies an image path");
+        let mut disk =
+            Disk::open(std::path::PathBuf::from(path), AccessIntent::Write).expect("child opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+            .expect("child overwrites");
+        disk.commit().expect("child commits");
+        panic!("the requested crash boundary was not reached");
+    }
+
+    fn run_crashing_commit(path: &std::path::Path, boundary: &str) {
+        let status = Command::new(std::env::current_exe().expect("test executable"))
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("disk::tests::crash_commit_child")
+            .arg("--nocapture")
+            .env(CRASH_IMAGE, path)
+            .env("REMANENCE_CRASH_TEST_BOUNDARY", boundary)
+            .status()
+            .expect("crash child starts");
+        assert_eq!(
+            status.code(),
+            Some(86),
+            "the child terminates at the {boundary} durability boundary"
+        );
+    }
+
+    fn build_committed_qcow2(path: &std::path::Path) {
+        build_fat16_qcow2(path);
+        let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+            .expect("writes old state");
+        disk.commit().expect("commits old state");
+    }
+
+    fn build_committed_chain(directory: &std::path::Path) -> (PathBuf, PathBuf) {
+        std::fs::create_dir_all(directory).expect("chain directory");
+        let base = directory.join("base.qcow2");
+        let top = directory.join("top.qcow2");
+        let virtual_size = build_fat16_qcow2(&base);
+        let mut base_disk = Disk::open(&base, AccessIntent::Write).expect("base opens");
+        base_disk
+            .write_file("superfloppy:0", "OLD.BIN", &old_content())
+            .expect("writes old state");
+        base_disk.commit().expect("commits old state");
+        drop(base_disk);
+
+        let mut image = empty_qcow2_bytes(virtual_size);
+        let name = b"base.qcow2";
+        image[0x200..0x200 + name.len()].copy_from_slice(name);
+        image[8..16].copy_from_slice(&0x200u64.to_be_bytes());
+        image[16..20].copy_from_slice(&(name.len() as u32).to_be_bytes());
+        std::fs::write(&top, image).expect("top writes");
+        (top, base)
+    }
+
+    #[test]
+    fn crash_harness_covers_every_commit_boundary_and_image_shape() {
+        let boundaries = [
+            ("journal-armed", false),
+            ("image-applied", false),
+            ("journal-retired", true),
+        ];
+        for (boundary, expect_new) in boundaries {
+            for shape in ["raw", "qcow2", "chain"] {
+                let stem = format!("remanence-crash-{shape}-{boundary}-{}", std::process::id());
+                let (path, backing, directory) = match shape {
+                    "raw" => {
+                        let path = std::env::temp_dir().join(format!("{stem}.img"));
+                        build_committed_raw(&path);
+                        (path, None, None)
+                    }
+                    "qcow2" => {
+                        let path = std::env::temp_dir().join(format!("{stem}.qcow2"));
+                        build_committed_qcow2(&path);
+                        (path, None, None)
+                    }
+                    "chain" => {
+                        let directory = std::env::temp_dir().join(stem);
+                        let (path, backing) = build_committed_chain(&directory);
+                        (path, Some(backing), Some(directory))
+                    }
+                    _ => unreachable!(),
+                };
+                let backing_before = backing
+                    .as_ref()
+                    .map(|path| std::fs::read(path).expect("backing reads"));
+
+                run_crashing_commit(&path, boundary);
+
+                let mut reopened = Disk::open(&path, AccessIntent::Read)
+                    .unwrap_or_else(|error| panic!("{shape}/{boundary} reopens: {error}"));
+                let content = reopened
+                    .read_file("superfloppy:0", "OLD.BIN")
+                    .unwrap_or_else(|error| panic!("{shape}/{boundary} reads: {error}"));
+                assert_eq!(
+                    content,
+                    if expect_new {
+                        new_content()
+                    } else {
+                        old_content()
+                    },
+                    "{shape}/{boundary} reconciles to a whole state"
+                );
+                assert!(
+                    !crate::journal::sidecar_path(&path).exists(),
+                    "{shape}/{boundary} leaves no recovery artifact after reopen"
+                );
+                drop(reopened);
+
+                if let (Some(backing), Some(before)) = (&backing, backing_before) {
+                    assert_eq!(
+                        std::fs::read(backing).expect("backing reads"),
+                        before,
+                        "{shape}/{boundary} never modifies the backing file"
+                    );
+                }
+                std::fs::remove_file(&path).ok();
+                if let Some(backing) = backing {
+                    std::fs::remove_file(backing).ok();
+                }
+                if let Some(directory) = directory {
+                    std::fs::remove_dir(directory).ok();
+                }
+            }
+        }
     }
 
     /// Runs a commit's staging and journal phases exactly as

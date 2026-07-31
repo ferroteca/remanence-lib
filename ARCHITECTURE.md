@@ -179,6 +179,22 @@ versioning, the claim is structural and P3 governs: FAT width is
 decided by cluster count because the format says so, and FAT32 is
 refused by name, never guessed at.
 
+### P9 — Interruption never invents a third state
+
+P2 makes commit the only moment the image changes; this principle
+armors that moment. An interruption at any point during commit — a
+killed process, lost power — leaves state the next open reconciles
+**before exposing the disk**, and after reconciliation the image is
+wholly the old state or wholly the committed new state, never a partial
+third state.
+
+The durable undo journal beneath the overlay is private transient
+state: no user-owned file, no cleanup verb, no contract about its shape
+or location. A fault-injection harness terminates a separate process
+after each durability boundary in commit and proves reconciliation for
+raw, standalone qcow2, and backing-chain images; in-process rollback
+tests are not evidence for this principle.
+
 ### P10 — Every refusal is machine-addressable
 
 A refusal's human diagnostic (P6) is not its interface. Every error
