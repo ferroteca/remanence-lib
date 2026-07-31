@@ -81,8 +81,8 @@ because they are claims about the code as it exists today:
 [USE-CASES.md](../USE-CASES.md) (U1–U5, every entry met by the
 code) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the whole-system
 view, the application surface inventory S1–S4, and the
-architectural principles P1–P8, every principle honored by the
-code). Together with the norms — currently the defining code, as
+architectural principles P1–P8 and P10, every principle honored by
+the code). Together with the norms — currently the defining code, as
 root ARCHITECTURE.md states — they are the project's **vision**.
 What sits under `proposed/` and `pledged/` here is vision that has
 not arrived yet; both directories appear when they next have

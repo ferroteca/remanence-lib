@@ -117,10 +117,18 @@ fn parse_label(image: &[u8]) -> Result<Label> {
         ));
     }
     if !matches!(info.volume_sectors, 400 | 800 | 1600) {
-        return Err(Error::invalid_image("hdos", "unsupported HDOS volume size"));
+        return Err(Error::categorized_image(
+            crate::ErrorCategory::Unsupported,
+            "hdos",
+            "unsupported HDOS volume size",
+        ));
     }
     if sector_size != 256 {
-        return Err(Error::invalid_image("hdos", "unsupported HDOS sector size"));
+        return Err(Error::categorized_image(
+            crate::ErrorCategory::Unsupported,
+            "hdos",
+            "unsupported HDOS sector size",
+        ));
     }
     if image.len() < usize::from(info.volume_sectors) * SECTOR_SIZE {
         return Err(Error::invalid_image("hdos", "image shorter than HDOS volume size"));
@@ -276,7 +284,11 @@ pub fn read_hdos_file(image: &[u8], name: &str) -> Result<Vec<u8>> {
         depth += 1;
     }
 
-    Err(Error::invalid_image("hdos", format!("file '{name}' not found")))
+    Err(Error::categorized_image(
+        crate::ErrorCategory::NotFound,
+        "hdos",
+        format!("file '{name}' not found"),
+    ))
 }
 
 /// Parse the HDOS directory from a raw hard-sectored image (e.g. `.h8d`).

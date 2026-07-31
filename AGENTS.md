@@ -14,8 +14,9 @@ the separate `remanence` project and will consume this library through the
 C ABI. The Rust code here is now the authoritative implementation.
 
 - `crates/remanence/` — the core library. `error.rs` owns the error
-  taxonomy (`Error`, five variants, display messages that the front-ends
-  print verbatim); `registry.rs` the format-definition parser and
+  taxonomy (`Error`, five diagnostic variants, and the stable
+  `ErrorCategory` set; display messages remain human diagnostics);
+  `registry.rs` the format-definition parser and
   `FormatRegistry` (BTreeMap-keyed, so detection iterates in stable id
   order); `image.rs` size validation against a container format;
   `container.rs` / `filesystem.rs` the detection heuristics (crate-private,
@@ -63,8 +64,8 @@ C ABI. The Rust code here is now the authoritative implementation.
   initiative, and ask before editing that file at all**; anyone may pick
   up what is already there.
 - **The vision is in force.** Use cases U1–U5 (root
-  [USE-CASES.md](USE-CASES.md)) and architectural principles P1–P8
-  (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
+  [USE-CASES.md](USE-CASES.md)) and architectural principles P1–P8 and
+  P10 (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage
   cites them by number; the surface-change rule in
   [planning/SURFACES.md](planning/SURFACES.md) is fully operable.

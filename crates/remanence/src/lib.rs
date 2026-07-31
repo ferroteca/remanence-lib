@@ -26,7 +26,7 @@ mod zip;
 
 pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat, DiskGeometry};
-pub use error::{Error, Result};
+pub use error::{Error, ErrorCategory, Result};
 pub use fat::{FatEntry, FatEntryKind, FatKind, VolumeInfo};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
 pub use image::DiskImage;

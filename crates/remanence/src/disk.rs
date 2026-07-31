@@ -243,7 +243,7 @@ impl Disk {
 
     fn require_writable(&self) -> Result<()> {
         if self.mode == AccessMode::ReadOnly {
-            return Err(Error::io(format!(
+            return Err(Error::read_only(format!(
                 "'{}' was opened for reading; write actions are denied",
                 self.path
             )));

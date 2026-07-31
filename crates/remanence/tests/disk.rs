@@ -8,7 +8,9 @@
 
 use std::path::PathBuf;
 
-use remanence::{AccessIntent, AccessMode, Disk, DiskFormat, FatEntryKind, FatKind};
+use remanence::{
+    AccessIntent, AccessMode, Disk, DiskFormat, ErrorCategory, FatEntryKind, FatKind,
+};
 
 fn temp_path(tag: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -107,6 +109,28 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert_eq!(entries[0].kind, FatEntryKind::File);
     assert_eq!(entries[0].size_bytes, payload.len() as u64);
     assert_eq!(disk.read_file(0, "SUB/HELLO.BIN").expect("read"), payload);
+    assert_eq!(
+        disk.read_file(0, "SUB").expect_err("directory is not a file").category(),
+        ErrorCategory::IsDirectory
+    );
+    assert_eq!(
+        disk.entries(0, "SUB/HELLO.BIN")
+            .expect_err("file is not a directory")
+            .category(),
+        ErrorCategory::NotDirectory
+    );
+    assert_eq!(
+        disk.read_file(0, "SUB/MISSING.BIN")
+            .expect_err("missing file is refused")
+            .category(),
+        ErrorCategory::NotFound
+    );
+    assert_eq!(
+        disk.write_file(0, "TOO-BIG.BIN", &vec![0u8; 5_000_000])
+            .expect_err("allocation exhaustion is refused")
+            .category(),
+        ErrorCategory::NoSpace
+    );
 
     // Rollback: the image is untouched.
     disk.rollback();
@@ -115,6 +139,12 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
 
     // Write again and commit this time.
     disk.write_file(0, "KEPT.TXT", b"kept bytes").expect("write");
+    assert_eq!(
+        disk.write_file(0, "KEPT.TXT", b"replacement")
+            .expect_err("overwrite is outside the current claim")
+            .category(),
+        ErrorCategory::Unsupported
+    );
     disk.commit().expect("commit");
     assert!(!disk.is_modified());
     drop(disk);
@@ -163,13 +193,17 @@ fn p7_declared_intent_claims_and_refusals() {
     // A writable session admits no observers: while it holds the claim,
     // a second open fails fast whatever its intent.
     let writer = Disk::open(&path, AccessIntent::Write).expect("writable open");
-    assert!(
-        Disk::open(&path, AccessIntent::Read).is_err(),
-        "a reader is excluded while a writable session lives"
+    assert_eq!(
+        Disk::open(&path, AccessIntent::Read)
+            .expect_err("a reader is excluded while a writable session lives")
+            .category(),
+        ErrorCategory::Locked
     );
-    assert!(
-        Disk::open(&path, AccessIntent::Write).is_err(),
-        "a second writer is excluded"
+    assert_eq!(
+        Disk::open(&path, AccessIntent::Write)
+            .expect_err("a second writer is excluded")
+            .category(),
+        ErrorCategory::Locked
     );
     drop(writer);
 
@@ -177,9 +211,11 @@ fn p7_declared_intent_claims_and_refusals() {
     // every writer.
     let reader = Disk::open(&path, AccessIntent::Read).expect("read open");
     let second = Disk::open(&path, AccessIntent::Read).expect("second reader admitted");
-    assert!(
-        Disk::open(&path, AccessIntent::Write).is_err(),
-        "a writer is refused while readers hold the file"
+    assert_eq!(
+        Disk::open(&path, AccessIntent::Write)
+            .expect_err("a writer is refused while readers hold the file")
+            .category(),
+        ErrorCategory::Locked
     );
     drop(second);
     drop(reader);
@@ -199,8 +235,10 @@ fn p7_declared_intent_claims_and_refusals() {
     let mut readonly = Disk::open(&path, AccessIntent::Read).expect("read open proceeds");
     assert_eq!(readonly.mode(), AccessMode::ReadOnly);
     assert!(readonly.geometry().is_ok(), "analysis proceeds");
-    let refused = readonly.write_file(0, "NO.TXT", b"denied");
-    assert!(refused.is_err(), "write actions are denied on a read session");
+    let refused = readonly
+        .write_file(0, "NO.TXT", b"denied")
+        .expect_err("write actions are denied on a read session");
+    assert_eq!(refused.category(), ErrorCategory::ReadOnly);
     drop(readonly);
 
     permissions.set_readonly(false);
@@ -218,6 +256,7 @@ fn p8_refuses_a_future_qcow2_version_by_name() {
     std::fs::write(&path, header).expect("image writes");
 
     let error = Disk::open(&path, AccessIntent::Read).expect_err("future version refused");
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();
     assert!(
         message.contains("version 9") && message.contains("ceiling"),

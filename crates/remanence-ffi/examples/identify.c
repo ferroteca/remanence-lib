@@ -49,10 +49,12 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    RmnErrorCategory error_category;
     char *error = NULL;
-    RmnSession *session = rmn_session_open(argv[1], &error);
+    RmnSession *session = rmn_session_open(argv[1], &error_category, &error);
     if (session == NULL) {
-        fprintf(stderr, "error: %s\n", error != NULL ? error : "unknown");
+        fprintf(stderr, "error (category %d): %s\n",
+                (int)error_category, error != NULL ? error : "unknown");
         rmn_string_free(error);
         return EXIT_FAILURE;
     }
@@ -89,10 +91,11 @@ int main(int argc, char **argv) {
 
     int status = EXIT_SUCCESS;
     if (has_hdos) {
-        RmnHdosFileList *files = rmn_session_list_hdos_files(session, &error);
+        RmnHdosFileList *files =
+            rmn_session_list_hdos_files(session, &error_category, &error);
         if (files == NULL) {
-            fprintf(stderr, "\nerror listing HDOS files: %s\n",
-                    error != NULL ? error : "unknown");
+            fprintf(stderr, "\nerror listing HDOS files (category %d): %s\n",
+                    (int)error_category, error != NULL ? error : "unknown");
             rmn_string_free(error);
             status = EXIT_FAILURE;
         } else {

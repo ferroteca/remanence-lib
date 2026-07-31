@@ -8,8 +8,9 @@
 //!   and freed with their matching `*_free` function.
 //! - `const char*` return values are UTF-8, owned by the handle they were read
 //!   from, and valid until that handle is freed. Do not free them.
-//! - Fallible constructors take an optional `char** error_out`; on failure they
-//!   return null and store a message to free with `rmn_string_free`.
+//! - Fallible calls take optional category and message outputs; on failure they
+//!   store a stable [`RmnErrorCategory`] and a message to free with
+//!   `rmn_string_free`.
 //! - Accessors taking an index return null / false / 0 when the index is out of
 //!   range or the field does not apply to the container's layout.
 
@@ -17,9 +18,41 @@ use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 
 use remanence::{
-    Container, ContainerKind, ContainerLayout, DiskLayout, HdosFile, Identification,
-    PhysicalMediaLayout, SectorLayout, Session, list_hdos_files,
+    Container, ContainerKind, ContainerLayout, DiskLayout, ErrorCategory, HdosFile,
+    Identification, PhysicalMediaLayout, SectorLayout, Session, list_hdos_files,
 };
+
+/// Stable, machine-readable classification of a library refusal. A fallible
+/// call writes one beside its error message; the output is untouched on success.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RmnErrorCategory {
+    Locked = 0,
+    InvalidImage = 1,
+    Unsupported = 2,
+    ReadOnly = 3,
+    NotFound = 4,
+    NotDirectory = 5,
+    IsDirectory = 6,
+    NoSpace = 7,
+    Io = 8,
+}
+
+impl From<ErrorCategory> for RmnErrorCategory {
+    fn from(category: ErrorCategory) -> Self {
+        match category {
+            ErrorCategory::Locked => Self::Locked,
+            ErrorCategory::InvalidImage => Self::InvalidImage,
+            ErrorCategory::Unsupported => Self::Unsupported,
+            ErrorCategory::ReadOnly => Self::ReadOnly,
+            ErrorCategory::NotFound => Self::NotFound,
+            ErrorCategory::NotDirectory => Self::NotDirectory,
+            ErrorCategory::IsDirectory => Self::IsDirectory,
+            ErrorCategory::NoSpace => Self::NoSpace,
+            ErrorCategory::Io => Self::Io,
+        }
+    }
+}
 
 /// What role a detected container plays in the image's layering.
 #[repr(C)]
@@ -66,7 +99,14 @@ unsafe fn clear_error(error_out: *mut *mut c_char) {
     }
 }
 
-unsafe fn set_error(error_out: *mut *mut c_char, error: &remanence::Error) {
+unsafe fn set_error(
+    category_out: *mut RmnErrorCategory,
+    error_out: *mut *mut c_char,
+    error: &remanence::Error,
+) {
+    if !category_out.is_null() {
+        unsafe { *category_out = error.category().into() };
+    }
     if !error_out.is_null() {
         unsafe { *error_out = to_owned_c_char(&error.to_string()) };
     }
@@ -291,6 +331,7 @@ unsafe fn hdos_file_view<'a>(
 
 fn hdos_list_from_bytes(
     bytes: &[u8],
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnHdosFileList {
     match list_hdos_files(bytes) {
@@ -299,7 +340,7 @@ fn hdos_list_from_bytes(
             Box::into_raw(Box::new(RmnHdosFileList { files }))
         }
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
     }
@@ -325,12 +366,13 @@ pub unsafe extern "C" fn rmn_string_free(string: *mut c_char) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_session_open(
     path: *const c_char,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnSession {
     unsafe { clear_error(error_out) };
     if path.is_null() {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     }
 
@@ -342,7 +384,7 @@ pub unsafe extern "C" fn rmn_session_open(
             Box::into_raw(Box::new(RmnSession { session, path, image_path }))
         }
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
     }
@@ -819,16 +861,17 @@ pub unsafe extern "C" fn rmn_container_fs_length_bytes(
 pub unsafe extern "C" fn rmn_list_hdos_files(
     bytes: *const u8,
     length: usize,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnHdosFileList {
     unsafe { clear_error(error_out) };
     if bytes.is_null() {
         let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     }
     let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
-    hdos_list_from_bytes(bytes, error_out)
+    hdos_list_from_bytes(bytes, error_category_out, error_out)
 }
 
 /// Parses the HDOS directory from a session's image bytes. Returns null on
@@ -836,15 +879,16 @@ pub unsafe extern "C" fn rmn_list_hdos_files(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_session_list_hdos_files(
     session: *const RmnSession,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnHdosFileList {
     unsafe { clear_error(error_out) };
     let Some(session) = (unsafe { session.as_ref() }) else {
         let error = remanence::Error::io("null session");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    hdos_list_from_bytes(session.session.bytes(), error_out)
+    hdos_list_from_bytes(session.session.bytes(), error_category_out, error_out)
 }
 
 /// Frees an HDOS file list handle.
@@ -1060,12 +1104,13 @@ unsafe fn utf8_arg<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
 pub unsafe extern "C" fn rmn_disk_open(
     path: *const c_char,
     intent: RmnAccessIntent,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnDisk {
     unsafe { clear_error(error_out) };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
     let intent = match intent {
@@ -1075,7 +1120,7 @@ pub unsafe extern "C" fn rmn_disk_open(
     match Disk::open(path.as_ref(), intent) {
         Ok(disk) => Box::into_raw(Box::new(RmnDisk { disk })),
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1132,6 +1177,7 @@ pub unsafe extern "C" fn rmn_disk_is_modified(disk: *const RmnDisk) -> bool {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_geometry(
     disk: *mut RmnDisk,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnDiskGeometry {
     unsafe { clear_error(error_out) };
@@ -1167,7 +1213,7 @@ pub unsafe extern "C" fn rmn_disk_geometry(
             Box::into_raw(Box::new(RmnDiskGeometry { partitions, volumes }))
         }
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1362,6 +1408,7 @@ pub unsafe extern "C" fn rmn_disk_entries(
     disk: *mut RmnDisk,
     volume: usize,
     path: *const c_char,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnFatEntryList {
     unsafe { clear_error(error_out) };
@@ -1385,7 +1432,7 @@ pub unsafe extern "C" fn rmn_disk_entries(
             Box::into_raw(Box::new(RmnFatEntryList { entries }))
         }
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1447,6 +1494,7 @@ pub unsafe extern "C" fn rmn_disk_read_file(
     disk: *mut RmnDisk,
     volume: usize,
     path: *const c_char,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnFileData {
     unsafe { clear_error(error_out) };
@@ -1455,13 +1503,13 @@ pub unsafe extern "C" fn rmn_disk_read_file(
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
     match disk.disk.read_file(volume, path.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RmnFileData { bytes })),
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1505,6 +1553,7 @@ pub unsafe extern "C" fn rmn_disk_write_file(
     path: *const c_char,
     bytes: *const u8,
     length: usize,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out) };
@@ -1513,12 +1562,12 @@ pub unsafe extern "C" fn rmn_disk_write_file(
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     };
     if bytes.is_null() && length > 0 {
         let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     }
     let contents = if length == 0 {
@@ -1529,7 +1578,7 @@ pub unsafe extern "C" fn rmn_disk_write_file(
     match disk.disk.write_file(volume, path.as_ref(), contents) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             false
         }
     }
@@ -1541,6 +1590,7 @@ pub unsafe extern "C" fn rmn_disk_make_directory(
     disk: *mut RmnDisk,
     volume: usize,
     path: *const c_char,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out) };
@@ -1549,13 +1599,13 @@ pub unsafe extern "C" fn rmn_disk_make_directory(
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     };
     match disk.disk.make_directory(volume, path.as_ref()) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             false
         }
     }
@@ -1566,6 +1616,7 @@ pub unsafe extern "C" fn rmn_disk_make_directory(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmn_disk_commit(
     disk: *mut RmnDisk,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out) };
@@ -1575,7 +1626,7 @@ pub unsafe extern "C" fn rmn_disk_commit(
     match disk.disk.commit() {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             false
         }
     }
@@ -1606,24 +1657,25 @@ pub unsafe extern "C" fn rmn_read_hdos_file(
     bytes: *const u8,
     length: usize,
     name: *const c_char,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnFileData {
     unsafe { clear_error(error_out) };
     if bytes.is_null() {
         let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     }
     let Some(name) = (unsafe { utf8_arg(name) }) else {
         let error = remanence::Error::io("null name");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
     let image = unsafe { std::slice::from_raw_parts(bytes, length) };
     match read_hdos_file(image, name.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RmnFileData { bytes })),
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1635,24 +1687,46 @@ pub unsafe extern "C" fn rmn_read_hdos_file(
 pub unsafe extern "C" fn rmn_session_read_hdos_file(
     session: *const RmnSession,
     name: *const c_char,
+    error_category_out: *mut RmnErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RmnFileData {
     unsafe { clear_error(error_out) };
     let Some(session) = (unsafe { session.as_ref() }) else {
         let error = remanence::Error::io("null session");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
     let Some(name) = (unsafe { utf8_arg(name) }) else {
         let error = remanence::Error::io("null name");
-        unsafe { set_error(error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
     match read_hdos_file(session.session.bytes(), name.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RmnFileData { bytes })),
         Err(error) => {
-            unsafe { set_error(error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_output_carries_category_beside_unchanged_message() {
+        let error = remanence::Error::unknown_container("future");
+        let mut category = RmnErrorCategory::Io;
+        let mut message = ptr::null_mut();
+
+        unsafe { set_error(&mut category, &mut message, &error) };
+
+        assert_eq!(category, RmnErrorCategory::Unsupported);
+        assert_eq!(
+            unsafe { CStr::from_ptr(message) }.to_str().expect("UTF-8"),
+            "unknown container format 'future'"
+        );
+        unsafe { rmn_string_free(message) };
     }
 }

@@ -35,6 +35,10 @@ fn invalid(reason: impl Into<String>) -> Error {
     Error::invalid_image("qcow2", reason)
 }
 
+fn unsupported(reason: impl Into<String>) -> Error {
+    Error::categorized_image(crate::ErrorCategory::Unsupported, "qcow2", reason)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Qcow2Header {
     pub version: u32,
@@ -67,10 +71,10 @@ impl Qcow2Header {
         // trusted to mean what this release thinks it means.
         let version = be32(&raw, 4);
         if version < 2 {
-            return Err(invalid(format!("unsupported qcow2 version {version}")));
+            return Err(unsupported(format!("unsupported qcow2 version {version}")));
         }
         if version > SUPPORTED_VERSION_CEILING {
-            return Err(invalid(format!(
+            return Err(unsupported(format!(
                 "qcow2 version {version} is newer than this release supports \
                  (ceiling: version {SUPPORTED_VERSION_CEILING}); refusing to touch it"
             )));
@@ -78,7 +82,7 @@ impl Qcow2Header {
 
         let backing_file_offset = be64(&raw, 8);
         if backing_file_offset != 0 {
-            return Err(invalid("backing files are not supported"));
+            return Err(unsupported("backing files are not supported"));
         }
         let cluster_bits = be32(&raw, 20);
         if !(9..=21).contains(&cluster_bits) {
@@ -87,7 +91,7 @@ impl Qcow2Header {
         let virtual_size = be64(&raw, 24);
         let crypt_method = be32(&raw, 32);
         if crypt_method != 0 {
-            return Err(invalid("encrypted images are not supported"));
+            return Err(unsupported("encrypted images are not supported"));
         }
         let l1_size = be32(&raw, 36);
         let l1_table_offset = be64(&raw, 40);
@@ -106,7 +110,7 @@ impl Qcow2Header {
             // external data file; anything set is either a state we must
             // not touch or a feature beyond this release's claim.
             if incompatible != 0 {
-                return Err(invalid(format!(
+                return Err(unsupported(format!(
                     "incompatible feature bits 0x{incompatible:x} are beyond this \
                      release's support; refusing to touch the image"
                 )));
@@ -172,12 +176,12 @@ impl<D: Device> Qcow2<D> {
             return Ok(());
         }
         if self.header.nb_snapshots != 0 {
-            return Err(invalid(
+            return Err(unsupported(
                 "image carries internal snapshots; writing is not supported",
             ));
         }
         if self.header.refcount_order != 4 {
-            return Err(invalid(format!(
+            return Err(unsupported(format!(
                 "refcount width 2^{} is beyond this release's write support \
                  (only 16-bit refcounts are claimed)",
                 self.header.refcount_order
@@ -249,7 +253,7 @@ impl<D: Device> Qcow2<D> {
         let table_len =
             self.header.refcount_table_clusters as u64 * self.cluster_size() / 8;
         if table_index >= table_len {
-            return Err(invalid(
+            return Err(unsupported(
                 "refcount table cannot cover the image; growing it is beyond \
                  this release's write support",
             ));
@@ -340,7 +344,7 @@ impl<D: Device> Qcow2<D> {
 
         if is_standard {
             if entry & OFLAG_COPIED == 0 {
-                return Err(invalid(
+                return Err(unsupported(
                     "cluster lacks the copied flag (shared with a snapshot?); \
                      refusing to write",
                 ));

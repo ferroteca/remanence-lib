@@ -2,7 +2,7 @@
 
 > **Status:** drafted 2026-07-30 and pledged 2026-07-31, both at
 > the owner's direction, from the same demand as the use cases
-> beside this file ([USE-CASES.md](USE-CASES.md)). Two principles
+> beside this file ([USE-CASES.md](USE-CASES.md)). One principle
 > and one amendment to an in-force principle, owed by the project;
 > a principle is **armed** only when it reaches root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md) — at which point a
@@ -30,20 +30,6 @@ Evidence is out-of-process, by definition: an in-process rollback
 test proves nothing about the crash case. Fault injection
 terminates a separate process after each durability boundary in
 commit and proves the next open reconciles correctly.
-
-## P10 — Every refusal is machine-addressable
-
-A refusal's human diagnostic (P6) is not its interface. Every error
-carries, beside its message, a stable machine-readable category
-from one enumerated set — the same category in Rust, in C, and in
-Python (P5) — so an embedder maps behavior without parsing text no
-release promises to keep. The category set is itself part of the
-surface: adding a category is a surface change; rewording a message
-never is.
-
-The initial set, covering every refusal the library makes today:
-`locked`, `invalid-image`, `unsupported`, `read-only`, `not-found`,
-`not-directory`, `is-directory`, `no-space`, `io`.
 
 ## Amendment — the P7 claim covers the chain
 

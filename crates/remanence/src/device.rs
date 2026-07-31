@@ -69,7 +69,7 @@ pub(crate) fn open_locked(path: &Path) -> Result<(File, AccessMode)> {
         Ok(file) => Ok((file, AccessMode::ReadWrite)),
         Err(first) => match open_claimed(path, false) {
             Ok(file) => Ok((file, AccessMode::ReadOnly)),
-            Err(_) if is_sharing_conflict(&first) => Err(Error::io(format!(
+            Err(_) if is_sharing_conflict(&first) => Err(Error::locked(format!(
                 "cannot lock '{}': another process holds write access",
                 path.display()
             ))),
@@ -98,7 +98,7 @@ pub(crate) fn open_declared(path: &Path, intent: AccessIntent) -> Result<File> {
                 AccessIntent::Read => "another process holds write access",
                 AccessIntent::Write => "another process has the file open",
             };
-            Error::io(format!(
+            Error::locked(format!(
                 "cannot claim '{}' for {verb}: {holder}",
                 path.display()
             ))
@@ -286,7 +286,7 @@ impl Device for FileDevice {
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
         if self.mode == AccessMode::ReadOnly {
-            return Err(Error::io(format!(
+            return Err(Error::read_only(format!(
                 "'{}' is open read-only; write denied",
                 self.path
             )));
@@ -331,7 +331,7 @@ impl Device for SliceDevice<'_> {
     }
 
     fn write_at(&mut self, _offset: u64, _data: &[u8]) -> Result<()> {
-        Err(Error::io("in-memory device is read-only".to_owned()))
+        Err(Error::read_only("in-memory device is read-only".to_owned()))
     }
 
     fn flush(&mut self) -> Result<()> {

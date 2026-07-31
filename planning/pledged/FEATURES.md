@@ -4,10 +4,11 @@
 > the owner's direction: the feature cut that would let the
 > downstream embedding consumer that U3 and U4 serve delete its own
 > disk-access implementation and stand wholly on this library,
-> pinning one exact prerelease at a time.
-> The demand behind it is pledged beside this file —
-> [USE-CASES.md](USE-CASES.md) (U6 and the U3/U4 amendments) and
-> [ARCHITECTURE.md](ARCHITECTURE.md) (P9, P10, the P7 amendment).
+> pinning one exact prerelease at a time. P10 is now in force at
+> root [ARCHITECTURE.md](../../ARCHITECTURE.md); the remaining demand
+> is pledged beside this file — [USE-CASES.md](USE-CASES.md) (U6 and
+> the U3/U4 amendments) and [ARCHITECTURE.md](ARCHITECTURE.md) (P9
+> and the P7 amendment).
 > Every feature here is owed by the project, with no promise of
 > order or time; a feature's number evaporates on delivery, and a
 > split retires the parent number. Each feature is cut to one
@@ -37,19 +38,6 @@
 > implementation above the library); **identification of backing
 > chains** (U5 untouched, per U6's note).
 
-## F11 — Error categories
-
-P10's mechanics. Every `Error` carries a stable category from the
-enumerated set; every existing refusal is mapped once, deliberately
-— the P7 contention refusals to `locked`, the format and structure
-refusals to `invalid-image` or `unsupported`, the FAT lookup
-refusals to `not-found`/`not-directory`/`is-directory`, allocation
-exhaustion to `no-space`, the read-only write refusal to
-`read-only`, the remainder to `io`. S1: a category accessor on the
-error; S2: a category code beside the message; S3: a category
-attribute on the exception. Message text is explicitly not part of
-the change and not a contract. Needs: P10 pledged.
-
 ## F12 — The complete geometry report
 
 The amended U4's report. Blank is an answer: an all-zero boot
@@ -62,7 +50,7 @@ cannot be read, stays in the report carrying a structured issue —
 category plus diagnostic — instead of failing the whole disk or
 vanishing, and the volumes behind it never renumber. Cylinders are
 reported where the disk states them or an exact derivation exists,
-omitted otherwise. Needs: F11 (the issue carries a category).
+omitted otherwise.
 
 ## F13 — Stable volume identity
 

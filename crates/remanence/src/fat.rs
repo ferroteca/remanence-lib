@@ -7,7 +7,7 @@
 //! follow reliquary's `at_rest.py`, whose behavior this absorbs.
 
 use crate::device::Device;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorCategory, Result};
 
 /// The FAT width of a recognized volume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,34 @@ pub struct FatEntry {
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::invalid_image("fat", reason)
+}
+
+fn categorized(category: ErrorCategory, reason: impl Into<String>) -> Error {
+    Error::categorized_image(category, "fat", reason)
+}
+
+fn unsupported(reason: impl Into<String>) -> Error {
+    categorized(ErrorCategory::Unsupported, reason)
+}
+
+fn not_found(reason: impl Into<String>) -> Error {
+    categorized(ErrorCategory::NotFound, reason)
+}
+
+fn not_directory(reason: impl Into<String>) -> Error {
+    categorized(ErrorCategory::NotDirectory, reason)
+}
+
+fn is_directory(reason: impl Into<String>) -> Error {
+    categorized(ErrorCategory::IsDirectory, reason)
+}
+
+fn no_space(reason: impl Into<String>) -> Error {
+    categorized(ErrorCategory::NoSpace, reason)
+}
+
+fn io(reason: impl Into<String>) -> Error {
+    categorized(ErrorCategory::Io, reason)
 }
 
 const RECORD: usize = 32;
@@ -106,7 +134,7 @@ impl Bpb {
         if sectors_per_fat == 0 {
             // FAT32 stores its FAT size at offset 36 instead; this is the
             // structural marker of a generation beyond the claim (P8).
-            return Err(invalid(
+            return Err(unsupported(
                 "32-bit FAT size field in use: FAT32 or later, which is beyond \
                  this release's claim (FAT12/FAT16 only)",
             ));
@@ -199,7 +227,7 @@ impl FatVolume {
         } else if count < 65525 {
             FatKind::Fat16
         } else {
-            return Err(invalid(format!(
+            return Err(unsupported(format!(
                 "{count} clusters means FAT32 or later, which is beyond this \
                  release's claim (FAT12/FAT16 only)"
             )));
@@ -430,7 +458,7 @@ impl FatVolume {
         segments: &'s [&str],
     ) -> Result<(u64, &'s str)> {
         let Some((leaf, dirs)) = segments.split_last() else {
-            return Err(invalid("empty path"));
+            return Err(io("empty path"));
         };
         let mut current = 0u64;
         for dir in dirs {
@@ -438,9 +466,9 @@ impl FatVolume {
             let found = entries
                 .iter()
                 .find(|(entry, _)| entry.name.eq_ignore_ascii_case(dir))
-                .ok_or_else(|| invalid(format!("directory '{dir}' not found")))?;
+                .ok_or_else(|| not_found(format!("directory '{dir}' not found")))?;
             if found.0.kind != FatEntryKind::Directory {
-                return Err(invalid(format!("'{dir}' is not a directory")));
+                return Err(not_directory(format!("'{dir}' is not a directory")));
             }
             current = found.1.first_cluster;
         }
@@ -453,7 +481,7 @@ impl FatVolume {
             .into_iter()
             .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
             .map(|(_, located)| located)
-            .ok_or_else(|| invalid(format!("'{leaf}' not found")))
+            .ok_or_else(|| not_found(format!("'{leaf}' not found")))
     }
 
     /// Lists a directory ("" or "A/B" style path segments; empty = root).
@@ -467,7 +495,7 @@ impl FatVolume {
         } else {
             let located = self.locate(device, segments)?;
             if located.attributes & ATTR_DIRECTORY == 0 {
-                return Err(invalid(format!(
+                return Err(not_directory(format!(
                     "'{}' is not a directory",
                     segments.join("/")
                 )));
@@ -485,7 +513,7 @@ impl FatVolume {
     pub fn read_file(&self, device: &mut dyn Device, segments: &[&str]) -> Result<Vec<u8>> {
         let located = self.locate(device, segments)?;
         if located.attributes & ATTR_DIRECTORY != 0 {
-            return Err(invalid(format!("'{}' is a directory", segments.join("/"))));
+            return Err(is_directory(format!("'{}' is a directory", segments.join("/"))));
         }
         let mut out = Vec::with_capacity(located.size as usize);
         if located.size > 0 && located.first_cluster >= 2 {
@@ -523,7 +551,7 @@ impl FatVolume {
             cluster += 1;
         }
         if free.len() < count {
-            return Err(invalid(format!(
+            return Err(no_space(format!(
                 "volume full: {count} clusters needed, {} free",
                 free.len()
             )));
@@ -541,7 +569,7 @@ impl FatVolume {
             !part.is_empty() && part.len() <= max || (max == 3 && part.is_empty())
         };
         if !valid(base, 8) || !(ext.len() <= 3) || base.contains('.') {
-            return Err(invalid(format!("'{name}' is not a valid 8.3 name")));
+            return Err(io(format!("'{name}' is not a valid 8.3 name")));
         }
         let ok_byte = |byte: u8| {
             byte.is_ascii_uppercase()
@@ -550,7 +578,7 @@ impl FatVolume {
                     | b'-' | b'@' | b'^' | b'_' | b'`' | b'{' | b'}' | b'~')
         };
         if !base.bytes().all(ok_byte) || !ext.bytes().all(ok_byte) {
-            return Err(invalid(format!("'{name}' is not a valid 8.3 name")));
+            return Err(io(format!("'{name}' is not a valid 8.3 name")));
         }
         let mut raw = [b' '; 11];
         raw[..base.len()].copy_from_slice(base.as_bytes());
@@ -600,7 +628,7 @@ impl FatVolume {
             }
         }
         if parent_cluster == 0 {
-            return Err(invalid("root directory is full"));
+            return Err(no_space("root directory is full"));
         }
         // Grow the directory by one cluster.
         let new = self.claim_clusters(device, 1)?[0];
@@ -647,7 +675,7 @@ impl FatVolume {
             .iter()
             .any(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
         {
-            return Err(invalid(format!(
+            return Err(unsupported(format!(
                 "'{leaf}' already exists; overwriting is not part of this claim"
             )));
         }
@@ -680,7 +708,7 @@ impl FatVolume {
             .iter()
             .any(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
         {
-            return Err(invalid(format!("'{leaf}' already exists")));
+            return Err(io(format!("'{leaf}' already exists")));
         }
         let cluster = self.claim_clusters(device, 1)?[0];
         let slot = self.free_record_slot(device, parent)?;

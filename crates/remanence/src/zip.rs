@@ -116,7 +116,8 @@ impl ZipArchive {
             8 => inflate(compressed, entry.uncompressed_size as usize).ok_or_else(|| {
                 Error::archive("zip", format!("failed to inflate '{}'", entry.name))
             }),
-            method => Err(Error::archive(
+            method => Err(Error::categorized_archive(
+                crate::ErrorCategory::Unsupported,
                 "zip",
                 format!("unsupported compression method {method}"),
             )),

@@ -41,9 +41,9 @@ never reused.
 - **S1 — The Rust crate API.** The public surface of `crates/remanence`:
   `Session`, `Identification` and the container/layout types,
   `FormatRegistry` and the format types, `DiskImage`, `list_hdos_files`
-  and `HdosFile`, `Error`/`Result`, and the embedded default format
-  definitions. Defined by the crate's `pub` items; `cargo doc` output is a
-  representation of it.
+  and `HdosFile`, `Error`/`ErrorCategory`/`Result`, and the embedded
+  default format definitions. Defined by the crate's `pub` items; `cargo
+  doc` output is a representation of it.
 - **S2 — The C ABI.** Every `rmn_*` symbol exported by
   `crates/remanence-ffi`, with the generated `include/remanence.h` as its
   consumer-facing representation. Covers naming, ownership rules (who
@@ -51,7 +51,7 @@ never reused.
   change is a surface change even when no Rust type changed.
 - **S3 — The Python module.** The `remanence` module registered by
   `crates/remanence-py`: its classes, properties, functions, exception
-  type, and module constants.
+  type and category attribute, and module constants.
 - **S4 — The format-definition text format.** The `[section]` /
   `key = value` dialect parsed by `FormatRegistry` — section kinds,
   known keys and their types, list syntax, comment and attribute
@@ -172,3 +172,17 @@ them is itself a named refusal. Where a format genuinely carries no
 versioning, the claim is structural and P3 governs: FAT width is
 decided by cluster count because the format says so, and FAT32 is
 refused by name, never guessed at.
+
+### P10 — Every refusal is machine-addressable
+
+A refusal's human diagnostic (P6) is not its interface. Every error
+carries, beside its message, a stable machine-readable category
+from one enumerated set — the same category in Rust, in C, and in
+Python (P5) — so an embedder maps behavior without parsing text no
+release promises to keep. The category set is itself part of the
+surface: adding a category is a surface change; rewording a message
+never is.
+
+The initial set, covering every refusal the library makes today:
+`locked`, `invalid-image`, `unsupported`, `read-only`, `not-found`,
+`not-directory`, `is-directory`, `no-space`, `io`.

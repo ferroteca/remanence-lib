@@ -28,6 +28,10 @@ fn invalid(reason: impl Into<String>) -> Error {
     Error::invalid_image("mbr", reason)
 }
 
+fn unsupported(reason: impl Into<String>) -> Error {
+    Error::categorized_image(crate::ErrorCategory::Unsupported, "mbr", reason)
+}
+
 /// The pinned partition-type claim. Everything else is a named refusal.
 fn pinned_type_name(type_byte: u8) -> Option<&'static str> {
     match type_byte {
@@ -110,7 +114,7 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Vec<PartitionInfo>> {
             continue;
         }
         let Some(type_name) = pinned_type_name(entry.type_byte) else {
-            return Err(invalid(format!(
+            return Err(unsupported(format!(
                 "partition type 0x{:02x} is outside this release's claim; \
                  refusing rather than skipping (skipping would renumber \
                  every volume behind it)",
@@ -159,7 +163,7 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Vec<PartitionInfo>> {
         let logical = &entries[0];
         if logical.type_byte != 0x00 {
             let Some(type_name) = pinned_type_name(logical.type_byte) else {
-                return Err(invalid(format!(
+                return Err(unsupported(format!(
                     "logical partition type 0x{:02x} is outside this release's \
                      claim; refusing rather than skipping",
                     logical.type_byte

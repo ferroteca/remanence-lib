@@ -20,11 +20,25 @@ create_exception!(
     remanence,
     RemanenceError,
     PyException,
-    "Raised when the remanence library reports an error."
+    "Raised when the remanence library reports an error; `category` is stable."
 );
 
+fn categorized_py_err(
+    category: remanence::ErrorCategory,
+    message: impl Into<String>,
+) -> PyErr {
+    let error = RemanenceError::new_err(message.into());
+    Python::attach(|py| {
+        error
+            .value(py)
+            .setattr("category", category.as_str())
+            .expect("RemanenceError instances accept attributes");
+    });
+    error
+}
+
 fn to_py_err(error: remanence::Error) -> PyErr {
-    RemanenceError::new_err(error.to_string())
+    categorized_py_err(error.category(), error.to_string())
 }
 
 fn kind_str(kind: remanence::ContainerKind) -> &'static str {
@@ -584,7 +598,9 @@ impl Disk {
     fn get(&mut self) -> PyResult<&mut remanence::Disk> {
         self.inner
             .as_mut()
-            .ok_or_else(|| RemanenceError::new_err("disk is closed"))
+            .ok_or_else(|| {
+                categorized_py_err(remanence::ErrorCategory::Io, "disk is closed")
+            })
     }
 }
 

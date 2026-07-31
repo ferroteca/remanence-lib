@@ -155,7 +155,13 @@ pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
         .entries()
         .iter()
         .find(|entry| entry.name == entry_name)
-        .ok_or_else(|| Error::archive("zip", format!("entry '{entry_name}' not found")))?;
+        .ok_or_else(|| {
+            Error::categorized_archive(
+                crate::ErrorCategory::NotFound,
+                "zip",
+                format!("entry '{entry_name}' not found"),
+            )
+        })?;
 
     let compressed_size = entry.compressed_size;
     let uncompressed_size = entry.uncompressed_size;

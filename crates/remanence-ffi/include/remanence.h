@@ -14,6 +14,20 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// Stable, machine-readable classification of a library refusal. A fallible
+// call writes one beside its error message; the output is untouched on success.
+typedef enum {
+  RMN_ERROR_CATEGORY_LOCKED = 0,
+  RMN_ERROR_CATEGORY_INVALID_IMAGE = 1,
+  RMN_ERROR_CATEGORY_UNSUPPORTED = 2,
+  RMN_ERROR_CATEGORY_READ_ONLY = 3,
+  RMN_ERROR_CATEGORY_NOT_FOUND = 4,
+  RMN_ERROR_CATEGORY_NOT_DIRECTORY = 5,
+  RMN_ERROR_CATEGORY_IS_DIRECTORY = 6,
+  RMN_ERROR_CATEGORY_NO_SPACE = 7,
+  RMN_ERROR_CATEGORY_IO = 8,
+} RmnErrorCategory;
+
 // What role a detected container plays in the image's layering.
 typedef enum {
   RMN_CONTAINER_KIND_ARCHIVE,
@@ -98,7 +112,9 @@ void rmn_string_free(char *string);
 // Opens `path` (UTF-8) — a raw disk image, or `archive.zip[/entry]` — with
 // the default format registry. Returns null on failure and stores a message
 // in `error_out` (free with `rmn_string_free`).
-RmnSession *rmn_session_open(const char *path, char **error_out);
+RmnSession *rmn_session_open(const char *path,
+                             RmnErrorCategory *error_category_out,
+                             char **error_out);
 
 // Frees a session handle.
 void rmn_session_free(RmnSession *session);
@@ -247,11 +263,16 @@ bool rmn_container_fs_length_bytes(const RmnIdentification *identification,
 
 // Parses the HDOS directory from raw image bytes. Returns null on failure and
 // stores a message in `error_out` (free with `rmn_string_free`).
-RmnHdosFileList *rmn_list_hdos_files(const uint8_t *bytes, size_t length, char **error_out);
+RmnHdosFileList *rmn_list_hdos_files(const uint8_t *bytes,
+                                     size_t length,
+                                     RmnErrorCategory *error_category_out,
+                                     char **error_out);
 
 // Parses the HDOS directory from a session's image bytes. Returns null on
 // failure and stores a message in `error_out` (free with `rmn_string_free`).
-RmnHdosFileList *rmn_session_list_hdos_files(const RmnSession *session, char **error_out);
+RmnHdosFileList *rmn_session_list_hdos_files(const RmnSession *session,
+                                             RmnErrorCategory *error_category_out,
+                                             char **error_out);
 
 // Frees an HDOS file list handle.
 void rmn_hdos_file_list_free(RmnHdosFileList *list);
@@ -293,7 +314,10 @@ const char *rmn_hdos_file_modified_date(const RmnHdosFileList *list, size_t inde
 // never by falling back; a `Read` open takes read access only, denies
 // writes to others, and admits other readers. Returns null on failure
 // with a message in `error_out`.
-RmnDisk *rmn_disk_open(const char *path, RmnAccessIntent intent, char **error_out);
+RmnDisk *rmn_disk_open(const char *path,
+                       RmnAccessIntent intent,
+                       RmnErrorCategory *error_category_out,
+                       char **error_out);
 
 // Frees a disk handle, releasing the P7 claim. Uncommitted changes are
 // discarded (the commit point never reached the file).
@@ -316,7 +340,9 @@ bool rmn_disk_is_modified(const RmnDisk *disk);
 
 // Reads the disk's partitions and volumes as they actually are. Free the
 // result with `rmn_disk_geometry_free`.
-RmnDiskGeometry *rmn_disk_geometry(RmnDisk *disk, char **error_out);
+RmnDiskGeometry *rmn_disk_geometry(RmnDisk *disk,
+                                   RmnErrorCategory *error_category_out,
+                                   char **error_out);
 
 // Frees a geometry snapshot.
 void rmn_disk_geometry_free(RmnDiskGeometry *geometry);
@@ -378,7 +404,11 @@ bool rmn_geometry_volume_heads(const RmnDiskGeometry *geometry, size_t index, ui
 
 // Lists a directory in volume `volume` ("" = root, "A/B" descends). Free
 // with `rmn_fat_entry_list_free`.
-RmnFatEntryList *rmn_disk_entries(RmnDisk *disk, size_t volume, const char *path, char **error_out);
+RmnFatEntryList *rmn_disk_entries(RmnDisk *disk,
+                                  size_t volume,
+                                  const char *path,
+                                  RmnErrorCategory *error_category_out,
+                                  char **error_out);
 
 // Frees a directory listing.
 void rmn_fat_entry_list_free(RmnFatEntryList *list);
@@ -397,7 +427,11 @@ uint64_t rmn_fat_entry_size_bytes(const RmnFatEntryList *list, size_t index);
 
 // Copies a file's bytes out of volume `volume`. Free with
 // `rmn_file_data_free`.
-RmnFileData *rmn_disk_read_file(RmnDisk *disk, size_t volume, const char *path, char **error_out);
+RmnFileData *rmn_disk_read_file(RmnDisk *disk,
+                                size_t volume,
+                                const char *path,
+                                RmnErrorCategory *error_category_out,
+                                char **error_out);
 
 // The bytes of a read-out file; valid until the handle is freed.
 const uint8_t *rmn_file_data_bytes(const RmnFileData *data, size_t *length_out);
@@ -411,14 +445,19 @@ bool rmn_disk_write_file(RmnDisk *disk,
                          const char *path,
                          const uint8_t *bytes,
                          size_t length,
+                         RmnErrorCategory *error_category_out,
                          char **error_out);
 
 // Creates a directory in volume `volume`. Buffered until commit.
-bool rmn_disk_make_directory(RmnDisk *disk, size_t volume, const char *path, char **error_out);
+bool rmn_disk_make_directory(RmnDisk *disk,
+                             size_t volume,
+                             const char *path,
+                             RmnErrorCategory *error_category_out,
+                             char **error_out);
 
 // The commit point (P2): everything buffered reaches the image, then a
 // flush. Until this call, nothing has touched the file.
-bool rmn_disk_commit(RmnDisk *disk, char **error_out);
+bool rmn_disk_commit(RmnDisk *disk, RmnErrorCategory *error_category_out, char **error_out);
 
 // Discards everything buffered; the image is untouched.
 void rmn_disk_rollback(RmnDisk *disk);
@@ -431,12 +470,14 @@ RmnAccessMode rmn_session_access_mode(const RmnSession *session);
 RmnFileData *rmn_read_hdos_file(const uint8_t *bytes,
                                 size_t length,
                                 const char *name,
+                                RmnErrorCategory *error_category_out,
                                 char **error_out);
 
 // Reads a cataloged HDOS file out of a session's image bytes. Free with
 // `rmn_file_data_free`.
 RmnFileData *rmn_session_read_hdos_file(const RmnSession *session,
                                         const char *name,
+                                        RmnErrorCategory *error_category_out,
                                         char **error_out);
 
 #ifdef __cplusplus
