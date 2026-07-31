@@ -106,7 +106,9 @@ is expected to stay no.
 
 ## Licensing
 
-The project is **GPL-3.0-only** and follows REUSE conventions.
+The project is **GPL-3.0-only** and follows REUSE conventions. The name
+**Remanence** is reserved to Paul Galbraith under [TRADEMARKS.md](TRADEMARKS.md) — a reservation GPL section 7(e)
+expressly permits; do not weaken or contradict that policy in docs or packaging metadata.
 
 Every new file authored for the project needs:
 

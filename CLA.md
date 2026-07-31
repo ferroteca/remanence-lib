@@ -188,7 +188,8 @@ on it.
 ## 9. Trademarks
 
 This agreement grants no rights in any trademark, trade name, or service
-mark of either party.
+mark of either party. The Remanence name is governed by
+[TRADEMARKS.md](TRADEMARKS.md).
 
 ## 10. No obligation, and no warranty
 

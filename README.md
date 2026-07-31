@@ -107,3 +107,6 @@ already been released: every version published under the GPL stays under
 the GPL, permanently. Contributions are accepted under a copyright
 assignment that keeps the reservation intact; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+The name **Remanence** is owned by Paul Galbraith and is not licensed
+for use by forks or redistributions. See [TRADEMARKS.md](TRADEMARKS.md).

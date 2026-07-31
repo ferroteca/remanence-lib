@@ -141,6 +141,13 @@ another project's implementation of something, say so before submitting
 work in that area — that is a normal and welcome thing to disclose, not an
 accusation to avoid.
 
+### The project name
+
+The name **Remanence** is owned by Paul Galbraith and is not part of the
+GPL grant — a reservation the GPL expressly permits at section 7(e).
+Forks and redistributions must use a different name; see
+[TRADEMARKS.md](TRADEMARKS.md).
+
 ### SPDX headers
 
 Use accurate SPDX copyright information in each new file:

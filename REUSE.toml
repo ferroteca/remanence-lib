@@ -10,6 +10,7 @@ path = [
     "AGENTS.md",
     "CLAUDE.md",
     "CONTRIBUTING.md",
+    "TRADEMARKS.md",
     "ARCHITECTURE.md",
     "REUSE.toml",
     "planning/**",
