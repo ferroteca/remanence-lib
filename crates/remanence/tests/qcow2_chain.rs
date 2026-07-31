@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Backing-chain integration tests (U6's read half) over synthetic
-//! images the project owns outright: hand-built qcow2 overlays whose
-//! chains bottom out in a hand-built FAT16 volume. Everything runs
-//! through the public `Disk` surface; cluster-level composition
-//! semantics are unit-tested inside the crate.
+//! Backing-chain integration tests (U6) over synthetic images the
+//! project owns outright: hand-built qcow2 overlays whose chains bottom
+//! out in a hand-built FAT16 volume. Everything runs through the public
+//! `Disk` surface; cluster-level composition semantics are unit-tested
+//! inside the crate.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use remanence::{AccessIntent, Disk, DiskFormat, ErrorCategory};
 
@@ -123,6 +124,41 @@ fn cleanup(dir: &Path) {
     std::fs::remove_dir_all(dir).ok();
 }
 
+fn qemu_img() -> PathBuf {
+    if let Some(path) = std::env::var_os("REMANENCE_QEMU_IMG") {
+        return path.into();
+    }
+    for path in [
+        PathBuf::from("qemu-img"),
+        PathBuf::from(r"C:\Program Files\qemu\qemu-img.exe"),
+    ] {
+        if Command::new(&path).arg("--version").output().is_ok() {
+            return path;
+        }
+    }
+    panic!(
+        "qemu-img was not found; put it on PATH or set REMANENCE_QEMU_IMG \
+         (the tested Windows location is C:\\Program Files\\qemu\\qemu-img.exe)"
+    );
+}
+
+fn run_qemu_img(qemu_img: &Path, args: &[&str]) -> String {
+    let output = Command::new(qemu_img)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("could not run {}: {error}", qemu_img.display()));
+    assert!(
+        output.status.success(),
+        "{} {} failed with {}\nstdout:\n{}\nstderr:\n{}",
+        qemu_img.display(),
+        args.join(" "),
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 #[test]
 fn reads_compose_through_a_raw_backing_file() {
     let dir = chain_dir("raw-base");
@@ -149,11 +185,83 @@ fn reads_compose_through_a_raw_backing_file() {
     );
     drop(disk);
 
-    // Writing through a chain is refused at the open, by name.
-    let error = Disk::open(&overlay, AccessIntent::Write)
-        .expect_err("a chained image refuses write intent");
-    assert_eq!(error.category(), ErrorCategory::Unsupported);
-    assert!(error.to_string().contains("backing chain"));
+    // A write is seeded from the composed view, then allocated into the
+    // top image. The backing bytes and the top's recorded relationship
+    // remain byte-for-byte unchanged.
+    let untouched_top = std::fs::read(&overlay).expect("top reads");
+    let top_header = untouched_top[..CLUSTER as usize].to_vec();
+    let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("write chain opens");
+    disk.write_file("superfloppy:0", "MARKER.TXT", b"rolled back")
+        .expect("write buffers");
+    disk.rollback();
+    drop(disk);
+    assert_eq!(
+        std::fs::read(&overlay).expect("rolled-back top reads"),
+        untouched_top,
+        "rollback never reaches the top image"
+    );
+
+    let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("write chain opens");
+    disk.write_file("superfloppy:0", "MARKER.TXT", b"changed in the top")
+        .expect("write buffers");
+    disk.commit().expect("write commits");
+    drop(disk);
+
+    assert_eq!(std::fs::read(dir.join("base.img")).expect("base reads"), base);
+    assert_eq!(
+        &std::fs::read(&overlay).expect("top reads")[..CLUSTER as usize],
+        top_header.as_slice()
+    );
+    let mut reopened = Disk::open(&overlay, AccessIntent::Read).expect("written chain reopens");
+    assert_eq!(
+        reopened.read_file("superfloppy:0", "MARKER.TXT").expect("changed file reads"),
+        b"changed in the top"
+    );
+
+    cleanup(&dir);
+}
+
+#[test]
+#[ignore = "requires qemu-img; proves the delivered host reads the preserved chain"]
+fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
+    let dir = chain_dir("qemu-cow");
+    let base = dir.join("base.img");
+    let overlay = dir.join("overlay.qcow2");
+    let flattened = dir.join("flattened.img");
+    write(&base, &synthetic_fat16());
+
+    let qemu = qemu_img();
+    let base_arg = base.to_str().expect("utf-8 base path");
+    let overlay_arg = overlay.to_str().expect("utf-8 overlay path");
+    run_qemu_img(
+        &qemu,
+        &["create", "-f", "qcow2", "-F", "raw", "-b", base_arg, overlay_arg],
+    );
+    let before = run_qemu_img(&qemu, &["info", overlay_arg]);
+
+    let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("QEMU chain opens");
+    disk.write_file("superfloppy:0", "MARKER.TXT", b"remanence copy-on-write")
+        .expect("write buffers");
+    disk.commit().expect("write commits");
+    drop(disk);
+
+    let after = run_qemu_img(&qemu, &["info", overlay_arg]);
+    assert!(
+        before.lines().any(|line| line.contains(base_arg))
+            && after.lines().any(|line| line.contains(base_arg)),
+        "qemu-img reports the same backing before and after commit\nbefore:\n{before}\nafter:\n{after}"
+    );
+
+    let flattened_arg = flattened.to_str().expect("utf-8 flattened path");
+    run_qemu_img(&qemu, &["convert", "-O", "raw", overlay_arg, flattened_arg]);
+    let mut qemu_view =
+        Disk::open(&flattened, AccessIntent::Read).expect("QEMU-rendered disk opens");
+    assert_eq!(
+        qemu_view
+            .read_file("superfloppy:0", "MARKER.TXT")
+            .expect("QEMU-rendered changed file reads"),
+        b"remanence copy-on-write"
+    );
 
     cleanup(&dir);
 }
@@ -185,6 +293,30 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         b"read through the chain"
     );
     drop(disk);
+
+    let base_before = std::fs::read(dir.join("base.img")).expect("base reads");
+    let mid_before = std::fs::read(dir.join("mid.qcow2")).expect("middle reads");
+    let mut disk = Disk::open(&top, AccessIntent::Write).expect("two-level write opens");
+    disk.write_file("superfloppy:0", "MARKER.TXT", b"changed above two levels")
+        .expect("write buffers");
+    disk.commit().expect("write commits");
+    drop(disk);
+    assert_eq!(
+        std::fs::read(dir.join("base.img")).expect("base reads"),
+        base_before
+    );
+    assert_eq!(
+        std::fs::read(dir.join("mid.qcow2")).expect("middle reads"),
+        mid_before
+    );
+    let mut reopened = Disk::open(&top, AccessIntent::Read).expect("changed chain reopens");
+    assert_eq!(
+        reopened
+            .read_file("superfloppy:0", "MARKER.TXT")
+            .expect("changed marker reads"),
+        b"changed above two levels"
+    );
+
     cleanup(&dir);
 }
 

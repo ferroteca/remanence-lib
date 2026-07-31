@@ -6,12 +6,13 @@
 //! a [`Device`]. The support claim, per P8, is validated before anything
 //! else is touched — versions 2 and 3, no encryption, no external data
 //! file, no unknown incompatible feature bits — for every file of a
-//! backing chain alike. A chain composes for reading (U6): members are
-//! raw or qcow2, a relative backing path resolves from the image that
-//! names it, and every backing file is claimed immutable (P7). A missing
-//! member, a cycle, a chain past [`MAX_CHAIN_LENGTH`] files, and a
-//! backing format beyond the claim are refused by name. Writing claims
-//! standalone images only, refcount width 16, and no internal snapshots.
+//! backing chain alike. A chain composes for reading and writing (U6):
+//! members are raw or qcow2, a relative backing path resolves from the
+//! image that names it, and every backing file is claimed immutable
+//! (P7). Writes allocate copy-on-write into the top image only. A
+//! missing member, a cycle, a chain past [`MAX_CHAIN_LENGTH`] files, and
+//! a backing format beyond the claim are refused by name. Writing claims
+//! refcount width 16 and no internal snapshots.
 
 use std::path::{Path, PathBuf};
 
@@ -299,11 +300,6 @@ impl<D: Device> Qcow2<D> {
         &self.header
     }
 
-    /// Whether this image reads through a backing chain.
-    pub fn backed(&self) -> bool {
-        self.backing.is_some()
-    }
-
     #[cfg(test)]
     fn into_device(self) -> D {
         self.device
@@ -322,12 +318,6 @@ impl<D: Device> Qcow2<D> {
     fn check_writable(&mut self) -> Result<()> {
         if self.writable_checked {
             return Ok(());
-        }
-        if self.backing.is_some() {
-            return Err(unsupported(
-                "writing through a backing chain is beyond this release's \
-                 support; open the image for reading",
-            ));
         }
         if self.header.nb_snapshots != 0 {
             return Err(unsupported(
@@ -907,16 +897,23 @@ mod tests {
     }
 
     #[test]
-    fn writing_through_a_chain_is_refused() {
+    fn writing_through_a_chain_allocates_into_the_top_only() {
+        let backing_bytes = vec![0x5au8; CLUSTER as usize];
         let mut top = with_backing(
             empty_qcow2(64 * CLUSTER),
-            Backing::Raw(VecDevice(vec![0u8; CLUSTER as usize])),
+            Backing::Raw(VecDevice(backing_bytes.clone())),
         );
-        let error = top
-            .write_at(0, &[1, 2, 3])
-            .expect_err("chain writes are beyond the claim");
-        assert_eq!(error.category(), crate::ErrorCategory::Unsupported);
-        assert!(error.to_string().contains("backing chain"));
+        top.write_at(0, &[1, 2, 3]).expect("chain write allocates");
+
+        let mut composed = vec![0u8; CLUSTER as usize];
+        top.read_at(0, &mut composed).expect("written cluster reads");
+        assert_eq!(&composed[..3], &[1, 2, 3]);
+        assert_eq!(&composed[3..], &backing_bytes[3..]);
+
+        let Some(Backing::Raw(backing)) = &top.backing else {
+            panic!("raw backing remains attached");
+        };
+        assert_eq!(backing.0, backing_bytes, "the backing is never modified");
     }
 
     #[test]

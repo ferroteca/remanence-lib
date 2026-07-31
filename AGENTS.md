@@ -30,9 +30,10 @@ C ABI. The Rust code here is now the authoritative implementation.
   identification sessions), and the P2 commit-point overlay;
   `qcow2.rs` the native qcow2 v2/v3
   driver (P8 version gate first, run for every member of a backing
-  chain; chains compose for reading with each backing file claimed
-  immutable; write path refuses chains, snapshots and
-  non-16-bit refcounts by name); `mbr.rs` partition discovery with
+  chain; chains compose for reading and allocate writes into the top
+  image only, with each backing file claimed immutable; write path
+  refuses snapshots and non-16-bit refcounts by name); `mbr.rs`
+  partition discovery with
   pinned types; `fat.rs` FAT12/16 volume read/write; `disk.rs` the
   public `Disk` API (open/geometry/entries/stat/read/write/mkdir/
   commit/rollback). `formats/` holds the starter container/filesystem

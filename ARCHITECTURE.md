@@ -16,8 +16,8 @@ One core, two bindings:
   file extractor, the self-contained ZIP/DEFLATE reader that lets
   `Session::open` reach inside archives, and the disk stack —
   the declared-intent deny-write claim, the native qcow2 v2/v3 driver
-  with read composition through backing chains, MBR partition discovery,
-  FAT12/FAT16 volume read/write, and the
+  with read composition and top-image copy-on-write through backing
+  chains, MBR partition discovery, FAT12/FAT16 volume read/write, and the
   commit-point overlay that keeps every write bufferable and revocable
   until committed.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
