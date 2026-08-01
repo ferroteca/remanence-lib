@@ -58,3 +58,85 @@ Needs: F19 pledged and delivered.
 
 Companion design:
 [design/layered-partition-volume-inspection.md](design/layered-partition-volume-inspection.md).
+
+## F21 — Mixed-mode optical media and presentations
+
+Introduce the P24 optical active layer and the compositions required by U18:
+one drive-visible optical state capable of preserving mixed audio/data track
+layout, raw main-channel frames, P–W subchannels, and provenance; a typed
+optical hardware presentation over that state; and bounded block
+presentations over only the eligible data-track extents.
+
+The feature must prove that at least two materially different image adapters
+can load the same optical family interface without central format branching.
+A compound raw-main/raw-subchannel source and a normalized single-file
+optical source are the reference shapes; the eventual pledge may split their
+individual adapters into smaller features if the implementation cut would
+otherwise exceed one sprint. Format support is claimed only for adapters
+actually delivered, never inferred from these reference names.
+
+F21 adds an explicit generate-optical composition for a source such as an ISO
+whose block or filesystem content can be mastered into a declared optical
+profile. The transition is atomic, provenance-bearing, and opt-in. It does
+not generalize into arbitrary block-to-optical conversion, and it cannot
+recover mixed-mode content or physical evidence absent from the source.
+
+The optical hardware presentation uses P15's common timed-causality
+lifecycle at the applicable drive-visible command, track, sector, audio, and
+subchannel seam. It does not model pickup physics or integrated-drive
+internals. The derived block presentation is selected by reported data-track
+identity and cannot cover audio or optical-only regions. Both presentations
+operate on one optical-active state and share P2 commit and rollback.
+
+F21 requires a coherent amendment to P23 when pledged: `optical` joins the
+exact active-layer vocabulary, while block remains the active layer for an
+ordinary ISO or other block-only open. It also requires the inspection graph
+eventually serving these compositions to distinguish optical tracks from
+P16 partitions and to preserve the relationship from an eligible data track
+to its derived block extent and volume.
+
+Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
+dependent feature lands. Supports: U18; P3–P5, P12–P15, P19, P21, P23, P24.
+Needs: F19 pledged and delivered. F20 is not a prerequisite; any shared report
+vocabulary must converge before either surface lands.
+
+Companion design:
+[design/optical-media-representations.md](design/optical-media-representations.md).
+
+## F22 — LaserDisc signal and program presentations
+
+Introduce the LaserDisc-family forms of P24 required by U19: a raw sampled-RF
+image adapter at the optical signal seam, a decoded audio/video image adapter
+at the optical program seam, and one typed player presentation which can be
+served honestly from either active representation. The two adapters prove
+that the family interface does not depend on one storage encoding or force a
+decoded source to invent its absent RF.
+
+The raw path preserves the capture timebase, RF samples, capture-chain
+provenance, discontinuities, and ambiguity needed for later re-decoding. Its
+video, audio, vertical-blanking, frame or chapter, and digital-data outputs are
+derived observations over the signal-active state. The decoded path begins at
+the program-active seam and preserves only the channels and addressing its
+source actually supplies. It cannot claim signal-level round trips.
+
+The player presentation uses P15 timed causality at a family-appropriate
+control and output boundary, including CAV/CLV behavior, seek and playback
+continuations, still and directional playback where supported, audio/video
+observations, and mapped digital-data service. F22 also supplies a bounded
+block presentation for LV-ROM data carried in the applicable program-channel
+mapping. That view cannot flatten the analog video program, cannot cover
+unmapped extents, and does not reinterpret the mapping as a partition.
+
+The initial feature is read-only. It does not master LaserDisc, synthesize RF
+from decoded program content, emulate laser, pickup, focus, tracking, servo,
+firmware, or physical pits and lands, or promise one universal command set for
+every LaserDisc player. It may support named player profiles behind P15's
+common lifecycle without moving their policy into the image adapters.
+
+Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
+dependent feature lands. Supports: U19; P3–P5, P12–P15, P19, P21, P23, P24.
+Needs: F19 pledged and delivered. F21 is not a prerequisite; both features
+share P24 and must converge on its optical identities and report vocabulary.
+
+Companion design:
+[design/laserdisc-signal-and-program-presentations.md](design/laserdisc-signal-and-program-presentations.md).

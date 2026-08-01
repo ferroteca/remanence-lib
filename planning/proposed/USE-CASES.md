@@ -1990,3 +1990,240 @@ grow a second orchestration path to serve the other.
   recording underneath a geometry-opaque logical-block device.
 - Partial-block writes, short successful transfers, or implicit block-size
   guessing.
+
+## U18 — I use one mixed-mode CD through optical and block presentations
+
+I open one mixed-mode compact-disc image and use the same recorded disc in
+two honest ways. An emulator exercises the disc through the common optical
+drive seam: it reads the table of contents and subchannels, reads raw or
+decoded data sectors, and plays audio tracks with causal timing. A filesystem
+tool selects an eligible data track from that same disc, views its user-data
+sectors as logical blocks, and reads files from the filesystem recorded
+there. The audio tracks, pregaps, indexes, subchannels, and other optical
+state remain present even though they have no block presentation.
+
+My source may be a compound BIN/CUE or CCD/IMG/SUB image, or a single-file
+optical image such as CHD or Aaru Image Format. The recognizing image adapter
+claims every source artifact and declares the optical information it actually
+records. Persistent files and descriptor syntax are encodings of the image,
+not file-container entries and not additional mutable copies of the disc.
+
+The durable optical state preserves, at the fidelity supplied by the source:
+
+- ordered sessions, tracks, indexes, pregaps, postgaps, lead-in and lead-out
+  facts visible at the applicable optical-drive seam;
+- each track's declared mode and the disc-relative address of its frames;
+- the main-channel frame payload, including raw 2,352-byte CD frames when
+  present;
+- the P–W subchannels, including raw 96-byte subchannel frames when present;
+  and
+- per-field evidence distinguishing captured, declared, decoded, synthesized,
+  patched, ambiguous, invalid, and absent information.
+
+Those facts form one P24 optical-active media instance. Main channel and
+subchannels are parallel recorded channels of that instance, not separate
+active layers. A sparse sidecar such as SBI is an evidence-bearing overlay on
+selected Q-channel frames; applying it does not relabel patched values as
+captured evidence. Read retries, C2 reports, drive offset, and dump logs remain
+capture provenance rather than deterministic recorded bytes.
+
+The emulator opens a typed optical hardware presentation over that state. Its
+contract may expose the applicable command, track, sector, audio, and
+subchannel behavior—for a CD-family presentation, operations corresponding to
+TOC inspection, raw and cooked reads, subchannel queries, seeking, and audio
+playback. Remanence advances command completion and audio observations through
+P15 timed causality. Pickup position, playback cursor, seek continuation, and
+pending command effects are ephemeral hardware state; they never become image
+or media layers. Remanence does not infer pits, lands, EFM channel bits, analog
+RF, a laser pickup, focus or tracking servos, firmware, or microcode beneath
+the common drive-visible floor.
+
+Separately, I select a reported data track whose mode defines a logical
+user-data sector view. Remanence exposes only that eligible extent as a derived
+block presentation with its declared logical block size—for example, 2,048
+bytes for an ordinary Mode 1 CD-ROM data track. The block address starts in
+the selected presentation; it is not silently equated with the whole disc's
+absolute frame address. Mode decoding and EDC/ECC treatment belong to the
+optical-family derivation and remain visible in its evidence and refusals.
+
+A track is not a partition merely because it bounds a block presentation.
+The selected block extent may form a volume, and a filesystem adapter may
+recognize ISO 9660 or another applicable filesystem on that volume. Audio
+tracks and optical-only regions form no fake blocks, partitions, volumes, or
+files. Failure to recognize the data track's filesystem does not erase the
+track or its optical evidence.
+
+Both presentations observe one active state. A writable higher presentation
+may alter a file or data sector only when its changes project through the data
+track encoding into the optical frames without flattening or disturbing audio
+tracks, subchannels, gaps, indexes, or unsupported structures. An optical
+write changes that same state, so a later block or filesystem read observes
+the representable result. P2 commit succeeds only when the source image
+adapter can encode every change honestly; otherwise writable composition is
+refused in advance or I explicitly convert to a richer optical image.
+
+An ISO file is the useful converse case. When I request only ordinary data
+access, it may remain block-authoritative and block-active and support volume,
+filesystem, and file presentations without inventing a CD. If I explicitly
+attach it through an optical-media composition, Remanence performs one atomic
+**generate-optical** transition under a selected optical profile and mastering
+policy. It constructs the most honest data track, raw frames, layout, and
+subchannels those inputs justify, marks every manufactured fact synthetic,
+and makes optical the active layer before optical hardware service begins.
+This creates a new synthetic optical recording; it does not recover audio
+tracks, protection data, original mastering choices, damage, or subchannels
+which the ISO never contained. A generic hard-drive block device never enters
+this path merely because its bytes happen to resemble an optical filesystem.
+
+The journey succeeds when the emulator can boot or read the data track and
+play the audio tracks through its optical command seam, while a higher tool
+can independently read the eligible data-track filesystem without flattening
+the rest of the disc. Reports preserve the identity and provenance joining
+the optical disc, tracks, derived block extent, volume, filesystem, source
+artifacts, and any overlay. Ambiguity or damage at one seam remains there and
+does not manufacture a simpler whole-disc block device.
+
+### Deliberately outside this use case
+
+- Treating the whole mixed-mode disc as one geometry-opaque block device.
+- Presenting audio tracks, gaps, lead-in, lead-out, or subchannels as blocks,
+  partitions, volumes, or files.
+- Claiming that BIN/CUE contains raw subchannels which only an accompanying
+  source or explicit overlay supplies.
+- Claiming that CCD/IMG/SUB, CHD, Aaru Image Format, or another encoding has
+  identical fidelity without inspecting its actual recorded channels and
+  provenance.
+- Reconstructing original audio, protection, damage, subchannels, mastering,
+  sessions, or physical manufacture from an ISO.
+- Pits, lands, EFM channel-bit capture, or analog RF within this CD journey;
+  U19 owns the distinct LaserDisc signal case. Laser, focus, tracking,
+  spindle-servo, firmware, and microcode emulation remain absent.
+- Assuming that the CD-family frame schema is a universal representation for
+  DVD, Blu-ray, magneto-optical, or every later optical family.
+
+## U19 — I preserve and use one LaserDisc through signal, player, and data presentations
+
+I open one LaserDisc-family image whose best durable evidence may be either a
+raw RF capture or an already-decoded audio/video program. Remanence preserves
+the source at its honest P24 optical seam and lets an emulator exercise the
+same title through a timed player boundary. If the title is LV-ROM, a data
+tool can also read the digital data mapped into the applicable program
+channels without flattening or discarding the analog video program.
+
+For a raw `.lds`, `.ldf`, or equivalent capture, the optical signal
+representation is authoritative and active. It preserves the sampled RF,
+sample clock, capture-chain provenance, discontinuities, conflicting or weak
+observations, and every distinction needed to decode the recording again.
+Video frames, analog or digital audio, vertical-blanking information, frame
+and chapter addresses, and LV-ROM data are evidence-bearing derived views.
+They do not become a second mutable program copy and are not promoted to
+literal pits, lands, or original surface state.
+
+For a decoded LaserDisc CHD or equivalent image, the family-owned recorded
+program representation is authoritative and active. Remanence preserves the
+video, supplied audio channels, timing, addressing metadata, and digital-data
+mappings the source actually contains. It reports absent RF and capture
+evidence as absent; it never fabricates them to make the decoded source look
+like a raw capture.
+
+The emulator opens a typed LaserDisc player presentation over either source.
+The presentation supplies a family-appropriate command and output seam—such
+as a named F-code, serial, or SCSI-capable player profile—while P15 owns the
+common timed-causality lifecycle. Seeking, play, still, reverse or variable
+play where supported, frame or chapter observation, audio/video output, and
+pending command completion advance against one causal clock. Pickup position,
+CAV or CLV rotational phase, continuation state, and controller progress are
+ephemeral hardware state and are never written into the image.
+
+For an LV-ROM title, I select a reported digital-data mapping whose bytes
+replace or occupy declared program channels over declared extents. Remanence
+opens a bounded block presentation with an explicit block size, address map,
+and derivation evidence. The mapping is neither a partition nor proof that the
+whole disc is a block device. Analog video and every unmapped audio, video,
+blanking, and control region remain present and have no invented blocks.
+Volumes, filesystems, and files may compose above only that eligible view.
+
+The journey succeeds when a raw capture remains independently re-decodable,
+when either source can drive the same player-facing emulator lifecycle at the
+fidelity it actually supports, and when LV-ROM data can be read while the
+video program remains observable. Reports join source artifacts, active
+representation, decoded observations, player profile, program channels, data
+mapping, derived blocks, and any recognized volume or filesystem without
+claiming stronger evidence than the source supplies.
+
+### Deliberately outside this use case
+
+- Reconstructing original RF, capture defects, or physical mastering from a
+  decoded audio/video image.
+- Treating sampled RF as literal pits, lands, surface geometry, or pickup
+  behavior.
+- Making the whole LaserDisc or all program channels into one block device.
+- Treating an LV-ROM channel mapping as a partition merely because it bounds
+  digital data.
+- Persisting pickup position, CAV/CLV phase, seek continuation, playback
+  direction, or pending player commands.
+- Laser, focus, tracking, spindle-servo, pickup electronics, firmware, or
+  microcode emulation.
+- Mastering or writing LaserDisc, or synthesizing plausible RF from decoded
+  program content.
+- One command protocol or player profile presented as universal to every
+  LaserDisc-family machine.
+
+## U20 — I open images recursively embedded in other artifacts
+
+I open a ZIP archive containing a compact-disc image. Remanence identifies the
+ZIP as a file container, reports the selected entry as a possible child
+artifact, and opens that entry through the applicable optical image adapter.
+The ZIP remains the parent file-container state while the disc has its own
+optical-active state and all source claims and provenance remain joined.
+
+Inspection of the disc reports every recognized way its content can supply a
+further child artifact. An El Torito boot catalog may map a bounded floppy,
+hard-disk, EFI-system-partition, or load-image extent without requiring that
+extent to be a named ISO file. Separately, the disc's filesystem may contain a
+named `disk.p64` file. A file entry and a boot-catalog extent are different
+mapping mechanisms but use the same child-opening operation.
+
+I select one reported mapping rather than asking Remanence to guess which
+nested object matters. Selecting the boot floppy opens an independent child
+disk at the active layer its evidence supports. Selecting `disk.p64` opens a
+flux-active child through the P64 adapter. Either child may expose its own
+partitions, volumes, filesystems, files, or further artifact mappings. There
+is no format-family depth baked into the model; explicit resource limits bound
+traversal, and there is no format-specific orchestration branch.
+
+Each report preserves the complete path from root artifact to selected child:
+the ZIP entry, optical disc and data track, filesystem file or boot-catalog
+entry, exact byte mapping, image recognition evidence, authoritative layer,
+active layer, and higher presentations. A mapping reports a candidate source;
+it does not claim that its bytes form a recognized image until a P12 adapter
+does so.
+
+If two paths name the same bytes—for example, an El Torito boot image which
+also appears as a file—Remanence reports the alias rather than manufacturing
+two independent mutable children. A writable open shares one child state or
+is refused before mutation. On commit, a representable child result projects
+outward through every mapping and parent adapter atomically; failure at any
+seam writes none of the root artifacts.
+
+The journey succeeds when I can navigate ZIP → optical image → boot image or
+filesystem file → nested disk using stable reported identities and the same
+selection operation at every step, while each independently mutable instance
+retains exactly one active layer and its honest provenance.
+
+### Deliberately outside this use case
+
+- Treating every byte range, file, partition, or volume as a disk image
+  without recognition evidence.
+- Automatically descending every candidate, choosing the deepest object, or
+  selecting a boot entry or operating system on the caller's behalf.
+- Treating an artifact mapping itself as a container, partition, volume,
+  filesystem, durable layer, or recognized child image.
+- Maintaining independently mutable children over aliased or overlapping
+  parent bytes.
+- Flattening the graph into one synthetic filesystem or one universal block
+  address space.
+- Bypassing an image adapter because a filename extension or parent standard
+  suggests what the child probably contains.
+- Partial outward commits when a deeper or enclosing representation cannot
+  encode the requested result.
