@@ -1776,6 +1776,128 @@ pub unsafe extern "C" fn remanence_disk_read_file(
     }
 }
 
+/// Reads part of a file into `buffer_out` — the streamed form beside
+/// `remanence_disk_read_file`: exactly `length` bytes at `offset`,
+/// which must lie within the file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_disk_read_file_at(
+    disk: *mut RemanenceDisk,
+    volume_id: *const c_char,
+    path: *const c_char,
+    offset: u64,
+    buffer_out: *mut u8,
+    length: usize,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out) };
+    let Some(disk) = (unsafe { disk.as_mut() }) else {
+        return false;
+    };
+    let (Some(volume_id), Some(path)) =
+        (unsafe { utf8_arg(volume_id) }, unsafe { utf8_arg(path) })
+    else {
+        let error = remanence::Error::io("null volume identifier or path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    if buffer_out.is_null() {
+        let error = remanence::Error::io("null buffer");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    }
+    let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
+    match disk
+        .disk
+        .read_file_at(volume_id.as_ref(), path.as_ref(), offset, buffer)
+    {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            false
+        }
+    }
+}
+
+/// Sets a file's size, creating it when absent — with
+/// `remanence_disk_write_file_at`, the streamed replacement for
+/// `remanence_disk_write_file`. Buffered until commit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_disk_resize_file(
+    disk: *mut RemanenceDisk,
+    volume_id: *const c_char,
+    path: *const c_char,
+    size: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out) };
+    let Some(disk) = (unsafe { disk.as_mut() }) else {
+        return false;
+    };
+    let (Some(volume_id), Some(path)) =
+        (unsafe { utf8_arg(volume_id) }, unsafe { utf8_arg(path) })
+    else {
+        let error = remanence::Error::io("null volume identifier or path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match disk.disk.resize_file(volume_id.as_ref(), path.as_ref(), size) {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            false
+        }
+    }
+}
+
+/// Writes part of a file in place — the streamed form beside
+/// `remanence_disk_write_file`: the span must lie within the file's
+/// current size. Buffered until commit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_disk_write_file_at(
+    disk: *mut RemanenceDisk,
+    volume_id: *const c_char,
+    path: *const c_char,
+    offset: u64,
+    bytes: *const u8,
+    length: usize,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out) };
+    let Some(disk) = (unsafe { disk.as_mut() }) else {
+        return false;
+    };
+    let (Some(volume_id), Some(path)) =
+        (unsafe { utf8_arg(volume_id) }, unsafe { utf8_arg(path) })
+    else {
+        let error = remanence::Error::io("null volume identifier or path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    if bytes.is_null() && length != 0 {
+        let error = remanence::Error::io("null bytes");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    }
+    let data = if length == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(bytes, length) }
+    };
+    match disk
+        .disk
+        .write_file_at(volume_id.as_ref(), path.as_ref(), offset, data)
+    {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            false
+        }
+    }
+}
+
 /// The bytes of a read-out file; valid until the handle is freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_file_data_bytes(

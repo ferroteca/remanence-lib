@@ -786,6 +786,24 @@ impl Disk {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Reads part of a file — the streamed form, `os.pread`-shaped:
+    /// exactly `length` bytes at `offset`, which must lie within the
+    /// file.
+    fn read_file_at<'py>(
+        &mut self,
+        py: Python<'py>,
+        volume_id: &str,
+        path: &str,
+        offset: u64,
+        length: usize,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let mut buffer = vec![0u8; length];
+        self.get()?
+            .read_file_at(volume_id, path, offset, &mut buffer)
+            .map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &buffer))
+    }
+
     /// Writes a file into `volume_id`. An existing file is overwritten —
     /// shorter or longer, its old clusters released and reclaimed —
     /// while an existing directory is refused. Buffered until
@@ -793,6 +811,31 @@ impl Disk {
     fn write_file(&mut self, volume_id: &str, path: &str, contents: &[u8]) -> PyResult<()> {
         self.get()?
             .write_file(volume_id, path, contents)
+            .map_err(to_py_err)
+    }
+
+    /// Sets a file's size, creating it when absent — `truncate`-shaped:
+    /// kept bytes preserved in place, a grown region reads as zeros.
+    /// With `write_file_at` this is the streamed replacement for
+    /// `write_file`. Buffered until `commit()`.
+    fn resize_file(&mut self, volume_id: &str, path: &str, size: u64) -> PyResult<()> {
+        self.get()?
+            .resize_file(volume_id, path, size)
+            .map_err(to_py_err)
+    }
+
+    /// Writes part of a file in place — the streamed form,
+    /// `os.pwrite`-shaped: the span must lie within the file's current
+    /// size (resize first to change it). Buffered until `commit()`.
+    fn write_file_at(
+        &mut self,
+        volume_id: &str,
+        path: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> PyResult<()> {
+        self.get()?
+            .write_file_at(volume_id, path, offset, data)
             .map_err(to_py_err)
     }
 

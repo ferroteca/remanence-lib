@@ -539,6 +539,40 @@ RemanenceFileData *remanence_disk_read_file(RemanenceDisk *disk,
                                             RemanenceErrorCategory *error_category_out,
                                             char **error_out);
 
+// Reads part of a file into `buffer_out` — the streamed form beside
+// `remanence_disk_read_file`: exactly `length` bytes at `offset`,
+// which must lie within the file.
+bool remanence_disk_read_file_at(RemanenceDisk *disk,
+                                 const char *volume_id,
+                                 const char *path,
+                                 uint64_t offset,
+                                 uint8_t *buffer_out,
+                                 size_t length,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out);
+
+// Sets a file's size, creating it when absent — with
+// `remanence_disk_write_file_at`, the streamed replacement for
+// `remanence_disk_write_file`. Buffered until commit.
+bool remanence_disk_resize_file(RemanenceDisk *disk,
+                                const char *volume_id,
+                                const char *path,
+                                uint64_t size,
+                                RemanenceErrorCategory *error_category_out,
+                                char **error_out);
+
+// Writes part of a file in place — the streamed form beside
+// `remanence_disk_write_file`: the span must lie within the file's
+// current size. Buffered until commit.
+bool remanence_disk_write_file_at(RemanenceDisk *disk,
+                                  const char *volume_id,
+                                  const char *path,
+                                  uint64_t offset,
+                                  const uint8_t *bytes,
+                                  size_t length,
+                                  RemanenceErrorCategory *error_category_out,
+                                  char **error_out);
+
 // The bytes of a read-out file; valid until the handle is freed.
 const uint8_t *remanence_file_data_bytes(const RemanenceFileData *data, size_t *length_out);
 

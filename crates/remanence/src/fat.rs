@@ -590,6 +590,192 @@ impl FatVolume {
         Ok(out)
     }
 
+    /// Reads part of a file — the streamed form (P27): exactly `buf`
+    /// bytes at `offset`, which must lie wholly within the file's
+    /// recorded size.
+    pub fn read_file_at(
+        &self,
+        device: &mut dyn Device,
+        segments: &[&str],
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<()> {
+        let located = self.locate(device, segments)?;
+        if located.attributes & ATTR_DIRECTORY != 0 {
+            return Err(is_directory(format!(
+                "'{}' is a directory",
+                segments.join("/")
+            )));
+        }
+        if offset + buf.len() as u64 > located.size {
+            return Err(io(format!(
+                "read past end of '{}' (offset {offset}, length {}, size {})",
+                segments.join("/"),
+                buf.len(),
+                located.size
+            )));
+        }
+        if buf.is_empty() {
+            return Ok(());
+        }
+        let cluster_bytes = self.bpb.cluster_bytes();
+        let chain = self.chain(device, located.first_cluster)?;
+        let end = offset + buf.len() as u64;
+        let first_index = (offset / cluster_bytes) as usize;
+        let last_index = ((end - 1) / cluster_bytes) as usize;
+        if last_index >= chain.len() {
+            return Err(invalid(format!(
+                "FAT chain shorter than the recorded size of '{}'",
+                segments.join("/")
+            )));
+        }
+        for (index, &cluster) in chain[first_index..=last_index].iter().enumerate() {
+            let cluster_start = (first_index + index) as u64 * cluster_bytes;
+            let from = cluster_start.max(offset);
+            let to = (cluster_start + cluster_bytes).min(end);
+            device.read_at(
+                self.cluster_offset(cluster) + (from - cluster_start),
+                &mut buf[(from - offset) as usize..(to - offset) as usize],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Writes part of a file in place — the streamed form (P27): the
+    /// span must lie wholly within the file's recorded size (resize
+    /// first to change it). The record's timestamp advances; nothing
+    /// else about the entry moves.
+    pub fn write_file_at(
+        &self,
+        device: &mut dyn Device,
+        segments: &[&str],
+        offset: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        let located = self.locate(device, segments)?;
+        if located.attributes & ATTR_DIRECTORY != 0 {
+            return Err(is_directory(format!(
+                "'{}' is a directory",
+                segments.join("/")
+            )));
+        }
+        if offset + data.len() as u64 > located.size {
+            return Err(io(format!(
+                "write past end of '{}' (offset {offset}, length {}, size {}); \
+                 resize the file first",
+                segments.join("/"),
+                data.len(),
+                located.size
+            )));
+        }
+        if data.is_empty() {
+            return Ok(());
+        }
+        let cluster_bytes = self.bpb.cluster_bytes();
+        let chain = self.chain(device, located.first_cluster)?;
+        let end = offset + data.len() as u64;
+        let first_index = (offset / cluster_bytes) as usize;
+        let last_index = ((end - 1) / cluster_bytes) as usize;
+        if last_index >= chain.len() {
+            return Err(invalid(format!(
+                "FAT chain shorter than the recorded size of '{}'",
+                segments.join("/")
+            )));
+        }
+        for (index, &cluster) in chain[first_index..=last_index].iter().enumerate() {
+            let cluster_start = (first_index + index) as u64 * cluster_bytes;
+            let from = cluster_start.max(offset);
+            let to = (cluster_start + cluster_bytes).min(end);
+            device.write_at(
+                self.cluster_offset(cluster) + (from - cluster_start),
+                &data[(from - offset) as usize..(to - offset) as usize],
+            )?;
+        }
+        let (date, time) = Self::timestamp();
+        device.write_at(located.record_offset + 22, &time.to_le_bytes())?;
+        device.write_at(located.record_offset + 24, &date.to_le_bytes())
+    }
+
+    /// Sets a file's size, creating it when absent: bytes within the
+    /// kept prefix are preserved in place, a grown region reads as
+    /// zeros, and a shrunk chain's surplus clusters are released with
+    /// every FAT copy kept in step. P6: everything validated before the
+    /// first mutation.
+    pub fn resize_file(
+        &self,
+        device: &mut dyn Device,
+        segments: &[&str],
+        size: u64,
+    ) -> Result<()> {
+        let (parent, leaf) = self.walk_to_parent(device, segments)?;
+        let (raw_name, _) = Self::validated_short_name(leaf)?;
+        let existing = self
+            .entries_of(device, parent)?
+            .into_iter()
+            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf));
+        let (old_chain, old_size, slot) = match &existing {
+            Some((entry, located)) => {
+                if entry.kind == FatEntryKind::Directory {
+                    return Err(is_directory(format!("'{leaf}' is a directory")));
+                }
+                let chain = if located.first_cluster >= 2 {
+                    self.chain(device, located.first_cluster)?
+                } else {
+                    Vec::new()
+                };
+                (chain, located.size, Some(located.record_offset))
+            }
+            None => (Vec::new(), 0, self.find_free_record(device, parent)?),
+        };
+        let growth = u64::from(slot.is_none());
+        if growth != 0 && parent == 0 {
+            return Err(no_space("root directory is full"));
+        }
+        let cluster_bytes = self.bpb.cluster_bytes();
+        let needed = size.div_ceil(cluster_bytes);
+        let kept = (old_chain.len() as u64).min(needed) as usize;
+        if needed > kept as u64 {
+            let more = needed - kept as u64 + growth;
+            let free = self.free_cluster_count(device, more)?;
+            if free < more {
+                return Err(no_space(format!(
+                    "volume full: {more} clusters needed, {free} free"
+                )));
+            }
+        }
+
+        // All checks passed; now mutate (into the session cache above).
+        for &cluster in &old_chain[kept..] {
+            self.set_fat_entry(device, cluster, 0)?;
+        }
+        let slot = match slot {
+            Some(offset) => offset,
+            None => self.grow_directory(device, parent)?,
+        };
+        let mut chain: Vec<u64> = old_chain[..kept].to_vec();
+        if (chain.len() as u64) < needed {
+            let new = self.claim_clusters(device, (needed - chain.len() as u64) as usize)?;
+            let zeroes = vec![0u8; cluster_bytes as usize];
+            for &cluster in &new {
+                device.write_at(self.cluster_offset(cluster), &zeroes)?;
+            }
+            chain.extend_from_slice(&new);
+            // A grown file must not resurrect stale bytes between the
+            // old size and its cluster's end.
+            if old_size % cluster_bytes != 0 && kept > 0 {
+                let tail = old_size % cluster_bytes;
+                let scrub = vec![0u8; (cluster_bytes - tail) as usize];
+                device.write_at(self.cluster_offset(chain[kept - 1]) + tail, &scrub)?;
+            }
+        }
+        for (i, &cluster) in chain.iter().enumerate() {
+            let next = chain.get(i + 1).copied().unwrap_or_else(|| self.end_marker());
+            self.set_fat_entry(device, cluster, next)?;
+        }
+        let first = chain.first().copied().unwrap_or(0);
+        self.write_record(device, slot, raw_name, 0x20, first, size)
+    }
+
     // Write half (P6: validation precedes the first mutating write; the
     // commit-point overlay above this makes it atomic besides).
 

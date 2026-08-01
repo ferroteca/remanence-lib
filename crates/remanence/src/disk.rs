@@ -375,6 +375,60 @@ impl Disk {
         fat.read_file(&mut composed, &segments)
     }
 
+    /// Reads part of a file — the streamed form (P27), beside
+    /// [`Disk::read_file`]: exactly `buf` bytes at `offset`, which must
+    /// lie within the file.
+    pub fn read_file_at(
+        &mut self,
+        volume_id: &str,
+        path: &str,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<()> {
+        let segments = Self::split_path(path)?;
+        if segments.is_empty() {
+            return Err(Error::io("a file path is required".to_owned()));
+        }
+        let (_, fat) = self.volume_at(volume_id)?;
+        let mut composed = self.composed();
+        fat.read_file_at(&mut composed, &segments, offset, buf)
+    }
+
+    /// Sets a file's size, creating it when absent: kept bytes preserved
+    /// in place, a grown region reads as zeros. With
+    /// [`Disk::write_file_at`] this is the streamed replacement for
+    /// [`Disk::write_file`]. Buffered until commit.
+    pub fn resize_file(&mut self, volume_id: &str, path: &str, size: u64) -> Result<()> {
+        self.require_writable()?;
+        let segments = Self::split_path(path)?;
+        if segments.is_empty() {
+            return Err(Error::io("a file path is required".to_owned()));
+        }
+        let (_, fat) = self.volume_at(volume_id)?;
+        let mut composed = self.composed();
+        fat.resize_file(&mut composed, &segments, size)
+    }
+
+    /// Writes part of a file in place — the streamed form (P27), beside
+    /// [`Disk::write_file`]: the span must lie within the file's current
+    /// size (resize first to change it). Buffered until commit.
+    pub fn write_file_at(
+        &mut self,
+        volume_id: &str,
+        path: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        self.require_writable()?;
+        let segments = Self::split_path(path)?;
+        if segments.is_empty() {
+            return Err(Error::io("a file path is required".to_owned()));
+        }
+        let (_, fat) = self.volume_at(volume_id)?;
+        let mut composed = self.composed();
+        fat.write_file_at(&mut composed, &segments, offset, data)
+    }
+
     fn require_writable(&self) -> Result<()> {
         if self.mode == AccessMode::ReadOnly {
             return Err(Error::read_only(format!(
@@ -804,6 +858,71 @@ mod tests {
             })
             .expect("collects");
         (blocks, capture.len())
+    }
+
+    #[test]
+    fn streamed_file_verbs_round_trip_beside_the_whole_file_forms() {
+        let path = temp_image("streamed-verbs");
+        std::fs::write(&path, fat16_volume_bytes()).expect("image writes");
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+
+        // Streamed replace: size the file, then write it in chunks.
+        let contents = new_content();
+        disk.resize_file("superfloppy:0", "BIG.BIN", contents.len() as u64)
+            .expect("sizes");
+        for (n, chunk) in contents.chunks(10_000).enumerate() {
+            disk.write_file_at("superfloppy:0", "BIG.BIN", (n * 10_000) as u64, chunk)
+                .expect("writes a chunk");
+        }
+        assert_eq!(
+            disk.read_file("superfloppy:0", "BIG.BIN").expect("whole read"),
+            contents,
+            "the streamed write equals a whole-file write"
+        );
+
+        // Streamed read: ranged reads reassemble the whole.
+        let mut ranged = vec![0u8; contents.len()];
+        for start in (0..contents.len()).step_by(7_777) {
+            let end = (start + 7_777).min(contents.len());
+            disk.read_file_at(
+                "superfloppy:0",
+                "BIG.BIN",
+                start as u64,
+                &mut ranged[start..end],
+            )
+            .expect("reads a range");
+        }
+        assert_eq!(ranged, contents);
+
+        // Shrink keeps the prefix; growth reads as zeros, never stale bytes.
+        disk.resize_file("superfloppy:0", "BIG.BIN", 100).expect("shrinks");
+        disk.resize_file("superfloppy:0", "BIG.BIN", 20_000).expect("regrows");
+        let back = disk.read_file("superfloppy:0", "BIG.BIN").expect("reads");
+        assert_eq!(&back[..100], &contents[..100], "the kept prefix survives");
+        assert!(back[100..].iter().all(|&byte| byte == 0), "growth is zeros");
+
+        // The bounds are refusals, not clamps.
+        let mut probe = [0u8; 8];
+        assert!(
+            disk.read_file_at("superfloppy:0", "BIG.BIN", 19_996, &mut probe)
+                .is_err(),
+            "a read past the size is refused"
+        );
+        assert!(
+            disk.write_file_at("superfloppy:0", "BIG.BIN", 19_996, &probe)
+                .is_err(),
+            "a write past the size is refused"
+        );
+
+        // Everything above survives the commit.
+        disk.commit().expect("commits");
+        drop(disk);
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        let back = reopened.read_file("superfloppy:0", "BIG.BIN").expect("reads");
+        assert_eq!(back.len(), 20_000);
+        assert_eq!(&back[..100], &contents[..100]);
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
