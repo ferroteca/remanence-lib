@@ -3,9 +3,10 @@
 
 //! The block device seam: the byte-addressed surface the disk stack
 //! works over, the P7 claims — declared intent for the disk stack, the
-//! discovery ladder for identification sessions — the commit-point
-//! overlay (P2), and the host-write capture a durable commit stages
-//! into before the recovery journal is armed (P9).
+//! discovery ladder for identification sessions — and the host-write
+//! capture a durable commit stages into before the recovery journal is
+//! armed (P9). The P2 commit-point buffer itself is the session cache
+//! (`cache.rs`).
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -338,7 +339,7 @@ impl Device for RawFile<'_> {
 }
 
 #[cfg(windows)]
-fn read_exact_at(file: &File, offset: u64, buf: &mut [u8]) -> std::io::Result<()> {
+pub(crate) fn read_exact_at(file: &File, offset: u64, buf: &mut [u8]) -> std::io::Result<()> {
     use std::os::windows::fs::FileExt;
     let mut done = 0;
     while done < buf.len() {
@@ -352,7 +353,7 @@ fn read_exact_at(file: &File, offset: u64, buf: &mut [u8]) -> std::io::Result<()
 }
 
 #[cfg(windows)]
-fn write_all_at(file: &File, offset: u64, data: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_all_at(file: &File, offset: u64, data: &[u8]) -> std::io::Result<()> {
     use std::os::windows::fs::FileExt;
     let mut done = 0;
     while done < data.len() {
@@ -366,13 +367,13 @@ fn write_all_at(file: &File, offset: u64, data: &[u8]) -> std::io::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn read_exact_at(file: &File, offset: u64, buf: &mut [u8]) -> std::io::Result<()> {
+pub(crate) fn read_exact_at(file: &File, offset: u64, buf: &mut [u8]) -> std::io::Result<()> {
     use std::os::unix::fs::FileExt;
     file.read_exact_at(buf, offset)
 }
 
 #[cfg(not(windows))]
-fn write_all_at(file: &File, offset: u64, data: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_all_at(file: &File, offset: u64, data: &[u8]) -> std::io::Result<()> {
     use std::os::unix::fs::FileExt;
     file.write_all_at(data, offset)
 }
@@ -465,10 +466,11 @@ impl Device for SliceDevice<'_> {
 
 const OVERLAY_BLOCK: u64 = 4096;
 
-/// The commit point (P2): writes land in an in-memory overlay and reach
-/// the underlying device only when the commit writes them through;
-/// clearing discards them all. The same structure is the staging area a
-/// capture buffers host writes in (P9).
+/// The staging area a durable commit's capture buffers host writes in
+/// (P9): while a capture is active every host write lands here, so the
+/// complete write set is known — and journaled — before the first byte
+/// of the file changes. The session-lifetime P2 buffer is the session
+/// cache (`cache.rs`); this overlay lives only inside one commit.
 #[derive(Debug)]
 pub(crate) struct Overlay {
     blocks: BTreeMap<u64, Vec<u8>>,
@@ -477,14 +479,6 @@ pub(crate) struct Overlay {
 impl Overlay {
     pub fn new() -> Self {
         Self { blocks: BTreeMap::new() }
-    }
-
-    pub fn modified(&self) -> bool {
-        !self.blocks.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.blocks.clear();
     }
 
     /// Reads `buf` from `base` with overlay blocks patched in.
@@ -541,24 +535,6 @@ impl Overlay {
         Ok(())
     }
 
-    /// Writes every buffered block through to `base`. The overlay keeps
-    /// its blocks — the commit clears them only once the write-through
-    /// is durably applied, so a failure anywhere leaves the buffered
-    /// state intact.
-    pub fn write_through(&self, base: &mut dyn Device) -> Result<()> {
-        for (&offset, block) in &self.blocks {
-            let take = if offset + OVERLAY_BLOCK > base.len() {
-                // The device may legitimately end mid-block.
-                (base.len().max(offset) - offset) as usize
-            } else {
-                OVERLAY_BLOCK as usize
-            };
-            if take > 0 {
-                base.write_at(offset, &block[..take])?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]

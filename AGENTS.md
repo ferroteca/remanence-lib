@@ -27,7 +27,11 @@ C ABI. The Rust code here is now the authoritative implementation.
   `zip.rs` + `inflate.rs` the self-contained ZIP reader and DEFLATE
   decompressor; `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
-  identification sessions), and the P2 commit-point overlay;
+  identification sessions), and the host-write capture a durable
+  commit stages into; `cache.rs` the session cache — the P2 commit
+  buffer and the bounded working set (pledged P27): unaltered extents
+  evict and re-read from the image, altered extents spill to private
+  session storage;
   `qcow2.rs` the native qcow2 v2/v3
   driver (P8 version gate first, run for every member of a backing
   chain; chains compose for reading and allocate writes into the top

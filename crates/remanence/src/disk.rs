@@ -15,7 +15,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::device::{AccessIntent, AccessMode, Device, FileDevice, Overlay};
+use crate::cache::SessionCache;
+use crate::device::{AccessIntent, AccessMode, Device, FileDevice};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeInfo};
 use crate::journal;
@@ -88,11 +89,13 @@ impl Virtual {
     }
 }
 
-/// A composed view: the overlay patched over the virtual disk. Reads see
-/// buffered writes; nothing reaches the file until commit.
+/// A composed view: the session cache over the virtual disk (P27).
+/// Reads stream through the cache and see buffered writes; altered
+/// extents stay in the cache — in memory or spilled to private session
+/// storage — and nothing reaches the file until commit (P2).
 struct Composed<'a> {
     base: &'a mut dyn Device,
-    overlay: &'a mut Overlay,
+    cache: &'a mut SessionCache,
 }
 
 impl Device for Composed<'_> {
@@ -101,11 +104,11 @@ impl Device for Composed<'_> {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        self.overlay.read_at(self.base, offset, buf)
+        self.cache.read_at(self.base, offset, buf)
     }
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        self.overlay.write_at(self.base, offset, data)
+        self.cache.write_at(self.base, offset, data)
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -117,7 +120,7 @@ impl Device for Composed<'_> {
 #[derive(Debug)]
 pub struct Disk {
     virtual_disk: Virtual,
-    overlay: Overlay,
+    cache: SessionCache,
     format: DiskFormat,
     mode: AccessMode,
     path: String,
@@ -190,7 +193,7 @@ impl Disk {
 
         Ok(Self {
             virtual_disk,
-            overlay: Overlay::new(),
+            cache: SessionCache::new(),
             format,
             mode,
             path: path.display().to_string(),
@@ -222,13 +225,13 @@ impl Disk {
 
     /// Whether uncommitted changes exist.
     pub fn is_modified(&self) -> bool {
-        self.overlay.modified()
+        self.cache.modified()
     }
 
     fn composed(&mut self) -> Composed<'_> {
         Composed {
             base: self.virtual_disk.device(),
-            overlay: &mut self.overlay,
+            cache: &mut self.cache,
         }
     }
 
@@ -411,7 +414,7 @@ impl Disk {
     pub fn commit(&mut self) -> Result<()> {
         self.require_usable()?;
         self.require_writable()?;
-        if !self.overlay.modified() {
+        if !self.cache.modified() {
             return self.virtual_disk.device().flush();
         }
 
@@ -422,14 +425,14 @@ impl Disk {
         // buffered state for the caller.
         let cache_snapshot = self.virtual_disk.cache_snapshot();
         self.virtual_disk.host().begin_capture();
-        let staged = self.overlay.write_through(self.virtual_disk.device());
+        let staged = self.cache.write_through(self.virtual_disk.device());
         let (blocks, new_len) = self.virtual_disk.host().take_capture();
         if let Err(error) = staged {
             self.virtual_disk.restore_cache(cache_snapshot);
             return Err(error);
         }
         if blocks.is_empty() {
-            self.overlay.clear();
+            self.cache.mark_committed();
             return self.virtual_disk.device().flush();
         }
 
@@ -495,13 +498,14 @@ impl Disk {
             return Err(error);
         }
 
-        self.overlay.clear();
+        self.cache.mark_committed();
         Ok(())
     }
 
-    /// Discards everything buffered; the image is untouched.
+    /// Discards everything buffered; the image is untouched. Unaltered
+    /// cached extents stay resident — they still mirror the image.
     pub fn rollback(&mut self) {
-        self.overlay.clear();
+        self.cache.discard_dirty();
     }
 }
 
@@ -768,7 +772,7 @@ mod tests {
     /// writes so a test can apply any prefix of them before "crashing".
     fn stage_and_arm(disk: &mut Disk) -> (std::collections::BTreeMap<u64, Vec<u8>>, u64) {
         disk.virtual_disk.host().begin_capture();
-        disk.overlay
+        disk.cache
             .write_through(disk.virtual_disk.device())
             .expect("stages");
         let (blocks, new_len) = disk.virtual_disk.host().take_capture();

@@ -18,8 +18,10 @@ One core, two bindings:
   the declared-intent deny-write claim, the native qcow2 v2/v3 driver
   with read composition and top-image copy-on-write through backing
   chains, MBR partition discovery, FAT12/FAT16 volume read/write, and the
-  commit-point overlay that keeps every write bufferable and revocable
-  until committed.
+  commit-point session cache that keeps every write bufferable and
+  revocable until committed — reads stream through a bounded working
+  set, and altered extents hold in memory or spill to private session
+  storage, never the image.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
   accessor functions, borrowed strings owned by their handle. The header
   `include/remanence.h` is generated from the Rust signatures by cbindgen
@@ -87,9 +89,10 @@ and Python without an environment around it.
 Opening, identifying, listing, and extracting never mutate an image —
 not a byte. Write access is a separate, explicit request, and every
 write path offers a commit point that can be rolled back until it is
-committed: writes buffer in memory and nothing reaches the file before
-the commit. An archivist's tool that damages what it examines has
-failed at the door.
+committed: altered data stays in the session's cache — in memory or
+spilled to private session storage, never the image — and nothing
+reaches the file before the commit. An archivist's tool that damages
+what it examines has failed at the door.
 
 ### P3 — Claims are enumerated and refusals fail closed
 

@@ -958,14 +958,12 @@ independently of source size is the testable claim that arms it.
 
 ### Knock-on requirements
 
-Arming this principle requires amending in-force P2 in the same act. Its
-commit-point sentence reads "writes buffer in memory and nothing reaches the
-file before the commit": the second half is the load-bearing claim, and the
-first becomes "writes buffer in the session". Until that amendment lands, P2
-binds as written. D2's overlay ruling is untouched either way — the commit
-point remains an overlay, never internal snapshots, and nothing touches the
-host file before commit; this principle generalizes only the overlay's
-residence.
+In-force P2 already carries the residency-neutral wording — altered data
+stays in the session's cache, in memory or spilled to private session
+storage — so arming adds no further P2 amendment. D2's overlay ruling is
+untouched — the commit point remains an overlay, never internal snapshots,
+and nothing touches the host file before commit; this principle generalizes
+only the overlay's residence.
 
 The pledged F19 design's adapter interfaces and shared mechanisms are
 stream-shaped from the first implementation — retrofitting streaming beneath

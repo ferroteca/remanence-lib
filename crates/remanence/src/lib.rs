@@ -9,6 +9,7 @@
 //! definitions in a [`FormatRegistry`].
 
 mod archive;
+mod cache;
 mod container;
 mod device;
 mod disk;
