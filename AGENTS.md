@@ -24,8 +24,11 @@ C ABI. The Rust code here is now the authoritative implementation.
   the layered identification result, and the P7 claim held for the
   session's lifetime; `hdos.rs` the HDOS directory lister and file
   extractor; `archive.rs` `.zip[/entry]` path resolution under the claim;
-  `zip.rs` + `inflate.rs` the self-contained ZIP reader and DEFLATE
-  decompressor; `device.rs` the block-device seam, the P7 claims
+  `zip.rs` + `inflate.rs` the self-contained ZIP reader and streaming
+  DEFLATE decompressor — archives are read in place by positioned
+  reads, and a compressed entry decodes through the 32 KiB LZ77
+  window into private session storage, never resident whole;
+  `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable
   commit stages into; `cache.rs` the session cache — the P2 commit

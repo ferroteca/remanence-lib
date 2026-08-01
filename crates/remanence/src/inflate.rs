@@ -4,7 +4,15 @@
 //! A compact, self-contained RFC 1951 (DEFLATE) decompressor. The structure
 //! follows Mark Adler's "puff" reference implementation (see AGENTS.md,
 //! "Prior art and provenance notes"), so the library has no external
-//! compression dependency.
+//! compression dependency. Decompression streams (pledged P27): compressed
+//! bytes are pulled through a bounded chunk and decompressed bytes flow to a
+//! sink that keeps only the 32 KiB LZ77 window resident, so an entry of any
+//! size decodes in bounded memory.
+
+use std::fs::File;
+
+use crate::device::{read_exact_at, write_all_at};
+use crate::error::{Error, Result};
 
 const MAX_BITS: usize = 15;
 const MAX_LCODES: usize = 286;
@@ -12,28 +20,212 @@ const MAX_DCODES: usize = 30;
 const MAX_CODES: usize = MAX_LCODES + MAX_DCODES;
 const FIX_LCODES: usize = 288;
 
-struct BitReader<'a> {
+/// The LZ77 back-reference horizon DEFLATE mandates: a sink must keep
+/// this much recent output resident, and no more.
+const WINDOW_KEEP: usize = 32 * 1024;
+/// The sink's resident buffer flushes down to [`WINDOW_KEEP`] whenever
+/// it reaches this size.
+const WINDOW_FULL: usize = 64 * 1024;
+
+/// Where compressed bytes come from, one byte at a time.
+trait ByteSource {
+    /// The next compressed byte, or `None` at end of input (or on a
+    /// source failure the wrapper reports separately).
+    fn next_byte(&mut self) -> Option<u8>;
+}
+
+/// Compressed bytes pulled from a byte range of a file through a
+/// bounded chunk.
+struct FileSource<'a> {
+    file: &'a File,
+    next: u64,
+    end: u64,
+    buf: Vec<u8>,
+    buf_pos: usize,
+    failed: bool,
+}
+
+impl<'a> FileSource<'a> {
+    fn new(file: &'a File, offset: u64, length: u64) -> Self {
+        Self {
+            file,
+            next: offset,
+            end: offset + length,
+            buf: Vec::new(),
+            buf_pos: 0,
+            failed: false,
+        }
+    }
+}
+
+impl ByteSource for FileSource<'_> {
+    fn next_byte(&mut self) -> Option<u8> {
+        if self.buf_pos == self.buf.len() {
+            if self.failed || self.next == self.end {
+                return None;
+            }
+            let take = (self.end - self.next).min(4096) as usize;
+            self.buf.resize(take, 0);
+            self.buf_pos = 0;
+            if read_exact_at(self.file, self.next, &mut self.buf).is_err() {
+                self.failed = true;
+                self.buf.clear();
+                return None;
+            }
+            self.next += take as u64;
+        }
+        let byte = self.buf[self.buf_pos];
+        self.buf_pos += 1;
+        Some(byte)
+    }
+}
+
+struct SliceSource<'a> {
     data: &'a [u8],
-    byte_pos: usize,
+    pos: usize,
+}
+
+impl ByteSource for SliceSource<'_> {
+    fn next_byte(&mut self) -> Option<u8> {
+        let byte = *self.data.get(self.pos)?;
+        self.pos += 1;
+        Some(byte)
+    }
+}
+
+/// Where decompressed bytes go. `push` and `copy_back` return false
+/// when the output would exceed the expected size, a back-reference is
+/// invalid, or the sink failed.
+trait InflateSink {
+    fn total(&self) -> u64;
+    fn push(&mut self, byte: u8) -> bool;
+    fn copy_back(&mut self, dist: usize, len: usize) -> bool;
+}
+
+/// Decompressed bytes spooled to session storage, with only the LZ77
+/// window resident.
+struct SpoolSink<'a> {
+    file: &'a File,
+    window: Vec<u8>,
+    flushed: u64,
+    cap: u64,
+    failed: bool,
+}
+
+impl<'a> SpoolSink<'a> {
+    fn new(file: &'a File, cap: u64) -> Self {
+        Self { file, window: Vec::new(), flushed: 0, cap, failed: false }
+    }
+
+    fn flush_half(&mut self) -> bool {
+        if write_all_at(self.file, self.flushed, &self.window[..WINDOW_KEEP]).is_err() {
+            self.failed = true;
+            return false;
+        }
+        self.flushed += WINDOW_KEEP as u64;
+        self.window.copy_within(WINDOW_KEEP.., 0);
+        self.window.truncate(self.window.len() - WINDOW_KEEP);
+        true
+    }
+
+    /// Writes the window's remainder through; the spool then holds the
+    /// complete output. Returns the total length spooled.
+    fn finish(mut self) -> std::result::Result<u64, ()> {
+        if self.failed {
+            return Err(());
+        }
+        if !self.window.is_empty() {
+            if write_all_at(self.file, self.flushed, &self.window).is_err() {
+                return Err(());
+            }
+            self.flushed += self.window.len() as u64;
+        }
+        Ok(self.flushed)
+    }
+}
+
+impl InflateSink for SpoolSink<'_> {
+    fn total(&self) -> u64 {
+        self.flushed + self.window.len() as u64
+    }
+
+    fn push(&mut self, byte: u8) -> bool {
+        if self.failed || self.total() >= self.cap {
+            return false;
+        }
+        if self.window.len() == WINDOW_FULL && !self.flush_half() {
+            return false;
+        }
+        self.window.push(byte);
+        true
+    }
+
+    fn copy_back(&mut self, dist: usize, len: usize) -> bool {
+        if dist == 0 || dist > self.window.len() {
+            return false;
+        }
+        for _ in 0..len {
+            let byte = self.window[self.window.len() - dist];
+            if !self.push(byte) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+struct VecSink {
+    out: Vec<u8>,
+    cap: usize,
+}
+
+impl InflateSink for VecSink {
+    fn total(&self) -> u64 {
+        self.out.len() as u64
+    }
+
+    fn push(&mut self, byte: u8) -> bool {
+        if self.out.len() >= self.cap {
+            return false;
+        }
+        self.out.push(byte);
+        true
+    }
+
+    fn copy_back(&mut self, dist: usize, len: usize) -> bool {
+        if dist == 0 || dist > self.out.len() {
+            return false;
+        }
+        for _ in 0..len {
+            let byte = self.out[self.out.len() - dist];
+            if !self.push(byte) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+struct BitReader<'a> {
+    source: &'a mut dyn ByteSource,
     bit_buffer: u32,
     bit_count: u32,
     error: bool,
 }
 
 impl<'a> BitReader<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self { data, byte_pos: 0, bit_buffer: 0, bit_count: 0, error: false }
+    fn new(source: &'a mut dyn ByteSource) -> Self {
+        Self { source, bit_buffer: 0, bit_count: 0, error: false }
     }
 
     fn bits(&mut self, need: u32) -> u32 {
         let mut value = u64::from(self.bit_buffer);
         while self.bit_count < need {
-            let Some(&byte) = self.data.get(self.byte_pos) else {
+            let Some(byte) = self.source.next_byte() else {
                 self.error = true;
                 return 0;
             };
             value |= u64::from(byte) << self.bit_count;
-            self.byte_pos += 1;
             self.bit_count += 8;
         }
         self.bit_buffer = (value >> need) as u32;
@@ -107,8 +299,7 @@ fn construct(huffman: &mut Huffman, lengths: &[i16], n: usize) -> bool {
 
 fn codes(
     reader: &mut BitReader<'_>,
-    out: &mut Vec<u8>,
-    expected_size: usize,
+    sink: &mut dyn InflateSink,
     lencode: &Huffman,
     distcode: &Huffman,
 ) -> bool {
@@ -138,10 +329,9 @@ fn codes(
             return true;
         }
         if symbol < 256 {
-            if out.len() >= expected_size {
+            if !sink.push(symbol as u8) {
                 return false;
             }
-            out.push(symbol as u8);
             continue;
         }
 
@@ -156,44 +346,42 @@ fn codes(
             return false;
         }
         let dist = DIST_BASE[symbol as usize] + reader.bits(DIST_EXTRA[symbol as usize]) as i32;
-        if reader.error || dist as usize > out.len() {
+        if reader.error {
             return false;
         }
-        if out.len() + len as usize > expected_size {
+        if !sink.copy_back(dist as usize, len as usize) {
             return false;
-        }
-        for _ in 0..len {
-            out.push(out[out.len() - dist as usize]);
         }
     }
 }
 
-fn stored(reader: &mut BitReader<'_>, out: &mut Vec<u8>, expected_size: usize) -> bool {
+fn stored(reader: &mut BitReader<'_>, sink: &mut dyn InflateSink) -> bool {
     reader.bit_buffer = 0;
     reader.bit_count = 0;
-    if reader.byte_pos + 4 > reader.data.len() {
-        return false;
+    let mut header = [0u8; 4];
+    for byte in &mut header {
+        let Some(next) = reader.source.next_byte() else {
+            return false;
+        };
+        *byte = next;
     }
-    let length = usize::from(reader.data[reader.byte_pos])
-        | (usize::from(reader.data[reader.byte_pos + 1]) << 8);
-    let nlength = usize::from(reader.data[reader.byte_pos + 2])
-        | (usize::from(reader.data[reader.byte_pos + 3]) << 8);
-    reader.byte_pos += 4;
+    let length = usize::from(header[0]) | (usize::from(header[1]) << 8);
+    let nlength = usize::from(header[2]) | (usize::from(header[3]) << 8);
     if (length & 0xffff) != (!nlength & 0xffff) {
         return false;
     }
-    if reader.byte_pos + length > reader.data.len() {
-        return false;
+    for _ in 0..length {
+        let Some(byte) = reader.source.next_byte() else {
+            return false;
+        };
+        if !sink.push(byte) {
+            return false;
+        }
     }
-    if out.len() + length > expected_size {
-        return false;
-    }
-    out.extend_from_slice(&reader.data[reader.byte_pos..reader.byte_pos + length]);
-    reader.byte_pos += length;
     true
 }
 
-fn fixed(reader: &mut BitReader<'_>, out: &mut Vec<u8>, expected_size: usize) -> bool {
+fn fixed(reader: &mut BitReader<'_>, sink: &mut dyn InflateSink) -> bool {
     let mut lengths = [0i16; FIX_LCODES];
     for (symbol, length) in lengths.iter_mut().enumerate() {
         *length = match symbol {
@@ -211,10 +399,10 @@ fn fixed(reader: &mut BitReader<'_>, out: &mut Vec<u8>, expected_size: usize) ->
     let mut distcode = Huffman::new();
     construct(&mut distcode, &dist_lengths, MAX_DCODES);
 
-    codes(reader, out, expected_size, &lencode, &distcode)
+    codes(reader, sink, &lencode, &distcode)
 }
 
-fn dynamic(reader: &mut BitReader<'_>, out: &mut Vec<u8>, expected_size: usize) -> bool {
+fn dynamic(reader: &mut BitReader<'_>, sink: &mut dyn InflateSink) -> bool {
     const ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
     let hlit = reader.bits(5) as usize + 257;
@@ -277,34 +465,163 @@ fn dynamic(reader: &mut BitReader<'_>, out: &mut Vec<u8>, expected_size: usize) 
     }
     construct(&mut dist_code, &lengths[hlit..], hdist);
 
-    codes(reader, out, expected_size, &lit_code, &dist_code)
+    codes(reader, sink, &lit_code, &dist_code)
 }
 
-/// Decompresses a raw DEFLATE (RFC 1951) stream. Returns `None` when the
-/// stream is malformed or the output would exceed `expected_size`.
-pub(crate) fn inflate(data: &[u8], expected_size: usize) -> Option<Vec<u8>> {
-    let mut reader = BitReader::new(data);
-    let mut out = Vec::with_capacity(expected_size);
-
+/// Runs the block loop: true when the stream decoded to its final
+/// block, false when it is malformed, truncated, or over the sink's cap.
+fn inflate_into(source: &mut dyn ByteSource, sink: &mut dyn InflateSink) -> bool {
+    let mut reader = BitReader::new(source);
     loop {
         let last = reader.bits(1);
         let block_type = reader.bits(2);
         if reader.error {
-            return None;
+            return false;
         }
         let ok = match block_type {
-            0 => stored(&mut reader, &mut out, expected_size),
-            1 => fixed(&mut reader, &mut out, expected_size),
-            2 => dynamic(&mut reader, &mut out, expected_size),
+            0 => stored(&mut reader, sink),
+            1 => fixed(&mut reader, sink),
+            2 => dynamic(&mut reader, sink),
             _ => false,
         };
         if !ok {
-            return None;
+            return false;
         }
         if last != 0 {
             break;
         }
     }
+    true
+}
 
-    Some(out)
+/// Decompresses a raw DEFLATE (RFC 1951) stream held in memory. For
+/// bounded inputs only — a qcow2 compressed cluster, a test vector —
+/// where the format itself bounds the sizes (P27); an archive entry of
+/// arbitrary size takes [`inflate_file_to_spool`] instead. Returns
+/// `None` when the stream is malformed or the output would exceed
+/// `expected_size`.
+pub(crate) fn inflate(data: &[u8], expected_size: usize) -> Option<Vec<u8>> {
+    let mut source = SliceSource { data, pos: 0 };
+    let mut sink = VecSink { out: Vec::with_capacity(expected_size), cap: expected_size };
+    inflate_into(&mut source, &mut sink).then_some(sink.out)
+}
+
+/// Decompresses a raw DEFLATE stream read from `length` bytes of `file`
+/// at `offset` into `spool`, holding only the LZ77 window and a bounded
+/// input chunk in memory (pledged P27). Returns `Ok(Some(total))` with
+/// the spooled length, `Ok(None)` when the stream is malformed or would
+/// exceed `expected_size`, and `Err` when reading or spooling itself
+/// failed.
+pub(crate) fn inflate_file_to_spool(
+    file: &File,
+    offset: u64,
+    length: u64,
+    expected_size: u64,
+    spool: &File,
+) -> Result<Option<u64>> {
+    let mut source = FileSource::new(file, offset, length);
+    let mut sink = SpoolSink::new(spool, expected_size);
+    let ok = inflate_into(&mut source, &mut sink);
+    if source.failed {
+        return Err(Error::io("reading the compressed stream failed".to_owned()));
+    }
+    if sink.failed {
+        return Err(Error::io("spooling the decompressed stream failed".to_owned()));
+    }
+    if !ok {
+        return Ok(None);
+    }
+    match sink.finish() {
+        Ok(total) => Ok(Some(total)),
+        Err(()) => Err(Error::io("spooling the decompressed stream failed".to_owned())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A DEFLATE stream of stored blocks wrapping `payload` — legal
+    /// RFC 1951, hand-craftable without a compressor.
+    fn stored_deflate(payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut chunks = payload.chunks(0xffff).peekable();
+        loop {
+            let Some(chunk) = chunks.next() else {
+                // An empty payload still needs one final stored block.
+                out.extend_from_slice(&[0x01, 0x00, 0x00, 0xff, 0xff]);
+                break;
+            };
+            let last = chunks.peek().is_none();
+            out.push(u8::from(last));
+            let len = chunk.len() as u16;
+            out.extend_from_slice(&len.to_le_bytes());
+            out.extend_from_slice(&(!len).to_le_bytes());
+            out.extend_from_slice(chunk);
+            if last {
+                break;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn stored_blocks_round_trip_through_a_slice() {
+        let payload: Vec<u8> = (0..100_000u32).map(|n| (n % 249) as u8).collect();
+        let stream = stored_deflate(&payload);
+        let out = inflate(&stream, payload.len()).expect("inflates");
+        assert_eq!(out, payload);
+    }
+
+    #[test]
+    fn oversized_output_is_refused() {
+        let payload = vec![0xa5u8; 1000];
+        let stream = stored_deflate(&payload);
+        assert!(inflate(&stream, 999).is_none());
+    }
+
+    #[test]
+    fn a_stream_spools_to_session_storage_through_the_window() {
+        // Larger than the resident window, so the spool path flushes.
+        let payload: Vec<u8> = (0..200_000u32).map(|n| (n % 251) as u8).collect();
+        let stream = stored_deflate(&payload);
+
+        let input = crate::cache::session_storage_file().expect("input storage");
+        write_all_at(&input, 0, &stream).expect("stream writes");
+        let spool = crate::cache::session_storage_file().expect("spool storage");
+
+        let total = inflate_file_to_spool(
+            &input,
+            0,
+            stream.len() as u64,
+            payload.len() as u64,
+            &spool,
+        )
+        .expect("io succeeds")
+        .expect("stream decodes");
+        assert_eq!(total, payload.len() as u64);
+
+        let mut back = vec![0u8; payload.len()];
+        read_exact_at(&spool, 0, &mut back).expect("spool reads");
+        assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn a_truncated_stream_is_malformed_not_an_io_error() {
+        let payload = vec![0x11u8; 4096];
+        let stream = stored_deflate(&payload);
+        let input = crate::cache::session_storage_file().expect("input storage");
+        write_all_at(&input, 0, &stream).expect("stream writes");
+        let spool = crate::cache::session_storage_file().expect("spool storage");
+
+        let outcome = inflate_file_to_spool(
+            &input,
+            0,
+            (stream.len() / 2) as u64,
+            payload.len() as u64,
+            &spool,
+        )
+        .expect("io succeeds");
+        assert_eq!(outcome, None, "a truncated stream is a named refusal");
+    }
 }

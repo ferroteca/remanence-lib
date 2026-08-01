@@ -3,21 +3,22 @@
 
 //! Resolves a user-supplied path — a raw image, or `archive.zip[/entry]` — to
 //! a streamed image source plus any archive layers that were unwrapped along
-//! the way. The source file is opened under the P7 claim, and the claim is
-//! the read backing: a plain image is never loaded whole — identification
-//! reads stream from the claimed file through the session cache (pledged
-//! P27). An archive entry is decoded into a resident backing today; spooling
-//! it to session storage is the archive path's remaining P27 work.
+//! the way. The source file is opened under the P7 claim, and nothing is
+//! loaded whole (pledged P27): a plain image and a stored archive entry are
+//! source-backed — reads stream from the claimed file through the session
+//! cache — while a compressed entry is session-backed, decoded once by the
+//! streaming inflater into private session storage and served from there
+//! through the same cache.
 
 use std::fs::File;
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::cache::SessionCache;
+use crate::cache::{SessionCache, session_storage_file};
 use crate::device::{AccessMode, Device, FileRangeDevice, open_locked};
 use crate::error::{Error, Result};
-use crate::zip::ZipArchive;
+use crate::inflate::inflate_file_to_spool;
+use crate::zip::{EntryData, ZipArchive};
 
 /// One archive wrapper that was unwrapped while resolving an image.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,11 +35,13 @@ pub(crate) struct ArchiveLayer {
 /// What the session reads image bytes from.
 #[derive(Debug)]
 enum Backing {
-    /// The claimed source file itself, from `offset`: reads stream from
-    /// the claim through the session cache — nothing is loaded whole.
+    /// The claimed source file itself, from `offset`: a plain image, or
+    /// a stored archive entry read in place. Source-backed (P27) —
+    /// reads stream from the claim through the session cache.
     Claim { offset: u64 },
-    /// Bytes decoded out of an archive entry, resident for the session.
-    Memory(Vec<u8>),
+    /// Private session storage holding a decoded archive entry.
+    /// Session-backed (P27) — served through the same cache.
+    Spool(File),
 }
 
 /// The session's image source: the P7 claim on the source file, held for
@@ -74,8 +77,8 @@ impl ImageSource {
         self.mode
     }
 
-    /// Reads `buf` at `offset`: a resident backing copies directly, the
-    /// claimed file streams through the session cache.
+    /// Reads `buf` at `offset`, streaming from the backing — the
+    /// claimed file, or the session spool — through the session cache.
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
         if offset + buf.len() as u64 > self.len {
             return Err(Error::io(format!(
@@ -83,20 +86,16 @@ impl ImageSource {
                 buf.len()
             )));
         }
-        match &self.backing {
-            Backing::Memory(bytes) => {
-                let start = offset as usize;
-                buf.copy_from_slice(&bytes[start..start + buf.len()]);
-                Ok(())
-            }
+        let mut device = match &self.backing {
             Backing::Claim { offset: base } => {
-                let mut device = FileRangeDevice::new(&self.claim, *base, self.len);
-                self.cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .read_at(&mut device, offset, buf)
+                FileRangeDevice::new(&self.claim, *base, self.len)
             }
-        }
+            Backing::Spool(spool) => FileRangeDevice::new(spool, 0, self.len),
+        };
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .read_at(&mut device, offset, buf)
     }
 
     /// The image's leading bytes (up to `limit`), for bounded probes.
@@ -255,13 +254,14 @@ pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
         });
     };
 
-    let (mut file, mode) = open_locked(&archive_path)?;
-    let mut archive_bytes = Vec::new();
-    file.read_to_end(&mut archive_bytes).map_err(|error| {
-        Error::io(format!("failed to read '{}': {error}", archive_path.display()))
-    })?;
-    let archive_size = Some(archive_bytes.len() as u64);
-    let archive = ZipArchive::from_bytes(archive_bytes)?;
+    let (file, mode) = open_locked(&archive_path)?;
+    let archive_len = file
+        .metadata()
+        .map_err(|error| {
+            Error::io(format!("failed to stat '{}': {error}", archive_path.display()))
+        })?
+        .len();
+    let archive = ZipArchive::open(&file, archive_len)?;
 
     let entry_name = match &entry_path {
         Some(entry_path) => normalize_entry_name(entry_path),
@@ -282,15 +282,42 @@ pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
 
     let compressed_size = entry.compressed_size;
     let uncompressed_size = entry.uncompressed_size;
-    let bytes = archive.read_entry(entry)?;
-    let len = bytes.len() as u64;
+    let backing = match archive.entry_data(&file, entry)? {
+        // A stored entry is read in place: the image is a span of the
+        // claimed archive, source-backed under P27.
+        EntryData::Stored { offset, .. } => Backing::Claim { offset },
+        // A compressed entry is decoded once, streaming into session
+        // storage, and served from there: session-backed under P27.
+        EntryData::Deflated { offset, compressed_length } => {
+            let spool = session_storage_file()?;
+            let total = inflate_file_to_spool(
+                &file,
+                offset,
+                compressed_length,
+                uncompressed_size,
+                &spool,
+            )?
+            .ok_or_else(|| {
+                Error::archive("zip", format!("failed to inflate '{entry_name}'"))
+            })?;
+            if total != uncompressed_size {
+                return Err(Error::archive(
+                    "zip",
+                    format!(
+                        "'{entry_name}' decoded to {total} bytes, expected {uncompressed_size}"
+                    ),
+                ));
+            }
+            Backing::Spool(spool)
+        }
+    };
 
     let layer = ArchiveLayer {
         id: "zip".to_owned(),
         name: "ZIP archive".to_owned(),
         path: archive_path.clone(),
         entry_name: entry_name.clone(),
-        archive_size,
+        archive_size: Some(archive_len),
         compressed_size: Some(compressed_size),
         uncompressed_size: Some(uncompressed_size),
     };
@@ -298,7 +325,7 @@ pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
     Ok(ResolvedImage {
         source_path: archive_path,
         image_path: PathBuf::from(entry_name),
-        source: ImageSource::new(file, mode, Backing::Memory(bytes), len),
+        source: ImageSource::new(file, mode, backing, uncompressed_size),
         archive_layers: vec![layer],
     })
 }

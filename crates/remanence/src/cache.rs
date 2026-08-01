@@ -59,19 +59,28 @@ struct Spill {
     next_slot: u64,
 }
 
+/// Creates one file of private session storage (P27): no user-owned
+/// path, no cleanup verb — unlinked at birth (POSIX) or delete-on-close
+/// (Windows), so it cannot outlive the process however the session
+/// ends. The cache spills altered extents here; the archive path spools
+/// decoded entries here.
+pub(crate) fn session_storage_file() -> Result<File> {
+    let path = std::env::temp_dir().join(format!(
+        "remanence-session-{}-{}.tmp",
+        std::process::id(),
+        SPILL_SERIAL.fetch_add(1, Ordering::Relaxed),
+    ));
+    open_spill(&path).map_err(|error| {
+        Error::io(format!(
+            "cannot create session storage '{}': {error}",
+            path.display()
+        ))
+    })
+}
+
 impl Spill {
     fn create() -> Result<Self> {
-        let path = std::env::temp_dir().join(format!(
-            "remanence-spill-{}-{}.tmp",
-            std::process::id(),
-            SPILL_SERIAL.fetch_add(1, Ordering::Relaxed),
-        ));
-        let file = open_spill(&path).map_err(|error| {
-            Error::io(format!(
-                "cannot create session spill storage '{}': {error}",
-                path.display()
-            ))
-        })?;
+        let file = session_storage_file()?;
         Ok(Self { file, slots: BTreeMap::new(), next_slot: 0 })
     }
 
