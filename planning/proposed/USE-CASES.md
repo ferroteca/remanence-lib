@@ -2227,3 +2227,45 @@ retains exactly one active layer and its honest provenance.
   suggests what the child probably contains.
 - Partial outward commits when a deeper or enclosing representation cannot
   encode the requested result.
+
+## U21 — I inspect and recover files from a captured computer tape
+
+I have a computer-tape image, perhaps Aaru or another tape capture, and do not
+yet know its contents. Remanence reports the encoding and the tape at the
+source's fidelity: media facts, ordered partitions, data records, filemarks
+and setmarks, end observations, capture metadata, damage, ambiguity, and
+absence. Fixed-size records do not turn the tape into a disk.
+
+I inspect every partition and object without flattening them. Fixed- and
+variable-length records retain boundaries. Marks remain typed positions, not
+zero-length files or invented bytes. Missing, unreadable, conflicting, or
+resumed reads remain positioned; later records are never shifted to hide gaps.
+
+The report groups mark-delimited tape files and assigns opaque,
+composition-scoped identities. I select one to stream its records. A supported
+filesystem or file container recognized over that selection can expose named
+contents without hiding tape ordering, marks, boundaries, or evidence. A tape
+file is not a P19 entry merely because both use the word “file.”
+
+A consumer may open a typed tape-drive presentation over the same state. Read,
+rewind, space, supported locate, position, and status retain sequential
+semantics. Position, motion, buffering, continuation, and latency are runtime
+drive state; recorded objects and marks are durable media state.
+
+Aaru Image Format is one adapter at this seam, not the abstraction. Other
+encodings materialize the same family-owned state only at their actual
+fidelity.
+
+The journey succeeds when I can identify a capture, enumerate exact ordered
+structure and issues, stream a tape file without losing record boundaries,
+extract recognized contents, and serve honest read-only drive behavior.
+
+### Deliberately outside this use case
+
+- Physical-drive acquisition; the journey begins with a capture.
+- Treating tape partitions as P16 partitions, tape files as P19 entries, or
+  fixed-record tape as a random-access disk.
+- Inventing marks, boundaries, partitioning, bytes, or physical facts.
+- Analog tape, sampled magnetic signals, mechanics, electronics, or firmware.
+- Writing, erasing, formatting, appending, or persisting tape changes.
+- Claiming a named format before its adapter is implemented and tested.

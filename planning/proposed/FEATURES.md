@@ -140,3 +140,34 @@ share P24 and must converge on its optical identities and report vocabulary.
 
 Companion design:
 [design/laserdisc-signal-and-program-presentations.md](design/laserdisc-signal-and-program-presentations.md).
+
+## F23 — Computer-tape media and read-only presentations
+
+Introduce the P26 tape active layer required by U21: ordered partitions,
+variable- or fixed-length records, marks, end observations, evidence, and
+provenance; inspection and sequential reading; and a typed read-only
+tape-drive presentation.
+
+Aaru is the principal interoperability target, but remains one P12 adapter.
+At least one materially different tape-image shape must exercise the same
+family interface. The eventual pledge may split adapters, inspection, and
+drive presentation to meet the one-sprint bound.
+
+Inspection does not treat tape partitions as P16 disk partitions or tape files
+as P19 entries. A selected tape file exposes sequential records and, only
+under declared rules, a bounded byte view. Damaged objects remain positioned.
+
+The P15 drive presentation covers read, rewind, spacing, supported locating,
+position, completion, and status while motion and command state stay
+ephemeral. The initial feature is read-only.
+
+F23 adds `tape` to P23's exact vocabulary when pledged. Retries, conflicts,
+and resume observations remain evidence, not stored snapshots.
+
+Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
+dependent feature lands. Supports: U21; P3–P5, P12–P15, P19, P21, P23, P26.
+Needs: F19 pledged and delivered. F20–F22 are not prerequisites; shared report
+identity and artifact-mapping vocabulary must converge before overlap lands.
+
+Companion design:
+[design/computer-tape-representations.md](design/computer-tape-representations.md).

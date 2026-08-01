@@ -144,3 +144,42 @@ state, continuing outward until the root source is representable. P2 commits
 the validated composition atomically and P7 holds the necessary claims for
 the whole graph. Failure at any seam writes nothing and names the exact child,
 mapping, and representation which could not be encoded.
+
+## P26 — Computer tape has a family-owned sequential active layer
+
+A computer data tape whose ordering is observable above flat bytes uses a
+family-owned **tape** durable active layer. It is an ordered sequence of typed
+objects within tape partitions: records with preserved lengths, filemarks,
+setmarks where applicable, end observations, provenance, and issues. Equal
+record sizes do not make a disk.
+
+Ordering and position are load-bearing. An adapter never deletes an unreadable
+object and renumbers what follows, silently concatenates records, encodes marks
+as payload, or fills absent structure. Retries, conflicts, drive responses,
+resume history, and inferred positions remain evidence, not snapshots.
+
+Tape partitions are family-owned divisions, not P16 layouts. Tape files are
+mark-delimited extents, not P19 entries. A selected range supplies a derived
+byte view only under explicit boundary and concatenation rules. Higher
+interpretations compose above it without replacing tape-active state.
+
+Image formats remain P12 adapters at the seam they record. Aaru may carry
+partitions, tape files, records, marks, device responses, and provenance;
+another encoding may carry only records and marks or flat bytes. Packaging
+and format names confer no fidelity.
+
+P15 projects tape state through a typed family drive presentation. Read,
+rewind, space, locate, and position obey its contract. Position, motion,
+buffering, continuation, latency, and status are ephemeral; contents, marks,
+partitions, and evidenced structure are durable. U21 is initially read-only;
+writable tape use must separately define mutation semantics.
+
+Pledging this principle requires adding this row to P23:
+
+| Active layer | Durable session state | Claim |
+|---|---|---|
+| **tape** | family-owned partitions containing ordered typed records, marks, end observations, and provenance | sequential recorded structure, not a random-access disk, sampled signal, transport mechanism, or firmware |
+
+P23 otherwise remains unchanged. Derived byte, filesystem, file-container, or
+fixed-record views do not become active. Flat bytes are not promoted to tape
+because their name or contents suggest tape origin.
