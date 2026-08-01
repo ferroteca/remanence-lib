@@ -39,7 +39,7 @@ housekeeping**, whatever its diff looks like, and takes the rule
 below instead. That test is asked first and answered by lookup, so
 it is a checklist, not a judgement. **The norm is part of the
 surface**: with the code as norm, a change to the defining code of
-S1–S4 *is* a surface change — an edit to `pub` items, `rmn_*`
+S1–S4 *is* a surface change — an edit to `pub` items, `remanence_*`
 symbols or their contracts, the Python module surface, or the
 format-dialect grammar is gated however small its diff. Only a
 change that alters no contract is housekeeping-eligible. This

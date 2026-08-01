@@ -40,7 +40,7 @@ C ABI. The Rust code here is now the authoritative implementation.
   definitions, embedded with `include_str!`. Unit tests live in their
   modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
   images built in-test, plus the fixture-driven HDOS tests.
-- `crates/remanence-ffi/` — the C ABI (`rmn_*` symbols): opaque handles,
+- `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`
   regenerates `include/remanence.h` with cbindgen on every build; the
   header is generated output, never edited by hand.

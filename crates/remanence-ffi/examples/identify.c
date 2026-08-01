@@ -17,27 +17,27 @@
 
 #include "remanence.h"
 
-static const char *container_kind_name(RmnContainerKind kind) {
+static const char *container_kind_name(RemanenceContainerKind kind) {
     switch (kind) {
-        case RMN_CONTAINER_KIND_ARCHIVE: return "archive";
-        case RMN_CONTAINER_KIND_IMAGE: return "image";
-        case RMN_CONTAINER_KIND_PHYSICAL_MEDIA: return "physical-media";
-        case RMN_CONTAINER_KIND_FILESYSTEM: return "filesystem";
-        case RMN_CONTAINER_KIND_UNKNOWN: return "unknown";
+        case REMANENCE_CONTAINER_KIND_ARCHIVE: return "archive";
+        case REMANENCE_CONTAINER_KIND_IMAGE: return "image";
+        case REMANENCE_CONTAINER_KIND_PHYSICAL_MEDIA: return "physical-media";
+        case REMANENCE_CONTAINER_KIND_FILESYSTEM: return "filesystem";
+        case REMANENCE_CONTAINER_KIND_UNKNOWN: return "unknown";
     }
     return "unknown";
 }
 
-static void print_size(const RmnIdentification *identification, size_t index) {
+static void print_size(const RemanenceIdentification *identification, size_t index) {
     uint64_t current = 0;
     uint64_t expected = 0;
     printf("      size: ");
-    if (rmn_container_current_bytes(identification, index, &current)) {
+    if (remanence_container_current_bytes(identification, index, &current)) {
         printf("%" PRIu64 " bytes", current);
     } else {
         printf("unknown");
     }
-    if (rmn_container_expected_bytes(identification, index, &expected)) {
+    if (remanence_container_expected_bytes(identification, index, &expected)) {
         printf(" (expected %" PRIu64 ")", expected);
     }
     printf("\n");
@@ -49,70 +49,70 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    RmnErrorCategory error_category;
+    RemanenceErrorCategory error_category;
     char *error = NULL;
-    RmnSession *session = rmn_session_open(argv[1], &error_category, &error);
+    RemanenceSession *session = remanence_session_open(argv[1], &error_category, &error);
     if (session == NULL) {
         fprintf(stderr, "error (category %d): %s\n",
                 (int)error_category, error != NULL ? error : "unknown");
-        rmn_string_free(error);
+        remanence_string_free(error);
         return EXIT_FAILURE;
     }
 
-    RmnIdentification *identification = rmn_session_identify(session);
+    RemanenceIdentification *identification = remanence_session_identify(session);
 
-    printf("Source:  %s\n", rmn_session_path(session));
-    printf("Image:   %s\n", rmn_session_image_path(session));
-    printf("Modified: %s\n\n", rmn_identification_modified(identification) ? "yes" : "no");
+    printf("Source:  %s\n", remanence_session_path(session));
+    printf("Image:   %s\n", remanence_session_image_path(session));
+    printf("Modified: %s\n\n", remanence_identification_modified(identification) ? "yes" : "no");
 
-    size_t container_count = rmn_identification_container_count(identification);
+    size_t container_count = remanence_identification_container_count(identification);
     printf("Containers (%zu):\n", container_count);
     int has_hdos = 0;
     for (size_t i = 0; i < container_count; ++i) {
-        RmnContainerKind kind = rmn_container_kind(identification, i);
-        const char *id = rmn_container_id(identification, i);
+        RemanenceContainerKind kind = remanence_container_kind(identification, i);
+        const char *id = remanence_container_id(identification, i);
         printf("  - [%s] %s \"%s\" (confidence %d)%s\n", container_kind_name(kind), id,
-               rmn_container_name(identification, i),
-               (int)rmn_container_confidence(identification, i),
-               rmn_container_known(identification, i) ? "" : " [unknown]");
+               remanence_container_name(identification, i),
+               (int)remanence_container_confidence(identification, i),
+               remanence_container_known(identification, i) ? "" : " [unknown]");
         print_size(identification, i);
-        if (kind == RMN_CONTAINER_KIND_FILESYSTEM && strcmp(id, "hdos") == 0) {
+        if (kind == REMANENCE_CONTAINER_KIND_FILESYSTEM && strcmp(id, "hdos") == 0) {
             has_hdos = 1;
         }
     }
 
-    size_t evidence_count = rmn_identification_evidence_count(identification);
+    size_t evidence_count = remanence_identification_evidence_count(identification);
     if (evidence_count > 0) {
         printf("\nEvidence:\n");
         for (size_t i = 0; i < evidence_count; ++i) {
-            printf("  * %s\n", rmn_identification_evidence(identification, i));
+            printf("  * %s\n", remanence_identification_evidence(identification, i));
         }
     }
 
     int status = EXIT_SUCCESS;
     if (has_hdos) {
-        RmnHdosFileList *files =
-            rmn_session_list_hdos_files(session, &error_category, &error);
+        RemanenceHdosFileList *files =
+            remanence_session_list_hdos_files(session, &error_category, &error);
         if (files == NULL) {
             fprintf(stderr, "\nerror listing HDOS files (category %d): %s\n",
                     (int)error_category, error != NULL ? error : "unknown");
-            rmn_string_free(error);
+            remanence_string_free(error);
             status = EXIT_FAILURE;
         } else {
-            size_t file_count = rmn_hdos_file_count(files);
+            size_t file_count = remanence_hdos_file_count(files);
             printf("\nFiles (%zu):\n", file_count);
             for (size_t i = 0; i < file_count; ++i) {
                 printf("  %s\t%" PRIu32 " sectors\t%s\t%s\n",
-                       rmn_hdos_file_display_name(files, i),
-                       rmn_hdos_file_size_sectors(files, i),
-                       rmn_hdos_file_modified_date(files, i),
-                       rmn_hdos_file_flags(files, i));
+                       remanence_hdos_file_display_name(files, i),
+                       remanence_hdos_file_size_sectors(files, i),
+                       remanence_hdos_file_modified_date(files, i),
+                       remanence_hdos_file_flags(files, i));
             }
-            rmn_hdos_file_list_free(files);
+            remanence_hdos_file_list_free(files);
         }
     }
 
-    rmn_identification_free(identification);
-    rmn_session_free(session);
+    remanence_identification_free(identification);
+    remanence_session_free(session);
     return status;
 }

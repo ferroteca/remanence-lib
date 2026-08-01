@@ -17,296 +17,306 @@
 // Stable, machine-readable classification of a library refusal. A fallible
 // call writes one beside its error message; the output is untouched on success.
 typedef enum {
-  RMN_ERROR_CATEGORY_LOCKED = 0,
-  RMN_ERROR_CATEGORY_INVALID_IMAGE = 1,
-  RMN_ERROR_CATEGORY_UNSUPPORTED = 2,
-  RMN_ERROR_CATEGORY_READ_ONLY = 3,
-  RMN_ERROR_CATEGORY_NOT_FOUND = 4,
-  RMN_ERROR_CATEGORY_NOT_DIRECTORY = 5,
-  RMN_ERROR_CATEGORY_IS_DIRECTORY = 6,
-  RMN_ERROR_CATEGORY_NO_SPACE = 7,
-  RMN_ERROR_CATEGORY_IO = 8,
-} RmnErrorCategory;
+  REMANENCE_ERROR_CATEGORY_LOCKED = 0,
+  REMANENCE_ERROR_CATEGORY_INVALID_IMAGE = 1,
+  REMANENCE_ERROR_CATEGORY_UNSUPPORTED = 2,
+  REMANENCE_ERROR_CATEGORY_READ_ONLY = 3,
+  REMANENCE_ERROR_CATEGORY_NOT_FOUND = 4,
+  REMANENCE_ERROR_CATEGORY_NOT_DIRECTORY = 5,
+  REMANENCE_ERROR_CATEGORY_IS_DIRECTORY = 6,
+  REMANENCE_ERROR_CATEGORY_NO_SPACE = 7,
+  REMANENCE_ERROR_CATEGORY_IO = 8,
+} RemanenceErrorCategory;
 
 // What role a detected container plays in the image's layering.
 typedef enum {
-  RMN_CONTAINER_KIND_ARCHIVE,
-  RMN_CONTAINER_KIND_IMAGE,
-  RMN_CONTAINER_KIND_PHYSICAL_MEDIA,
-  RMN_CONTAINER_KIND_FILESYSTEM,
-  RMN_CONTAINER_KIND_UNKNOWN,
-} RmnContainerKind;
+  REMANENCE_CONTAINER_KIND_ARCHIVE,
+  REMANENCE_CONTAINER_KIND_IMAGE,
+  REMANENCE_CONTAINER_KIND_PHYSICAL_MEDIA,
+  REMANENCE_CONTAINER_KIND_FILESYSTEM,
+  REMANENCE_CONTAINER_KIND_UNKNOWN,
+} RemanenceContainerKind;
 
 // Which layout details a container carries.
 typedef enum {
-  RMN_LAYOUT_KIND_UNKNOWN,
-  RMN_LAYOUT_KIND_ARCHIVE,
-  RMN_LAYOUT_KIND_IMAGE,
-  RMN_LAYOUT_KIND_PHYSICAL_MEDIA,
-  RMN_LAYOUT_KIND_FILESYSTEM,
-} RmnLayoutKind;
+  REMANENCE_LAYOUT_KIND_UNKNOWN,
+  REMANENCE_LAYOUT_KIND_ARCHIVE,
+  REMANENCE_LAYOUT_KIND_IMAGE,
+  REMANENCE_LAYOUT_KIND_PHYSICAL_MEDIA,
+  REMANENCE_LAYOUT_KIND_FILESYSTEM,
+} RemanenceLayoutKind;
 
 // Sector arrangement across a disk.
 typedef enum {
-  RMN_SECTOR_LAYOUT_KIND_UNKNOWN,
-  RMN_SECTOR_LAYOUT_KIND_FIXED,
-  RMN_SECTOR_LAYOUT_KIND_VARIABLE,
-} RmnSectorLayoutKind;
+  REMANENCE_SECTOR_LAYOUT_KIND_UNKNOWN,
+  REMANENCE_SECTOR_LAYOUT_KIND_FIXED,
+  REMANENCE_SECTOR_LAYOUT_KIND_VARIABLE,
+} RemanenceSectorLayoutKind;
 
 // The caller's declared intent when opening a disk (P7).
 typedef enum {
-  RMN_ACCESS_INTENT_READ,
-  RMN_ACCESS_INTENT_WRITE,
-} RmnAccessIntent;
+  REMANENCE_ACCESS_INTENT_READ,
+  REMANENCE_ACCESS_INTENT_WRITE,
+} RemanenceAccessIntent;
 
 // A session's access mode. For a disk this echoes the declared intent;
 // for an identification session it reports what the P7 ladder obtained.
 typedef enum {
-  RMN_ACCESS_MODE_READ_WRITE,
-  RMN_ACCESS_MODE_READ_ONLY,
-} RmnAccessMode;
+  REMANENCE_ACCESS_MODE_READ_WRITE,
+  REMANENCE_ACCESS_MODE_READ_ONLY,
+} RemanenceAccessMode;
 
 // The container format a disk image turned out to be.
 typedef enum {
-  RMN_DISK_FORMAT_RAW,
-  RMN_DISK_FORMAT_QCOW2,
-} RmnDiskFormat;
+  REMANENCE_DISK_FORMAT_RAW,
+  REMANENCE_DISK_FORMAT_QCOW2,
+} RemanenceDiskFormat;
 
 // What a FAT directory entry is.
 typedef enum {
-  RMN_FAT_ENTRY_KIND_FILE,
-  RMN_FAT_ENTRY_KIND_DIRECTORY,
-} RmnFatEntryKind;
+  REMANENCE_FAT_ENTRY_KIND_FILE,
+  REMANENCE_FAT_ENTRY_KIND_DIRECTORY,
+} RemanenceFatEntryKind;
 
 // An open disk image.
-typedef struct RmnDisk RmnDisk;
+typedef struct RemanenceDisk RemanenceDisk;
 
 // A snapshot of a disk's complete report (U4): blank is an
 // answer, and every declared partition row stays, issues and all.
-typedef struct RmnDiskGeometry RmnDiskGeometry;
+typedef struct RemanenceDiskGeometry RemanenceDiskGeometry;
 
 // A directory listing.
-typedef struct RmnFatEntryList RmnFatEntryList;
+typedef struct RemanenceFatEntryList RemanenceFatEntryList;
 
 // Bytes read out of a volume or catalog.
-typedef struct RmnFileData RmnFileData;
+typedef struct RemanenceFileData RemanenceFileData;
 
 // A parsed HDOS directory listing.
-typedef struct RmnHdosFileList RmnHdosFileList;
+typedef struct RemanenceHdosFileList RemanenceHdosFileList;
 
 // The result of identifying a session's image.
-typedef struct RmnIdentification RmnIdentification;
+typedef struct RemanenceIdentification RemanenceIdentification;
 
 // An open analysis session over one disk image.
-typedef struct RmnSession RmnSession;
+typedef struct RemanenceSession RemanenceSession;
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
 // Returns the library version as a static string. Do not free.
-const char *rmn_version(void);
+const char *remanence_version(void);
 
 // Frees a string returned through an `error_out` parameter.
-void rmn_string_free(char *string);
+void remanence_string_free(char *string);
 
 // Opens `path` (UTF-8) — a raw disk image, or `archive.zip[/entry]` — with
 // the default format registry. Returns null on failure and stores a message
-// in `error_out` (free with `rmn_string_free`).
-RmnSession *rmn_session_open(const char *path,
-                             RmnErrorCategory *error_category_out,
-                             char **error_out);
+// in `error_out` (free with `remanence_string_free`).
+RemanenceSession *remanence_session_open(const char *path,
+                                         RemanenceErrorCategory *error_category_out,
+                                         char **error_out);
 
 // Frees a session handle.
-void rmn_session_free(RmnSession *session);
+void remanence_session_free(RemanenceSession *session);
 
 // The path the session was opened from (the archive path for ZIP inputs).
-const char *rmn_session_path(const RmnSession *session);
+const char *remanence_session_path(const RemanenceSession *session);
 
 // The resolved image path (the entry name for ZIP inputs).
-const char *rmn_session_image_path(const RmnSession *session);
+const char *remanence_session_image_path(const RemanenceSession *session);
 
 // The resolved image bytes; valid until the session is freed.
-const uint8_t *rmn_session_bytes(const RmnSession *session, size_t *length_out);
+const uint8_t *remanence_session_bytes(const RemanenceSession *session, size_t *length_out);
 
 // Whether the session has unsaved modifications.
-bool rmn_session_is_modified(const RmnSession *session);
+bool remanence_session_is_modified(const RemanenceSession *session);
 
 // Identifies the image's container layers and probable filesystem. Free the
-// result with `rmn_identification_free`.
-RmnIdentification *rmn_session_identify(const RmnSession *session);
+// result with `remanence_identification_free`.
+RemanenceIdentification *remanence_session_identify(const RemanenceSession *session);
 
 // Frees an identification handle.
-void rmn_identification_free(RmnIdentification *identification);
+void remanence_identification_free(RemanenceIdentification *identification);
 
 // Whether the session reported unsaved modifications at identify time.
-bool rmn_identification_modified(const RmnIdentification *identification);
+bool remanence_identification_modified(const RemanenceIdentification *identification);
 
 // Number of detected container layers.
-size_t rmn_identification_container_count(const RmnIdentification *identification);
+size_t remanence_identification_container_count(const RemanenceIdentification *identification);
 
 // Number of evidence lines.
-size_t rmn_identification_evidence_count(const RmnIdentification *identification);
+size_t remanence_identification_evidence_count(const RemanenceIdentification *identification);
 
 // One evidence line, or null when out of range.
-const char *rmn_identification_evidence(const RmnIdentification *identification, size_t index);
-
-// The container's kind, or `RmnContainerKind::Unknown` when out of range.
-RmnContainerKind rmn_container_kind(const RmnIdentification *identification, size_t index);
-
-// The container's id (e.g. "h8d", "zip", "hdos").
-const char *rmn_container_id(const RmnIdentification *identification, size_t index);
-
-// The container's human-readable name.
-const char *rmn_container_name(const RmnIdentification *identification, size_t index);
-
-// Detection confidence, 0-100.
-uint8_t rmn_container_confidence(const RmnIdentification *identification, size_t index);
-
-// Whether the container matched a known format.
-bool rmn_container_known(const RmnIdentification *identification, size_t index);
-
-// Current size in bytes; returns false when unknown.
-bool rmn_container_current_bytes(const RmnIdentification *identification,
-                                 size_t index,
-                                 uint64_t *out);
-
-// Expected size in bytes; returns false when unknown.
-bool rmn_container_expected_bytes(const RmnIdentification *identification,
-                                  size_t index,
-                                  uint64_t *out);
-
-// Which layout details this container carries.
-RmnLayoutKind rmn_container_layout_kind(const RmnIdentification *identification, size_t index);
-
-// Archive layout: the archive file path; null for other layouts.
-const char *rmn_container_archive_path(const RmnIdentification *identification, size_t index);
-
-// Archive layout: the entry name inside the archive; null for other layouts.
-const char *rmn_container_archive_entry_name(const RmnIdentification *identification, size_t index);
-
-// Archive layout: compressed entry size; returns false when unknown.
-bool rmn_container_archive_compressed_size(const RmnIdentification *identification,
-                                           size_t index,
-                                           uint64_t *out);
-
-// Archive layout: uncompressed entry size; returns false when unknown.
-bool rmn_container_archive_uncompressed_size(const RmnIdentification *identification,
-                                             size_t index,
-                                             uint64_t *out);
-
-// Image layout: payload offset in bytes; returns false when unknown.
-bool rmn_container_image_payload_offset(const RmnIdentification *identification,
-                                        size_t index,
-                                        uint64_t *out);
-
-// Image layout: payload length in bytes; returns false when unknown.
-bool rmn_container_image_payload_length(const RmnIdentification *identification,
-                                        size_t index,
-                                        uint64_t *out);
-
-// Physical media layout: whether disk geometry is known.
-bool rmn_container_has_disk_layout(const RmnIdentification *identification, size_t index);
-
-// Disk layout: media kind (e.g. "floppy"); null when unknown.
-const char *rmn_container_disk_media_kind(const RmnIdentification *identification, size_t index);
-
-// Disk layout: sector size in bytes; returns false when unknown.
-bool rmn_container_disk_sector_size(const RmnIdentification *identification,
-                                    size_t index,
-                                    uint64_t *out);
-
-// Disk layout: cylinder count; returns false when unknown.
-bool rmn_container_disk_cylinders(const RmnIdentification *identification,
-                                  size_t index,
-                                  uint32_t *out);
-
-// Disk layout: side count; returns false when unknown.
-bool rmn_container_disk_sides(const RmnIdentification *identification, size_t index, uint32_t *out);
-
-// Disk layout: how sectors are arranged.
-RmnSectorLayoutKind rmn_container_disk_sector_layout_kind(const RmnIdentification *identification,
-                                                          size_t index);
-
-// Disk layout: sectors per track for fixed layouts; 0 otherwise.
-uint32_t rmn_container_disk_sectors_per_track(const RmnIdentification *identification,
+const char *remanence_identification_evidence(const RemanenceIdentification *identification,
                                               size_t index);
 
+// The container's kind, or `RemanenceContainerKind::Unknown` when out of range.
+RemanenceContainerKind remanence_container_kind(const RemanenceIdentification *identification,
+                                                size_t index);
+
+// The container's id (e.g. "h8d", "zip", "hdos").
+const char *remanence_container_id(const RemanenceIdentification *identification, size_t index);
+
+// The container's human-readable name.
+const char *remanence_container_name(const RemanenceIdentification *identification, size_t index);
+
+// Detection confidence, 0-100.
+uint8_t remanence_container_confidence(const RemanenceIdentification *identification, size_t index);
+
+// Whether the container matched a known format.
+bool remanence_container_known(const RemanenceIdentification *identification, size_t index);
+
+// Current size in bytes; returns false when unknown.
+bool remanence_container_current_bytes(const RemanenceIdentification *identification,
+                                       size_t index,
+                                       uint64_t *out);
+
+// Expected size in bytes; returns false when unknown.
+bool remanence_container_expected_bytes(const RemanenceIdentification *identification,
+                                        size_t index,
+                                        uint64_t *out);
+
+// Which layout details this container carries.
+RemanenceLayoutKind remanence_container_layout_kind(const RemanenceIdentification *identification,
+                                                    size_t index);
+
+// Archive layout: the archive file path; null for other layouts.
+const char *remanence_container_archive_path(const RemanenceIdentification *identification,
+                                             size_t index);
+
+// Archive layout: the entry name inside the archive; null for other layouts.
+const char *remanence_container_archive_entry_name(const RemanenceIdentification *identification,
+                                                   size_t index);
+
+// Archive layout: compressed entry size; returns false when unknown.
+bool remanence_container_archive_compressed_size(const RemanenceIdentification *identification,
+                                                 size_t index,
+                                                 uint64_t *out);
+
+// Archive layout: uncompressed entry size; returns false when unknown.
+bool remanence_container_archive_uncompressed_size(const RemanenceIdentification *identification,
+                                                   size_t index,
+                                                   uint64_t *out);
+
+// Image layout: payload offset in bytes; returns false when unknown.
+bool remanence_container_image_payload_offset(const RemanenceIdentification *identification,
+                                              size_t index,
+                                              uint64_t *out);
+
+// Image layout: payload length in bytes; returns false when unknown.
+bool remanence_container_image_payload_length(const RemanenceIdentification *identification,
+                                              size_t index,
+                                              uint64_t *out);
+
+// Physical media layout: whether disk geometry is known.
+bool remanence_container_has_disk_layout(const RemanenceIdentification *identification,
+                                         size_t index);
+
+// Disk layout: media kind (e.g. "floppy"); null when unknown.
+const char *remanence_container_disk_media_kind(const RemanenceIdentification *identification,
+                                                size_t index);
+
+// Disk layout: sector size in bytes; returns false when unknown.
+bool remanence_container_disk_sector_size(const RemanenceIdentification *identification,
+                                          size_t index,
+                                          uint64_t *out);
+
+// Disk layout: cylinder count; returns false when unknown.
+bool remanence_container_disk_cylinders(const RemanenceIdentification *identification,
+                                        size_t index,
+                                        uint32_t *out);
+
+// Disk layout: side count; returns false when unknown.
+bool remanence_container_disk_sides(const RemanenceIdentification *identification,
+                                    size_t index,
+                                    uint32_t *out);
+
+// Disk layout: how sectors are arranged.
+RemanenceSectorLayoutKind remanence_container_disk_sector_layout_kind(const RemanenceIdentification *identification,
+                                                                      size_t index);
+
+// Disk layout: sectors per track for fixed layouts; 0 otherwise.
+uint32_t remanence_container_disk_sectors_per_track(const RemanenceIdentification *identification,
+                                                    size_t index);
+
 // Disk layout: per-track entry count for variable layouts; 0 otherwise.
-size_t rmn_container_disk_track_count(const RmnIdentification *identification, size_t index);
+size_t remanence_container_disk_track_count(const RemanenceIdentification *identification,
+                                            size_t index);
 
 // Disk layout: one per-track entry for variable layouts. Returns false when
 // out of range. `has_sector_size` and `sector_size` report the optional
 // per-track sector size.
-bool rmn_container_disk_track(const RmnIdentification *identification,
-                              size_t index,
-                              size_t track_index,
-                              uint32_t *cylinder,
-                              uint32_t *side,
-                              uint32_t *sectors,
-                              bool *has_sector_size,
-                              uint64_t *sector_size);
+bool remanence_container_disk_track(const RemanenceIdentification *identification,
+                                    size_t index,
+                                    size_t track_index,
+                                    uint32_t *cylinder,
+                                    uint32_t *side,
+                                    uint32_t *sectors,
+                                    bool *has_sector_size,
+                                    uint64_t *sector_size);
 
 // Disk layout: total sector count; returns false when unknown.
-bool rmn_container_disk_total_sectors(const RmnIdentification *identification,
-                                      size_t index,
-                                      uint64_t *out);
+bool remanence_container_disk_total_sectors(const RemanenceIdentification *identification,
+                                            size_t index,
+                                            uint64_t *out);
 
 // Filesystem layout: offset in bytes; returns false when unknown.
-bool rmn_container_fs_offset_bytes(const RmnIdentification *identification,
-                                   size_t index,
-                                   uint64_t *out);
+bool remanence_container_fs_offset_bytes(const RemanenceIdentification *identification,
+                                         size_t index,
+                                         uint64_t *out);
 
 // Filesystem layout: length in bytes; returns false when unknown.
-bool rmn_container_fs_length_bytes(const RmnIdentification *identification,
-                                   size_t index,
-                                   uint64_t *out);
+bool remanence_container_fs_length_bytes(const RemanenceIdentification *identification,
+                                         size_t index,
+                                         uint64_t *out);
 
 // Parses the HDOS directory from raw image bytes. Returns null on failure and
-// stores a message in `error_out` (free with `rmn_string_free`).
-RmnHdosFileList *rmn_list_hdos_files(const uint8_t *bytes,
-                                     size_t length,
-                                     RmnErrorCategory *error_category_out,
-                                     char **error_out);
+// stores a message in `error_out` (free with `remanence_string_free`).
+RemanenceHdosFileList *remanence_list_hdos_files(const uint8_t *bytes,
+                                                 size_t length,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out);
 
 // Parses the HDOS directory from a session's image bytes. Returns null on
-// failure and stores a message in `error_out` (free with `rmn_string_free`).
-RmnHdosFileList *rmn_session_list_hdos_files(const RmnSession *session,
-                                             RmnErrorCategory *error_category_out,
-                                             char **error_out);
+// failure and stores a message in `error_out` (free with `remanence_string_free`).
+RemanenceHdosFileList *remanence_session_list_hdos_files(const RemanenceSession *session,
+                                                         RemanenceErrorCategory *error_category_out,
+                                                         char **error_out);
 
 // Frees an HDOS file list handle.
-void rmn_hdos_file_list_free(RmnHdosFileList *list);
+void remanence_hdos_file_list_free(RemanenceHdosFileList *list);
 
 // Number of files in the listing.
-size_t rmn_hdos_file_count(const RmnHdosFileList *list);
+size_t remanence_hdos_file_count(const RemanenceHdosFileList *list);
 
 // File name without extension, e.g. "HDOS".
-const char *rmn_hdos_file_name(const RmnHdosFileList *list, size_t index);
+const char *remanence_hdos_file_name(const RemanenceHdosFileList *list, size_t index);
 
 // File extension, possibly empty, e.g. "SYS".
-const char *rmn_hdos_file_extension(const RmnHdosFileList *list, size_t index);
+const char *remanence_hdos_file_extension(const RemanenceHdosFileList *list, size_t index);
 
 // `"NAME.EXT"`, or `"NAME"` when the extension is empty.
-const char *rmn_hdos_file_display_name(const RmnHdosFileList *list, size_t index);
+const char *remanence_hdos_file_display_name(const RemanenceHdosFileList *list, size_t index);
 
 // Size in 256-byte sectors.
-uint32_t rmn_hdos_file_size_sectors(const RmnHdosFileList *list, size_t index);
+uint32_t remanence_hdos_file_size_sectors(const RemanenceHdosFileList *list, size_t index);
 
 // Size in bytes.
-uint64_t rmn_hdos_file_size_bytes(const RmnHdosFileList *list, size_t index);
+uint64_t remanence_hdos_file_size_bytes(const RemanenceHdosFileList *list, size_t index);
 
 // Raw HDOS date word.
-uint16_t rmn_hdos_file_modified_date_raw(const RmnHdosFileList *list, size_t index);
+uint16_t remanence_hdos_file_modified_date_raw(const RemanenceHdosFileList *list, size_t index);
 
 // Raw HDOS flag byte.
-uint8_t rmn_hdos_file_flags_raw(const RmnHdosFileList *list, size_t index);
+uint8_t remanence_hdos_file_flags_raw(const RemanenceHdosFileList *list, size_t index);
 
 // HDOS flag letters (subset of "SLWC"), possibly empty.
-const char *rmn_hdos_file_flags(const RmnHdosFileList *list, size_t index);
+const char *remanence_hdos_file_flags(const RemanenceHdosFileList *list, size_t index);
 
 // HDOS catalog date, e.g. "09-May-78", or "No-Date".
-const char *rmn_hdos_file_modified_date(const RmnHdosFileList *list, size_t index);
+const char *remanence_hdos_file_modified_date(const RemanenceHdosFileList *list, size_t index);
 
 // Opens `path` (UTF-8) as a disk image — raw or qcow2, detected by
 // magic — with the caller's declared intent (P7). A `Write` open
@@ -318,197 +328,208 @@ const char *rmn_hdos_file_modified_date(const RmnHdosFileList *list, size_t inde
 // (P9): the image comes back wholly the old state or wholly the
 // committed new one, never a partial third state. Returns null on
 // failure with a message in `error_out`.
-RmnDisk *rmn_disk_open(const char *path,
-                       RmnAccessIntent intent,
-                       RmnErrorCategory *error_category_out,
-                       char **error_out);
+RemanenceDisk *remanence_disk_open(const char *path,
+                                   RemanenceAccessIntent intent,
+                                   RemanenceErrorCategory *error_category_out,
+                                   char **error_out);
 
 // Frees a disk handle, releasing the P7 claim. Uncommitted changes are
 // discarded (the commit point never reached the file).
-void rmn_disk_free(RmnDisk *disk);
+void remanence_disk_free(RemanenceDisk *disk);
 
 // The disk session's access mode — an echo of the declared intent.
-RmnAccessMode rmn_disk_mode(const RmnDisk *disk);
+RemanenceAccessMode remanence_disk_mode(const RemanenceDisk *disk);
 
 // The detected container format.
-RmnDiskFormat rmn_disk_format(const RmnDisk *disk);
+RemanenceDiskFormat remanence_disk_format(const RemanenceDisk *disk);
 
 // The qcow2 version, or 0 for a raw image.
-uint32_t rmn_disk_qcow2_version(const RmnDisk *disk);
+uint32_t remanence_disk_qcow2_version(const RemanenceDisk *disk);
 
 // The virtual disk size in bytes.
-uint64_t rmn_disk_size(const RmnDisk *disk);
+uint64_t remanence_disk_size(const RemanenceDisk *disk);
 
 // Whether uncommitted changes exist.
-bool rmn_disk_is_modified(const RmnDisk *disk);
+bool remanence_disk_is_modified(const RemanenceDisk *disk);
 
 // Reads the disk's complete report (U4): its partitions and
 // volumes as they actually are. Blank is an answer (zero volumes, see
-// `rmn_geometry_is_blank`), a partition row the library cannot read
+// `remanence_geometry_is_blank`), a partition row the library cannot read
 // stays in the report carrying its issue, and non-zero data that is
 // neither a supported filesystem nor a partition table fails by name,
 // kept distinct from blank. Free the result with
-// `rmn_disk_geometry_free`.
-RmnDiskGeometry *rmn_disk_geometry(RmnDisk *disk,
-                                   RmnErrorCategory *error_category_out,
-                                   char **error_out);
+// `remanence_disk_geometry_free`.
+RemanenceDiskGeometry *remanence_disk_geometry(RemanenceDisk *disk,
+                                               RemanenceErrorCategory *error_category_out,
+                                               char **error_out);
 
 // Frees a geometry snapshot.
-void rmn_disk_geometry_free(RmnDiskGeometry *geometry);
+void remanence_disk_geometry_free(RemanenceDiskGeometry *geometry);
 
 // Whether sector 0 was all zero: a blank disk with zero volumes — an
 // answer, not an error.
-bool rmn_geometry_is_blank(const RmnDiskGeometry *geometry);
+bool remanence_geometry_is_blank(const RemanenceDiskGeometry *geometry);
 
 // Number of partitions (0 for a partitionless image).
-size_t rmn_geometry_partition_count(const RmnDiskGeometry *geometry);
+size_t remanence_geometry_partition_count(const RemanenceDiskGeometry *geometry);
 
 // A partition's 1-based number.
-uint32_t rmn_geometry_partition_number(const RmnDiskGeometry *geometry, size_t index);
+uint32_t remanence_geometry_partition_number(const RemanenceDiskGeometry *geometry, size_t index);
 
 // A partition's MBR type byte.
-uint8_t rmn_geometry_partition_type_byte(const RmnDiskGeometry *geometry, size_t index);
+uint8_t remanence_geometry_partition_type_byte(const RemanenceDiskGeometry *geometry, size_t index);
 
 // A partition row's kind: "primary" (an MBR slot, the extended
 // container included) or "logical" (a row of the extended chain).
-const char *rmn_geometry_partition_kind(const RmnDiskGeometry *geometry, size_t index);
+const char *remanence_geometry_partition_kind(const RemanenceDiskGeometry *geometry, size_t index);
 
 // A partition's pinned type name, or null when the type byte is outside
 // the claim — the row's issue then names the refusal.
-const char *rmn_geometry_partition_type_name(const RmnDiskGeometry *geometry, size_t index);
+const char *remanence_geometry_partition_type_name(const RemanenceDiskGeometry *geometry,
+                                                   size_t index);
 
 // A partition's start offset in bytes.
-uint64_t rmn_geometry_partition_start_bytes(const RmnDiskGeometry *geometry, size_t index);
+uint64_t remanence_geometry_partition_start_bytes(const RemanenceDiskGeometry *geometry,
+                                                  size_t index);
 
 // A partition's length in bytes.
-uint64_t rmn_geometry_partition_length_bytes(const RmnDiskGeometry *geometry, size_t index);
+uint64_t remanence_geometry_partition_length_bytes(const RemanenceDiskGeometry *geometry,
+                                                   size_t index);
 
 // Stores a partition row's issue category and returns true; returns
 // false when the row was read cleanly (or the index is out of range).
 // A row carrying an issue stays in the report with no volume read from
 // it, and the rows behind it never renumber (U4).
-bool rmn_geometry_partition_issue_category(const RmnDiskGeometry *geometry,
-                                           size_t index,
-                                           RmnErrorCategory *category_out);
+bool remanence_geometry_partition_issue_category(const RemanenceDiskGeometry *geometry,
+                                                 size_t index,
+                                                 RemanenceErrorCategory *category_out);
 
 // A partition row's issue diagnostic — why no volume was read from the
 // row — or null when the row was read cleanly.
-const char *rmn_geometry_partition_issue(const RmnDiskGeometry *geometry, size_t index);
+const char *remanence_geometry_partition_issue(const RemanenceDiskGeometry *geometry, size_t index);
 
 // Number of volumes actually read (one guest drive letter each).
-size_t rmn_geometry_volume_count(const RmnDiskGeometry *geometry);
+size_t remanence_geometry_volume_count(const RemanenceDiskGeometry *geometry);
 
 // A volume's opaque stable identifier. The borrowed string is owned by
 // `geometry`.
-const char *rmn_geometry_volume_id(const RmnDiskGeometry *geometry, size_t index);
+const char *remanence_geometry_volume_id(const RemanenceDiskGeometry *geometry, size_t index);
 
 // The 1-based partition number a volume sits in; returns false for a
 // partitionless image.
-bool rmn_geometry_volume_partition_number(const RmnDiskGeometry *geometry,
-                                          size_t index,
-                                          uint32_t *out);
+bool remanence_geometry_volume_partition_number(const RemanenceDiskGeometry *geometry,
+                                                size_t index,
+                                                uint32_t *out);
 
 // The volume's FAT kind name ("FAT12" or "FAT16").
-const char *rmn_geometry_volume_kind(const RmnDiskGeometry *geometry, size_t index);
+const char *remanence_geometry_volume_kind(const RemanenceDiskGeometry *geometry, size_t index);
 
 // The volume label, or null when it has none.
-const char *rmn_geometry_volume_label(const RmnDiskGeometry *geometry, size_t index);
+const char *remanence_geometry_volume_label(const RemanenceDiskGeometry *geometry, size_t index);
 
 // The volume's offset in bytes.
-uint64_t rmn_geometry_volume_offset_bytes(const RmnDiskGeometry *geometry, size_t index);
+uint64_t remanence_geometry_volume_offset_bytes(const RemanenceDiskGeometry *geometry,
+                                                size_t index);
 
 // The volume's length in bytes.
-uint64_t rmn_geometry_volume_length_bytes(const RmnDiskGeometry *geometry, size_t index);
+uint64_t remanence_geometry_volume_length_bytes(const RemanenceDiskGeometry *geometry,
+                                                size_t index);
 
 // The volume's cluster size in bytes.
-uint64_t rmn_geometry_volume_cluster_bytes(const RmnDiskGeometry *geometry, size_t index);
+uint64_t remanence_geometry_volume_cluster_bytes(const RemanenceDiskGeometry *geometry,
+                                                 size_t index);
 
 // The volume's data-cluster count.
-uint64_t rmn_geometry_volume_cluster_count(const RmnDiskGeometry *geometry, size_t index);
+uint64_t remanence_geometry_volume_cluster_count(const RemanenceDiskGeometry *geometry,
+                                                 size_t index);
 
 // The BPB-stated sectors per track; returns false where the boot record
 // states none.
-bool rmn_geometry_volume_sectors_per_track(const RmnDiskGeometry *geometry,
-                                           size_t index,
-                                           uint32_t *out);
+bool remanence_geometry_volume_sectors_per_track(const RemanenceDiskGeometry *geometry,
+                                                 size_t index,
+                                                 uint32_t *out);
 
 // The BPB-stated head count; returns false where the boot record states
 // none.
-bool rmn_geometry_volume_heads(const RmnDiskGeometry *geometry, size_t index, uint32_t *out);
+bool remanence_geometry_volume_heads(const RemanenceDiskGeometry *geometry,
+                                     size_t index,
+                                     uint32_t *out);
 
 // The volume's cylinder count, only where an exact derivation exists —
 // the boot record's track geometry divides the total sector count with
 // no remainder; returns false otherwise, never an invented value
 // (U4).
-bool rmn_geometry_volume_cylinders(const RmnDiskGeometry *geometry, size_t index, uint64_t *out);
+bool remanence_geometry_volume_cylinders(const RemanenceDiskGeometry *geometry,
+                                         size_t index,
+                                         uint64_t *out);
 
 // Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
-// with `rmn_fat_entry_list_free`.
-RmnFatEntryList *rmn_disk_entries(RmnDisk *disk,
-                                  const char *volume_id,
-                                  const char *path,
-                                  RmnErrorCategory *error_category_out,
-                                  char **error_out);
+// with `remanence_fat_entry_list_free`.
+RemanenceFatEntryList *remanence_disk_entries(RemanenceDisk *disk,
+                                              const char *volume_id,
+                                              const char *path,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out);
 
 // Answers one path in `volume_id` (U3): a one-entry listing when
 // something exists there, an empty listing when nothing does — a
 // missing leaf, a missing parent, or a parent that is a file alike.
 // Absence is an answer, distinguished from failure, which returns null
-// with the error set. Free with `rmn_fat_entry_list_free`.
-RmnFatEntryList *rmn_disk_stat(RmnDisk *disk,
-                               const char *volume_id,
-                               const char *path,
-                               RmnErrorCategory *error_category_out,
-                               char **error_out);
+// with the error set. Free with `remanence_fat_entry_list_free`.
+RemanenceFatEntryList *remanence_disk_stat(RemanenceDisk *disk,
+                                           const char *volume_id,
+                                           const char *path,
+                                           RemanenceErrorCategory *error_category_out,
+                                           char **error_out);
 
 // Frees a directory listing.
-void rmn_fat_entry_list_free(RmnFatEntryList *list);
+void remanence_fat_entry_list_free(RemanenceFatEntryList *list);
 
 // Number of entries in the listing.
-size_t rmn_fat_entry_count(const RmnFatEntryList *list);
+size_t remanence_fat_entry_count(const RemanenceFatEntryList *list);
 
 // An entry's 8.3 name.
-const char *rmn_fat_entry_name(const RmnFatEntryList *list, size_t index);
+const char *remanence_fat_entry_name(const RemanenceFatEntryList *list, size_t index);
 
 // Whether an entry is a file or a directory.
-RmnFatEntryKind rmn_fat_entry_kind(const RmnFatEntryList *list, size_t index);
+RemanenceFatEntryKind remanence_fat_entry_kind(const RemanenceFatEntryList *list, size_t index);
 
 // An entry's size in bytes (0 for directories).
-uint64_t rmn_fat_entry_size_bytes(const RmnFatEntryList *list, size_t index);
+uint64_t remanence_fat_entry_size_bytes(const RemanenceFatEntryList *list, size_t index);
 
 // Copies a file's bytes out of `volume_id`. Free with
-// `rmn_file_data_free`.
-RmnFileData *rmn_disk_read_file(RmnDisk *disk,
-                                const char *volume_id,
-                                const char *path,
-                                RmnErrorCategory *error_category_out,
-                                char **error_out);
+// `remanence_file_data_free`.
+RemanenceFileData *remanence_disk_read_file(RemanenceDisk *disk,
+                                            const char *volume_id,
+                                            const char *path,
+                                            RemanenceErrorCategory *error_category_out,
+                                            char **error_out);
 
 // The bytes of a read-out file; valid until the handle is freed.
-const uint8_t *rmn_file_data_bytes(const RmnFileData *data, size_t *length_out);
+const uint8_t *remanence_file_data_bytes(const RemanenceFileData *data, size_t *length_out);
 
 // Frees read-out file bytes.
-void rmn_file_data_free(RmnFileData *data);
+void remanence_file_data_free(RemanenceFileData *data);
 
 // Writes a file into `volume_id`. An existing file is overwritten —
 // shorter or longer, its old clusters released and reclaimed — while
-// an existing directory is refused. Buffered until `rmn_disk_commit`.
-bool rmn_disk_write_file(RmnDisk *disk,
-                         const char *volume_id,
-                         const char *path,
-                         const uint8_t *bytes,
-                         size_t length,
-                         RmnErrorCategory *error_category_out,
-                         char **error_out);
+// an existing directory is refused. Buffered until `remanence_disk_commit`.
+bool remanence_disk_write_file(RemanenceDisk *disk,
+                               const char *volume_id,
+                               const char *path,
+                               const uint8_t *bytes,
+                               size_t length,
+                               RemanenceErrorCategory *error_category_out,
+                               char **error_out);
 
 // Ensures a directory exists in `volume_id`: missing parents are
 // created, and a path that already leads to a directory succeeds
 // unchanged. Buffered until commit.
-bool rmn_disk_make_directory(RmnDisk *disk,
-                             const char *volume_id,
-                             const char *path,
-                             RmnErrorCategory *error_category_out,
-                             char **error_out);
+bool remanence_disk_make_directory(RemanenceDisk *disk,
+                                   const char *volume_id,
+                                   const char *path,
+                                   RemanenceErrorCategory *error_category_out,
+                                   char **error_out);
 
 // The commit point (P2): everything buffered reaches the image, then a
 // flush. Until this call, nothing has touched the file. The commit is
@@ -516,28 +537,30 @@ bool rmn_disk_make_directory(RmnDisk *disk,
 // byte of the file changes, so an interruption at any point leaves
 // state the next open reconciles to wholly the old image or wholly
 // the committed new one.
-bool rmn_disk_commit(RmnDisk *disk, RmnErrorCategory *error_category_out, char **error_out);
+bool remanence_disk_commit(RemanenceDisk *disk,
+                           RemanenceErrorCategory *error_category_out,
+                           char **error_out);
 
 // Discards everything buffered; the image is untouched.
-void rmn_disk_rollback(RmnDisk *disk);
+void remanence_disk_rollback(RemanenceDisk *disk);
 
 // Which P7 mode the session's open obtained on its source file.
-RmnAccessMode rmn_session_access_mode(const RmnSession *session);
+RemanenceAccessMode remanence_session_access_mode(const RemanenceSession *session);
 
 // Reads a cataloged HDOS file's contents out of raw image bytes. Free
-// with `rmn_file_data_free`.
-RmnFileData *rmn_read_hdos_file(const uint8_t *bytes,
-                                size_t length,
-                                const char *name,
-                                RmnErrorCategory *error_category_out,
-                                char **error_out);
+// with `remanence_file_data_free`.
+RemanenceFileData *remanence_read_hdos_file(const uint8_t *bytes,
+                                            size_t length,
+                                            const char *name,
+                                            RemanenceErrorCategory *error_category_out,
+                                            char **error_out);
 
 // Reads a cataloged HDOS file out of a session's image bytes. Free with
-// `rmn_file_data_free`.
-RmnFileData *rmn_session_read_hdos_file(const RmnSession *session,
-                                        const char *name,
-                                        RmnErrorCategory *error_category_out,
-                                        char **error_out);
+// `remanence_file_data_free`.
+RemanenceFileData *remanence_session_read_hdos_file(const RemanenceSession *session,
+                                                    const char *name,
+                                                    RemanenceErrorCategory *error_category_out,
+                                                    char **error_out);
 
 #ifdef __cplusplus
 }  // extern "C"

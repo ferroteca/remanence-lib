@@ -45,7 +45,7 @@ never reused.
   and `HdosFile`, `Error`/`ErrorCategory`/`Result`, and the embedded
   default format definitions. Defined by the crate's `pub` items; `cargo
   doc` output is a representation of it.
-- **S2 — The C ABI.** Every `rmn_*` symbol exported by
+- **S2 — The C ABI.** Every `remanence_*` symbol exported by
   `crates/remanence-ffi`, with the generated `include/remanence.h` as its
   consumer-facing representation. Covers naming, ownership rules (who
   frees what), null/out-of-range behavior, and enum values — an ABI
