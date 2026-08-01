@@ -419,50 +419,45 @@ impl Disk {
         }
 
         // Stage: the write-through runs against a capture of the host
-        // file, so the complete set of host writes is known while the
+        // file — itself a bounded cache spilling to session storage
+        // (P27) — so the complete set of host writes is known while the
         // file is still untouched. A refusal discards the staging —
         // the driver's caches put back alongside it — and keeps the
         // buffered state for the caller.
         let cache_snapshot = self.virtual_disk.cache_snapshot();
         self.virtual_disk.host().begin_capture();
         let staged = self.cache.write_through(self.virtual_disk.device());
-        let (blocks, new_len) = self.virtual_disk.host().take_capture();
+        let capture = self.virtual_disk.host().take_capture();
         if let Err(error) = staged {
             self.virtual_disk.restore_cache(cache_snapshot);
             return Err(error);
         }
-        if blocks.is_empty() {
+        if capture.is_clean() {
             self.cache.mark_committed();
             return self.virtual_disk.device().flush();
         }
 
         // The durability boundary (P9): the bytes the apply will
-        // overwrite are durable in the recovery journal before the
-        // first of them changes.
-        let journal = match journal::record(
-            &self.journal_path,
-            self.virtual_disk.host(),
-            &blocks,
-            new_len,
-        ) {
-            Ok(journal) => journal,
-            Err(error) => {
-                let _ = journal::retire(&self.journal_path);
-                self.virtual_disk.restore_cache(cache_snapshot);
-                return Err(error);
-            }
-        };
+        // overwrite are durable in the recovery journal — streamed
+        // there, never held whole — before the first of them changes.
+        if let Err(error) =
+            journal::record(&self.journal_path, self.virtual_disk.host(), &capture)
+        {
+            let _ = journal::retire(&self.journal_path);
+            self.virtual_disk.restore_cache(cache_snapshot);
+            return Err(error);
+        }
         #[cfg(test)]
         crash_test_process_at("journal-armed");
 
         // Apply, then retire the journal. Should either fail, the
-        // in-process undo puts the image back to wholly the old state;
-        // should even that fail, the armed journal remains for the
-        // next open to reconcile.
+        // in-process undo reconciles from the armed journal, putting
+        // the image back to wholly the old state; should even that
+        // fail, the journal remains for the next open to reconcile.
         let applied = self
             .virtual_disk
             .host()
-            .apply(&blocks, new_len)
+            .apply(&capture)
             .and_then(|()| {
                 #[cfg(test)]
                 crash_test_process_at("image-applied");
@@ -478,13 +473,13 @@ impl Disk {
                 crash_test_process_at("journal-retired");
             });
         if let Err(error) = applied {
-            match self
-                .virtual_disk
-                .host()
-                .restore(&journal.records, journal.original_len)
-            {
+            let image_path = PathBuf::from(&self.path);
+            match journal::reconcile(
+                &self.journal_path,
+                self.virtual_disk.host(),
+                &image_path,
+            ) {
                 Ok(()) => {
-                    let _ = journal::retire(&self.journal_path);
                     self.virtual_disk.restore_cache(cache_snapshot);
                 }
                 Err(_) => {
@@ -770,15 +765,22 @@ mod tests {
     /// [`Disk::commit`] does, stopping at the durability boundary: the
     /// journal is armed, the file untouched. Returns the staged host
     /// writes so a test can apply any prefix of them before "crashing".
-    fn stage_and_arm(disk: &mut Disk) -> (std::collections::BTreeMap<u64, Vec<u8>>, u64) {
+    fn stage_and_arm(disk: &mut Disk) -> (Vec<(u64, Vec<u8>)>, u64) {
         disk.virtual_disk.host().begin_capture();
         disk.cache
             .write_through(disk.virtual_disk.device())
             .expect("stages");
-        let (blocks, new_len) = disk.virtual_disk.host().take_capture();
-        crate::journal::record(&disk.journal_path, disk.virtual_disk.host(), &blocks, new_len)
+        let capture = disk.virtual_disk.host().take_capture();
+        crate::journal::record(&disk.journal_path, disk.virtual_disk.host(), &capture)
             .expect("journals");
-        (blocks, new_len)
+        let mut blocks = Vec::new();
+        capture
+            .for_each_dirty(&mut |offset, data| {
+                blocks.push((offset, data.to_vec()));
+                Ok(())
+            })
+            .expect("collects");
+        (blocks, capture.len())
     }
 
     #[test]
@@ -840,7 +842,7 @@ mod tests {
 
         // The crash: half the staged writes land, the rest never do,
         // and the process vanishes without retiring the journal.
-        for (&offset, block) in blocks.iter().take(blocks.len() / 2) {
+        for &(offset, ref block) in blocks.iter().take(blocks.len() / 2) {
             let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
             disk.virtual_disk
                 .host()
@@ -886,7 +888,13 @@ mod tests {
         // The crash: the apply completes, but the journal is never
         // retired — the commit never returned, so the armed journal
         // governs and the next open rolls the image back.
-        disk.virtual_disk.host().apply(&blocks, new_len).expect("applies");
+        for &(offset, ref block) in &blocks {
+            let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
+            disk.virtual_disk
+                .host()
+                .write_at(offset, &block[..take])
+                .expect("applies");
+        }
         drop(disk);
 
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
@@ -927,7 +935,7 @@ mod tests {
             .expect("writes");
         let (blocks, new_len) = stage_and_arm(&mut disk);
         assert!(blocks.len() >= 2, "the staged write set spans blocks");
-        for (&offset, block) in blocks.iter().take(blocks.len() / 2) {
+        for &(offset, ref block) in blocks.iter().take(blocks.len() / 2) {
             let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
             disk.virtual_disk
                 .host()
@@ -977,7 +985,7 @@ mod tests {
         disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
             .expect("overwrites");
         let (blocks, new_len) = stage_and_arm(&mut disk);
-        for (&offset, block) in blocks.iter().take(blocks.len() / 2) {
+        for &(offset, ref block) in blocks.iter().take(blocks.len() / 2) {
             let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
             disk.virtual_disk
                 .host()

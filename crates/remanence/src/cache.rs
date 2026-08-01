@@ -311,47 +311,80 @@ impl SessionCache {
         Ok(())
     }
 
+    /// Calls `f` for every altered extent in offset order — resident
+    /// extents from memory, spilled ones through one bounded buffer.
+    /// The commit pipeline streams from this; nothing materializes the
+    /// altered set whole.
+    pub fn for_each_dirty(
+        &self,
+        f: &mut dyn FnMut(u64, &[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let mut spill_buf = vec![0u8; EXTENT as usize];
+        let mut resident = self
+            .resident
+            .iter()
+            .filter(|(_, extent)| extent.dirty)
+            .peekable();
+        let mut spilled = self
+            .spill
+            .as_ref()
+            .map(|spill| spill.slots.keys().copied())
+            .into_iter()
+            .flatten()
+            .peekable();
+        loop {
+            let next_resident = resident.peek().map(|(offset, _)| **offset);
+            let next_spilled = spilled.peek().copied();
+            match (next_resident, next_spilled) {
+                (None, None) => return Ok(()),
+                // A re-loaded spilled extent is resident and newest;
+                // its stale slot is skipped.
+                (Some(r), Some(s)) if s == r => {
+                    spilled.next();
+                }
+                (Some(r), Some(s)) if s < r => {
+                    self.spill
+                        .as_ref()
+                        .expect("a spilled offset has a spill")
+                        .read(s, &mut spill_buf)?;
+                    f(s, &spill_buf)?;
+                    spilled.next();
+                }
+                (Some(_), _) => {
+                    let (&offset, extent) = resident.next().expect("peeked");
+                    f(offset, &extent.data)?;
+                }
+                (None, Some(s)) => {
+                    self.spill
+                        .as_ref()
+                        .expect("a spilled offset has a spill")
+                        .read(s, &mut spill_buf)?;
+                    f(s, &spill_buf)?;
+                    spilled.next();
+                }
+            }
+        }
+    }
+
     /// Writes every altered extent through to `base` — resident and
     /// spilled alike, in offset order, one bounded buffer at a time. The
     /// cache keeps its state: the commit marks it committed only once
     /// the write-through is durably applied, so a failure anywhere
     /// leaves the buffered state intact.
     pub fn write_through(&self, base: &mut dyn Device) -> Result<()> {
-        let mut offsets: Vec<u64> = self
-            .resident
-            .iter()
-            .filter(|(_, extent)| extent.dirty)
-            .map(|(&offset, _)| offset)
-            .collect();
-        if let Some(spill) = &self.spill {
-            offsets.extend(spill.slots.keys().copied());
-        }
-        offsets.sort_unstable();
-        offsets.dedup();
-
-        let mut spill_buf = vec![0u8; EXTENT as usize];
-        for extent_offset in offsets {
-            let data: &[u8] = match self.resident.get(&extent_offset) {
-                Some(extent) => &extent.data,
-                None => {
-                    self.spill
-                        .as_ref()
-                        .expect("a non-resident altered extent is spilled")
-                        .read(extent_offset, &mut spill_buf)?;
-                    &spill_buf
-                }
-            };
+        self.for_each_dirty(&mut |extent_offset, data| {
             let take = if extent_offset + EXTENT > base.len() {
                 // The device may legitimately end mid-extent.
                 (base.len().max(extent_offset) - extent_offset) as usize
             } else {
                 EXTENT as usize
             };
+            let take = take.min(data.len());
             if take > 0 {
                 base.write_at(extent_offset, &data[..take])?;
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// The commit landed: altered extents are now the image's own bytes,
