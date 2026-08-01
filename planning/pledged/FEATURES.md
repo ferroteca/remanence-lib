@@ -3,13 +3,13 @@ SPDX-FileCopyrightText: 2026 Paul Galbraith
 SPDX-License-Identifier: GPL-3.0-only
 -->
 
-# FEATURES (proposed)
+# FEATURES (pledged)
 
-> **Status:** drafted at the owner's direction. Nothing here is owed;
-> a feature is pledged by moving it to `planning/pledged/`, and its
-> number evaporates on delivery without being reused. The companion
-> [design](design/image-format-modules.md) and proposed P12, P13, P16–P19,
-> and P21 in [ARCHITECTURE.md](ARCHITECTURE.md) travel with this feature.
+> **Status:** pledged at the owner's direction. F19 is owed by the project,
+> with no promise of order or time; its number evaporates on delivery
+> without being reused. The companion
+> [design](design/image-format-modules.md) and P12, P13, P16–P19, and P21
+> in [ARCHITECTURE.md](ARCHITECTURE.md) travel with this feature.
 > Pre-1.0, every affected presentation moves coherently and the old shape
 > is deleted rather than bridged.
 
@@ -82,5 +82,5 @@ Existing H8D, qcow2, HDOS, CP/M, file-container, disk, and filesystem
 behavior remains covered at its current public surfaces. The core gains no
 runtime dependency.
 
-Touches: S1, S3, S4. Supports: U1, U2, U5; P1, P3, P4, P5; proposed P12,
+Touches: S1, S3, S4. Supports: U1, U2, U5; P1, P3, P4, P5; P12,
 P13, P16–P19, and P21. Needs: P12, P13, P16–P19, and P21 pledged.

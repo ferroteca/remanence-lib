@@ -7,10 +7,10 @@ SPDX-License-Identifier: GPL-3.0-only
 
 Design for
 [F19](../FEATURES.md#f19--image-format-modules-and-the-built-in-catalogs),
-serving proposed P12–P19 and P21 in
+serving pledged P12–P19 and P21 in
 [ARCHITECTURE.md](../ARCHITECTURE.md).
-This document specifies the destination and delivery cut; it does not
-pledge the feature or authorize implementation.
+This document specifies the destination and delivery cut for the pledged
+feature; it is not an implementation record.
 
 ## The problem
 
@@ -480,10 +480,8 @@ F19 is one coherent replacement, in this internal order:
 6. Delete the registry parser, definition files, and public reflections;
    land every affected document and test on the new shape.
 
-Before F19 is pledged, this cut is checked against the project's
-one-sprint bound. If it cannot be delivered in one bounded push, F19 is
-retired and the coherent pieces receive new feature numbers; it is not
-pledged oversized and it is not implemented piecemeal from `proposed/`.
+This cut is one coherent, bounded push within the project's one-sprint
+bound. It is delivered as a whole rather than implemented piecemeal.
 
 ## Acceptance
 

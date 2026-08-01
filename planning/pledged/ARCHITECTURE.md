@@ -3,11 +3,10 @@ SPDX-FileCopyrightText: 2026 Paul Galbraith
 SPDX-License-Identifier: GPL-3.0-only
 -->
 
-# ARCHITECTURE (proposed)
+# ARCHITECTURE (pledged)
 
-> **Status:** drafted at the owner's direction. Nothing here binds;
-> a principle is pledged by moving it to `planning/pledged/` and is
-> armed only when it reaches root
+> **Status:** pledged at the owner's direction. Every principle here is
+> owed by the project and is armed only when it reaches root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
 > reused.
