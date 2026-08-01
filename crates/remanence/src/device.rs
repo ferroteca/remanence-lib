@@ -7,7 +7,7 @@
 //! capture a durable commit stages into before the recovery journal is
 //! armed (P9). The P2 commit-point buffer itself is the session cache
 //! (`cache.rs`), and the capture is another instance of it, so a
-//! commit's transient staging is bounded too (pledged P27).
+//! commit's transient staging is bounded too (P27).
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -466,7 +466,7 @@ impl Device for FileDevice {
 
 /// A read-only device over a byte range of an already-claimed file:
 /// positioned reads, no resident copy. The session cache streams
-/// identification reads through this (pledged P27).
+/// identification reads through this (P27).
 pub(crate) struct FileRangeDevice<'a> {
     file: &'a File,
     base: u64,

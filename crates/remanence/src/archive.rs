@@ -4,7 +4,7 @@
 //! Resolves a user-supplied path — a raw image, or `archive.zip[/entry]` — to
 //! a streamed image source plus any archive layers that were unwrapped along
 //! the way. The source file is opened under the P7 claim, and nothing is
-//! loaded whole (pledged P27): a plain image and a stored archive entry are
+//! loaded whole (P27): a plain image and a stored archive entry are
 //! source-backed — reads stream from the claimed file through the session
 //! cache — while a compressed entry is session-backed, decoded once by the
 //! streaming inflater into private session storage and served from there

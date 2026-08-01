@@ -4,7 +4,7 @@
 //! A compact, self-contained RFC 1951 (DEFLATE) decompressor. The structure
 //! follows Mark Adler's "puff" reference implementation (see AGENTS.md,
 //! "Prior art and provenance notes"), so the library has no external
-//! compression dependency. Decompression streams (pledged P27): compressed
+//! compression dependency. Decompression streams (P27): compressed
 //! bytes are pulled through a bounded chunk and decompressed bytes flow to a
 //! sink that keeps only the 32 KiB LZ77 window resident, so an entry of any
 //! size decodes in bounded memory.
@@ -508,7 +508,7 @@ pub(crate) fn inflate(data: &[u8], expected_size: usize) -> Option<Vec<u8>> {
 
 /// Decompresses a raw DEFLATE stream read from `length` bytes of `file`
 /// at `offset` into `spool`, holding only the LZ77 window and a bounded
-/// input chunk in memory (pledged P27). Returns `Ok(Some(total))` with
+/// input chunk in memory (P27). Returns `Ok(Some(total))` with
 /// the spooled length, `Ok(None)` when the stream is malformed or would
 /// exceed `expected_size`, and `Err` when reading or spooling itself
 /// failed.

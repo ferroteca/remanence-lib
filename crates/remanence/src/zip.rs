@@ -4,7 +4,7 @@
 //! Minimal ZIP central-directory reader supporting STORE (0) and DEFLATE (8),
 //! mirroring the subset of the ZIP format the archive resolver relies on.
 //! The archive is read where it lies, by positioned reads through the
-//! claimed handle (pledged P27): the end-of-central-directory scan and the
+//! claimed handle (P27): the end-of-central-directory scan and the
 //! directory parse read bounded metadata, and an entry's data is resolved to
 //! a span of the archive file — never the archive loaded whole.
 

@@ -16,7 +16,7 @@ pub(crate) struct ContainerIdentification {
 
 /// Scores every registered container format against the image's length,
 /// leading bytes, and (optional) file name, returning the
-/// highest-confidence match. The probe is bounded (pledged P27): every
+/// highest-confidence match. The probe is bounded (P27): every
 /// heuristic here reads the length or the prefix, never the whole image.
 pub(crate) fn detect(
     len: u64,

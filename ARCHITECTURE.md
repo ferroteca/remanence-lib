@@ -228,3 +228,68 @@ platforms when repeatable CI or trusted native builders are added. A
 support claim names the host tuple it covers rather than letting an
 operating-system name imply every architecture that operating system can
 run.
+
+
+### P27 — Sessions stream; memory holds a bounded working set
+
+Remanence is sized by the operation, never by the artifact. A source may
+be a floppy image of a few hundred kilobytes or a virtual disk of a
+hundred-plus gigabytes; the same open, identify, read, and write journeys
+serve both, so no representation — a source's encoding, the session's
+durable state, a derived view, or the uncommitted write set — is ever
+loaded whole as a design assumption. An operation may visit bytes in
+proportion to its task; it may hold only a bounded working set. A whole
+layer may be held only when its format bounds it beneath the working set;
+every other path streams, and a format that resists streaming is
+materialized to private session storage, never to memory.
+
+Every session's durable state has one backing. It is **source-backed**
+when bounded random access is served directly from the source encoding —
+a raw image by identity, qcow2 through its allocation structures — and
+reads stream from the source on demand through the session cache. It is
+**session-backed** when it cannot be — a decoded representation whose
+encoding permits only sequential access, such as a DEFLATE-compressed
+archive entry the session must address randomly — and is then produced
+once by a streamed transform into private session storage and served
+from there through the same cache.
+
+Caching is per modeled durable layer, under one declared session budget.
+The active state's cache carries the session's mutable truth in two
+residency classes: **clean state is always evictable** — droppable and
+re-read from its backing at will, sound because the P7 claim pins the
+source, so a small image simply becomes fully resident while a huge one
+converges on the operation's locality — and **dirty state is never
+dropped**: alteration is tracked at extent granularity, uncommitted
+changes hold in memory within the bound and spill to private session
+storage beyond it (P2), eviction moves them, only rollback discards
+them, and commit projects them. A derived view's cache, where a session
+models one, is an accelerator holding only clean state: its writes
+complete into the layer below in the same act or alter nothing, a lower
+write invalidates the overlapping derived extents above it, and eviction
+regenerates from below.
+
+The library may use threads to predict, prefetch, and offload —
+speculatively reading ahead of an access pattern, deriving ahead of
+demand, spilling ahead of pressure — with the standard library's threads
+alone. Four rules keep the concurrency observationally invisible:
+speculation produces only clean state; offload never gaps the truth (an
+altered extent leaves memory only once its spill write has completed,
+and every act that consumes the altered set joins the offloads in
+flight); the work spends the declared budget with demand outranking
+prediction; and speculation is silent — a failed speculative read caches
+nothing and reports nothing, so results, evidence, and refusals are
+identical with any number of threads, including none.
+
+Commit, materialization, and recovery stream like everything else
+through bounded buffers; identification probes read the bounded evidence
+their claims name; private session storage takes the shape P9 gave the
+journal — no user-owned file, no cleanup verb, discardable after
+interruption — and the bound and its read-ahead are declared session
+configuration with a stated default, never discovered behavior. Public
+presentations carry the same rule: an operation whose result is
+proportional to source content offers a bounded or streamed form in
+Rust, C, and Python alike (P5), with whole-value conveniences beside it,
+never as the only route. This principle constrains resources, not
+semantics: behavior is identical at every source size, and peak memory
+bounded independently of source size is the testable claim this entry
+makes.

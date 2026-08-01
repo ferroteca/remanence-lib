@@ -334,7 +334,7 @@ impl Session {
     }
 
     /// Reads `buf` from the resolved image at `offset` — the bounded
-    /// access form (pledged P27): the image streams from its backing
+    /// access form (P27): the image streams from its backing
     /// through the session cache, and no operation requires it resident
     /// whole.
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
@@ -381,7 +381,7 @@ impl Session {
 
     /// Identifies the image's container layers and probable filesystem.
     /// Probes read bounded evidence — a leading prefix, the length, the
-    /// name — never the whole image (pledged P27).
+    /// name — never the whole image (P27).
     pub fn identify(&self) -> Identification {
         let prefix = self.source.prefix(512).unwrap_or_default();
         let container = container::detect(
@@ -556,7 +556,7 @@ impl Session {
     /// Walks a qcow2 session's virtual disk — header, partitions, FAT
     /// volumes — and returns one Filesystem container per volume read.
     /// The walk streams from the claimed file through the session cache
-    /// (pledged P27); the container is never resident whole.
+    /// (P27); the container is never resident whole.
     fn qcow2_layers(&self, evidence: &mut Vec<String>) -> Result<Vec<Container>> {
         let mut qcow2 = Qcow2::open(SourceDevice(&self.source))?;
         let header = qcow2.header().clone();

@@ -32,7 +32,7 @@ C ABI. The Rust code here is now the authoritative implementation.
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable
   commit stages into; `cache.rs` the session cache — the P2 commit
-  buffer and the bounded working set (pledged P27): unaltered extents
+  buffer and the bounded working set (P27): unaltered extents
   evict and re-read from the image, altered extents spill to private
   session storage, and the bound is declared at open with a stated
   default;
@@ -76,7 +76,7 @@ C ABI. The Rust code here is now the authoritative implementation.
   do not add tasks on their own initiative, and ask before editing that
   file at all**; anyone may pick up what is already there.
 - **The vision is in force.** Use cases U1–U6 (root
-  [USE-CASES.md](USE-CASES.md)) and architectural principles P1–P11
+  [USE-CASES.md](USE-CASES.md)) and architectural principles
   (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage
   cites them by number; the surface-change rule in

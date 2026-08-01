@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! The session cache: the bounded working set the disk stack streams
-//! through (pledged P27) and the commit-point buffer (P2). Reads load
+//! through (P27) and the commit-point buffer (P2). Reads load
 //! extents from the virtual disk on demand and serve later hits without
 //! disk I/O; altered extents are the session's uncommitted truth and are
 //! never dropped — they stay resident within the bound and spill to
@@ -69,7 +69,7 @@ struct OffloadDone {
     ok: bool,
 }
 
-/// The background offload worker (pledged P27): spills altered extents
+/// The background offload worker (P27): spills altered extents
 /// ahead of memory pressure so eviction rarely stalls on I/O. An extent
 /// leaves memory only once its spill write has completed — the no-gap
 /// rule — and a failed speculative write reports nothing: the extent

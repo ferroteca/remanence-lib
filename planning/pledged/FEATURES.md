@@ -8,8 +8,8 @@ SPDX-License-Identifier: GPL-3.0-only
 > **Status:** pledged at the owner's direction. F19 is owed by the project,
 > with no promise of order or time; its number evaporates on delivery
 > without being reused. The companion
-> [design](design/image-format-modules.md) and P12, P13, P16–P19, P21–P23,
-> and P27 in [ARCHITECTURE.md](ARCHITECTURE.md) travel with this feature.
+> [design](design/image-format-modules.md) and P12, P13, P16–P19, and
+> P21–P23 in [ARCHITECTURE.md](ARCHITECTURE.md) travel with this feature.
 > Pre-1.0, every affected presentation moves coherently and the old shape
 > is deleted rather than bridged.
 
@@ -84,5 +84,5 @@ behavior remains covered at its current public surfaces. The core gains no
 runtime dependency.
 
 Touches: S1, S3, S4. Supports: U1, U2, U5; P1, P3, P4, P5; P12,
-P13, P16–P19, P21–P23, and P27. Needs: P12, P13, P16–P19, P21–P23,
-and P27 pledged.
+P13, P16–P19, P21–P23, and P27. Needs: P12, P13, P16–P19, and
+P21–P23 pledged.

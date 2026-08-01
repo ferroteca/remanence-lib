@@ -9,7 +9,7 @@
 //! exposed. The journal is private transient state: its path is derived,
 //! not user-owned, there is no cleanup verb, and it is gone again the
 //! moment a commit completes or the next open reconciles it. Recording
-//! and reconciling both stream through a bounded buffer (pledged P27):
+//! and reconciling both stream through a bounded buffer (P27):
 //! a journal the size of the write set never sits in memory.
 
 use std::fs::File;
