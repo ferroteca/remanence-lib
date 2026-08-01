@@ -44,7 +44,7 @@ the format work itself. Reading never changes the image. Writing is
 a separate, explicit mode with a commit point: until I commit,
 everything I wrote can be rolled back cleanly.
 
-## U4 — Reliquary sees a stopped machine's disks as they actually are
+## U4 — I retrieve a stopped machine's partition and volume information
 
 Reliquary's drive reporting and its guest drive-letter map run on
 host-side facts about a stopped machine's disk images, and this
