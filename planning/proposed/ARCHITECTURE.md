@@ -145,41 +145,49 @@ the validated composition atomically and P7 holds the necessary claims for
 the whole graph. Failure at any seam writes nothing and names the exact child,
 mapping, and representation which could not be encoded.
 
-## P26 — Computer tape has a family-owned sequential active layer
+## P26 — Computer tape has a family-owned active layer
 
-A computer data tape whose ordering is observable above flat bytes uses a
-family-owned **tape** durable active layer. It is an ordered sequence of typed
-objects within tape partitions: records with preserved lengths, filemarks,
-setmarks where applicable, end observations, provenance, and issues. Equal
-record sizes do not make a disk.
+A computer-tape capture uses exactly one durable active representation owned
+by its media family. “Tape” does not imply one universal object schema. The
+adapter selects only the representation its source actually records:
 
-Ordering and position are load-bearing. An adapter never deletes an unreadable
-object and renumbers what follows, silently concatenates records, encodes marks
-as payload, or fills absent structure. Retries, conflicts, drive responses,
-resume history, and inferred positions remain evidence, not snapshots.
+- a **signal representation** preserves a time base and ordered transitions,
+  pulse intervals, samples, gaps, provenance, and issues; C64 TAP is in this
+  class; or
+- a **recorded-object representation** preserves ordered partitions, records,
+  filemarks, setmarks, end observations, provenance, and issues where the
+  source carries them; Aaru and record-oriented drive captures are in this
+  class.
 
-Tape partitions are family-owned divisions, not P16 layouts. Tape files are
-mark-delimited extents, not P19 entries. A selected range supplies a derived
-byte view only under explicit boundary and concatenation rules. Higher
-interpretations compose above it without replacing tape-active state.
+Neither representation is silently promoted into the other. Pulse intervals
+are not records, records are not sampled signals, fixed-size records do not
+make a disk, and a filename or container label supplies no missing fidelity.
+Unreadable, truncated, conflicting, resumed, or inferred observations retain
+their evidenced positions.
 
-Image formats remain P12 adapters at the seam they record. Aaru may carry
-partitions, tape files, records, marks, device responses, and provenance;
-another encoding may carry only records and marks or flat bytes. Packaging
-and format names confer no fidelity.
+Decoders and media parsers derive higher interpretations over the active
+state. A standard C64 KERNAL decoder can derive a P19 flat file container from
+TAP pulses while those pulses remain active. A record selection can expose a
+bounded byte view under explicit concatenation rules. Filesystems, file
+containers, and child images never replace the tape evidence from which they
+were derived.
 
-P15 projects tape state through a typed family drive presentation. Read,
-rewind, space, locate, and position obey its contract. Position, motion,
-buffering, continuation, latency, and status are ephemeral; contents, marks,
-partitions, and evidenced structure are durable. U21 is initially read-only;
-writable tape use must separately define mutation semantics.
+T64 is a logical C64 file container, not a pulse or recorded-object tape
+representation. It can be active at P19 without acquiring a tape layer.
+Conversely, a custom-loader TAP remains an honest signal capture even when no
+file container can be derived.
 
-Pledging this principle requires adding this row to P23:
+A future write journey must name the representation it changes and define a
+separate generate-tape transition when logical contents are encoded as pulses
+or records. It cannot mutate a derived file view and pretend the source
+evidence was edited in place. Physical transport and drive emulation remain
+outside P15 until a use case requires their runtime semantics.
+
+Pledging this principle requires replacing P23's proposed tape row with:
 
 | Active layer | Durable session state | Claim |
 |---|---|---|
-| **tape** | family-owned partitions containing ordered typed records, marks, end observations, and provenance | sequential recorded structure, not a random-access disk, sampled signal, transport mechanism, or firmware |
+| **tape** | one family-owned signal or recorded-object representation, with exact ordering, provenance, and issues | captured tape evidence at its actual fidelity, not a universal record list, random-access disk, derived file container, transport mechanism, or firmware |
 
-P23 otherwise remains unchanged. Derived byte, filesystem, file-container, or
-fixed-record views do not become active. Flat bytes are not promoted to tape
-because their name or contents suggest tape origin.
+P23 otherwise remains unchanged. Derived signal decoding, record grouping,
+byte, filesystem, and file-container views do not become active.

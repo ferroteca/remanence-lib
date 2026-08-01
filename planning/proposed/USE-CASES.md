@@ -2228,44 +2228,63 @@ retains exactly one active layer and its honest provenance.
 - Partial outward commits when a deeper or enclosing representation cannot
   encode the requested result.
 
-## U21 — I inspect and recover files from a captured computer tape
+## U21 — I recover a program from a C64 cassette capture
 
-I have a computer-tape image, perhaps Aaru or another tape capture, and do not
-yet know its contents. Remanence reports the encoding and the tape at the
-source's fidelity: media facts, ordered partitions, data records, filemarks
-and setmarks, end observations, capture metadata, damage, ambiguity, and
-absence. Fixed-size records do not turn the tape into a disk.
+I have a Commodore 64 `.tap` capture and want the files recorded by the
+standard KERNAL tape routines. Remanence identifies the TAP version, platform,
+video system, time base, and exact ordered pulse observations. Source offsets,
+unsupported encodings, truncation, and timing ambiguity remain visible.
 
-I inspect every partition and object without flattening them. Fixed- and
-variable-length records retain boundaries. Marks remain typed positions, not
-zero-length files or invented bytes. Missing, unreadable, conflicting, or
-resumed reads remain positioned; later records are never shifted to hide gaps.
+I ask for the standard KERNAL interpretation. It derives headers and data from
+the pulses and reports each candidate's opaque identity, 16-byte tape name,
+header kind, load range, checksum state, copy relationship, issues, and exact
+pulse extents. Duplicate names remain separate entries; names and ordering are
+not identity.
 
-The report groups mark-delimited tape files and assigns opaque,
-composition-scoped identities. I select one to stream its records. A supported
-filesystem or file container recognized over that selection can expose named
-contents without hiding tape ordering, marks, boundaries, or evidence. A tape
-file is not a P19 entry merely because both use the word “file.”
+The standard format records two copies. If both valid copies agree, Remanence
+returns their one shared payload and retains both as evidence. If only one copy
+is valid, it may recover that payload with an explicit degraded-redundancy
+issue. If valid copies disagree, it refuses to choose silently. It never
+stores repeated observations as independent snapshots of the cassette.
 
-A consumer may open a typed tape-drive presentation over the same state. Read,
-rewind, space, supported locate, position, and status retain sequential
-semantics. Position, motion, buffering, continuation, and latency are runtime
-drive state; recorded objects and marks are durable media state.
+The successful interpretation supplies a flat P19 file container. I select an
+entry by opaque identity and read its exact recorded data bytes. A program's
+load address remains metadata from the header; Remanence does not prepend a
+synthetic two-byte PRG address to the extracted payload.
 
-Aaru Image Format is one adapter at this seam, not the abstraction. Other
-encodings materialize the same family-owned state only at their actual
-fidelity.
+The Rust journey has this semantic shape:
 
-The journey succeeds when I can identify a capture, enumerate exact ordered
-structure and issues, stream a tape file without losing record boundaries,
-extract recognized contents, and serve honest read-only drive behavior.
+```rust
+let mut tape = C64Tape::open(tap_path, AccessIntent::Read)?;
+let report = tape.inspect()?;
+let kernal = report.kernal_files().ok_or(Error::NoFileContainer)?;
+let selected = choose_file(kernal.files())?;
+let mut files = tape.open_files(kernal.container().id())?;
+let contents = files.read(selected.entry_id())?;
+```
+
+`C64TapeReport` owns the pulse and decoder evidence. `C64KernalFileSetInfo`
+and `C64TapeFileInfo` are inspection values; `C64TapeHeaderKind` expresses the
+standard header meaning. `open_files` returns the common P19 `FileContainer`
+interface rather than a C64-only extraction API. The C ABI uses opaque tape,
+report, file-set, and file-container handles with accessor functions; Python
+mirrors the same ownership and value vocabulary.
+
+A custom loader remains a valid, inspectable pulse stream even when no KERNAL
+file view can be derived. A `.t64` source is a logical file container with C64
+metadata, not a pulse-faithful tape capture; it may reuse P19 but does not
+acquire a tape active layer merely because its name says tape.
+
+The journey succeeds when I can inspect the original pulses and their issues,
+choose a standard-format file without ambiguity, and recover its exact payload
+through the same file-container interface used by other rooted containers.
 
 ### Deliberately outside this use case
 
-- Physical-drive acquisition; the journey begins with a capture.
-- Treating tape partitions as P16 partitions, tape files as P19 entries, or
-  fixed-record tape as a random-access disk.
-- Inventing marks, boundaries, partitioning, bytes, or physical facts.
-- Analog tape, sampled magnetic signals, mechanics, electronics, or firmware.
-- Writing, erasing, formatting, appending, or persisting tape changes.
-- Claiming a named format before its adapter is implemented and tested.
+- Physical acquisition, Datasette mechanics, electrical emulation, or motor
+  control; the journey begins with a capture.
+- Decoding arbitrary fast loaders or copy-protection schemes.
+- Writing TAP, synthesizing pulses, or producing T64 or PRG files.
+- Treating T64 as evidence of pulse timings or cassette transport structure.
+- Returning an end-of-tape header or other structural observation as a file.
+- Inventing a payload, copy agreement, boundary, timing fact, or load address.
