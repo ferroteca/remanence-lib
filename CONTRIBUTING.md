@@ -65,6 +65,9 @@ for what it builds, prerequisites (QEMU), and how the FreeDOS rig works.
 - Match the existing style, add or update tests for changed behavior, and
   keep the C header and Python surface in step with the core when the
   public API changes.
+- Add an entry to [CHANGELOG.md](CHANGELOG.md) under `Unreleased` when
+  public behavior changes. Released sections are history and are never
+  edited; a correction is a new entry.
 - Run `git diff --check` before handing work back.
 
 ## Contribution licensing

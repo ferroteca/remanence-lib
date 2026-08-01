@@ -7,6 +7,11 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** proposed, not pledged. Nothing in this file is approved for
 > implementation. Principle numbers record order of issue, not priority.
+>
+> Sections headed `P<n> amendment` are drafted changes to a principle the
+> project already carries, pledged or in force. They keep that principle's
+> number, consume none of their own, and fold into its text on delivery
+> ([SURFACES.md](../SURFACES.md)).
 
 ## P24 — Optical media has a family-owned active layer
 
@@ -191,3 +196,90 @@ Pledging this principle requires replacing P23's proposed tape row with:
 
 P23 otherwise remains unchanged. Derived signal decoding, record grouping,
 byte, filesystem, and file-container views do not become active.
+
+## P10 amendment — a refusal may also name the rule it broke
+
+In-force P10 gives every refusal a stable category from one enumerated set,
+so an embedder maps behavior without parsing text. That set is deliberately
+cross-cutting and small: it answers *how should the caller behave*, and it
+answers it for the whole library at once.
+
+One question it cannot answer is *which rule did this input break*. Where a
+format, namespace, or grammar defines a bounded set of rules an input must
+satisfy — a DOS 8.3 name has six, and FAT is one filesystem of many — the
+category is the same for every one of them, and the only difference between
+them is the sentence. A caller that must act on the distinction, or state
+it to a user in its own words, is then reduced to parsing the message no
+release promises to keep, or to reimplementing the rule set to decide what
+it would have said. Widening the category set instead would dissolve it:
+the categories would grow one per format rule, and the small cross-cutting
+mapping P10 exists to provide would be gone.
+
+The amendment adds one field beside the category, not a second mapping:
+
+Where a refusal is one of an enumerated set of rules defined by a format,
+namespace, or grammar, the error also carries a **rule identity** — a
+stable machine-readable value naming which rule was broken, from the set
+owned by the seam that defines those rules. The category still says how to
+behave and remains the interface an embedder maps onto; the rule identity
+says which rule, and never substitutes for the category. A refusal
+belonging to no such rule set carries none, and that absence is ordinary
+rather than an omission. Each rule set is part of the surface that owns it
+— adding a rule identity is a surface change, and rewording the diagnostic
+that states it is not — and every presentation carries the same identities
+(P5).
+
+The rule identity is not a second diagnostic. It names the rule, and P6's
+human diagnostic still says what was expected, what was found, and where.
+
+U22's DOS 8.3 refusals are the first demand for this; nothing else the
+library refuses today has a rule set behind it.
+
+## P19 amendment — namespace composition may derive a mapping, not only consume one
+
+Pledged P19 admits a namespace-composition adapter which "consume[s] file
+containers plus explicit drive, mount, folder, or volume mappings and
+expose[s] another file container". Both routes to that mapping assume it
+already exists somewhere: recovered as evidence where an operating system
+persisted it (U13, U16), or asserted outright by the caller.
+
+A DOS machine persists no such mapping. Its drive letters were assigned at
+boot by a rule over the machine's own configuration — which media occupied
+which slots, in which order the disks were attached — and nothing on the
+disks records the result. There is no evidence to read and nothing for the
+caller to assert but the answer it came for. Under P19 as pledged, the only
+remaining home for that rule is the caller, which is the one place it
+cannot be checked against the volumes the library composed.
+
+The amendment admits a third form at the same seam:
+
+A **namespace-mapping composer** consumes composed volumes with their
+identities, plus the machine facts its caller asserts, applies one named
+assignment rule, and returns the mapping it establishes. Producing a
+mapping and composing a file container over it are separate acts: the
+mapping answers on its own, and a composer that can establish only part of
+one still answers with that part.
+
+Three constraints keep the derivation from becoming a guess:
+
+- **The rule is an enumerated claim (P3).** The composer names the
+  assignment rule it applied. Where variants of one system assign
+  differently, it claims the variants it implements and refuses the rest by
+  name; it does not average them or pick the most common.
+- **Evidence outranks a rule.** Where a system persists its own mapping,
+  that mapping governs and no rule may stand in for it. This form exists
+  for systems which persist nothing, and it never becomes a fallback for a
+  persisted mapping that could not be read — U13's and U16's refusal to
+  invent `C:` is untouched.
+- **A derived mapping is not evidence.** The asserted machine facts and the
+  applied rule travel with the result as provenance, under the same
+  discipline that keeps a caller-selected installation out of the evidence
+  (U16). Whatever the rule cannot settle is reported undetermined, at the
+  granularity of the mapping it failed to establish, and is never filled
+  from position, size, order, label, or which volume happened to read
+  cleanly.
+
+The composer takes reports the caller already holds and returns a mapping;
+it opens nothing. D5's deferral of multi-device topology, multi-device
+volumes, and cross-source transactions is therefore untouched, and this
+form requires none of the atomic multi-artifact open U16 proposes.

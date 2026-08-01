@@ -67,6 +67,8 @@ C ABI. The Rust code here is now the authoritative implementation.
   build-system of its own) listing this crate as its sole workspace
   member; it also carries the `testing-prep` dependency group (below)
   so uv is the one Python tool for the whole repo.
+- [CHANGELOG.md](CHANGELOG.md) records release-facing changes; the rules
+  it follows are in "Versioning and releases" below.
 - `planning/README.md` is the map of the maintainer-facing planning
   machinery, and the place to start. `planning/SURFACES.md` is the
   surface-change rule; the application surface inventory it scopes over is
@@ -122,6 +124,28 @@ reader and DEFLATE decompressor are its own. That is a property the
 licensing tiers below make load-bearing, not just tidiness. Discuss before
 adding any dependency anywhere in the workspace; for the core the answer
 is expected to stay no.
+
+### The library does not name its consumers
+
+Documentation follows the dependency direction that the code does: a
+consumer may name the libraries it builds on, and this library names none
+of the projects that build on it. Not in the use cases, the principles, a
+planning document, the README, the changelog, this file, a doc comment, a
+test, or a commit message — not as an example, not as a "used by" credit,
+not as a note about where removed functionality went. Work that sits
+outside this library is **the caller's**, said that way, and generic
+placeholders carry any example that needs one.
+
+The reason is not tidiness. A downstream name here implies a relationship
+a reusable library should not have, and it goes stale silently inside a
+published artifact — a consumer's rename leaves the falsehood shipped.
+
+Two things are not violations of it. **`planning/DECISIONS.md` entries keep
+the spellings of their time** and are annotated, never rewritten, so a name
+inside one stays. And the fixture-preparation tooling under `testing-prep/`
+*depends on* a named tool the way any dependency is named — the permitted
+direction — which reaches that tooling, the metadata pinning it, and the
+prose documenting them, and nothing else.
 
 ## Licensing
 
@@ -227,8 +251,9 @@ compiled into the wheel.
 ## Versioning and releases
 
 The **workspace SemVer is the single upstream version** —
-`workspace.package.version`, inherited by every crate (currently
-`0.0.1-alpha.2`). Pre-releases follow SemVer's ladder (`-alpha.N` →
+`workspace.package.version`, inherited by every crate (the value in the
+root `Cargo.toml`, never restated elsewhere in prose). Pre-releases follow
+SemVer's ladder (`-alpha.N` →
 `-beta.N` → `-rc.N` → bare); nothing below `-alpha.1` is ever
 published to a registry — unpublished git is the dev channel.
 
@@ -248,6 +273,25 @@ spelling is mechanized.** PEP 440 discourages post-releases of
 pre-releases; the distro-revision model is chosen deliberately over
 that advice (D3), and PyPI's local-version syntax — the truer
 analog — is rejected by the index outright.
+
+### The changelog
+
+[CHANGELOG.md](CHANGELOG.md) records **release-facing** changes — what a
+consumer of S1–S4 meets, plus a principle arming, which is a claim about
+the code. Version headings are the workspace SemVer, matching the tags.
+Planning moves are not release-facing: proposing, pledging, and drafting
+leave their record in the commit that made them.
+
+**The changelog is history, not documentation.** Everything under a
+released version heading records what was true at release and stays as
+released — superseded wording, renamed concepts, and stale paths included.
+Corrections go in a new entry under `Unreleased`, never as an edit to
+released text; the unreleased section is freely editable until it ships.
+The one exception is removing legally problematic content: redact
+minimally, and record the redaction as an entry of its own.
+
+It names no consuming project, like every other library-side document
+("The library does not name its consumers", above).
 
 ## Required checks
 

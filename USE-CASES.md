@@ -23,9 +23,9 @@ with the real names, sizes, dates and flags, and I copy a chosen
 file's bytes out to the host, without ever booting anything or
 mutating the image.
 
-## U3 — Reliquary reads and writes a stopped machine's files
+## U3 — I read and write a stopped machine's files
 
-Reliquary, my QEMU automation layer, needs to reach inside a stopped
+My QEMU automation layer needs to reach inside a stopped
 machine's disk image on the host — qcow2 or raw — and work with the
 files in its FAT12/FAT16/FAT16B volumes, whether those volumes sit
 behind an MBR or bare on a partitionless image: list a directory's
@@ -37,7 +37,7 @@ and reclaiming clusters; creating a directory creates missing
 parents and succeeds when the directory already exists. The library
 addresses a volume by the stable identifier its geometry report gave
 it, and a path within it — mapping volumes to guest drive letters
-stays reliquary's job, standing on U4's volume enumeration. All of
+stays the caller's job, standing on U4's volume enumeration. All of
 this without booting the guest and without any external helper
 process: the library does
 the format work itself. Reading never changes the image. Writing is
@@ -46,8 +46,8 @@ everything I wrote can be rolled back cleanly.
 
 ## U4 — I retrieve a stopped machine's partition and volume information
 
-Reliquary's drive reporting and its guest drive-letter map run on
-host-side facts about a stopped machine's disk images, and this
+My automation layer's drive reporting and its guest drive-letter map
+run on host-side facts about a stopped machine's disk images, and this
 library is where those facts come from. For each disk — qcow2 or
 raw — I need: the partition table as it actually is, types pinned
 value by value, an unreadable entry refused with the reason rather

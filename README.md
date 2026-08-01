@@ -95,6 +95,13 @@ for f in session.list_hdos_files():
     print(f.display_name, f.size_sectors, f.modified_date_string)
 ```
 
+## Changes
+
+Release-facing changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+Pre-1.0 the project makes no compatibility promise: a surface change lands
+across the Rust, C, and Python presentations together and the old shape is
+deleted, so read the changelog before upgrading.
+
 ## Planning and governance
 
 Maintainer-facing planning lives under [planning/](planning/README.md); the

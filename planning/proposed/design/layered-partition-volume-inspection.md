@@ -71,11 +71,11 @@ The semantic model is:
 ```text
 DiskReport
   device: DeviceInfo
+  content: Blank | Schema | DirectVolume | UnknownNonblank
   partition_schemas: [PartitionSchemaInfo]
   regions: [RegionInfo]
   volumes: [VolumeInfo]
   filesystems: [FilesystemInfo]
-  blank: bool
 
 DeviceInfo
   id, image format, byte bounds, authoritative layer, active layer
@@ -84,7 +84,8 @@ PartitionSchemaInfo
   kind, containing device or region, recognition evidence, issues
 
 RegionInfo
-  identity, owning schema, declared role and type, addressed bounds, issues
+  identity, owning schema, declared role, declared type (raw value and its
+  reading), addressed bounds, issues
 
 VolumeInfo
   identity, origin = WholeDevice | Regions([region identity]), byte bounds,
@@ -164,17 +165,47 @@ evidence, authoritative layer, active layer, and provenance established by
 F19. The current direct one-region composition is sufficient; a catalog or
 implementation for complex volume managers remains absent.
 
+## A declared type is reported twice: as recorded, and as read
+
+Every region carries the type value exactly as its schema records it, and a
+reading of what that value declares. Both are present whether or not the
+type is inside F20's read claim, because the row a caller most needs
+explained is the one this feature refuses to read.
+
+The reading is fit to quote in a refusal a user sees. Type `0x07` reads as
+NTFS or exFAT; `0xee` says the disk is GPT rather than MBR, which is the
+sentence that turns a confusing empty result into an answer. A kind tag —
+`Fat16`, `Extended`, `Unsupported` — does not meet that bar: it tells a
+caller which arm to take and nothing it can say out loud, which leaves the
+caller maintaining a partition-type table of its own. That table is exactly
+what P16 places inside the schema adapter, and a second copy outside the
+library is the same duplication wearing a consumer's name.
+
+The reading describes what the value *declares*, never what the region
+contains: an unread `0x07` region is not thereby asserted to hold NTFS. The
+issue on the row still owns the refusal, and the reading is what makes that
+refusal quotable.
+
 ## Absence, evidence, and refusal stay distinct
 
-The report distinguishes at least these outcomes:
+What the device's leading structure turned out to be is a **classified
+outcome the report states**, not an inference from which lists came back
+empty. `content` carries exactly one of: blank; a recognized partition
+schema; a direct unpartitioned volume; nonblank content no adapter claims.
+A caller reading `blank` beside a possibly-empty `partitions` and a
+possibly-empty `volumes` has to reconstruct that judgement from three
+fields, each of which is empty for more than one reason — and it is a
+judgement this library already made in order to compose anything at all.
+
+With the outcome named, the rest of the report says what followed from it:
 
 - an all-zero device is blank;
-- a valid MBR with no data volumes has a recognized schema and zero composed
-  volumes;
-- a partitionless FAT image has no partition schema, one whole-device
-  volume, and one recognized filesystem;
-- an unknown nonblank payload is not reported as blank or as an empty known
-  schema;
+- a valid MBR with no data volumes is the schema outcome with a recognized
+  schema and zero composed volumes;
+- a partitionless FAT image is the direct-volume outcome, with no partition
+  schema, one whole-device volume, and one recognized filesystem;
+- an unknown nonblank payload is its own outcome, never blank and never an
+  empty known schema;
 - a malformed declared partition remains a region with its issue rather
   than disappearing; and
 - a composed volume whose filesystem is unknown or refused remains a
@@ -253,7 +284,11 @@ F20 is delivered only when:
 - unreadable partition entries remain visible, later entries do not
   renumber, and recognized refusals retain their owning evidence;
 - blank, empty-partitioned, partitionless-volume, unknown, and invalid
-  images remain distinguishable;
+  images remain distinguishable, and the report *states* which one rather
+  than leaving it to be reconstructed from empty lists;
+- every declared region carries its raw type value and a reading of that
+  value which a consumer can quote in a refusal, including for a type this
+  feature does not read;
 - total composed-volume count and host-readable filesystem-volume count are
   separately available, with the latter preserving U4's present reporting
   use;

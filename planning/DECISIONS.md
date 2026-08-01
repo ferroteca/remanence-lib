@@ -58,6 +58,30 @@ removes it is the record either way.
 
 ## Decisions
 
+### D7 — The library names no consuming project
+
+**Decided** Paul Galbraith, 2026-08-01. **Supports** (none) — a naming
+ruling; no numbered vision entry demands it.
+
+Documentation follows the dependency direction the code does: a consumer
+may name the libraries it builds on, and this library names none of the
+projects that build on it. In-force U3 and U4 named the consuming
+application outright, inherited from the demand they were dictated from.
+Both are reworded to the caller's voice — every claim, contract and symbol
+unchanged — under authority compression. The rule's home is AGENTS.md,
+"The library does not name its consumers"; it reaches every library-side
+document, not only the ones a registry publishes.
+
+**Weighed and declined:** keeping the name in the use cases on the grounds
+that they are the owner's demand narrative and a real name is more concrete
+than "my automation layer" — that concreteness is exactly what goes stale
+inside a published artifact, and the use cases are the first library-side
+document a newcomer reads. Sweeping this record too: entries keep the
+spellings of their time, so D1's and D2's mentions stand.
+
+**Folded into:** root [USE-CASES.md](../USE-CASES.md) (U3's title, opening
+and drive-letter clause; U4's opening); [AGENTS.md](../AGENTS.md).
+
 ### D6 — Device identity is assigned, not requested
 
 **Decided** Paul Galbraith, 2026-07-31. **Supports** P21.

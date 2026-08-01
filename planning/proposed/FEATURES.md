@@ -26,6 +26,24 @@ Typed relationships join those results. Evidence, ambiguity, absence, and
 recognized refusals remain attached to the seam which owns them; a failed
 filesystem read does not erase its partition row or renumber later volumes.
 
+The report states what the device's leading structure turned out to be as
+one classified outcome — blank; a recognized partition schema, whether or
+not any volume composed from it; a direct unpartitioned volume; or nonblank
+content no adapter claims. That is a distinct value, not a flag beside two
+lists which may each be empty for several different reasons: a consumer
+reconstructing the state from those combinations is reimplementing a
+judgement this library has already made.
+
+Every declared region reports both its raw declaration — the type value
+exactly as the schema records it — and a reading of what that value
+declares, present whether or not the type is inside this feature's read
+claim. The reading is fit to quote in a refusal a user will read: type
+`0x07` reads as NTFS or exFAT, and `0xee` says the disk is GPT rather than
+MBR. A kind tag alone does not meet that bar. Its point is that no consumer
+keeps a second partition-type table in order to explain what this library
+declined to read — the same reason P16 puts type interpretation inside the
+schema adapter.
+
 The report supplies opaque library-owned identities suitable for selecting a
 reported region, volume, or filesystem in a later operation. Their public
 semantics preserve U4's cross-report stability for an unchanged single-disk
@@ -179,3 +197,112 @@ and F23 share the P19 seam and cannot land incompatible public interfaces.
 
 Companion design:
 [design/computer-tape-representations.md](design/computer-tape-representations.md).
+
+## F24 — The FAT label answer, whole, at the filesystem seam
+
+Make a recognized FAT volume's label one complete answer: the label, or the
+fact that the volume has none. `NO NAME` is the format's own spelling of
+unlabeled, so it is absence — decided where the format is known rather than by
+a string comparison in every consumer that displays a drive.
+
+FAT records a label in two places, the boot record's field and the root
+directory's volume-ID entry, and a volume may carry either, both, or
+disagreeing values. Choosing between them is a policy about FAT, so the
+filesystem adapter holds it and states it: the root-directory entry is the
+label DOS itself displays and answers wherever it exists; the boot-record
+field answers where it does not; `NO NAME` at either source is absence. Both
+readings stay beside the answer as evidence (P4), so a caller which needs the
+literal bytes has them without opening a sector, and no caller has to know
+which of the two it should have looked at.
+
+Nothing else may become a label. A directory name, a filesystem kind, a file
+inside the volume, and the image's own filename are not evidence of one, and
+an unlabeled volume is reported unlabeled rather than given a placeholder.
+
+The label sits today on the volume record the disk report returns and, once
+F20 has landed, on the filesystem record where that seam owns it. F24 lands on
+whichever presentation is current when it is picked up; it neither waits for
+F20 nor blocks it, and the answer it defines is the same either way.
+
+Touches: S1, S2, S3. Supports: U2, U4, U22; P3, P4, P5, P18. Needs: nothing
+pledged first.
+
+## F25 — DOS 8.3 name rules owned at the file-access seam
+
+Make every 8.3 name decision the file-access seam's own, and make each refusal
+name the rule it broke.
+
+Reads match without regard to case and return the name as stored. That is the
+behavior today; this feature states it as a claim rather than leaving it a
+property of the implementation, so a caller may rely on showing the user what
+the directory actually holds. Writes validate and normalize at the same seam:
+the caller supplies the name it has, and the library uppercases, pads, and
+stores it. A caller uppercasing first is performing the library's rule in the
+one place it cannot be checked against the format.
+
+A name outside the namespace is refused with a rule identity from one
+enumerated set, under the P10 amendment:
+
+- an empty base;
+- a base longer than eight characters;
+- an extension longer than three;
+- more than one separator, or one where the format does not allow it;
+- a character the format excludes, naming the character;
+- a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
+  `LPT1`–`LPT9`), with or without an extension; and
+- a leading or trailing space in a component.
+
+The reserved-device rule is the one the code does not enforce at all today;
+the others are enforced and refused with a single undifferentiated diagnostic,
+which is what leaves a consumer reimplementing the set to say which rule was
+broken. Nothing is truncated, transliterated, or repaired to fit — a refused
+name is refused (P6), and the caller decides what to do about it.
+
+The stored escape for a leading `0xe5` byte stays internal. It encodes a
+stored name; it is not a rule a caller can break.
+
+Touches: S1, S2, S3. Supports: U3, U22; P3, P5, P6, P10, P18, P19. Needs: the
+P10 amendment ([ARCHITECTURE.md](ARCHITECTURE.md)) pledged, since the rule
+identity is the half a category cannot carry.
+
+## F26 — The DOS drive-letter composer
+
+Deliver the namespace-mapping composer of the P19 amendment for DOS. Given the
+machine facts the caller asserts — medium, slot, and attachment order — and the
+volumes already composed from the images it inspected, return which volume each
+drive letter names, as an answer built from a named rule rather than from the
+order things happen to appear in.
+
+Floppy slots take `A:` and `B:`, and a single-floppy machine's second letter is
+the phantom-drive convention rather than a second volume. Hard-disk volumes take
+letters from `C:` upward under the claimed rule. CD-ROM letters follow only
+where the caller declares the resident driver's placement, because nothing on
+the disks records it and the driver could put it anywhere.
+
+The assignment rule is the substance of this feature and its whole risk. DOS
+did not letter volumes in the order a report lists them: the usual rule takes
+the first primary DOS partition of each disk in attachment order, then the
+logical drives of the extended partitions across those disks in the same order,
+then such remaining primaries as the variant assigns at all — and the variants
+differ exactly there. F26 therefore claims named rules by variant (P3). Where
+the caller states which variant the machine ran, the composer applies that
+rule; where it does not, a letter on which the claimed variants disagree is
+reported undetermined rather than settled by choosing the most common one.
+`LASTDRIVE`, `SUBST`, `JOIN`, `ASSIGN`, a block-device driver, and a network
+redirector are outside every claimed rule, and a mapping they would have
+changed is undetermined, not approximated.
+
+The composer answers with mappings: each established letter names a volume by
+the identity its report issued, and every letter it could not establish says so
+with the reason. It opens no artifact, takes the reports the caller already
+holds, and composes no file container over the result — the letter is what a
+consumer shows a user, and the identity is what it passes back into a file
+verb. Composing a rooted namespace over the mapping is separately admitted by
+P19 and is not this feature.
+
+Touches: S1, S2, S3. Supports: U22; P3, P4, P5, P19, P21. Needs: F20 pledged
+and delivered, for the stable volume identities and the composed-volume report
+this maps over; and the P19 amendment
+([ARCHITECTURE.md](ARCHITECTURE.md)) pledged, which is what admits a composer
+that derives a mapping instead of consuming one. D5's deferral is untouched:
+nothing here opens several artifacts together.
