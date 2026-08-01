@@ -58,6 +58,50 @@ removes it is the record either way.
 
 ## Decisions
 
+### D6 — Device identity is assigned, not requested
+
+**Decided** Paul Galbraith, 2026-07-31. **Supports** P21.
+
+D5 still defers multi-device topology, volumes spanning devices, and
+cross-source transactions. Its refusal of preparatory identity was too
+broad: a library-assigned, composition-scoped identity adds useful internal
+structure without adding a caller-supplied datum. It gives identity no
+global meaning and revives none of the machinery D5 deferred; P21 carries
+the rule.
+
+**Partially overrules:** D5's rejection of topology-ready identities. The
+new evidence is that automatic identity and caller-authored topology have
+different interface costs.
+
+### D5 — Multi-device topology is deferred until a use demands it
+
+**Decided** Paul Galbraith, 2026-07-31. **Supports** P17.
+
+> **Partly overruled by D6:** the refusal of automatic device identity no
+> longer binds; the deferral of multi-device topology and volumes stands.
+
+The proposed P20 is withdrawn. Multi-device volumes are extremely unlikely
+to enter Remanence, and the concrete cost of adding them later is an
+ordinary refactor: qualify disk-local identities, supply several devices to
+volume composition, and add cross-source write coordination if writing is
+claimed. That does not justify making source, device, attachment, and
+multi-parent provenance part of F19 or the architecture now. P20's number
+is retired and will not be reused.
+
+P17 remains the independent volume-composition seam. It supports current
+whole-medium, partition-backed, and region-composed volumes without
+promising or preparing for a volume spread across devices. If that use ever
+becomes real, it receives its own proposal and surface design. Existing
+disk-local identifiers retain their existing scope; no present interface
+claims they are globally unique.
+
+**Weighed and declined:** building topology-ready identities and
+multi-parent provenance into F19; a multiple-source open with manual
+`hdd0`/`hdd1` assignment; a principle governing cross-file transactions
+before any multi-device write use exists.
+
+**Folded into:** proposed P17; the F19 design; withdrawal of proposed P20.
+
 ### D4 — "At rest" leaves the library's vocabulary; the surface is the `Disk` stack
 
 **Decided** Paul Galbraith, 2026-07-30. **Supports** (none) — a
