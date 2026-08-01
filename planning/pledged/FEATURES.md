@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-3.0-only
 > **Status:** pledged at the owner's direction. F19 is owed by the project,
 > with no promise of order or time; its number evaporates on delivery
 > without being reused. The companion
-> [design](design/image-format-modules.md) and P12, P13, P16–P19, and P21
+> [design](design/image-format-modules.md) and P12, P13, P16–P19, and P21–P23
 > in [ARCHITECTURE.md](ARCHITECTURE.md) travel with this feature.
 > Pre-1.0, every affected presentation moves coherently and the old shape
 > is deleted rather than bridged.
@@ -52,12 +52,13 @@ No descriptor may be enrolled without the behavior that validates and
 interprets what it claims.
 
 Each loaded image names exactly one authoritative image layer declared by
-its image-format adapter. Derived representations distinguish decoded
-evidence from synthetic detail, and the layer remains fixed for the open
-image. F19 carries that identity and provenance through identification
-and opening; later media and drive features use it to decide which read
-and write derivations are valid rather than guessing from a filename or
-drive.
+its image-format adapter. Each independently mutable open state also names
+one active durable layer. Derived representations distinguish decoded
+evidence from synthetic detail and never become independently mutable
+copies. F19 carries authoritative-layer, active-layer, and provenance
+identity through identification and opening; later media and
+hardware-emulation features use it to decide which read and write
+derivations are valid rather than guessing from a filename or product model.
 
 Every addressed virtual device created by image-format composition also
 receives an opaque P21 identity from Remanence. It is scoped to the loaded
@@ -83,4 +84,5 @@ behavior remains covered at its current public surfaces. The core gains no
 runtime dependency.
 
 Touches: S1, S3, S4. Supports: U1, U2, U5; P1, P3, P4, P5; P12,
-P13, P16–P19, and P21. Needs: P12, P13, P16–P19, and P21 pledged.
+P13, P16–P19, and P21–P23. Needs: P12, P13, P16–P19, and P21–P23
+pledged.

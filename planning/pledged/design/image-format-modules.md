@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 Design for
 [F19](../FEATURES.md#f19--image-format-modules-and-the-built-in-catalogs),
-serving pledged P12–P19 and P21 in
+serving pledged P12–P19 and P21–P23 in
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 This document specifies the destination and delivery cut for the pledged
 feature; it is not an implementation record.
@@ -112,7 +112,7 @@ signal-level floppy drive: sectors cannot express rotational position,
 transition timing, index and sector holes, damaged or neutral regions, or
 other facts visible to a physical head and its sensors.
 
-## P13 makes one image layer authoritative
+## P13 and P23 separate authoritative and active layers
 
 Loading an image does not make every representation equally true. The
 recognizing image-format adapter declares exactly one authoritative image
@@ -132,21 +132,38 @@ byte stream, which must independently enter P12 before it is an image or
 has an authoritative layer.
 
 Other representations are derived through family-specific adapters. A
-lower-level recording can be decoded toward sectors, volumes, filesystems,
-and files, with ambiguity and evidence preserved under P3 and P4. A
-higher-level image can be materialized toward tracks, bitcells, or flux
-only by synthesis. The chosen geometry, encoding, gaps, timing, and other
-defaults are synthetic provenance, not observations recovered from the
-image. There is no project-wide total ordering forced across magnetic,
-optical, and logical-block families; each family owns the valid derivation
-paths between its representations.
+lower-level recording can be decoded toward sector, filesystem, and file
+presentations, with ambiguity and evidence preserved under P3 and P4. A
+legacy magnetic image may be materialized toward tracks, bitcells, or flux
+only by synthesis inside its declared family. The chosen geometry,
+encoding, gaps, timing, and other defaults are synthetic provenance, not
+observations recovered from the image. Geometry-opaque logical blocks and
+flux are mutually non-convertible in either direction. There is no
+project-wide total ordering forced across magnetic, optical, and
+logical-block families; each family owns only its permitted derivations.
+
+Each independently mutable open state also has exactly one active durable
+layer: file container, flux, CHS, or block. This is the state against which
+all current presentations read and write. The active and authoritative
+layers commonly coincide, but answer different questions. The authoritative
+layer says what the source image persistently records; the active layer says
+which durable representation currently owns mutation.
+
+A request below an image's information floor triggers one explicit
+materialization to the most honest lower layer available. For example, a
+sector-authoritative C64 image may synthesize timed flux under a declared
+media and encoding profile, after which flux is active while sectors remain
+authoritative. Provenance identifies every synthesized fact. Sector,
+filesystem, and file views over that flux are derived presentations, never
+independently mutable peer copies.
 
 The graph is deliberately incomplete. Opening a typical virtual hard-disk
 image through an LBA drive ends at logical blocks. Remanence never
 materializes speculative platters, heads, tracks, timing, or flux beneath
-it; doing so would replace a stable and sufficient interface with a vast
-fiction. By contrast, a raw sector C64 image may be attached to a 1541
-composition that claims a sector-to-track and track-to-signal derivation.
+it, and no flux image is converted into an LBA device. This is a permanent
+family separation rather than a missing adapter. By contrast, a raw sector
+C64 image may be attached to a 1541 composition that claims a
+sector-to-track and track-to-signal derivation.
 Its track, bitcell, or flux state is then inferred by deterministic
 synthesis from the authoritative sectors plus the selected media and drive
 rules. It is suitable for hardware-level emulation, but it remains
@@ -154,16 +171,16 @@ synthetic provenance rather than a recovered observation of the original
 disk.
 
 The authoritative layer is fixed for an open image. Read-only derivation
-may be lossy when the result says what was omitted or synthesized. A
-writable composition is assembled only when every adapter on the path
-claims that changes can be projected back through the authoritative layer
-and encoded by the original format without unclaimed loss. If arbitrary
-mechanism-level writes cannot be represented by a sector image, for
-example, that image cannot be attached writable through that path; the
-refusal occurs before emulation begins. An explicit conversion may create
-a new image whose authoritative layer differs, with losses named. Loading,
-attaching, writing, and saving an existing image never change its layer
-silently.
+may be lossy when the result says what was omitted or synthesized. Writes
+land in the active layer. A writable composition is assembled only when
+every adapter on the path claims that those changes can be projected back
+through the authoritative layer and encoded by the original format without
+unclaimed loss. If arbitrary hardware-level writes cannot be represented by
+a sector image, for example, that image cannot be attached writable through
+that path; the refusal occurs before emulation begins. An explicit
+conversion may create a new image whose authoritative layer differs, with
+losses named. Loading, attaching, writing, and saving an existing image
+never change its authoritative layer silently.
 
 ## P19 makes file containers the common file-access seam
 
@@ -229,7 +246,10 @@ divided by family rather than forced into one schema:
 
 - magnetic flexible media profiles describe physical compatibility such
   as form factor, sides, magnetic characteristics, and index or sector
-  holes; their instances carry magnetic surface state;
+  holes; their instances carry magnetic surface state as timed flux-data
+  transitions and strength semantics, with index and hard-sector topology
+  represented through separate marker/sensor channels carrying their own
+  captured or fabricated provenance;
 - optical profiles describe the applicable CD, DVD, dual-layer DVD,
   Blu-ray, or later variant; for modern drives their instances carry only
   the tracks, sectors, subchannels, and other recorded state visible at
@@ -245,99 +265,97 @@ inch high-density, double-sided profile with a conventional recorded
 layout; the sector count and encoding are not intrinsic physical
 properties of the medium.
 
-## P15 makes drive seams family-specific
+## P15 supplies one common hardware-emulation layer
 
-The default seam is the common drive interface presented to the system.
-Remanence emulates that contract and nothing beneath it. A selected legacy
-drive family may explicitly claim a lower electrical and mechanical seam
-when faithful emulation requires the historical controller to operate the
-real drive signals. The exception is named by the drive family; an image
-format or media profile cannot cause it implicitly.
+Remanence does not own a catalog of modeled drive products. It owns one
+timed-causality hardware layer whose reusable timing, mechanism,
+read-channel, and electronics modules are composed behind typed integration
+contracts. A contract selects a useful real seam and its physical profile;
+the image format and media profile never select that seam implicitly.
 
-For a legacy drive family that claims the hardware exception, the
-composition is:
+Every typed hardware presentation uses the same timed-causality lifecycle:
+reset, current time, next outward deadline, advance, one timestamped
+interaction, and side-effect-free inspection. The contract binds that
+lifecycle to typed stimuli, responses, inspections, events, time, media
+slots, and configuration. The common contract is therefore neither a
+universal pin map nor a public byte, bit, pulse, or sector stream.
 
-1. an image-format adapter converts persistent bytes into a magnetic-media
-   instance;
-2. a drive selected from the drive catalog accepts compatible media and
-   creates one stateful electromechanical drive; and
-3. a controller owned by the emulator changes the drive's physical input
-   lines and consumes its output lines and read-data transition stream.
+The Commodore 1541 fixes the lowest required public cut. The emulator owns
+the drive CPU, memory, firmware, IEC bus, both 6522 VIAs, and their register
+and interrupt behavior. Remanence owns the drive-side electronics below the
+disk VIA, including data separation, sync detection, byte assembly, weak-
+signal behavior, mechanism, and medium. Timestamped motor, stepper, density,
+byte-ready-enable, read/write-mode, and port-A-drive state cross into
+Remanence; port-A data, sync, byte-ready, and write-protect signals cross
+back at their causal times.
 
-Inputs include the applicable motor, head-select, direction, step,
-write-gate, and timed write-data signals. Outputs include timed read-data
-transitions and the physical high or low values of signals such as index
-or hard-sector-hole, track-zero, ready, write-protect, disk-change, and
-model-specific pins. The drive owns rotational phase and speed, motor
-start and stop, head choice and position, stepping and settling,
-head/media interaction, sensor placement, and filtering or weak-signal
-behavior to the fidelity it claims.
+Other typed presentations may place the public cut elsewhere while retaining
+the same lifecycle. A Disk II presentation may include its controller and
+expose slot-bus transactions; H17 and MITS 88-DCDD presentations may expose
+timed programmed-I/O transactions. These examples test the common layer's
+required generality; they are neither drive-catalog entries nor pledges of
+the named support.
 
-The mechanism does not know sectors, filesystems, controller commands or
-registers, DMA, data separation or PLL policy. Channel encodings are
-supplied and interpreted by the emulator's controller; the drive claims
-only the signal rates and transition tolerances it can reproduce.
+Below every public cut, Remanence may compose private mechanism, medium,
+read-channel, and controller modules as one signal graph. Those private
+modules can exchange timed flux transitions, marker/sensor changes, motor
+and head controls, recovered bits, or latched bytes without making any of
+those an additional public interface. Rotational phase, head position,
+settling, controller continuation, and pending causal effects are ephemeral
+hardware state and never become an image layer.
 
-The Commodore 1541 mechanism is a required example of this exception.
-Remanence emulates the mechanism beneath its on-board electronics:
-stepper and motor effects, head/media interaction, and the applicable
-signals. The emulator remains responsible for the drive's processor,
-firmware, controller electronics, and serial protocol. Calling the whole
-historical product a drive does not move those responsibilities across
-the Remanence seam.
+One hardware composition accepts zero or more typed media attachments.
+Each occupied slot owns a separate claim and independently mutable P23
+active-layer instance; drive selection remains ephemeral hardware state.
+The composition may mutate only the selected active media state, and P2
+commit still decides whether that change projects honestly to the image's
+P13 authoritative layer.
 
-An old MFM or RLL hard-drive mechanism may later claim a comparable
-hardware seam. If it does, the emulator's controller owns MFM or RLL
-encoding while Remanence owns the claimed mechanism and connector
-behavior. P15 permits that family; it does not pledge it.
-
-For an LBA hard drive, the block interface itself is the seam:
+For LBA storage, the block interface itself is the seam:
 
 1. an image or container adapter exposes a logical-block media instance;
-2. an LBA drive implementation presents the claimed block sizes, bounds,
-   operations, and externally observable refusals; and
+2. the common block-hardware presentation exposes the claimed block sizes,
+   bounds, operations, and externally observable refusals; and
 3. the emulator consumes that LBA interface.
 
 Remanence does not derive cylinders, heads, zones, platters, servo
 behavior, or transition streams underneath those logical blocks. It does
 not emulate the integrated controller's algorithms, firmware, or
-microcode. LBA is a large drive family precisely because those internals
-vary while the external block contract remains useful and stable.
+microcode. Those internals may vary while the external block contract
+remains useful and stable.
 
-CHS is a required common interface for older drive families. A CHS adapter
+CHS is a required common interface for older storage contexts. A CHS adapter
 addresses the recorded cylinder, head, and sector layout without emulating
 controller registers, commands, encoding, firmware, or microcode. Where
-the same family also supplies a hardware-mechanism adapter, both adapters
-operate on the same media instance, so activity at either seam changes one
-recorded state. CHS is not a physical-media profile and is never inferred
-as hidden geometry beneath an LBA drive.
+the same composition also supplies a hardware presentation, both
+presentations operate on the same media instance, so activity at either seam
+changes one recorded state. CHS is not a physical-media profile and is never
+inferred as hidden geometry beneath an LBA drive.
 
-Modern large storage and optical drives follow the same default. CD, DVD,
-dual-layer DVD, Blu-ray, and their variants are exposed at the common
-command, track, sector, and subchannel interface presented by the drive
-family. Remanence does not descend into laser pickup behavior, focus and
-tracking servos, physical mark detection, internal error correction,
-firmware, or microcode. Those facts may distinguish media profiles without
-becoming emulated internals.
+Modern large storage and optical hardware follows the same default. CD, DVD,
+dual-layer DVD, Blu-ray, and their variants are exposed at the applicable
+common command, track, sector, and subchannel interface. Remanence does not
+descend into laser pickup behavior, focus and tracking servos, physical mark
+detection, internal error correction, firmware, or microcode. Those facts
+may distinguish media profiles without becoming emulated internals.
 
-Drive descriptors and drive behavior are enrolled together. A drive
-catalog exposes stable identities and compatibility facts at the declared
-family seam; it contains neither format rules nor a string program
-interpreted by a universal drive engine. Coherent families may share
-electromechanical, connector-signalling, or block-interface helpers
-internally.
+There is no drive descriptor, drive enrollment, or drive catalog. Typed
+integration contracts and physical profiles configure the one common layer;
+they do not form a product-discovery mechanism. Shared electromechanical,
+connector-signalling, controller, and block behavior stays inside that deep
+module rather than being presented as separately selectable drives.
 
-Writes made through any drive alter its media instance inside the explicit
-writable session. They reach the image only at its commit point, can be
-rolled back before then, and retain the file claims and reconciliation
-guarantees of P2, P7, and P9. A drive-family seam is not an excuse to
+Writes made through a hardware presentation alter its media instance inside
+the explicit writable session. They reach the image only at its commit point,
+can be rolled back before then, and retain the file claims and reconciliation
+guarantees of P2, P7, and P9. A hardware-integration seam is not an excuse to
 invent a second mutation policy.
 
-This design establishes the media and drive boundaries but F19 does not
-add media-family modules, drive interfaces, drive catalogs, or an emulator
-presentation. Those later capabilities need their own features and
-surface vetting. Building them against P14 and P15 will not require
-reopening the image-format architecture.
+This design establishes the media and hardware boundaries but F19 does not
+add media-family modules, the common hardware-emulation layer, typed hardware
+presentations, or an emulator presentation. Those later capabilities need
+their own features and surface vetting. Building them against P14, P15, P22,
+and P23 will not require reopening the image-format architecture.
 
 ## One module owns one image format
 
@@ -385,15 +403,29 @@ format that does not fit uses ordinary code behind the same seam. It does
 not add optional fields or new opcodes to a project-wide format schema
 merely to avoid having a module of its own.
 
-## Catalogs are wiring
+## Catalogs are role-specific wiring
 
-Each seam has a built-in catalog containing references to adapters for that
-role. A descriptor and its behavior are enrolled together; there is no
-descriptor-only entry. Enrollment is the one expected central edit when
-an implementation is added, and it is mechanical: central orchestration
-iterates adapters and never switches on an implementation identifier. P14
-and P15 give media profiles and drive implementations separate catalogs
-with the applicable wiring rules; F19 neither implements nor exposes them.
+The catalog families are role-scoped:
+
+- the **image-format catalog** and **filesystem catalog** enumerate executable
+  adapters which recognize, validate, and interpret their inputs;
+- the **partition-schema catalog** enumerates MBR, GPT, BSD disklabel, and
+  other layout adapters—not their individual partition-type codes or GUIDs;
+- serialized-file-container recognition uses its own adapter catalog rather
+  than entering the image-format catalog; and
+- the **media-type catalog** enumerates passive compatibility profiles, not
+  recognition programs or hardware behavior.
+
+For every adapter catalog, a descriptor and its behavior are enrolled
+together; there is no descriptor-only entry. Enrollment is the one expected
+central edit when an implementation is added, and it is mechanical: central
+orchestration iterates adapters and never switches on an implementation
+identifier. Passive media-type entries may instead be declarative because
+their profiles contain facts rather than behavior.
+
+P15 deliberately does not give hardware presentations or modeled drive
+products a catalog; typed contracts configure one common hardware-emulation
+layer outside F19.
 
 Catalogs are internal. F19 introduces no plug-in mechanism, dynamic
 loading, or caller-authored catalog. If a presentation needs to list
@@ -473,8 +505,9 @@ F19 is one coherent replacement, in this internal order:
 3. Route `Session` and `Disk` through the applicable catalogs and remove
    format-specific identifiers and heuristic interpretation from central
    orchestration.
-4. Carry each loaded image's authoritative layer and derivation provenance
-   through identification and opening.
+4. Carry each loaded image's authoritative layer, each independently
+   mutable open state's active layer, and derivation provenance through
+   identification and opening.
 5. Assign every addressed virtual device an opaque, composition-scoped
    identity without adding a caller-supplied identifier.
 6. Delete the registry parser, definition files, and public reflections;
@@ -492,8 +525,9 @@ The feature is delivered only when:
 - every catalog entry pairs an implementation with its descriptor;
 - a test-only adapter is recognized through a test catalog without an
   edit to orchestration;
-- every loaded image names exactly one authoritative image layer, and a
-  derived layer distinguishes decoded evidence from synthesized detail;
+- every loaded image names exactly one authoritative image layer, every
+  independently mutable open state names exactly one active durable layer,
+  and derived views distinguish decoded evidence from synthesized detail;
 - every addressed virtual device has a library-assigned identity unique
   within its loaded composition;
 - a supported single-volume legacy floppy reaches its filesystem's P19
@@ -515,10 +549,10 @@ The feature is delivered only when:
 - A public or dynamic plug-in system.
 - A replacement universal declaration language.
 - A new disk-image or filesystem format merely to demonstrate the seam.
-- The media-family modules, drive-family interfaces, drive catalog,
-  complex volume-composition implementations and catalog, and
-  emulator-facing compositions; P14, P15, and P17 fix their seams, but
-  later features must deliver them.
+- The media-family modules, common hardware-emulation layer, typed hardware
+  presentations, complex volume-composition implementations and catalog,
+  and emulator-facing compositions; P14, P15, P17, P22, and P23 fix their
+  seams and state model, but later features must deliver them.
 - System-wide file-container namespace composition and mount mapping; P19
   fixes the seam, but a later feature must deliver them.
 - A generic public open-to-files capability across S1, S2, and S3; P19
@@ -536,8 +570,8 @@ Executable third-party formats or a general plug-in system would be new
 application capabilities and require their own use case and surface
 design.
 
-MAME informs the directly controlled floppy branch: persistent image formats
-convert to and from physical media state, a drive exposes connector-level
-signals, and controllers remain separate above that connector. It does
-not impose that seam on LBA drives, whose logical-block interface is the
+MAME informs the private mechanism-and-media branch: persistent image formats
+convert to and from physical media state, and timed signals compose drives
+and controllers. It does not determine a family's public hardware seam or
+impose physical emulation on LBA drives, whose logical-block interface is the
 deliberate Remanence boundary. No MAME source enters this project.
