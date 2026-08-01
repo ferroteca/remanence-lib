@@ -46,6 +46,18 @@ artifacts are built with uv (`uv build crates/remanence-py`), which
 drives the maturin build backend in an isolated environment. See
 [README.md](README.md).
 
+Some `remanence` unit tests need fixtures that are not checked in;
+`testing-prep/prep_fixtures.py` prepares them (Python 3.12+, via uv):
+
+```bash
+uv sync --group testing-prep
+.venv\Scripts\Activate.ps1
+python testing-prep/prep_fixtures.py
+```
+
+See [testing-prep/test-rigs/README.md](testing-prep/test-rigs/README.md)
+for what it builds, prerequisites (QEMU), and how the FreeDOS rig works.
+
 - The core crate (`crates/remanence`) is **dependency-free at runtime**,
   deliberately — it carries its own ZIP reader and DEFLATE decompressor.
   Discuss any new dependency before adding it; the licensing tiers in

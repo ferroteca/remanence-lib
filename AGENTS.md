@@ -62,7 +62,11 @@ C ABI. The Rust code here is now the authoritative implementation.
   isolated environment; publishing is `uv publish` and is owner-gated.
   **The Python package claims Windows only** (the tested host; the
   classifiers state it) — keep POSIX paths correct but never state or
-  imply support the project has not tested.
+  imply support the project has not tested. The root `pyproject.toml`
+  is a virtual uv workspace root (`[tool.uv] package = false`, no
+  build-system of its own) listing this crate as its sole workspace
+  member; it also carries the `testing-prep` dependency group (below)
+  so uv is the one Python tool for the whole repo.
 - `planning/README.md` is the map of the maintainer-facing planning
   machinery, and the place to start. `planning/SURFACES.md` is the
   surface-change rule; the application surface inventory it scopes over is
@@ -203,8 +207,8 @@ compiled into the wheel.
   from the project's own C++ lineage, not from puff.c. Keep the
   attribution comment in the file.
 - `crates/remanence/tests/fixtures/` holds the test fixtures.
-  `testing-prep/prep_fixtures.py` (run from the testing-prep venv;
-  testing-prep/test-rigs/README.md) prepares them: it downloads the
+  `testing-prep/prep_fixtures.py` (run with `uv run --group
+  testing-prep`; testing-prep/test-rigs/README.md) prepares them: it downloads the
   sha256-pinned HDOS 1.0 distribution zip straight into
   `tests/fixtures/` (a multi-image zip, test material in its own
   right), extracts only the one disk image the tests read beside it

@@ -14,13 +14,18 @@ artifact** (the fixtures directory is never tracked — see D1 in
 
 ## Running prep_fixtures.py
 
-From the testing-prep venv (created once; reliquary is pinned in
-`testing-prep/requirements.txt`):
+Through uv, from the repo root (reliquary is pinned in the root
+`pyproject.toml`'s `testing-prep` dependency group):
 
 ```bash
-python -m venv testing-prep/.venv
-testing-prep\.venv\Scripts\Activate.ps1
-pip install -r testing-prep/requirements.txt
+uv run --group testing-prep testing-prep/prep_fixtures.py
+```
+
+Or activate the uv-managed `.venv` once and run directly, as before:
+
+```bash
+uv sync --group testing-prep
+.venv\Scripts\Activate.ps1
 python testing-prep/prep_fixtures.py
 ```
 
@@ -42,8 +47,8 @@ the one disk image the tests read extracts beside it.)
 
 ## Prerequisites — the tests fail naming the gap, they do not skip
 
-- **Python ≥ 3.12** (reliquary's floor) for the testing-prep venv
-  above.
+- **Python ≥ 3.12** (reliquary's floor); the root `pyproject.toml`
+  pins `requires-python` accordingly for the `testing-prep` group.
 - **QEMU** installed where reliquary can discover it, per reliquary's
   docs: a standard install location is sufficient, and PATH also
   works.
@@ -81,18 +86,18 @@ Environment knobs:
   checked-in blueprints and scripts, so moving it would only point a
   run at files that are not there.
 
-To build with unpublished reliquary changes, install a local checkout
-into the venv in place of the pin:
-`pip install -e D:\Projects\reliquary`.
+To build with unpublished reliquary changes, override the pin with a
+local editable checkout for the run:
+`uv run --with-editable D:\Projects\reliquary --group testing-prep testing-prep/prep_fixtures.py`.
 
 First build notes: the LiveCD zip (~0.5 GB) downloads into
 `testing-prep/test-rigs/cache/media/`, and the install run can take
 tens of minutes.
 After a failed build the machine is still there to inspect;
-`rlq destroy-machine --machine remanence-parttest-<n>
---home-dir testing-prep/test-rigs` (from the venv;
-`rlq list-machines --home-dir …` names them) resets it, and
-`rlq clean-media --home-dir …` gives back the LiveCD. A machine
+`uv run rlq destroy-machine --machine remanence-parttest-<n>
+--home-dir testing-prep/test-rigs` (`uv run rlq list-machines
+--home-dir …` names them) resets it, and
+`uv run rlq clean-media --home-dir …` gives back the LiveCD. A machine
 whose guest powered itself off still reads as `running` until
 `rlq stop-machine` reconciles it.
 

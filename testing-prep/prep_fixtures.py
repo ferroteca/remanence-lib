@@ -16,13 +16,10 @@ spec; the prep script pins reliquary's media cache to
 testing-prep/test-rigs/cache/media, so the download survives
 `cargo clean` and machine rebuilds.
 
-Reliquary comes from the testing-prep venv (pinned in
-testing-prep/requirements.txt); run the script from it:
+Reliquary is pinned in the root pyproject.toml's `testing-prep`
+dependency group; run the script through uv from the repo root:
 
-    python -m venv testing-prep/.venv
-    testing-prep\\.venv\\Scripts\\Activate.ps1
-    pip install -r testing-prep/requirements.txt
-    python testing-prep/prep_fixtures.py
+    uv run --group testing-prep testing-prep/prep_fixtures.py
 """
 
 import hashlib
@@ -43,12 +40,9 @@ except ImportError:
 
 if reliquary is None:
     sys.exit(
-        "reliquary is not importable — run this script from the "
-        "testing-prep venv:\n"
-        "  python -m venv testing-prep/.venv\n"
-        "  testing-prep\\.venv\\Scripts\\Activate.ps1\n"
-        "  pip install -r testing-prep/requirements.txt\n"
-        "  python testing-prep/prep_fixtures.py"
+        "reliquary is not importable — run this script through uv "
+        "from the repo root:\n"
+        "  uv run --group testing-prep testing-prep/prep_fixtures.py"
     )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
