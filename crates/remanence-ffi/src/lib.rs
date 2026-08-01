@@ -352,6 +352,13 @@ pub extern "C" fn remanence_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
+/// The stated default session cache bound, in bytes: what an open
+/// without a declared bound uses.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_default_cache_bytes() -> u64 {
+    remanence::DEFAULT_CACHE_BYTES
+}
+
 /// Frees a string returned through an `error_out` parameter.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
@@ -378,6 +385,41 @@ pub unsafe extern "C" fn remanence_session_open(
 
     let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
     match Session::open(path.as_ref()) {
+        Ok(session) => {
+            let path = to_cstring(&session.path().display().to_string());
+            let image_path = to_cstring(&session.image_path().display().to_string());
+            Box::into_raw(Box::new(RemanenceSession {
+                session,
+                path,
+                image_path,
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Opens a session as `remanence_session_open` does, under a declared
+/// session cache bound: at most `cache_bytes` stays resident, rounded
+/// up to whole 64 KiB extents with one extent as the floor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_open_with_cache(
+    path: *const c_char,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceSession {
+    unsafe { clear_error(error_out) };
+    if path.is_null() {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    }
+
+    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
+    match Session::open_with_cache(path.as_ref(), cache_bytes) {
         Ok(session) => {
             let path = to_cstring(&session.path().display().to_string());
             let image_path = to_cstring(&session.image_path().display().to_string());
@@ -1172,6 +1214,38 @@ pub unsafe extern "C" fn remanence_disk_open(
         RemanenceAccessIntent::Write => AccessIntent::Write,
     };
     match Disk::open(path.as_ref(), intent) {
+        Ok(disk) => Box::into_raw(Box::new(RemanenceDisk { disk })),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Opens a disk as `remanence_disk_open` does, under a declared session
+/// cache bound: at most `cache_bytes` of session state stays resident,
+/// rounded up to whole 64 KiB extents with one extent as the floor;
+/// altered state past the bound spills to private session storage,
+/// never the image.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_disk_open_with_cache(
+    path: *const c_char,
+    intent: RemanenceAccessIntent,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceDisk {
+    unsafe { clear_error(error_out) };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    let intent = match intent {
+        RemanenceAccessIntent::Read => AccessIntent::Read,
+        RemanenceAccessIntent::Write => AccessIntent::Write,
+    };
+    match Disk::open_with_cache(path.as_ref(), intent, cache_bytes) {
         Ok(disk) => Box::into_raw(Box::new(RemanenceDisk { disk })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };

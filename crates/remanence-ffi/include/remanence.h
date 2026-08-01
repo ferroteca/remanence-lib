@@ -107,6 +107,10 @@ extern "C" {
 // Returns the library version as a static string. Do not free.
 const char *remanence_version(void);
 
+// The stated default session cache bound, in bytes: what an open
+// without a declared bound uses.
+uint64_t remanence_default_cache_bytes(void);
+
 // Frees a string returned through an `error_out` parameter.
 void remanence_string_free(char *string);
 
@@ -116,6 +120,14 @@ void remanence_string_free(char *string);
 RemanenceSession *remanence_session_open(const char *path,
                                          RemanenceErrorCategory *error_category_out,
                                          char **error_out);
+
+// Opens a session as `remanence_session_open` does, under a declared
+// session cache bound: at most `cache_bytes` stays resident, rounded
+// up to whole 64 KiB extents with one extent as the floor.
+RemanenceSession *remanence_session_open_with_cache(const char *path,
+                                                    uint64_t cache_bytes,
+                                                    RemanenceErrorCategory *error_category_out,
+                                                    char **error_out);
 
 // Frees a session handle.
 void remanence_session_free(RemanenceSession *session);
@@ -343,6 +355,17 @@ RemanenceDisk *remanence_disk_open(const char *path,
                                    RemanenceAccessIntent intent,
                                    RemanenceErrorCategory *error_category_out,
                                    char **error_out);
+
+// Opens a disk as `remanence_disk_open` does, under a declared session
+// cache bound: at most `cache_bytes` of session state stays resident,
+// rounded up to whole 64 KiB extents with one extent as the floor;
+// altered state past the bound spills to private session storage,
+// never the image.
+RemanenceDisk *remanence_disk_open_with_cache(const char *path,
+                                              RemanenceAccessIntent intent,
+                                              uint64_t cache_bytes,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out);
 
 // Frees a disk handle, releasing the P7 claim. Uncommitted changes are
 // discarded (the commit point never reached the file).

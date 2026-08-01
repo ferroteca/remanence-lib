@@ -266,13 +266,16 @@ impl FileDevice {
         self.mode
     }
 
-    /// Starts capturing: until [`FileDevice::take_capture`], writes
-    /// buffer in the capture's cache — spilling to private session
-    /// storage past its bound — reads compose over them, and the file
-    /// is not touched.
-    pub fn begin_capture(&mut self) {
+    /// Starts capturing under the session's declared cache bound:
+    /// until [`FileDevice::take_capture`], writes buffer in the
+    /// capture's cache — spilling to private session storage past the
+    /// bound — reads compose over them, and the file is not touched.
+    pub fn begin_capture(&mut self, cache_bytes: u64) {
         debug_assert!(self.capture.is_none(), "a capture is already active");
-        self.capture = Some(Capture { cache: SessionCache::new(), len: self.len });
+        self.capture = Some(Capture {
+            cache: SessionCache::with_bytes(cache_bytes),
+            len: self.len,
+        });
     }
 
     /// Ends the capture, returning the staged writes and the length the
@@ -516,7 +519,7 @@ mod tests {
         std::fs::write(&path, vec![0xAAu8; 8192]).expect("image writes");
 
         let mut device = FileDevice::open(&path, AccessIntent::Write).expect("opens");
-        device.begin_capture();
+        device.begin_capture(crate::cache::DEFAULT_CACHE_BYTES);
         device.write_at(4090, &[1, 2, 3, 4, 5, 6, 7, 8]).expect("buffers");
         device.write_at(8192, &[9; 100]).expect("buffers growth");
         assert_eq!(device.len(), 8292, "the capture reports the grown length");

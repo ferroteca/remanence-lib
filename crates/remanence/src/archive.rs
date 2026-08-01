@@ -59,13 +59,13 @@ pub(crate) struct ImageSource {
 }
 
 impl ImageSource {
-    fn new(claim: File, mode: AccessMode, backing: Backing, len: u64) -> Self {
+    fn new(claim: File, mode: AccessMode, backing: Backing, len: u64, cache_bytes: u64) -> Self {
         Self {
             claim,
             mode,
             backing,
             len,
-            cache: Mutex::new(SessionCache::new()),
+            cache: Mutex::new(SessionCache::with_bytes(cache_bytes)),
         }
     }
 
@@ -235,9 +235,9 @@ fn only_file_entry_name(archive: &ZipArchive, archive_path: &Path) -> Result<Str
         .ok_or_else(|| Error::archive("zip", "archive contains no files"))
 }
 
-/// Resolves `path` to a streamed image source, unwrapping a `.zip`
-/// archive when present.
-pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
+/// Resolves `path` to a streamed image source under the session's
+/// declared cache bound, unwrapping a `.zip` archive when present.
+pub(crate) fn resolve_image(path: &Path, cache_bytes: u64) -> Result<ResolvedImage> {
     let Some((archive_path, entry_path)) = split_zip_path(path) else {
         let (file, mode) = open_locked(path)?;
         let len = file
@@ -249,7 +249,7 @@ pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
         return Ok(ResolvedImage {
             source_path: path.to_path_buf(),
             image_path: path.to_path_buf(),
-            source: ImageSource::new(file, mode, Backing::Claim { offset: 0 }, len),
+            source: ImageSource::new(file, mode, Backing::Claim { offset: 0 }, len, cache_bytes),
             archive_layers: Vec::new(),
         });
     };
@@ -325,7 +325,7 @@ pub(crate) fn resolve_image(path: &Path) -> Result<ResolvedImage> {
     Ok(ResolvedImage {
         source_path: archive_path,
         image_path: PathBuf::from(entry_name),
-        source: ImageSource::new(file, mode, backing, uncompressed_size),
+        source: ImageSource::new(file, mode, backing, uncompressed_size, cache_bytes),
         archive_layers: vec![layer],
     })
 }

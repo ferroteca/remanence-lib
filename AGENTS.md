@@ -34,7 +34,8 @@ C ABI. The Rust code here is now the authoritative implementation.
   commit stages into; `cache.rs` the session cache — the P2 commit
   buffer and the bounded working set (pledged P27): unaltered extents
   evict and re-read from the image, altered extents spill to private
-  session storage;
+  session storage, and the bound is declared at open with a stated
+  default;
   `qcow2.rs` the native qcow2 v2/v3
   driver (P8 version gate first, run for every member of a backing
   chain; chains compose for reading and allocate writes into the top

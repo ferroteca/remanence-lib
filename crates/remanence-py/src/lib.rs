@@ -447,12 +447,19 @@ pub struct Session {
 #[pymethods]
 impl Session {
     /// Opens `path` — a raw disk image, or `archive.zip[/entry]` — with the
-    /// default format registry.
+    /// default format registry. `cache_bytes` declares the session
+    /// cache bound (rounded up to whole 64 KiB extents, one extent at
+    /// minimum); omitted, the stated default `DEFAULT_CACHE_BYTES`
+    /// governs.
     #[new]
-    fn new(path: PathBuf) -> PyResult<Self> {
-        remanence::Session::open(path)
-            .map(|inner| Self { inner })
-            .map_err(to_py_err)
+    #[pyo3(signature = (path, *, cache_bytes = None))]
+    fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
+        match cache_bytes {
+            Some(cache_bytes) => remanence::Session::open_with_cache(path, cache_bytes),
+            None => remanence::Session::open(path),
+        }
+        .map(|inner| Self { inner })
+        .map_err(to_py_err)
     }
 
     /// Opens `path` with a caller-supplied format registry.
@@ -645,16 +652,19 @@ impl Disk {
     /// the old state or wholly the committed new one, never a partial
     /// third state.
     #[new]
-    #[pyo3(signature = (path, *, writable))]
-    fn new(path: PathBuf, writable: bool) -> PyResult<Self> {
+    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
+    fn new(path: PathBuf, writable: bool, cache_bytes: Option<u64>) -> PyResult<Self> {
         let intent = if writable {
             remanence::AccessIntent::Write
         } else {
             remanence::AccessIntent::Read
         };
-        remanence::Disk::open(path, intent)
-            .map(|inner| Self { inner: Some(inner) })
-            .map_err(to_py_err)
+        match cache_bytes {
+            Some(cache_bytes) => remanence::Disk::open_with_cache(path, intent, cache_bytes),
+            None => remanence::Disk::open(path, intent),
+        }
+        .map(|inner| Self { inner: Some(inner) })
+        .map_err(to_py_err)
     }
 
     /// `"read-write"` or `"read-only"` — an echo of the declared intent.
@@ -874,6 +884,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "DEFAULT_FILESYSTEM_FORMATS",
         remanence::DEFAULT_FILESYSTEM_FORMATS,
     )?;
+    m.add("DEFAULT_CACHE_BYTES", remanence::DEFAULT_CACHE_BYTES)?;
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
     m.add_class::<Session>()?;
     m.add_class::<Identification>()?;

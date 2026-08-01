@@ -271,13 +271,31 @@ pub struct Session {
 
 impl Session {
     /// Opens `path` — a raw disk image, or `archive.zip[/entry]` — with the
-    /// default format registry.
+    /// default format registry and the stated default cache bound
+    /// ([`crate::DEFAULT_CACHE_BYTES`]).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_registry(path, crate::default_format_registry()?)
+        Self::open_with_cache(path, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// Opens `path` with a caller-declared session cache bound (P27):
+    /// at most `cache_bytes` of the image stays resident, rounded up to
+    /// whole 64 KiB extents — the read-ahead unit — with one extent as
+    /// the floor. The bound narrows the working set; it never refuses
+    /// service.
+    pub fn open_with_cache(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
+        Self::open_full(path, crate::default_format_registry()?, cache_bytes)
     }
 
     pub fn open_with_registry(path: impl AsRef<Path>, registry: FormatRegistry) -> Result<Self> {
-        let resolved = archive::resolve_image(path.as_ref())?;
+        Self::open_full(path, registry, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    fn open_full(
+        path: impl AsRef<Path>,
+        registry: FormatRegistry,
+        cache_bytes: u64,
+    ) -> Result<Self> {
+        let resolved = archive::resolve_image(path.as_ref(), cache_bytes)?;
 
         let containers = resolved
             .archive_layers
@@ -708,6 +726,29 @@ mod tests {
         };
         assert_eq!(layout.offset_bytes, Some(0));
         assert_eq!(layout.length_bytes, Some(102_400));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_declared_cache_bound_streams_identification() {
+        let path = temp_image_path("session-tiny-bound", "h8d");
+        let mut bytes = vec![0u8; 102_400];
+        bytes[128..132].copy_from_slice(b"HDOS");
+        write_file(&path, &bytes);
+
+        // A one-extent working set (P27's declared bound at its floor):
+        // identification still walks every layer correctly.
+        let session = Session::open_with_cache(&path, 1).expect("session opens");
+        let identification = session.identify();
+        assert_eq!(identification.containers[0].id, "h8d");
+        assert_eq!(
+            identification.containers.last().expect("filesystem").id,
+            "hdos"
+        );
+        let mut probe = [0u8; 4];
+        session.read_at(128, &mut probe).expect("reads");
+        assert_eq!(&probe, b"HDOS");
 
         std::fs::remove_file(&path).ok();
     }

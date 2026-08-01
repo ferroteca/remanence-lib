@@ -26,6 +26,7 @@ mod registry;
 mod session;
 mod zip;
 
+pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat, DiskGeometry};
 pub use error::{Error, ErrorCategory, Result};

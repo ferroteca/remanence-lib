@@ -121,6 +121,9 @@ impl Device for Composed<'_> {
 pub struct Disk {
     virtual_disk: Virtual,
     cache: SessionCache,
+    /// The declared session cache bound (P27), governing the session
+    /// cache and each commit's capture alike.
+    cache_bytes: u64,
     format: DiskFormat,
     mode: AccessMode,
     path: String,
@@ -151,6 +154,20 @@ impl Disk {
     /// life (U6). Writes allocate copy-on-write into the top image only;
     /// commit preserves the backing relationship.
     pub fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
+        Self::open_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// Opens `path` as [`Disk::open`] does, under a caller-declared
+    /// session cache bound (P27): at most `cache_bytes` of session
+    /// state stays resident — reads, uncommitted writes, and a
+    /// commit's staging alike — rounded up to whole 64 KiB extents,
+    /// with one extent as the floor. Altered state past the bound
+    /// spills to private session storage, never the image.
+    pub fn open_with_cache(
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+        cache_bytes: u64,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let recovery = journal::sidecar_path(path);
         let mut file = FileDevice::open(path, intent)?;
@@ -193,7 +210,8 @@ impl Disk {
 
         Ok(Self {
             virtual_disk,
-            cache: SessionCache::new(),
+            cache: SessionCache::with_bytes(cache_bytes),
+            cache_bytes,
             format,
             mode,
             path: path.display().to_string(),
@@ -425,7 +443,8 @@ impl Disk {
         // the driver's caches put back alongside it — and keeps the
         // buffered state for the caller.
         let cache_snapshot = self.virtual_disk.cache_snapshot();
-        self.virtual_disk.host().begin_capture();
+        let cache_bytes = self.cache_bytes;
+        self.virtual_disk.host().begin_capture(cache_bytes);
         let staged = self.cache.write_through(self.virtual_disk.device());
         let capture = self.virtual_disk.host().take_capture();
         if let Err(error) = staged {
@@ -766,7 +785,8 @@ mod tests {
     /// journal is armed, the file untouched. Returns the staged host
     /// writes so a test can apply any prefix of them before "crashing".
     fn stage_and_arm(disk: &mut Disk) -> (Vec<(u64, Vec<u8>)>, u64) {
-        disk.virtual_disk.host().begin_capture();
+        let cache_bytes = disk.cache_bytes;
+        disk.virtual_disk.host().begin_capture(cache_bytes);
         disk.cache
             .write_through(disk.virtual_disk.device())
             .expect("stages");
@@ -781,6 +801,31 @@ mod tests {
             })
             .expect("collects");
         (blocks, capture.len())
+    }
+
+    #[test]
+    fn a_tiny_declared_cache_bound_still_commits_correctly() {
+        let path = temp_image("tiny-bound");
+        build_committed_raw(&path);
+
+        // A one-extent working set: reads, uncommitted writes, and the
+        // commit's capture all evict and spill constantly (P27), and
+        // the result is byte-identical to an unbounded run.
+        let mut disk =
+            Disk::open_with_cache(&path, AccessIntent::Write, 1).expect("opens");
+        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+            .expect("overwrites");
+        assert!(disk.is_modified());
+        disk.commit().expect("commits");
+        drop(disk);
+
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        assert_eq!(
+            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            new_content()
+        );
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

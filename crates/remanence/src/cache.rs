@@ -32,10 +32,10 @@ use crate::error::{Error, Result};
 /// whole extent, so a run of small reads costs one base read.
 pub(crate) const EXTENT: u64 = 64 * 1024;
 
-/// The stated default residency bound (P27), in extents: 2048 extents of
-/// 64 KiB — a 128 MiB working set. Peak cache memory is bounded by this
-/// figure regardless of image size.
-const DEFAULT_RESIDENT_EXTENTS: usize = 2048;
+/// The stated default session cache bound (P27), in bytes: unless a
+/// caller declares another bound at open, the resident working set
+/// never exceeds this, regardless of image size.
+pub const DEFAULT_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 
 static SPILL_SERIAL: AtomicU64 = AtomicU64::new(0);
 
@@ -154,13 +154,18 @@ pub(crate) struct SessionCache {
 }
 
 impl SessionCache {
-    pub fn new() -> Self {
-        Self::with_bound(DEFAULT_RESIDENT_EXTENTS)
+    /// A cache bounded at `bytes` of resident extents — P27's declared
+    /// session configuration. Rounded up to whole extents, one at
+    /// minimum: a tiny bound narrows the working set, it never refuses
+    /// service.
+    pub fn with_bytes(bytes: u64) -> Self {
+        let extents = bytes.div_ceil(EXTENT).max(1);
+        Self::with_bound(usize::try_from(extents).unwrap_or(usize::MAX))
     }
 
     /// A cache holding at most `bound` resident extents (tests use tiny
     /// bounds to force eviction and spill on small images).
-    pub fn with_bound(bound: usize) -> Self {
+    fn with_bound(bound: usize) -> Self {
         Self {
             resident: BTreeMap::new(),
             bound: bound.max(1),
@@ -457,7 +462,7 @@ mod tests {
     #[test]
     fn a_hit_serves_from_cache_without_base_io() {
         let mut base = CountingDevice::new(4 * E);
-        let mut cache = SessionCache::new();
+        let mut cache = SessionCache::with_bytes(DEFAULT_CACHE_BYTES);
 
         let mut first = [0u8; 512];
         cache.read_at(&mut base, 100, &mut first).expect("reads");
@@ -555,7 +560,7 @@ mod tests {
     #[test]
     fn reads_past_the_end_are_refused() {
         let mut base = CountingDevice::new(E);
-        let mut cache = SessionCache::new();
+        let mut cache = SessionCache::with_bytes(DEFAULT_CACHE_BYTES);
         let mut buf = [0u8; 32];
         let error = cache
             .read_at(&mut base, EXTENT - 16, &mut buf)
@@ -568,7 +573,7 @@ mod tests {
         // A device ending mid-extent: seeds clamp, write-through clamps.
         let len = E + E / 2;
         let mut base = CountingDevice::new(len);
-        let mut cache = SessionCache::new();
+        let mut cache = SessionCache::with_bytes(DEFAULT_CACHE_BYTES);
 
         cache
             .write_at(&mut base, (len - 8) as u64, b"tailtail")
