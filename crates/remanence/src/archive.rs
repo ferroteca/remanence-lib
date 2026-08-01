@@ -12,13 +12,19 @@
 
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
-use crate::cache::{SessionCache, session_storage_file};
-use crate::device::{AccessMode, Device, FileRangeDevice, open_locked};
+use crate::cache::{EXTENT, SessionCache, session_storage_file};
+use crate::device::{AccessMode, Device, FileRangeDevice, open_locked, read_exact_at};
 use crate::error::{Error, Result};
 use crate::inflate::inflate_file_to_spool;
 use crate::zip::{EntryData, ZipArchive};
+
+/// How far the predictive reader runs ahead of a sequential access
+/// pattern, in extents — part of the session's stated read-ahead (P27).
+const PREFETCH_DEPTH: u64 = 8;
 
 /// One archive wrapper that was unwrapped while resolving an image.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +47,89 @@ enum Backing {
     Claim { offset: u64 },
     /// Private session storage holding a decoded archive entry.
     /// Session-backed (P27) — served through the same cache.
-    Spool(File),
+    Spool(Arc<File>),
+}
+
+/// The predictive reader (P27): a worker that follows a sequential
+/// access pattern and loads extents from the backing before they are
+/// asked for. Speculation is silent and clean-only — a failed read
+/// caches nothing and reports nothing, results are identical with the
+/// worker absent — and the P7 claim makes the concurrent file reads
+/// sound.
+struct Prefetcher {
+    demand: Sender<u64>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for Prefetcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Prefetcher")
+    }
+}
+
+impl Prefetcher {
+    fn spawn(cache: Arc<Mutex<SessionCache>>, file: Arc<File>, base: u64, len: u64) -> Self {
+        let (demand, demands) = channel::<u64>();
+        let handle = std::thread::spawn(move || {
+            prefetch_loop(&demands, &cache, &file, base, len);
+        });
+        Self { demand, handle: Some(handle) }
+    }
+}
+
+impl Drop for Prefetcher {
+    fn drop(&mut self) {
+        let (orphan, _) = channel();
+        drop(std::mem::replace(&mut self.demand, orphan));
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn prefetch_loop(
+    demands: &Receiver<u64>,
+    cache: &Mutex<SessionCache>,
+    file: &File,
+    base: u64,
+    len: u64,
+) {
+    let mut previous: Option<u64> = None;
+    while let Ok(received) = demands.recv() {
+        // Coalesce to the latest demand; the pattern, not the queue,
+        // drives prediction.
+        let mut extent = received;
+        while let Ok(next) = demands.try_recv() {
+            extent = next;
+        }
+        let sequential = previous == Some(extent.saturating_sub(EXTENT)) && extent != 0;
+        previous = Some(extent);
+        if !sequential {
+            continue;
+        }
+        for ahead in 1..=PREFETCH_DEPTH {
+            let target = extent + ahead * EXTENT;
+            if target >= len {
+                break;
+            }
+            {
+                let guard = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if guard.is_resident(target) {
+                    continue;
+                }
+            }
+            let take = (len - target).min(EXTENT) as usize;
+            let mut data = vec![0u8; EXTENT as usize];
+            if read_exact_at(file, base + target, &mut data[..take]).is_err() {
+                // Silent: the caller's own access owns any diagnostic.
+                break;
+            }
+            cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert_prefetched(target, data);
+        }
+    }
 }
 
 /// The session's image source: the P7 claim on the source file, held for
@@ -51,22 +139,25 @@ pub(crate) struct ImageSource {
     /// The claimed handle — writes denied to every other process from
     /// open until the session drops. For a plain image it is also the
     /// read backing.
-    claim: File,
+    claim: Arc<File>,
     mode: AccessMode,
     backing: Backing,
     len: u64,
-    cache: Mutex<SessionCache>,
+    cache: Arc<Mutex<SessionCache>>,
+    prefetcher: Option<Prefetcher>,
 }
 
 impl ImageSource {
     fn new(claim: File, mode: AccessMode, backing: Backing, len: u64, cache_bytes: u64) -> Self {
-        Self {
-            claim,
-            mode,
-            backing,
-            len,
-            cache: Mutex::new(SessionCache::with_bytes(cache_bytes)),
-        }
+        let claim = Arc::new(claim);
+        let cache = Arc::new(Mutex::new(SessionCache::with_bytes(cache_bytes)));
+        let (file, base) = match &backing {
+            Backing::Claim { offset } => (Arc::clone(&claim), *offset),
+            Backing::Spool(spool) => (Arc::clone(spool), 0),
+        };
+        let prefetcher =
+            (len > 0).then(|| Prefetcher::spawn(Arc::clone(&cache), file, base, len));
+        Self { claim, mode, backing, len, cache, prefetcher }
     }
 
     pub fn len(&self) -> u64 {
@@ -79,6 +170,8 @@ impl ImageSource {
 
     /// Reads `buf` at `offset`, streaming from the backing — the
     /// claimed file, or the session spool — through the session cache.
+    /// Each read also feeds the predictive reader, which follows a
+    /// sequential pattern ahead of demand.
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
         if offset + buf.len() as u64 > self.len {
             return Err(Error::io(format!(
@@ -95,7 +188,12 @@ impl ImageSource {
         self.cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .read_at(&mut device, offset, buf)
+            .read_at(&mut device, offset, buf)?;
+        if let (Some(prefetcher), false) = (&self.prefetcher, buf.is_empty()) {
+            let last_extent = (offset + buf.len() as u64 - 1) / EXTENT * EXTENT;
+            let _ = prefetcher.demand.send(last_extent);
+        }
+        Ok(())
     }
 
     /// The image's leading bytes (up to `limit`), for bounded probes.
@@ -289,7 +387,7 @@ pub(crate) fn resolve_image(path: &Path, cache_bytes: u64) -> Result<ResolvedIma
         // A compressed entry is decoded once, streaming into session
         // storage, and served from there: session-backed under P27.
         EntryData::Deflated { offset, compressed_length } => {
-            let spool = session_storage_file()?;
+            let spool = Arc::new(session_storage_file()?);
             let total = inflate_file_to_spool(
                 &file,
                 offset,

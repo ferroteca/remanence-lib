@@ -754,6 +754,29 @@ mod tests {
     }
 
     #[test]
+    fn sequential_reads_stream_correctly_beside_the_prefetcher() {
+        let path = temp_image_path("session-sequential", "img");
+        let bytes: Vec<u8> = (0..409_600u32).map(|n| (n % 241) as u8).collect();
+        write_file(&path, &bytes);
+
+        // A four-extent bound under a sequential scan: the predictive
+        // reader races ahead while eviction churns behind, and the
+        // results must be identical to an unbounded, unthreaded read.
+        let session = Session::open_with_cache(&path, 4 * 64 * 1024).expect("opens");
+        let mut out = vec![0u8; bytes.len()];
+        let chunk = 64 * 1024;
+        for start in (0..bytes.len()).step_by(chunk) {
+            let end = (start + chunk).min(bytes.len());
+            session
+                .read_at(start as u64, &mut out[start..end])
+                .expect("reads");
+        }
+        assert_eq!(out, bytes);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn session_reports_unknown_container_and_filesystem() {
         let path = temp_image_path("session-unknown", "bin");
         write_file(&path, &[0u8; 10]);

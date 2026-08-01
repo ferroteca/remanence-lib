@@ -210,7 +210,7 @@ impl Disk {
 
         Ok(Self {
             virtual_disk,
-            cache: SessionCache::with_bytes(cache_bytes),
+            cache: SessionCache::with_bytes_offloading(cache_bytes),
             cache_bytes,
             format,
             mode,
@@ -444,6 +444,8 @@ impl Disk {
         // buffered state for the caller.
         let cache_snapshot = self.virtual_disk.cache_snapshot();
         let cache_bytes = self.cache_bytes;
+        // Consuming the altered set joins the offloads in flight first.
+        self.cache.join_offloads();
         self.virtual_disk.host().begin_capture(cache_bytes);
         let staged = self.cache.write_through(self.virtual_disk.device());
         let capture = self.virtual_disk.host().take_capture();
@@ -786,6 +788,7 @@ mod tests {
     /// writes so a test can apply any prefix of them before "crashing".
     fn stage_and_arm(disk: &mut Disk) -> (Vec<(u64, Vec<u8>)>, u64) {
         let cache_bytes = disk.cache_bytes;
+        disk.cache.join_offloads();
         disk.virtual_disk.host().begin_capture(cache_bytes);
         disk.cache
             .write_through(disk.virtual_disk.device())
