@@ -208,3 +208,20 @@ never is.
 The initial set, covering every refusal the library makes today:
 `locked`, `invalid-image`, `unsupported`, `read-only`, `not-found`,
 `not-directory`, `is-directory`, `no-space`, `io`.
+
+### P11 — Portable Rust comes first
+
+Remanence is written as portable Rust, not as a Windows implementation
+with incidental reach elsewhere. Core behavior avoids host-specific
+assumptions unless the operating system forces them, and any necessary
+platform-specific behavior is isolated behind a small internal boundary.
+Public semantics stay the same across platforms; where they cannot, the
+difference is a named refusal rather than a silent divergence.
+
+Windows is the directly tested and wheeled platform today. Linux, macOS,
+and BSD-family systems are expected to remain buildable from source as a
+soft portability obligation, and may become directly tested and wheeled
+platforms when repeatable CI or trusted native builders are added. A
+support claim names the host tuple it covers rather than letting an
+operating-system name imply every architecture that operating system can
+run.
