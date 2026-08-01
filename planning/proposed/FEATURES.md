@@ -53,8 +53,8 @@ volume managers, Windows namespace reconstruction, partition editing, and
 new disk formats remain outside it.
 
 Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U3, U4; P3–P5, P13, P16–P19, P21, P23.
-Needs: F19 pledged and delivered.
+dependent feature lands. Supports: U3, U4; P3–P5, P13, P16–P19, P21, P23,
+P27. Needs: F19 pledged and delivered.
 
 Companion design:
 [design/layered-partition-volume-inspection.md](design/layered-partition-volume-inspection.md).
@@ -96,9 +96,9 @@ P16 partitions and to preserve the relationship from an eligible data track
 to its derived block extent and volume.
 
 Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U18; P3–P5, P12–P15, P19, P21, P23, P24.
-Needs: F19 pledged and delivered. F20 is not a prerequisite; any shared report
-vocabulary must converge before either surface lands.
+dependent feature lands. Supports: U18; P3–P5, P12–P15, P19, P21, P23, P24,
+P27. Needs: F19 pledged and delivered. F20 is not a prerequisite; any shared
+report vocabulary must converge before either surface lands.
 
 Companion design:
 [design/optical-media-representations.md](design/optical-media-representations.md).
@@ -134,9 +134,10 @@ every LaserDisc player. It may support named player profiles behind P15's
 common lifecycle without moving their policy into the image adapters.
 
 Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U19; P3–P5, P12–P15, P19, P21, P23, P24.
-Needs: F19 pledged and delivered. F21 is not a prerequisite; both features
-share P24 and must converge on its optical identities and report vocabulary.
+dependent feature lands. Supports: U19; P3–P5, P12–P15, P19, P21, P23, P24,
+P27. Needs: F19 pledged and delivered. F21 is not a prerequisite; both
+features share P24 and must converge on its optical identities and report
+vocabulary.
 
 Companion design:
 [design/laserdisc-signal-and-program-presentations.md](design/laserdisc-signal-and-program-presentations.md).
@@ -172,9 +173,9 @@ signal-or-recorded-object wording. Repeated reads and redundant KERNAL copies
 remain evidence, not independent media snapshots.
 
 Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U21; P3–P5, P12–P15, P19, P21, P23, P26.
-Needs: F19 pledged and delivered. F20–F22 are not prerequisites, but F20 and
-F23 share the P19 seam and cannot land incompatible public interfaces.
+dependent feature lands. Supports: U21; P3–P5, P12–P15, P19, P21, P23, P26,
+P27. Needs: F19 pledged and delivered. F20–F22 are not prerequisites, but F20
+and F23 share the P19 seam and cannot land incompatible public interfaces.
 
 Companion design:
 [design/computer-tape-representations.md](design/computer-tape-representations.md).

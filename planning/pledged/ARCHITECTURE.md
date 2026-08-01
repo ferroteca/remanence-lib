@@ -358,7 +358,7 @@ different questions and neither replaces the other.
 The hardware emulation layer does not expand track-relative flux positions
 into a durable timeline of absolute-time pulse occurrences, recovered bits,
 bytes, bus transactions, or future effects. When a caller advances time,
-the timing mechanism combines the durable in-memory media state with the
+the timing mechanism combines the durable media state with the
 current mechanism and controller continuation state and generates only the
 transitions needed to reach the requested time or next externally visible
 deadline. Past internal transitions may be discarded once their
@@ -425,7 +425,7 @@ The separation is therefore:
 |---|---|---|
 | family presentation | the controls, signals, or programmed interface at the selected real hardware cut | nothing directly |
 | hardware emulation | timed-causal execution, below-seam electronics, read-channel/mechanism behavior, and ephemeral continuation state | nothing |
-| media | durable in-memory disk state plus evidence/provenance | media state and representable changes |
+| media | durable disk state plus evidence/provenance | media state and representable changes |
 | file container | durable named entries, byte streams, and container metadata | container state and representable changes |
 | image adapter | parsing and encoding one named artifact format | bytes of that format |
 
@@ -687,7 +687,7 @@ amplifier waveforms, magnetic field shapes, and transistor-level behavior
 remain outside the model.
 
 When a low-level composition claims that physical recording path, the flux
-layer is its durable mutable in-memory media state for the session, not a
+layer is its durable mutable media state for the session, not a
 transient stream generated separately for every read. Track-relative flux
 and marker state survives controller interactions and receives modeled
 writes. The timing mechanism projects that circular state into ephemeral
@@ -737,7 +737,7 @@ itself pledge a standalone P64 image adapter or a public flux interface.
 ## P23 — One durable layer is active
 
 Every independently mutable open state instance has exactly one **active
-layer**: the durable in-memory representation against which all of its
+layer**: the durable representation against which all of its
 current presentations read and, when permitted, write. The active layer is
 runtime artifact or media state, not an image-format choice, not a derived
 cache, and not the hardware emulation layer. Several presentations
@@ -764,7 +764,9 @@ interactions as the state instance's continuing mutable truth and is the
 source offered to P2 commit. It does not mean that the representation is
 already serialized, crash-durable, or necessarily encodable by the source
 image format. Persistence is a later capability check against P13 and the
-chosen image adapter.
+chosen image adapter. Nor does durable fix residence: under P27 the state
+may be resident in memory or spilled to private session storage, a resource
+policy that never changes what the layer means.
 
 Block and flux are mutually non-convertible active-layer families. No active
 layer transition crosses between them in either direction. Derived
@@ -868,3 +870,109 @@ hardware-emulation journeys whose physical read paths require flux-active
 media. U8 requires higher file edits over flux-active mixed media to mutate
 only representable regions through derived sector/filesystem views while
 preserving all unrelated lower-layer state.
+
+## P27 — Sessions stream; memory holds a bounded working set
+
+Remanence is sized by the operation, never by the artifact. A source may be a
+floppy image of a few hundred kilobytes or a VHDX, Aaru optical capture, or RF
+recording of a hundred-plus gigabytes; the same open, inspect, read, and write
+journeys serve both, so no layer — encoding, authoritative, active, derived
+view, or uncommitted overlay — is ever loaded whole as a design assumption. An
+operation may visit bytes in proportion to its task; it may hold only a
+bounded working set. An implementation may hold a whole layer only when its
+format bounds that layer's size beneath the working set; every other path
+streams. There is no in-memory escape hatch for a format that resists
+streaming — its route is materialization to private session storage, below.
+
+Every independently mutable state instance has one backing, decided by what
+P23 makes active:
+
+- The active layer is **source-backed** when its image adapter serves bounded
+  random access directly from the source encoding: a raw image by identity,
+  qcow2 or VHDX through their allocation structures, an indexed optical or
+  flux capture through its own tables, a per-block-compressed encoding whose
+  decode cost per access is bounded. Reads stream from the source on demand
+  through the session cache; nothing else is materialized.
+- The active layer is **session-backed** when it cannot: state the source does
+  not encode at bounded random-access cost — a materialized generate-flux or
+  generate-optical layer, downward synthesis, a decoded representation whose
+  encoding permits only sequential access, such as a DEFLATE-compressed entry
+  the operation must address randomly. Session-backed state is produced by a
+  streamed transform into private session storage and is then served exactly
+  as source-backed state is: on demand, through the same cache.
+
+Nesting composes backings. A child artifact's source reads are range requests
+against its parent's presentation, streaming under the same discipline at
+every level of the graph; only an encoding that defeats bounded random access
+forces a child to become session-backed, and recursion never materializes a
+copy per level.
+
+Above either backing sits one cache per state instance. Presentations share it
+— P23 already forbids independently mutable copies — so several views over one
+disk compete for one bounded working set rather than multiplying it. The bound
+and its read-ahead are declared session configuration with a stated default,
+not discovered behavior. The cache is an accelerator, never a truth, and its
+policy follows from two residency classes:
+
+- **Clean state is always evictable.** A clean extent can be dropped and
+  re-read from its backing at will: from the source while the active layer is
+  source-backed — P7 makes that sound, since the claim guarantees the source
+  cannot change beneath the session — and from session storage when it is
+  session-backed. On a small source the cache simply fills until the whole
+  image is resident and disk I/O stops; on a huge one it converges on the
+  operation's locality and full residency never happens. Both are one policy
+  observed at different sizes, not two designs.
+- **Dirty state is never dropped.** The session tracks alteration at extent
+  granularity, because eviction is only lawful when the two classes are
+  distinguishable. Uncommitted changes live in the P2 overlay: held in memory
+  within the session's bound, spilled to private session storage beyond it,
+  and either way nothing reaches the source before commit. Eviction moves
+  dirty state; only rollback discards it; commit projects it.
+
+Commit and materialization stream like everything else. Encoding a result
+through an image adapter never assembles the whole output in memory, and a
+generate transition never expands the new active layer wholesale; each is a
+bounded pipeline from backing to destination. Identification keeps the same
+discipline: a probe reads the bounded evidence its claim names, and a claim
+that must visit every byte streams the visit. This is the durable-state
+sibling of P15's rule that causality is generated, not materialized: neither
+runtime timelines nor resident copies are manufactured to make access
+convenient.
+
+Private session storage takes the shape P9 gave the journal: no user-owned
+file, no cleanup verb, no contract about its location or form, exclusively
+held for the session's life. Unlike the journal it is never load-bearing after
+interruption — spilled overlay and materialized state are exactly what a
+rollback discards, so P9 reconciliation continues to depend on the journal
+alone and an interrupted session's spill is simply discarded.
+
+The public presentations carry the same bound. An operation whose result is
+proportional to source content offers a bounded or streamed form in Rust, C,
+and Python alike (P5), and a whole-value convenience — a file read returning
+owned bytes — is a wrapper over that form, never the only route.
+
+This principle constrains resources, not semantics. It adds no entry to P23's
+active-layer vocabulary and moves no seam: adapters, presentations, evidence,
+and refusals behave identically at every source size, and peak memory bounded
+independently of source size is the testable claim that arms it.
+
+### Knock-on requirements
+
+Arming this principle requires amending in-force P2 in the same act. Its
+commit-point sentence reads "writes buffer in memory and nothing reaches the
+file before the commit": the second half is the load-bearing claim, and the
+first becomes "writes buffer in the session". Until that amendment lands, P2
+binds as written. D2's overlay ruling is untouched either way — the commit
+point remains an overlay, never internal snapshots, and nothing touches the
+host file before commit; this principle generalizes only the overlay's
+residence.
+
+The pledged F19 design's adapter interfaces and shared mechanisms are
+stream-shaped from the first implementation — retrofitting streaming beneath
+delivered adapters would reopen every seam this principle exists to
+protect — and its design document carries the requirement.
+
+Everything still proposed is drafted and judged under this principle from day
+one. A whole-value read in proposed pseudocode is a convenience over the
+streamed form, and a proposal whose service cannot be rendered within a
+bounded working set is not ready to pledge.

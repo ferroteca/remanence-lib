@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 Design for
 [F19](../FEATURES.md#f19--image-format-modules-and-the-built-in-catalogs),
-serving pledged P12–P19 and P21–P23 in
+serving pledged P12–P19, P21–P23, and P27 in
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 This document specifies the destination and delivery cut for the pledged
 feature; it is not an implementation record.
@@ -181,6 +181,24 @@ that path; the refusal occurs before emulation begins. An explicit
 conversion may create a new image whose authoritative layer differs, with
 losses named. Loading, attaching, writing, and saving an existing image
 never change its authoritative layer silently.
+
+## P27 sizes every access by the operation
+
+Every interface in this design is stream-shaped. An image-format adapter
+exposes its addressed device or media state through bounded range access,
+never a whole-source buffer; a serialized-file-container adapter exposes
+entry bytes the same way; recognition probes read the bounded evidence their
+claims name. Decoding, encoding, and materialization are streamed
+transforms. The bounded session cache, its extent-granular alteration
+tracking, and private spill storage are shared mechanisms owned once — one
+cache per independently mutable state instance, shared by every presentation
+over it — while each adapter owns the mapping that makes its encoding
+randomly accessible, or the declaration that it is not, which is what routes
+its layer to source-backed or session-backed service under P27.
+
+Delivering F19 with whole-image residency assumed anywhere would leave P27
+unarmable without reopening every adapter interface, so the constraint binds
+the first implementation, not a later optimization pass.
 
 ## P19 makes file containers the common file-access seam
 
@@ -394,7 +412,8 @@ image formats demonstrate the same rule. Likely shared modules include:
 - probe aggregation and evidence handling;
 - exact byte-reading and checked-range helpers;
 - a fixed-sector-layout helper once multiple raw formats share it;
-- a physical magnetic-media representation for claimed legacy mechanisms.
+- a physical magnetic-media representation for claimed legacy mechanisms;
+- the P27 session cache, alteration tracking, and private spill storage.
 
 The helper owns the mechanism; the image format owns every value and
 choice that gives it meaning. A helper for a coherent image-layout or
@@ -541,6 +560,9 @@ The feature is delivered only when:
   alternatives, and recognized-invalid input keeps its refusal;
 - S1, S3, S4, README, repository guidance, examples, and tests agree that
   image formats are implemented modules rather than caller-authored text;
+- no adapter interface requires, and no delivered path assumes, a whole
+  source resident in memory, and peak memory stays bounded independently of
+  source size (P27);
 - S2 remains semantically aligned under P5; and
 - the core remains runtime-dependency-free.
 
