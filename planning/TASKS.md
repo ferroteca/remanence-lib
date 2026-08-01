@@ -61,11 +61,11 @@ not reusable: the number retires and is never issued again, so one
 surviving in a commit message never resolves to something else
 later, and gaps are history.
 
-**The next number to issue is T7.** Keep this line current. Tasks
-are the one class whose whole population can vanish — the queue
-empties and a struck task's only record is its commit — so nothing
-else would say what the highest number ever issued was. It records
-what the sequence has spent, and is **not** a status column.
+Task numbers issue against [SEQUENCES.md](SEQUENCES.md), advanced in
+the same edit that enters a task. Tasks are the one class whose whole
+population can vanish — the queue empties and a struck task's only
+record is its commit — so the sequence ledger is what records what
+the task sequence has spent. It is **not** a status column.
 
 ## Tasks
 

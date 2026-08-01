@@ -48,8 +48,10 @@ number and issues a fresh one to each piece.
 
 The handles of *vision* — use cases, principles, surfaces,
 decisions — are permanent, and travel into the in-force lists on
-delivery. The handles of *work* evaporate: a delivered feature stops
-existing as an item, leaving code and the norms that specify it, and
+delivery. Every handle sequence issues against
+[SEQUENCES.md](SEQUENCES.md), which is advanced in the same edit that
+issues a number. The handles of *work* evaporate: a delivered
+feature stops existing as an item, leaving code and the norms that specify it, and
 its number retires rather than being reused. Gaps in the sequence
 are history, not a promise.
 
@@ -61,8 +63,8 @@ between two items, never a position in a queue. A date is a promise
 and belongs nowhere here.
 
 **The planning root holds what does not move.** The map, the rule,
-the record and the queue are machinery rather than proposals, and
-none of them has a lifecycle state to be in:
+the record, the queue and the ledger are machinery rather than
+proposals, and none of them has a lifecycle state to be in:
 
 - [README.md](README.md) — this map.
 - [SURFACES.md](SURFACES.md) — the vetting rule. It governs
@@ -75,6 +77,9 @@ none of them has a lifecycle state to be in:
 - [TASKS.md](TASKS.md) — the queue. Work entered there is small and
   **pre-approved**, so there is nothing to promote and no order to
   work it in.
+- [SEQUENCES.md](SEQUENCES.md) — the handle ledger. It records the
+  next number to issue for every handle class, and says nothing about
+  status, priority, or work order.
 
 The in-force artifacts live at the **repository root**, not here,
 because they are claims about the code as it exists today:

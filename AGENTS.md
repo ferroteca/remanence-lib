@@ -62,10 +62,11 @@ C ABI. The Rust code here is now the authoritative implementation.
   surfaces", where the housekeeping lookup answers by checklist.
   `planning/DECISIONS.md` is the adjudication record — **search it before
   a governed act** (drafting a proposal, pledging one, changing a norm)
-  and report what you found, including nothing. `planning/TASKS.md` is the
-  pre-approved task queue: **agents do not add tasks on their own
-  initiative, and ask before editing that file at all**; anyone may pick
-  up what is already there.
+  and report what you found, including nothing. `planning/SEQUENCES.md`
+  is the handle ledger; advance it in the same edit that issues a
+  handle. `planning/TASKS.md` is the pre-approved task queue: **agents
+  do not add tasks on their own initiative, and ask before editing that
+  file at all**; anyone may pick up what is already there.
 - **The vision is in force.** Use cases U1–U6 (root
   [USE-CASES.md](USE-CASES.md)) and architectural principles P1–P11
   (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
