@@ -884,8 +884,8 @@ format bounds that layer's size beneath the working set; every other path
 streams. There is no in-memory escape hatch for a format that resists
 streaming — its route is materialization to private session storage, below.
 
-Every independently mutable state instance has one backing, decided by what
-P23 makes active:
+Every independently mutable state instance has one backing for its active
+layer, decided by what P23 makes active:
 
 - The active layer is **source-backed** when its image adapter serves bounded
   random access directly from the source encoding: a raw image by identity,
@@ -907,11 +907,14 @@ every level of the graph; only an encoding that defeats bounded random access
 forces a child to become session-backed, and recursion never materializes a
 copy per level.
 
-Above either backing sits one cache per state instance. Presentations share it
-— P23 already forbids independently mutable copies — so several views over one
-disk compete for one bounded working set rather than multiplying it. The bound
-and its read-ahead are declared session configuration with a stated default,
-not discovered behavior. The cache is an accelerator, never a truth, and its
+Above the backing, caching is per modeled layer. Every durable layer a state
+instance currently models — its active layer, and any derived layer a
+requested presentation has materialized above it — has its own cache,
+streaming under the same rules, and a session's declared bound is one budget
+its layer caches share. One layer is one cache: presentations at that layer
+share it and never maintain independently mutable copies (P23).
+
+The **active layer's cache** carries the session's mutable truth, and its
 policy follows from two residency classes:
 
 - **Clean state is always evictable.** A clean extent can be dropped and
@@ -928,6 +931,61 @@ policy follows from two residency classes:
   within the session's bound, spilled to private session storage beyond it,
   and either way nothing reaches the source before commit. Eviction moves
   dirty state; only rollback discards it; commit projects it.
+
+A **derived layer's cache** is an accelerator, never a truth. Its extents are
+generated on demand by the family's derivation over the layer below — CHS
+sectors decoded from active flux when sector access arrives — and it holds
+only clean state: a derived write completes downward first, after which
+regeneration reproduces it, so a derived cache evicts freely and never
+spills. The layer caches are tied through the derivation mapping, in both
+directions:
+
+- **A derived write projects down in the same act.** A write at a derived
+  layer alters its cache only together with its projection through the
+  derivation into the layer below, reaching the active layer's cache — P23's
+  rule that writes land in the active layer, kept under caching. A write
+  whose projection is refused alters nothing at any layer.
+- **A lower write invalidates upward.** A write landing in a lower layer —
+  projected from above, or made directly through a lower presentation —
+  invalidates the overlapping extents of every derived cache above it, so a
+  stale decode is never served; the next read regenerates from the changed
+  state.
+
+A C64 floppy carries the shape. A P64 source pins the active layer at flux:
+flux streams from the image and altered flux spills to session storage.
+Sector-level access derives a CHS cache above it; a sector write alters that
+cache and its flux projection together, and a hardware-level flux write
+invalidates the sectors it underlies. A sector-format source is instead
+CHS-active with one cache — until a hardware request performs P23's
+generate-flux transition: the materialized flux becomes the active layer,
+session-backed, and the CHS cache is rebound as derived above it, both
+layers caching from then on.
+
+Layer caches may work ahead of demand, concurrently. The library may use
+threads to predict, prefetch, and offload: reading source extents ahead of a
+detected access pattern, deriving upper-layer extents before they are asked
+for, running a materializing conversion's pipeline in parallel, and moving
+the cache's own extents out ahead of memory pressure — spilling altered
+ones, dropping clean ones — with the standard library's threads alone, since
+the core takes no runtime dependency. Four rules keep the concurrency
+observationally invisible. Prefetch produces only clean state: cache extents
+identical to what the caller's own miss would have loaded or derived, never
+a mutation — dirty state, downward projection, commit, and every refusal
+remain synchronous acts of the caller's operation. Offload never gaps the
+truth: an altered extent leaves memory only once its spill write has
+completed, and every act that consumes the altered set — write-through,
+commit, rollback — first joins the offloads in flight. The work spends the
+declared budget: predictive depth is part of the declared read-ahead, its
+extents compete inside the session's one bound, and a demand miss always
+outranks a prediction. And speculation is silent: a failed speculative read
+caches nothing and reports nothing — the caller's own access, if it comes,
+re-attempts and owns the diagnostic (P6) — so results, evidence, and
+refusals are identical with any number of threads, including none. The P7
+claim is what makes concurrent source reads sound: nothing can change the
+file beneath the readers.
+
+The bound and its read-ahead are declared session configuration with a stated
+default, not discovered behavior.
 
 Commit and materialization stream like everything else. Encoding a result
 through an image adapter never assembles the whole output in memory, and a
