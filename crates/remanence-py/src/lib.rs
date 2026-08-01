@@ -475,10 +475,19 @@ impl Session {
         self.inner.image_path().display().to_string()
     }
 
-    /// The resolved image bytes.
+    /// The resolved image's size in bytes.
     #[getter]
-    fn bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, self.inner.bytes())
+    fn size_bytes(&self) -> u64 {
+        self.inner.size_bytes()
+    }
+
+    /// Reads `length` bytes of the resolved image at `offset` — the
+    /// bounded access form: the image streams from its backing and is
+    /// never resident whole.
+    fn read_at<'py>(&self, py: Python<'py>, offset: u64, length: usize) -> PyResult<Bound<'py, PyBytes>> {
+        let mut buffer = vec![0u8; length];
+        self.inner.read_at(offset, &mut buffer).map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &buffer))
     }
 
     /// Whether the session has unsaved modifications.
@@ -509,16 +518,17 @@ impl Session {
         })
     }
 
-    /// Parses the HDOS directory from the session's image bytes.
+    /// Parses the HDOS directory from the session's image.
     fn list_hdos_files(&self) -> PyResult<Vec<HdosFile>> {
-        remanence::list_hdos_files(self.inner.bytes())
+        self.inner
+            .list_hdos_files()
             .map(|files| files.iter().map(HdosFile::new).collect())
             .map_err(to_py_err)
     }
 
     /// Reads a cataloged HDOS file's contents out of the session's image.
     fn read_hdos_file<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = remanence::read_hdos_file(self.inner.bytes(), name).map_err(to_py_err)?;
+        let bytes = self.inner.read_hdos_file(name).map_err(to_py_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
 

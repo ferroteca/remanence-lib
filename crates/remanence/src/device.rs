@@ -427,36 +427,41 @@ impl Device for FileDevice {
     }
 }
 
-/// A read-only device over an in-memory byte buffer (used by
-/// identification, which already holds the session bytes).
-pub(crate) struct SliceDevice<'a> {
-    bytes: &'a [u8],
+/// A read-only device over a byte range of an already-claimed file:
+/// positioned reads, no resident copy. The session cache streams
+/// identification reads through this (pledged P27).
+pub(crate) struct FileRangeDevice<'a> {
+    file: &'a File,
+    base: u64,
+    len: u64,
 }
 
-impl<'a> SliceDevice<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes }
+impl<'a> FileRangeDevice<'a> {
+    pub fn new(file: &'a File, base: u64, len: u64) -> Self {
+        Self { file, base, len }
     }
 }
 
-impl Device for SliceDevice<'_> {
+impl Device for FileRangeDevice<'_> {
     fn len(&self) -> u64 {
-        self.bytes.len() as u64
+        self.len
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        let start = usize::try_from(offset)
-            .map_err(|_| Error::io("read offset out of range".to_owned()))?;
-        let end = start
-            .checked_add(buf.len())
-            .filter(|&end| end <= self.bytes.len())
-            .ok_or_else(|| Error::io("read past end of buffer".to_owned()))?;
-        buf.copy_from_slice(&self.bytes[start..end]);
-        Ok(())
+        if offset + buf.len() as u64 > self.len {
+            return Err(Error::io(format!(
+                "read past end of image (offset {offset}, length {})",
+                buf.len()
+            )));
+        }
+        read_exact_at(self.file, self.base + offset, buf)
+            .map_err(|error| Error::io(format!("read from claimed source failed: {error}")))
     }
 
     fn write_at(&mut self, _offset: u64, _data: &[u8]) -> Result<()> {
-        Err(Error::read_only("in-memory device is read-only".to_owned()))
+        Err(Error::read_only(
+            "a claimed identification source is read-only".to_owned(),
+        ))
     }
 
     fn flush(&mut self) -> Result<()> {

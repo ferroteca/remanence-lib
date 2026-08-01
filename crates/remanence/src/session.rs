@@ -3,16 +3,22 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::archive::{self, ArchiveLayer, SourceClaim};
+use crate::archive::{self, ArchiveLayer, ImageSource, SourceDevice};
 use crate::container;
-use crate::device::{AccessMode, SliceDevice};
+use crate::device::AccessMode;
 use crate::error::Result;
 use crate::fat::FatVolume;
 use crate::filesystem;
+use crate::hdos::HdosFile;
 use crate::image::DiskImage;
 use crate::mbr;
 use crate::qcow2::Qcow2;
 use crate::registry::{ContainerFormat, FormatRegistry};
+
+/// The largest image the HDOS reader will materialize (P27): HDOS lives
+/// on small vintage disks, so anything larger is refused by size before
+/// a byte of it is loaded.
+const HDOS_IMAGE_BOUND: u64 = 8 * 1024 * 1024;
 
 /// What role a detected container plays in the image's layering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,16 +255,18 @@ fn container_from_layer(layer: ArchiveLayer) -> Container {
 /// An open analysis session over one disk image.
 ///
 /// The session holds the P7 claim on its source file — writes denied to
-/// every other process — from open until it is dropped.
+/// every other process — from open until it is dropped. The claim is
+/// also the read backing: image bytes are never loaded whole, they
+/// stream from the claimed file through the session cache (pledged
+/// P27), and access is by bounded reads.
 #[derive(Debug)]
 pub struct Session {
     path: PathBuf,
     image_path: PathBuf,
-    bytes: Vec<u8>,
+    source: ImageSource,
     registry: FormatRegistry,
     containers: Vec<Container>,
     modified: bool,
-    claim: SourceClaim,
 }
 
 impl Session {
@@ -280,11 +288,10 @@ impl Session {
         Ok(Self {
             path: resolved.source_path,
             image_path: resolved.image_path,
-            bytes: resolved.bytes,
+            source: resolved.source,
             registry,
             containers,
             modified: false,
-            claim: resolved.claim,
         })
     }
 
@@ -292,7 +299,7 @@ impl Session {
     /// normally, `ReadOnly` when the file or media denies us write
     /// permission (writes are still denied to every other process).
     pub fn access_mode(&self) -> AccessMode {
-        self.claim.mode
+        self.source.mode()
     }
 
     pub fn path(&self) -> &Path {
@@ -303,8 +310,33 @@ impl Session {
         &self.image_path
     }
 
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+    /// The resolved image's size in bytes.
+    pub fn size_bytes(&self) -> u64 {
+        self.source.len()
+    }
+
+    /// Reads `buf` from the resolved image at `offset` — the bounded
+    /// access form (pledged P27): the image streams from its backing
+    /// through the session cache, and no operation requires it resident
+    /// whole.
+    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.source.read_at(offset, buf)
+    }
+
+    /// Parses the HDOS directory from the session's image. HDOS images
+    /// are bounded small by their formats, so the whole volume is read
+    /// through the cache; an image past the bound is refused by size,
+    /// never loaded (P27).
+    pub fn list_hdos_files(&self) -> Result<Vec<HdosFile>> {
+        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
+        crate::hdos::list_hdos_files(&bytes)
+    }
+
+    /// Copies one HDOS file's bytes out of the session's image, under
+    /// the same size bound as [`Session::list_hdos_files`].
+    pub fn read_hdos_file(&self, name: &str) -> Result<Vec<u8>> {
+        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
+        crate::hdos::read_hdos_file(&bytes, name)
     }
 
     pub fn registry(&self) -> &FormatRegistry {
@@ -330,8 +362,16 @@ impl Session {
     }
 
     /// Identifies the image's container layers and probable filesystem.
+    /// Probes read bounded evidence — a leading prefix, the length, the
+    /// name — never the whole image (pledged P27).
     pub fn identify(&self) -> Identification {
-        let container = container::detect(&self.bytes, Some(&self.image_path), &self.registry);
+        let prefix = self.source.prefix(512).unwrap_or_default();
+        let container = container::detect(
+            self.source.len(),
+            &prefix,
+            Some(&self.image_path),
+            &self.registry,
+        );
         let mut evidence = container.evidence;
 
         for existing in &self.containers {
@@ -348,7 +388,7 @@ impl Session {
             }
         }
 
-        let current_bytes = self.bytes.len() as u64;
+        let current_bytes = self.source.len();
 
         let Some(container_id) = container.container_id else {
             let image_container = unknown_image(SizeInformation {
@@ -411,42 +451,69 @@ impl Session {
             current_bytes,
         );
 
-        let image = match DiskImage::from_bytes(format, self.bytes.clone()) {
-            Ok(image) => image,
-            Err(_) => {
-                evidence.push(format!("invalid container '{container_id}'"));
-                return Identification {
-                    containers: self.containers_with(vec![
-                        image_container,
-                        physical_media,
-                        unknown_filesystem(),
-                    ]),
-                    modified: self.modified,
-                    evidence,
-                };
-            }
-        };
+        // A size mismatch against a bounded format is an invalid
+        // container, refused before a byte of the payload is read.
+        if expected_bytes.is_some_and(|expected| expected != current_bytes) {
+            evidence.push(format!("invalid container '{container_id}'"));
+            return Identification {
+                containers: self.containers_with(vec![
+                    image_container,
+                    physical_media,
+                    unknown_filesystem(),
+                ]),
+                modified: self.modified,
+                evidence,
+            };
+        }
 
-        let filesystem = filesystem::detect(&image, &self.registry);
-        evidence.extend(filesystem.evidence);
-
-        let filesystem_container = match (filesystem.filesystem_id, filesystem.filesystem_name) {
-            (Some(id), Some(name)) => Container {
-                kind: ContainerKind::Filesystem,
-                id,
-                name,
-                confidence: filesystem.confidence,
-                known: true,
-                size: SizeInformation {
-                    current_bytes: Some(current_bytes),
-                    expected_bytes,
-                },
-                layout: ContainerLayout::Filesystem(FilesystemLayout {
-                    offset_bytes: Some(0),
-                    length_bytes: Some(current_bytes),
-                }),
+        // Filesystem heuristics scan image bytes, so they run only over
+        // formats whose declared size bounds the image (P27); an
+        // unbounded container is walked by its own driver instead.
+        let filesystem_container = match expected_bytes {
+            Some(_) => match self
+                .source
+                .bytes_bounded(current_bytes, &container_id)
+                .and_then(|bytes| DiskImage::from_bytes(format, bytes))
+            {
+                Ok(image) => {
+                    let filesystem = filesystem::detect(&image, &self.registry);
+                    evidence.extend(filesystem.evidence);
+                    match (filesystem.filesystem_id, filesystem.filesystem_name) {
+                        (Some(id), Some(name)) => Container {
+                            kind: ContainerKind::Filesystem,
+                            id,
+                            name,
+                            confidence: filesystem.confidence,
+                            known: true,
+                            size: SizeInformation {
+                                current_bytes: Some(current_bytes),
+                                expected_bytes,
+                            },
+                            layout: ContainerLayout::Filesystem(FilesystemLayout {
+                                offset_bytes: Some(0),
+                                length_bytes: Some(current_bytes),
+                            }),
+                        },
+                        _ => unknown_filesystem(),
+                    }
+                }
+                Err(_) => {
+                    evidence.push(format!("invalid container '{container_id}'"));
+                    return Identification {
+                        containers: self.containers_with(vec![
+                            image_container,
+                            physical_media,
+                            unknown_filesystem(),
+                        ]),
+                        modified: self.modified,
+                        evidence,
+                    };
+                }
             },
-            _ => unknown_filesystem(),
+            None => {
+                evidence.push("no filesystem signatures found".to_owned());
+                unknown_filesystem()
+            }
         };
 
         // A qcow2 container gets its virtual-disk layers reported too
@@ -470,8 +537,10 @@ impl Session {
 
     /// Walks a qcow2 session's virtual disk — header, partitions, FAT
     /// volumes — and returns one Filesystem container per volume read.
+    /// The walk streams from the claimed file through the session cache
+    /// (pledged P27); the container is never resident whole.
     fn qcow2_layers(&self, evidence: &mut Vec<String>) -> Result<Vec<Container>> {
-        let mut qcow2 = Qcow2::open(SliceDevice::new(&self.bytes))?;
+        let mut qcow2 = Qcow2::open(SourceDevice(&self.source))?;
         let header = qcow2.header().clone();
         evidence.push(format!(
             "qcow2 version {}, virtual size {} bytes",
@@ -575,7 +644,10 @@ mod tests {
 
         assert!(!session.is_modified());
         assert!(!identification.modified);
-        assert_eq!(session.bytes().len(), 102_400);
+        assert_eq!(session.size_bytes(), 102_400);
+        let mut probe = [0u8; 16];
+        session.read_at(102_384, &mut probe).expect("bounded read");
+        assert_eq!(probe, [0u8; 16]);
         assert_eq!(identification.containers.len(), 3);
 
         let image = &identification.containers[0];

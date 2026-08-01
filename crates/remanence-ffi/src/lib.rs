@@ -420,25 +420,45 @@ pub unsafe extern "C" fn remanence_session_image_path(session: *const RemanenceS
     }
 }
 
-/// The resolved image bytes; valid until the session is freed.
+/// The resolved image's size in bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_bytes(
-    session: *const RemanenceSession,
-    length_out: *mut usize,
-) -> *const u8 {
+pub unsafe extern "C" fn remanence_session_size_bytes(session: *const RemanenceSession) -> u64 {
     match unsafe { session.as_ref() } {
-        Some(session) => {
-            let bytes = session.session.bytes();
-            if !length_out.is_null() {
-                unsafe { *length_out = bytes.len() };
-            }
-            bytes.as_ptr()
-        }
-        None => {
-            if !length_out.is_null() {
-                unsafe { *length_out = 0 };
-            }
-            ptr::null()
+        Some(session) => session.session.size_bytes(),
+        None => 0,
+    }
+}
+
+/// Reads `length` bytes of the resolved image at `offset` into
+/// `buffer_out` — the bounded access form: the image streams from its
+/// backing and is never resident whole. Returns false on failure and
+/// stores a message in `error_out` (free with `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_read_at(
+    session: *const RemanenceSession,
+    offset: u64,
+    buffer_out: *mut u8,
+    length: usize,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out) };
+    let Some(session) = (unsafe { session.as_ref() }) else {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    if buffer_out.is_null() {
+        let error = remanence::Error::io("null buffer");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    }
+    let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
+    match session.session.read_at(offset, buffer) {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            false
         }
     }
 }
@@ -880,7 +900,7 @@ pub unsafe extern "C" fn remanence_list_hdos_files(
     hdos_list_from_bytes(bytes, error_category_out, error_out)
 }
 
-/// Parses the HDOS directory from a session's image bytes. Returns null on
+/// Parses the HDOS directory from a session's image. Returns null on
 /// failure and stores a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_list_hdos_files(
@@ -894,7 +914,16 @@ pub unsafe extern "C" fn remanence_session_list_hdos_files(
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    hdos_list_from_bytes(session.session.bytes(), error_category_out, error_out)
+    match session.session.list_hdos_files() {
+        Ok(files) => {
+            let files = files.iter().map(HdosFileView::new).collect();
+            Box::into_raw(Box::new(RemanenceHdosFileList { files }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
 }
 
 /// Frees an HDOS file list handle.
@@ -1858,7 +1887,7 @@ pub unsafe extern "C" fn remanence_read_hdos_file(
     }
 }
 
-/// Reads a cataloged HDOS file out of a session's image bytes. Free with
+/// Reads a cataloged HDOS file out of a session's image. Free with
 /// `remanence_file_data_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_read_hdos_file(
@@ -1878,7 +1907,7 @@ pub unsafe extern "C" fn remanence_session_read_hdos_file(
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match read_hdos_file(session.session.bytes(), name.as_ref()) {
+    match session.session.read_hdos_file(name.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };

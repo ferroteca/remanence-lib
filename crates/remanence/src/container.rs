@@ -14,10 +14,13 @@ pub(crate) struct ContainerIdentification {
     pub evidence: Vec<String>,
 }
 
-/// Scores every registered container format against the image bytes and the
-/// (optional) file name, returning the highest-confidence match.
+/// Scores every registered container format against the image's length,
+/// leading bytes, and (optional) file name, returning the
+/// highest-confidence match. The probe is bounded (pledged P27): every
+/// heuristic here reads the length or the prefix, never the whole image.
 pub(crate) fn detect(
-    bytes: &[u8],
+    len: u64,
+    prefix: &[u8],
     file_name: Option<&Path>,
     registry: &FormatRegistry,
 ) -> ContainerIdentification {
@@ -38,14 +41,14 @@ pub(crate) fn detect(
         let mut evidence = Vec::new();
 
         if let Some(expected_size) = container.expected_size() {
-            if bytes.len() == expected_size {
+            if len == expected_size as u64 {
                 confidence = confidence.saturating_add(80);
                 evidence.push(format!("matched expected size of {expected_size} bytes"));
             }
         }
 
         if let Some(magic) = &container.magic {
-            if bytes.starts_with(magic) {
+            if prefix.starts_with(magic) {
                 confidence = confidence.saturating_add(80);
                 evidence.push(format!(
                     "matched {}-byte magic signature",
@@ -87,8 +90,8 @@ mod tests {
     fn identifies_h8d_by_size_and_extension() {
         let registry = default_format_registry().expect("default registry");
 
-        let bytes = vec![0u8; 102_400];
-        let identification = detect(&bytes, Some(Path::new("disk.h8d")), &registry);
+        let identification =
+            detect(102_400, &[0u8; 512], Some(Path::new("disk.h8d")), &registry);
 
         assert_eq!(identification.container_id.as_deref(), Some("h8d"));
         assert_eq!(
@@ -102,8 +105,7 @@ mod tests {
     fn returns_no_container_when_metadata_does_not_match() {
         let registry = default_format_registry().expect("default registry");
 
-        let bytes = vec![0u8; 10];
-        let identification = detect(&bytes, Some(Path::new("disk.bin")), &registry);
+        let identification = detect(10, &[0u8; 10], Some(Path::new("disk.bin")), &registry);
 
         assert_eq!(identification.container_id, None);
         assert_eq!(identification.container_name, None);

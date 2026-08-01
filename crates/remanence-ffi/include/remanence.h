@@ -126,8 +126,19 @@ const char *remanence_session_path(const RemanenceSession *session);
 // The resolved image path (the entry name for ZIP inputs).
 const char *remanence_session_image_path(const RemanenceSession *session);
 
-// The resolved image bytes; valid until the session is freed.
-const uint8_t *remanence_session_bytes(const RemanenceSession *session, size_t *length_out);
+// The resolved image's size in bytes.
+uint64_t remanence_session_size_bytes(const RemanenceSession *session);
+
+// Reads `length` bytes of the resolved image at `offset` into
+// `buffer_out` — the bounded access form: the image streams from its
+// backing and is never resident whole. Returns false on failure and
+// stores a message in `error_out` (free with `remanence_string_free`).
+bool remanence_session_read_at(const RemanenceSession *session,
+                               uint64_t offset,
+                               uint8_t *buffer_out,
+                               size_t length,
+                               RemanenceErrorCategory *error_category_out,
+                               char **error_out);
 
 // Whether the session has unsaved modifications.
 bool remanence_session_is_modified(const RemanenceSession *session);
@@ -279,7 +290,7 @@ RemanenceHdosFileList *remanence_list_hdos_files(const uint8_t *bytes,
                                                  RemanenceErrorCategory *error_category_out,
                                                  char **error_out);
 
-// Parses the HDOS directory from a session's image bytes. Returns null on
+// Parses the HDOS directory from a session's image. Returns null on
 // failure and stores a message in `error_out` (free with `remanence_string_free`).
 RemanenceHdosFileList *remanence_session_list_hdos_files(const RemanenceSession *session,
                                                          RemanenceErrorCategory *error_category_out,
@@ -555,7 +566,7 @@ RemanenceFileData *remanence_read_hdos_file(const uint8_t *bytes,
                                             RemanenceErrorCategory *error_category_out,
                                             char **error_out);
 
-// Reads a cataloged HDOS file out of a session's image bytes. Free with
+// Reads a cataloged HDOS file out of a session's image. Free with
 // `remanence_file_data_free`.
 RemanenceFileData *remanence_session_read_hdos_file(const RemanenceSession *session,
                                                     const char *name,

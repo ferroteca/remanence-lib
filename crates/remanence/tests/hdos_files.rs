@@ -29,7 +29,7 @@ fn lists_files_from_hdos_fixture_image() {
     let path = private_copy("list");
     let session = Session::open(&path).expect("session opens");
 
-    let files = list_hdos_files(session.bytes()).expect("directory parses");
+    let files = session.list_hdos_files().expect("directory parses");
     assert_eq!(files.len(), 31);
 
     assert_eq!(files[0].display_name(), "HDOS.SYS");
@@ -91,7 +91,7 @@ fn reads_a_file_out_through_the_grt_chain() {
     let session = Session::open(&path).expect("session opens");
 
     let contents =
-        remanence::read_hdos_file(session.bytes(), "DEMO.BAS").expect("file reads");
+        session.read_hdos_file("DEMO.BAS").expect("file reads");
     // 3 sectors cataloged: two full groups of 2 plus a final partial group
     // truncates to the last_sector_index — the byte size is
     // sector-granular in HDOS terms.
@@ -104,7 +104,7 @@ fn reads_a_file_out_through_the_grt_chain() {
         .count();
     assert!(printable * 10 >= contents.len() * 9, "mostly text/zero bytes");
 
-    let missing = remanence::read_hdos_file(session.bytes(), "NOPE.NOP");
+    let missing = session.read_hdos_file("NOPE.NOP");
     assert!(missing.is_err());
 
     drop(session);
