@@ -306,3 +306,15 @@ this maps over; and the P19 amendment
 ([ARCHITECTURE.md](ARCHITECTURE.md)) pledged, which is what admits a composer
 that derives a mapping instead of consuming one. D5's deferral is untouched:
 nothing here opens several artifacts together.
+
+## F27 — Degraded, evidence-bounded image access
+
+Replace all-or-nothing failure for a known deficient image with P28's verified, degraded, and refused outcomes. A degraded open preserves the observed deficiency and permits only reads whose complete interpretation is bounded by available evidence; it is irrevocably read-only. This is not recovery, repair, fabricated fill data, or a weaker way to accept an unsupported format.
+
+The initial vertical slice covers caller-selected raw FAT12/FAT16 images and direct filesystem access. A declared image size larger than the source is reported as truncation with declared and observed bounds. The library may enumerate and extract only entries whose metadata and complete cluster chains lie inside the readable extent; a missing-range operation reports the same condition and location. Invalid or ambiguous metadata that prevents those bounds remains a refusal.
+
+S1 exposes outcome, structured observations, readable bounds, effective access mode, and stable degraded condition; S2 and S3 mirror them. A write-intent open that becomes degraded reports its effective read-only mode and why; P7 host-access failure remains an open failure. Every mutation path, including commit, returns the degraded condition.
+
+Touches: S1, S2, S3. S4 is unaffected. Supports: U3; P2–P7, P10, P28. Needs: P28 pledged. The initial FAT slice must fit one sprint; qcow2, archives, HDOS, and later format-specific bounded-read rules are separate features.
+
+Companion design: [design/degraded-evidence-bounded-image-access.md](design/degraded-evidence-bounded-image-access.md).
