@@ -78,6 +78,33 @@ PINBALL_DISK_ONE_NAME = \
 PINBALL_DISK_ONE_STEP_COUNT = 84
 PINBALL_DISK_ONE_MEMBER_COUNT = PINBALL_DISK_ONE_STEP_COUNT * 2
 
+CONTRA_URL = (
+    "https://archive.org/download/"
+    "C64_Preservation_Project_10th_Anniversary_Collection/"
+    "C64_Preservation_Project_10th_Anniversary_Collection.zip/"
+    "c64pp%2Fvmax%2Fcontra%5Bkonami_1988%5D%28vmax3%29%28%21%29.nbz"
+)
+# Served by extracting one member out of the collection zip on the fly,
+# so the pin covers the member, not the collection. Archive.org
+# publishes no hash; this records the file as first fetched
+# (2026-08-03), so a changed upstream is caught, not silently adopted.
+CONTRA_NBZ_SHA256 = \
+    "1d8ae0328e2ae66afcd8792b7873fcfbb66d0ce3d7b71e26923cc3dce841e136"
+CONTRA_NBZ_NAME = "contra[konami_1988](vmax3)(!).nbz"
+
+BEACH_HEAD_URL = (
+    "https://archive.org/download/"
+    "C64_Preservation_Project_10th_Anniversary_Collection/"
+    "C64_Preservation_Project_10th_Anniversary_Collection_G64.zip/"
+    "c64pp-g64-zip%2Fb%2Fbeach-head%5Baccess_1983%5D%28v5%29%28%21%29.zip"
+)
+# As with the nbz above: served by extracting one member out of the
+# collection zip, so the pin covers the member. First fetched
+# 2026-08-03. The member is itself a zip, holding one deflated G64.
+BEACH_HEAD_ZIP_SHA256 = \
+    "f8b532e6d43e082fa76f840ccf0a080d198504b7751381d642f63263f9f680d7"
+BEACH_HEAD_ZIP_NAME = "beach-head[access_1983](v5)(!).zip"
+
 RIG_BLUEPRINT = "remanence-parttest"
 FREEDOS_QCOW2_NAME = "freedos-parttest.qcow2"
 
@@ -127,6 +154,13 @@ def download_archives() -> None:
                       HDOS_ZIP_SHA256)
     _download_archive(DOWNLOADS_DIR / PINBALL_ARCHIVE_NAME, PINBALL_URL,
                       PINBALL_ARCHIVE_SHA256)
+    # A single NIB-compressed disk image, fixture as downloaded — no
+    # member to extract and nothing to repackage, so it lands straight
+    # in the fixtures directory.
+    _download_archive(FIXTURES_DIR / CONTRA_NBZ_NAME, CONTRA_URL,
+                      CONTRA_NBZ_SHA256)
+    _download_archive(FIXTURES_DIR / BEACH_HEAD_ZIP_NAME, BEACH_HEAD_URL,
+                      BEACH_HEAD_ZIP_SHA256)
 
 
 def prepare_hdos_fixtures() -> None:
