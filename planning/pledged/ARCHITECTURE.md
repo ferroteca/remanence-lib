@@ -5,8 +5,8 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, P22, P29, and
-> the P23 and P19 amendments remain
+> **Status:** pledged at the owner's direction. P14, P15, P22, P25, P29,
+> and the P23 and P19 amendments remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
@@ -651,6 +651,66 @@ its own adapter — and it creates no public evidence iterator: the mastering
 plan and its declared-loss account are the surface, and the evidence stays
 behind them.
 
+## P25 — Artifact mappings make nesting recursive
+
+Any recognized structure may expose an evidence-bearing **artifact mapping**
+from part of its state to a possible child artifact. The mapping is the one
+general recursion mechanism whether the child bytes come from a P19
+file-container entry, a filesystem file, an optical boot-catalog extent, a
+partition or volume region whose format defines an embedded image, or another
+typed range declared by a recognized standard. Nesting is not a special
+property of ZIP, ISO, partitions, or any one format family.
+
+An artifact mapping is an edge in the inspection and composition graph, not a
+durable layer, partition, volume, filesystem, file container, or claim that
+the child has been recognized. It names the parent identity, source extent or
+byte projection, applicable standard semantics, evidence, access limits, and
+the path by which a representable child change would return to the parent.
+Opening that source invokes P12 image adapters normally. Successful
+recognition can materialize a child; opening it as an independent state
+instance gives it its own P13 authoritative layer and P23 active layer.
+
+Thus a ZIP may remain file-container-active while its ISO entry is an
+optical-active child; an El Torito boot entry in that disc may open a
+CHS- or block-active boot-disk child; and a P64 stored as a file in the ISO
+filesystem may instead open a flux-active child. These layers coexist because
+they belong to different state instances. They are never multiple active
+copies of one instance, and no parent-to-child mapping converts block into
+flux or optical into block.
+
+Discovery is explicit and lazy. Inspection reports mappings and their
+relationships without recursively opening every candidate, selecting a
+preferred boot entry, or guessing which embedded image the caller wants.
+The caller selects a reported mapping and requests recognition of its child.
+Unsupported, ambiguous, cyclic, excessively deep, or resource-hostile paths
+are bounded and refused with their evidence preserved rather than silently
+skipped or flattened.
+
+Mappings may alias or overlap: an El Torito image can also be a named ISO file,
+and hybrid structures can assign several meanings to the same bytes. Reports
+preserve that identity and overlap. Two paths to the same mutable child must
+share one child state, or conflicting writable composition is refused before
+mutation; independent mutable copies over aliased bytes are forbidden.
+
+Nested commit proceeds from child to parent. Every child result is first
+validated against its image adapter and mapping, then encoded into the parent
+state, continuing outward until the root source is representable. P2 commits
+the validated composition atomically and P7 holds the necessary claims for
+the whole graph. Failure at any seam writes nothing and names the exact child,
+mapping, and representation which could not be encoded.
+
+### What arming it will require
+
+The delivered library does not honor this principle, so it stays here until
+it does. Today nesting is special to ZIP and 7z and is decided by file
+extension; entry resolution is single-level, so an artifact inside an
+artifact inside an artifact cannot be reached at all; nothing reports
+mappings, discovery is neither explicit nor lazy because there is nothing to
+discover; alias and overlap have no representation; and there is no
+child-to-parent nested commit. Those are the delivery gaps, not a list of
+defects — a principle below the root list is unbuilt work, and it becomes a
+bug only when the project asserts the code complies.
+
 ## P19 amendment — a file-bearing interpretation states the scope of its claim
 
 In-force P19 refuses in both directions at the edge of an interpretation: it
@@ -659,35 +719,54 @@ force it through the seam. This amendment adds the positive obligation those
 refusals imply: what a file-bearing view says about the parts of its backing
 it does not interpret.
 
-A file-bearing view derived over a materialized durable layer can account
-for the backing extent it was derived from. In that account, every
-addressable unit of the backing falls in exactly one class:
+Every file-bearing view is a view *of* something: the lowest durable layer
+the session has materialized, which is the source of truth and which the
+view never is. That floor may be an archive's own named-entry state, CHS
+records, logical blocks, or timed flux. Presenting the P19 interface creates
+no layer above that system — the system holds its own structure and exposes
+a view of it — so this obligation falls on the provider that presents,
+whatever it presents. Every addressable unit of the floor falls in exactly
+one class:
 
-- the **data footprint** of an item the namespace names;
-- the **namespace's own structures** — directory records, allocation
-  metadata, boot and reserved structures the interpretation claims;
+- the **data hook** of an item the namespace names;
+- the **structures the interpretation claims for itself** — directory
+  records, allocation metadata, boot and reserved areas, an archive's local
+  headers and central directory;
 - space the allocation metadata **claims free** — recorded as that
   metadata's claim, never as a verdict that the extent is empty, disposable,
   or safe to reuse; or
 - an **opaque region** — an extent the interpretation does not claim.
 
-A valid namespace does not assert that every extent of its backing layer
-belongs to it. The opaque remainder is itemized without a name: it stands
-beside the namespace with its footprint stated in the backing layer's own
-addressing, readable under P2 as evidence, its meaning left to whatever
-lower seam claims it. It is never listed as a namespace entry — the
-pseudo-file rule stands — never reported as free space, and never silently
-dropped from the view. Footprints, including an opaque region's, are stated
-in the backing layer's addressing vocabulary because that is the only
+A valid namespace does not assert that every extent of its floor belongs to
+it. Being a view rather than the truth is exactly what permits that: a truth
+layer must account for everything because it *is* everything, while a view
+may present what it can explain and name the rest. The opaque remainder is
+itemized without a name: it stands beside the namespace with its hook stated
+in the floor's own addressing, readable under P2 as evidence, its meaning
+left to whatever other reading claims it. It is never listed as a namespace
+entry — the pseudo-file rule stands — never reported as free space, and
+never silently dropped from the view. Hooks, including an opaque region's,
+are stated in the floor's addressing vocabulary because that is the only
 vocabulary in which the account can be checked for totality.
 
 The account is a report the view can produce, not work the open performs:
 when it is computed is a resource question under P27, and computing it
-mutates nothing (P2). Its classes are claims carrying P4 evidence, and a
-backing extent the interpretation cannot classify is opaque rather than
-guessed into a class.
+mutates nothing (P2). Its classes are claims carrying P4 evidence, and an
+extent the interpretation cannot classify is opaque rather than guessed into
+a class.
 
-Where the file container is itself the active layer — a serialized container
-such as ZIP — there is no materialized layer beneath it, no footprints, and
-no coverage account. Source bytes the adapter's grammar does not account for
-are that adapter's evidence under P3 and P4, not opaque regions.
+The obligation does not vary with the kind of floor. A serialized container
+presents a view of its own named-entry state, and bytes of the archive its
+grammar does not account for — a self-extractor stub, padding between
+members, data appended past the end of the directory — are opaque regions in
+the same sense a protection track is opaque to a Commodore directory. Both
+say the same thing: this interpretation does not explain this part of the
+artifact.
+
+Nothing is written through a view. The provider owning the floor performs a
+write against the floor and the view is regenerated from the result, so no
+view holds mutable state that could diverge from the truth it presents. A
+view is likewise regenerated rather than migrated when the floor moves — a
+sector image whose composition later descends to flux is presented by a new
+view in flux addressing. Several views may coexist over one floor, since
+none of them is mutable and none is the truth.

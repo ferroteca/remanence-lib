@@ -102,54 +102,6 @@ different active representations, not concurrently mutable peers. A derived
 eligible block presentation over optical state does not make block active;
 an ISO opened only as blocks does not make optical active.
 
-## P25 — Artifact mappings make nesting recursive
-
-Any recognized structure may expose an evidence-bearing **artifact mapping**
-from part of its state to a possible child artifact. The mapping is the one
-general recursion mechanism whether the child bytes come from a P19
-file-container entry, a filesystem file, an optical boot-catalog extent, a
-partition or volume region whose format defines an embedded image, or another
-typed range declared by a recognized standard. Nesting is not a special
-property of ZIP, ISO, partitions, or any one format family.
-
-An artifact mapping is an edge in the inspection and composition graph, not a
-durable layer, partition, volume, filesystem, file container, or claim that
-the child has been recognized. It names the parent identity, source extent or
-byte projection, applicable standard semantics, evidence, access limits, and
-the path by which a representable child change would return to the parent.
-Opening that source invokes P12 image adapters normally. Successful
-recognition can materialize a child; opening it as an independent state
-instance gives it its own P13 authoritative layer and P23 active layer.
-
-Thus a ZIP may remain file-container-active while its ISO entry is an
-optical-active child; an El Torito boot entry in that disc may open a
-CHS- or block-active boot-disk child; and a P64 stored as a file in the ISO
-filesystem may instead open a flux-active child. These layers coexist because
-they belong to different state instances. They are never multiple active
-copies of one instance, and no parent-to-child mapping converts block into
-flux or optical into block.
-
-Discovery is explicit and lazy. Inspection reports mappings and their
-relationships without recursively opening every candidate, selecting a
-preferred boot entry, or guessing which embedded image the caller wants.
-The caller selects a reported mapping and requests recognition of its child.
-Unsupported, ambiguous, cyclic, excessively deep, or resource-hostile paths
-are bounded and refused with their evidence preserved rather than silently
-skipped or flattened.
-
-Mappings may alias or overlap: an El Torito image can also be a named ISO file,
-and hybrid structures can assign several meanings to the same bytes. Reports
-preserve that identity and overlap. Two paths to the same mutable child must
-share one child state, or conflicting writable composition is refused before
-mutation; independent mutable copies over aliased bytes are forbidden.
-
-Nested commit proceeds from child to parent. Every child result is first
-validated against its image adapter and mapping, then encoded into the parent
-state, continuing outward until the root source is representable. P2 commits
-the validated composition atomically and P7 holds the necessary claims for
-the whole graph. Failure at any seam writes nothing and names the exact child,
-mapping, and representation which could not be encoded.
-
 ## P26 — Computer tape has a family-owned active layer
 
 A computer-tape capture uses exactly one durable active representation owned

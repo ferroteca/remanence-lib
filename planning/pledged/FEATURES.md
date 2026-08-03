@@ -55,12 +55,14 @@ Touches: S1, S2, S3. Supports: U7, U23; P1, P3, P4, P6, P8, P9, P12, P13, P22, P
 
 Companion design: [design/p64-image-adapter.md](design/p64-image-adapter.md).
 
-## F35 — Private FileContainerLayer v1 foundation
+## F35 — The file-container presentation contract
 
-Establish the private, common file-container model behind the P19 seam and its bounded session backing: items distinct from the names that reach them, optionally hierarchical namespaces over one item pool, the metadata superset contract with source spelling and order preserved, per-item footprints in a materialized backing layer, and the coverage account whose remainder is the opaque regions. It is the common target of file-bearing providers — serialized-container catalogs, filesystem adapters, and namespace composers — not a public iterator, an interchange format, or a new archive grammar.
+Establish the private interface every file-bearing provider presents through at the P19 seam, and the vocabulary they answer in. **No file-container layer is created**: a ZIP grammar, a FAT volume, a Commodore directory, and a composed namespace already hold their own structure and simply present a view of it, so there is no intermediate representation to copy into and nothing to invalidate. The interface is navigational — roots, one container's entries, one item's facts, its hook, its content — so a provider answers by reading what it was asked about (P27).
 
-Every source fact maps to a named model fact, an adapter-namespaced declared fact, or a named refusal. The namespace lists only what the source names; an opaque region is itemized without a name, never manufactured into a pseudo-file. Unit tests build small synthetic layers and verify name/item separation, source-order and spelling retention, footprint accounting, coverage totality, and bounded reload without any filesystem or archive grammar.
+The vocabulary is the deliverable's substance: names distinct from items, recorded name bytes beside the provider's claimed encoding and conversion, `SizeClaim` carrying what the claim is about, declared facts and foreign records under the two-outcome rule with source spelling and order preserved, and each item's hook into the floor. A presentation is never the truth (D10) and nothing is written through it. The coverage account is the one computed value, produced on request, total by construction over whatever floor the provider presents — so an archive's unaccounted bytes and a disk's unclaimed track are opaque regions in the same sense, itemized without names and never manufactured into pseudo-files.
+
+Unit tests exercise the contract through a synthetic provider: name/item separation, source-order and spelling retention, coverage totality and overlap refusal over more than one addressing vocabulary, and content reached as a bounded descriptor — without any filesystem or archive grammar.
 
 Touches: none. Supports: P2, P3, P4, P13, P19, P23, P27. Needs: the P19 scope amendment pledged.
 
-Companion design: [design/file-container-layer-foundation.md](design/file-container-layer-foundation.md).
+Companion design: [design/file-container-presentation.md](design/file-container-presentation.md).

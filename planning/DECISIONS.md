@@ -58,6 +58,58 @@ removes it is the record either way.
 
 ## Decisions
 
+### D10 — The truth is the lowest materialized layer; file container is an interface, not a layer
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** P19, P23, P25.
+
+**The rule, in the owner's words:** the lowest durable layer the session has
+materialized is the source of truth. A file-container view has real
+utility — display, envisioning structure, and the account of what an
+interpretation claims — but it is not the truth. And there is **no container
+layer above these systems at all**: a ZIP grammar, a FAT volume, a Commodore
+directory each already hold their own structure and simply *present* a
+file-container view of it.
+
+In-force P23 already carries the first half for disks: the initial active
+layer is "the least physically expressive durable media layer which
+faithfully serves every presentation requested". This states it generally,
+past disks to serialized containers. P23 needs no amendment — it already
+separates the P19 interface from the active layer, and a ZIP's active
+named-entry state is owned by its grammar.
+
+The second half is a correction of this project's own drafting rather than
+of P19: in-force P19 was always written as a **seam** whose adapters *expose*
+a view and whose results *present* an interface. The word "layer" entered
+through the F35 drafts and nowhere else. What F35 delivers is therefore the
+interface providers present through and the vocabulary they answer in.
+
+Four consequences fold into the pledged P19 amendment and the F35 design.
+**No materialized model**, so a provider answers about the directory it was
+asked about instead of building an item pool for fifty thousand files, and
+identity is the provider's own rather than an index into a pool that no
+longer exists. **Nothing to invalidate**, so a floor that moves needs no
+regeneration protocol. **One hook, not two concepts**: a footprint and a
+content source were the same fact about different floors. **Coverage
+everywhere**, since every presentation has a floor — a self-extractor stub is
+an opaque region exactly as a protection track is, which overrules D9's
+clause to the contrary.
+
+**Weighed and declined:** a materialized model as the active layer for
+serialized containers (it made ZIP and media structurally different for no
+gain, and its footprints would go stale the moment a composition descended to
+flux); a materialized model as a generated view above the floor (it kept an
+invalidation protocol and a read-whole for no benefit the interface does not
+already give); declaring a file container never active at all, which would
+have contradicted in-force P23 and left a writable ZIP's pre-commit truth
+unowned; and treating an archive's unaccounted bytes as adapter evidence
+rather than opaque regions, which duplicated one concept in two
+vocabularies.
+
+**Folded into:** the pledged P19 amendment in
+[pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); the annotation on D9;
+pledged F35, whose companion design is renamed by this ruling to
+[pledged/design/file-container-presentation.md](pledged/design/file-container-presentation.md).
+
 ### D9 — The file-container model's scope calls
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** P19, P23.
@@ -86,6 +138,11 @@ container's unaccounted source bytes (a self-extractor stub, padding) are
 the adapter's evidence, not opaque regions; there is no layer beneath the
 active file container for a footprint to address.
 
+> **Overruled by D10** on this clause alone: a serialized container's own
+> named-entry state is a floor like any other, so its unaccounted bytes are
+> opaque regions and it carries an account. Every other ruling in this entry
+> stands.
+
 **Deleted-but-present entries are accounted, not itemized.** A scratched
 CBM entry or FAT `0xE5` slot is part of the namespace structures' footprint;
 itemizing it would be a recovery claim nothing pledges.
@@ -103,8 +160,10 @@ already at the flux layer; the two-outcome rule is reused instead);
 itemizing deleted entries (a recovery claim in disguise).
 
 **Folded into:** the pledged P19 amendment in
-[pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); pledged F35 and
-[pledged/design/file-container-layer-foundation.md](pledged/design/file-container-layer-foundation.md).
+[pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); pledged F35 and its
+companion design, drafted as `file-container-layer-foundation.md` and
+renamed by D10 to
+[pledged/design/file-container-presentation.md](pledged/design/file-container-presentation.md).
 
 ### D8 — Mastering a capture to P64 stops at flux, and gets its own principle
 
