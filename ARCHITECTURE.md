@@ -526,15 +526,36 @@ The durable active-layer vocabulary is exactly:
 | Active layer | Durable session state | Claim |
 |---|---|---|
 | **file container** | a rooted namespace of named entries and nested containers, entry bytes, and claimed metadata | container structure, not disk allocation or recording |
-| **flux** | circular track-relative flux transitions and strength semantics, with marker/sensor channels and provenance | a modeled magnetic recording surface |
+| **flux medium** | circular track-relative flux transitions and strength semantics, with marker/sensor channels and provenance | a modeled magnetic recording surface |
 | **CHS** | records addressed by cylinder, head, and sector under a declared geometry | geometry and records, but not their physical encoding |
 | **block** | geometry-opaque logical blocks addressed by number | no cylinder, head, track, recording, or mechanism claim |
 
 These are four family-owned representations, not variants of one universal
-schema. Flux includes its parallel marker channels; they are not another
-active layer. CHS and block both carry record bytes, but CHS's declared
+schema. The flux medium includes its parallel marker channels; they are not
+another active layer. CHS and block both carry record bytes, but CHS's declared
 geometry is observable and load-bearing while block deliberately hides it.
 File container is semantic named-entry state and makes no disk claim.
+
+**Flux capture takes no row.** It is an authoritative image layer under P13,
+which is a statement about what an artifact records, and it is read by
+inspection and by mastering. It never carries a session's mutable truth: the
+rule above is scoped to every independently mutable open state instance, and a
+capture set opened to be inspected and mastered is not one. A writable
+capture-editing session is claimed by nothing here.
+
+The reason is not bookkeeping. **A capture has no coherent answer to where a
+write lands.** A drive writing to a capture would have to choose which of
+several disagreeing observations to overwrite, and no answer to that is better
+than another. A drive writes to a medium.
+
+**A capture becomes a medium by mastering, not by lowering.** That is a P29 act
+with declared policy inputs, whether its destination is a new artifact or an
+active layer inside the session so that a drive can be served over a capture.
+Only the destination differs; the inputs, the plan, and the declared-loss
+account are the same. It is also the mechanism P15 assumes when it says a
+drive's floor may be timed flux for a P64 or a raw capture: a raw capture
+becomes a floor by being mastered in session under declared policy, never by a
+normalization nobody named.
 
 Here **durable** means that the representation survives runtime
 interactions as the state instance's continuing mutable truth and is the
@@ -575,8 +596,10 @@ questions. The authoritative layer states what the loaded artifact actually
 records and what its original format can persist. The active layer states
 which representation currently carries the session's mutable truth. They may
 coincide—a P64 physical-drive composition can be authoritative and active
-at flux—or differ—a raw sector image can remain authoritative at sectors
-while a synthesized flux layer becomes active for low-level drive service.
+at the flux medium—or differ—a raw sector image can remain authoritative at
+sectors while a synthesized flux medium becomes active for low-level drive
+service, and a capture set is authoritative at flux capture while whatever
+serves a drive over it is a mastered medium.
 Changing the active layer does not promote synthetic state into recovered
 evidence and does not change the authoritative image layer.
 
@@ -605,9 +628,14 @@ to produce the most honest flux and marker state the evidence permits:
 - a missing or contradictory rule refuses the lower service rather than
   manufacturing unjustified precision.
 
+**Generate-flux is generate-medium.** It synthesizes a flux medium and never a
+capture, because fabricating instrument evidence from sectors would be a false
+claim about provenance in the one clause most concerned with honest provenance.
+Every requirement above is unchanged by that naming.
+
 There is no universal linear ladder across all four layers. A declared
-legacy floppy family may lower CHS to flux. Block is terminal and never
-lowers to flux; flux never rises into block. File container participates
+legacy floppy family may lower CHS to a flux medium. Block is terminal and
+never lowers to flux; flux never rises into block. File container participates
 only through a declared container-to-child or filesystem-materialization
 path. Encoded-track and bitstream image representations enter flux through
 their family derivations rather than becoming extra rungs.
@@ -646,11 +674,11 @@ derived layer's cache is a clean-only accelerator regenerated from the layer
 below — a derived write completes downward into the active layer's cache in
 the same act or alters nothing, and a write landing in a lower layer
 invalidates the overlapping derived extents above it, so a stale decode is
-never served. A P64 source pins flux active, with sector access deriving a
-CHS cache above it; a sector-format source is CHS-active with one cache
-until generate-flux rebinds it as derived over session-backed flux, both
-layers caching from then on. Threads may derive upper-layer extents ahead of
-demand under P27's speculation rules.
+never served. A P64 source pins its flux medium active, with sector access
+deriving a CHS cache above it; a sector-format source is CHS-active with one
+cache until generate-flux rebinds it as derived over a session-backed
+medium, both layers caching from then on. Threads may derive upper-layer
+extents ahead of demand under P27's speculation rules.
 
 ### P27 — Sessions stream; memory holds a bounded working set
 

@@ -518,42 +518,19 @@ cut does not otherwise change.
 P23's durable active-layer vocabulary is corrected at its bottom and
 extended above it.
 
-### Flux medium is the active layer, and flux capture is never one
+**The correction at the bottom is in force.** Renaming the `flux` row to
+**flux medium**, the clause that gives flux capture no row, capture becoming
+medium by mastering rather than by lowering, and generate-flux being
+generate-medium are all claims the code already honors, and they moved to
+root [ARCHITECTURE.md](../../ARCHITECTURE.md) as the delivered half of this
+amendment. They were armed on their own because they depend on no unbuilt
+work — the delivered flux stack is where they were true — and because in-force
+P22 named two flux models while in-force P23's vocabulary still named one,
+which is a divergence between two armed principles rather than a gap awaiting
+a feature.
 
-The table's `flux` row already describes the medium: "circular track-relative
-flux transitions and strength semantics, with marker/sensor channels and
-provenance — a modeled magnetic recording surface". Singular, circular,
-carrying strength. That row is renamed **flux medium**, and its description
-stands as written.
-
-**Flux capture takes no row.** It is an authoritative image layer under P13,
-which is a statement about what an artifact records, and it is read by
-inspection and by mastering. It never carries a session's mutable truth.
-P23's rule is scoped to "every independently mutable open state instance",
-and a capture set opened to be inspected and mastered is not one; a writable
-capture-editing session is claimed by nothing here and would need its own
-proposal.
-
-The reason is not bookkeeping. **A capture has no coherent answer to where a
-write lands.** A drive writing to a flux capture would have to choose which
-of several disagreeing observations to overwrite, and no answer to that is
-better than another. A drive writes to a medium.
-
-**Capture becomes medium by mastering, not by lowering.** It is a P29 act
-with declared policy inputs, whether its destination is a new artifact — the
-U23 journey — or an active layer inside the session, so that a drive can be
-served over a capture. Only the destination differs; the inputs, the plan,
-and the declared-loss account are the same. This supplies the mechanism the
-P15 clause above assumes when it says a drive's floor may be "timed flux for
-a P64 or a raw capture": a raw capture becomes a floor by being mastered in
-session under declared policy, never by a normalization nobody named.
-
-**Generate-flux is generate-medium.** In-force P23's explicit transition
-below CHS synthesizes a medium and never a capture, because fabricating
-instrument evidence from sectors would be a false claim about provenance in
-the one clause most concerned with honest provenance. Every requirement in
-it — preserve what is known, synthesize only what the lower model needs,
-keep ambiguity ambiguous, refuse rather than invent — is unchanged.
+What remains below is the extension above the medium, which stays pledged
+until the layers it names exist.
 
 ### Hardware bitstream and encoded bytestream sit above it
 

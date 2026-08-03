@@ -190,6 +190,18 @@ rather than bridged. Read every entry below in that light.
   Each loaded disk carries its authoritative layer, active durable layer,
   derivation provenance, and a composition-scoped device identity.
 
+- **The durable active-layer vocabulary names the flux medium, and a
+  capture is never active** (the delivered half of the P23 amendment, armed
+  with this release). P23's `flux` row is renamed **flux medium** with its
+  description unchanged, and flux capture takes no row at all: a capture is
+  an authoritative image layer read by inspection and by mastering, and it
+  never carries a session's mutable truth, because a drive writing to a
+  capture would have to choose which of several disagreeing observations to
+  overwrite. A capture becomes a medium by mastering under declared policy,
+  never by lowering, and the generate-flux transition below CHS synthesizes
+  a medium and never a capture. No code changed: the flux stack already
+  behaved this way, and the vocabulary had lagged in-force P22, which names
+  both models.
 - **Sessions stream, and memory holds a bounded working set** (P27, armed
   with this release). No representation is loaded whole as a design
   assumption: identification probes read the evidence their claims name;
