@@ -44,6 +44,16 @@ produced it: which of the family's zones were recovered and what each
 location holds, the derived cell against what the zone claims, the seam
 located as an angle, and a named reason for every position not claimed.
 
+A recognized capture can then be mastered: the reduction to one
+circular, half-track-addressed flux medium resolves in two stages, a
+plan that computes everything and writes nothing and an execution that
+produces the medium. Every reduction is a declared policy input, and one
+the policy does not name is a refusal rather than a default — so a
+location whose content its neighbour also holds stops the plan until the
+caller says which it is. The plan carries the complete account of what
+the destination will not carry, in the source's own terms and before
+anything exists to carry it.
+
 The library is dependency-free at runtime, including its own ZIP
 central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
 LZMA/LZMA2 decompressors, and native qcow2 v2/v3 driver.
@@ -156,6 +166,14 @@ with remanence.CaptureSet("captures.7z") as capture:
     print(verdict.profile_name, verdict.confidence)
     for line in verdict.evidence:
         print(" ", line)
+
+    plan = capture.plan_c1541_mastering(remanence.MasteringPolicy(
+        side=0, observation_ordinal=0, duplicate="omit",
+        projection="declare-loss", pulse_strength="declared",
+        strength_state=2, origin="declared", seed=0x0123456789abcdef))
+    for loss in plan.report().declared_loss:
+        print(loss.code, loss.count, loss.detail)
+    medium = plan.execute()
 ```
 
 ## Changes

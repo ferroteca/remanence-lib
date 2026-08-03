@@ -20,6 +20,34 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A capture is mastered into a 1541 flux medium, on all three
+  surfaces.** `CaptureSet::plan_c1541_mastering` computes the whole
+  reduction and writes nothing; `MasteringPlan::execute` produces the
+  medium. Reflected as
+  `remanence_capture_set_plan_c1541_mastering` with its accessors, and
+  as the Python `plan_c1541_mastering` / `MasteringPlan.execute`.
+  **Every reduction is a named policy input** — which captured side
+  supplies the family's one recorded surface, which observation of a
+  location is used, what to do with a location whose content its
+  neighbour also holds, what happens when two transitions land on one
+  cycle of the destination frame, how the evidence becomes pulse
+  strength, and where the circle begins — each supplied by the caller or
+  declared by the profile, each reported in the plan, and each carried
+  into the result as provenance. A reduction no input names is a
+  refusal, not a default: the prepared capture holds locations whose
+  content their neighbour also holds, and the profile refuses them until
+  the caller declares which they are, because flux alone cannot tell a
+  head reading its neighbour from an instrument that did not move. The
+  loss is declared before the medium exists and in the source's own
+  terms — the unselected side, the unselected observations, the flux
+  outside the bounded revolutions, the marker channels a 1541 never
+  observes, the capture's metadata, its foreign records and its transfer
+  results, and every transition the destination frame could not express
+  apart. A count is not an account, so each entry says what was lost.
+  The projection is exact rational arithmetic against both declared
+  bases, and the circle begins at the track's own seam rather than at
+  the capture's index, a 1541 drive having no index sensor at all. The
+  same sources and policy produce the same plan.
 - **A capture is recognized as a drive family's, on all three surfaces.**
   `CaptureSet::recognize` consults every enrolled drive profile and ranks
   what claims the capture; `recognize_as` pins one whether or not it

@@ -1200,6 +1200,48 @@ impl ByteSink for Vec<u8> {
     }
 }
 
+/// Private session storage a backing streams into (P27).
+///
+/// It belongs here rather than beside either model because both stream
+/// into the same mechanism: what differs between a capture and a medium
+/// is the address, not the storage.
+pub(crate) struct SessionBacking {
+    file: std::sync::Arc<std::fs::File>,
+    written: u64,
+}
+
+impl SessionBacking {
+    pub(crate) fn create() -> Result<Self> {
+        Ok(Self {
+            file: std::sync::Arc::new(crate::cache::session_storage_file()?),
+            written: 0,
+        })
+    }
+
+    /// The same storage, read back a bounded section at a time.
+    pub(crate) fn into_source(self) -> SessionSource {
+        SessionSource(self.file)
+    }
+}
+
+impl ByteSink for SessionBacking {
+    fn append(&mut self, bytes: &[u8]) -> Result<()> {
+        crate::device::write_all_at(&self.file, self.written, bytes)
+            .map_err(|error| Error::io(format!("failed to write a layer backing: {error}")))?;
+        self.written += bytes.len() as u64;
+        Ok(())
+    }
+}
+
+pub(crate) struct SessionSource(std::sync::Arc<std::fs::File>);
+
+impl ByteSource for SessionSource {
+    fn read_at(&self, offset: u64, into: &mut [u8]) -> Result<()> {
+        crate::device::read_exact_at(&self.0, offset, into)
+            .map_err(|error| Error::io(format!("failed to read a layer backing: {error}")))
+    }
+}
+
 /// Builds a backing by appending sections in key order.
 ///
 /// The index is finished only once every section it references is

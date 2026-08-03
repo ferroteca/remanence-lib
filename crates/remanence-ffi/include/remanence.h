@@ -78,6 +78,38 @@ typedef enum {
   REMANENCE_FAT_ENTRY_KIND_DIRECTORY,
 } RemanenceFatEntryKind;
 
+// What to do with a location whose content its neighbour also holds.
+typedef enum {
+  // Take the profile's declaration, which for a 1541 refuses.
+  REMANENCE_DUPLICATE_POLICY_DECLARED = 0,
+  REMANENCE_DUPLICATE_POLICY_ADMIT_AS_OBSERVED = 1,
+  REMANENCE_DUPLICATE_POLICY_OMIT = 2,
+} RemanenceDuplicatePolicy;
+
+// What a projection does with two transitions landing on one cycle.
+typedef enum {
+  REMANENCE_PROJECTION_POLICY_REFUSE = 0,
+  REMANENCE_PROJECTION_POLICY_DECLARE_LOSS = 1,
+} RemanenceProjectionPolicy;
+
+// How the selected evidence becomes pulse strength.
+typedef enum {
+  // Every pulse carries `strength_state`; disagreement across the
+  // unselected observations is declared loss rather than expressed.
+  REMANENCE_PULSE_STRENGTH_POLICY_DECLARED = 0,
+  // A pulse every observation places within `strength_window_cycles`
+  // is strong; one only some corroborate is weak.
+  REMANENCE_PULSE_STRENGTH_POLICY_FROM_AGREEMENT = 1,
+} RemanencePulseStrengthPolicy;
+
+// Where the medium's circle begins.
+typedef enum {
+  // The track's own seam, which is what the profile declares.
+  REMANENCE_ORIGIN_POLICY_DECLARED = 0,
+  // The angle in `origin_cycles`, stated outright by the caller.
+  REMANENCE_ORIGIN_POLICY_ANGLE = 1,
+} RemanenceOriginPolicy;
+
 // An open archive listing, holding the claim on its file.
 typedef struct RemanenceArchive RemanenceArchive;
 
@@ -102,6 +134,12 @@ typedef struct RemanenceHdosFileList RemanenceHdosFileList;
 
 // The result of identifying a session's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
+
+// A mastered medium, held in the session.
+typedef struct RemanenceMasteredMedium RemanenceMasteredMedium;
+
+// A planned reduction: everything computed, nothing written.
+typedef struct RemanenceMasteringPlan RemanenceMasteringPlan;
 
 // A recognition result, ranked highest confidence first.
 typedef struct RemanenceRecognition RemanenceRecognition;
@@ -162,6 +200,40 @@ typedef struct {
   uint64_t duplicate_denominator;
   bool claimed;
 } RemanenceLocationVerdict;
+
+// The complete declared policy for one reduction. There is no default:
+// every field is a decision about evidence, and a reduction no input
+// names is a refusal.
+typedef struct {
+  // The captured head supplying the family's one recorded surface.
+  uint64_t side;
+  // Which observation of each location is used.
+  uint64_t observation_ordinal;
+  RemanenceDuplicatePolicy duplicate;
+  RemanenceProjectionPolicy projection;
+  RemanencePulseStrengthPolicy pulse_strength;
+  uint32_t strength_state;
+  uint64_t strength_window_cycles;
+  RemanenceOriginPolicy origin;
+  uint64_t origin_cycles;
+  // What makes any stochastic element reproducible.
+  uint64_t seed;
+} RemanenceMasteringPolicy;
+
+// One half-track the medium will hold.
+typedef struct {
+  uint64_t source_position_numerator;
+  uint64_t source_position_denominator;
+  uint64_t half_track_numerator;
+  uint64_t half_track_denominator;
+  uint64_t observation_ordinal;
+  uint64_t pulses;
+  uint64_t strong_pulses;
+  uint64_t weak_pulses;
+  uint64_t origin_cycles;
+  bool has_seam;
+  uint64_t seam_cycles;
+} RemanenceMasteredLocation;
 
 #ifdef __cplusplus
 extern "C" {
@@ -1009,6 +1081,92 @@ const char *remanence_recognition_location_artifact(const RemanenceRecognition *
 const char *remanence_recognition_location_refusal(const RemanenceRecognition *recognition,
                                                    size_t verdict,
                                                    size_t location);
+
+// Plans the reduction of a capture set to one 1541 flux medium.
+// Nothing is written and nothing is mutated. Returns null on failure
+// and stores a message in `error_out` (free with
+// `remanence_string_free`).
+RemanenceMasteringPlan *remanence_capture_set_plan_c1541_mastering(const RemanenceCaptureSet *set,
+                                                                   const RemanenceMasteringPolicy *policy,
+                                                                   RemanenceErrorCategory *error_category_out,
+                                                                   char **error_out);
+
+// Frees a plan handle.
+void remanence_mastering_plan_free(RemanenceMasteringPlan *plan);
+
+// Produces the medium the plan described, consuming the plan: the
+// handle is freed whether this succeeds or fails, and must not be used
+// again. Returns null on failure.
+RemanenceMasteredMedium *remanence_mastering_plan_execute(RemanenceMasteringPlan *plan,
+                                                          uint64_t cache_bytes,
+                                                          RemanenceErrorCategory *error_category_out,
+                                                          char **error_out);
+
+// Frees a mastered-medium handle, discarding its private session
+// storage.
+void remanence_mastered_medium_free(RemanenceMasteredMedium *medium);
+
+// How many locations the medium claims.
+uint64_t remanence_mastered_medium_locations(const RemanenceMasteredMedium *medium);
+
+// How many bytes of private session storage the medium occupies, and
+// how much of that is currently resident.
+uint64_t remanence_mastered_medium_backing_bytes(const RemanenceMasteredMedium *medium);
+
+uint64_t remanence_mastered_medium_resident_bytes(const RemanenceMasteredMedium *medium);
+
+// The profile the reduction was declared by. Pass whichever handle you
+// hold and null for the other.
+const char *remanence_mastering_profile_id(const RemanenceMasteringPlan *plan,
+                                           const RemanenceMasteredMedium *medium);
+
+// The frame the medium is expressed in.
+uint64_t remanence_mastering_reference_clock_hz(const RemanenceMasteringPlan *plan,
+                                                const RemanenceMasteredMedium *medium);
+
+uint64_t remanence_mastering_cycles_per_rotation(const RemanenceMasteringPlan *plan,
+                                                 const RemanenceMasteredMedium *medium);
+
+// Which rule placed the circle's origin.
+const char *remanence_mastering_origin_rule(const RemanenceMasteringPlan *plan,
+                                            const RemanenceMasteredMedium *medium);
+
+// How many half-tracks the reduction produces.
+size_t remanence_mastering_location_count(const RemanenceMasteringPlan *plan,
+                                          const RemanenceMasteredMedium *medium);
+
+// One of them, written into `out`. Returns false when out of range.
+bool remanence_mastering_location(const RemanenceMasteringPlan *plan,
+                                  const RemanenceMasteredMedium *medium,
+                                  size_t index,
+                                  RemanenceMasteredLocation *out);
+
+// How many kinds of loss the destination will not carry.
+size_t remanence_mastering_declared_loss_count(const RemanenceMasteringPlan *plan,
+                                               const RemanenceMasteredMedium *medium);
+
+// One loss entry's stable code, or null when out of range.
+const char *remanence_mastering_declared_loss_code(const RemanenceMasteringPlan *plan,
+                                                   const RemanenceMasteredMedium *medium,
+                                                   size_t index);
+
+// What was lost, in the source's own terms. A count is not an account.
+const char *remanence_mastering_declared_loss_detail(const RemanenceMasteringPlan *plan,
+                                                     const RemanenceMasteredMedium *medium,
+                                                     size_t index);
+
+// How much of it there was, in whatever the detail counts.
+uint64_t remanence_mastering_declared_loss_amount(const RemanenceMasteringPlan *plan,
+                                                  const RemanenceMasteredMedium *medium,
+                                                  size_t index);
+
+// The policy that produced the plan, stated in full.
+size_t remanence_mastering_evidence_count(const RemanenceMasteringPlan *plan,
+                                          const RemanenceMasteredMedium *medium);
+
+const char *remanence_mastering_evidence(const RemanenceMasteringPlan *plan,
+                                         const RemanenceMasteredMedium *medium,
+                                         size_t index);
 
 #ifdef __cplusplus
 }  // extern "C"

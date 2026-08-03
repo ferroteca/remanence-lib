@@ -28,17 +28,15 @@
 //! session storage; what stays in memory is identity and shape, and the
 //! pulses load a bounded section at a time from there.
 
-use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use crate::archive::{ClaimedArchive, EntrySource, normalize_entry_name, open_archive, split_archive_path};
-use crate::device::{AccessMode, read_exact_at, write_all_at};
+use crate::device::{AccessMode, read_exact_at};
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::{Issue, Provenance};
 use crate::flux_capture::{
-    ByteSink, ByteSource, CaptureBuilder, CaptureRun, FluxCapture, ForeignRecord, Marker,
-    MarkerKind, MetadataRecord, SourceDescriptor, SourceRange, Tick, TimeBase, TrackKey,
+    CaptureBuilder, CaptureRun, FluxCapture, ForeignRecord, Marker, MarkerKind, MetadataRecord,
+    SessionBacking, SourceDescriptor, SourceRange, Tick, TimeBase, TrackKey,
 };
 
 /// The namespace every fact this adapter states is declared under.
@@ -632,31 +630,6 @@ fn check_sample_clock(name: &str, declared: &str) -> Result<()> {
 
 // -------------------------------------------------------------- backing
 
-/// The capture's section backing, in private session storage.
-struct Backing {
-    file: Arc<File>,
-    written: u64,
-}
-
-impl ByteSink for Backing {
-    fn append(&mut self, bytes: &[u8]) -> Result<()> {
-        write_all_at(&self.file, self.written, bytes)
-            .map_err(|error| Error::io(format!("failed to write the capture backing: {error}")))?;
-        self.written += bytes.len() as u64;
-        Ok(())
-    }
-}
-
-/// The same storage, read back a bounded section at a time.
-struct BackingReader(Arc<File>);
-
-impl ByteSource for BackingReader {
-    fn read_at(&self, offset: u64, into: &mut [u8]) -> Result<()> {
-        read_exact_at(&self.0, offset, into)
-            .map_err(|error| Error::io(format!("failed to read the capture backing: {error}")))
-    }
-}
-
 // --------------------------------------------------------------- report
 
 /// A capture's declared timing basis: an exact count of ticks per
@@ -823,14 +796,7 @@ impl CaptureSet {
         let sources = claimed.catalog.entry_group(&indices)?;
 
         let time_base = TimeBase::new(KRYOFLUX, SAMPLE_CLOCK_NUMERATOR, SAMPLE_CLOCK_DENOMINATOR)?;
-        let spool = Arc::new(crate::cache::session_storage_file()?);
-        let mut builder = CaptureBuilder::new(
-            time_base,
-            Backing {
-                file: Arc::clone(&spool),
-                written: 0,
-            },
-        );
+        let mut builder = CaptureBuilder::new(time_base, SessionBacking::create()?);
 
         let mut reported = Vec::with_capacity(members.len());
         for (member, source) in members.iter().zip(sources.iter()) {
@@ -871,9 +837,8 @@ impl CaptureSet {
         }
 
         let (mut capture, backing, total_bytes) = builder.seal()?;
-        drop(backing);
         capture.attach_backing(
-            Box::new(BackingReader(spool)),
+            Box::new(backing.into_source()),
             total_bytes,
             cache_bytes,
             vec![KRYOFLUX],
@@ -979,6 +944,22 @@ impl CaptureSet {
     /// into the result.
     pub fn recognize_as(&self, profile_id: &str) -> Result<crate::Recognition> {
         crate::drive_profile::recognition(&self.capture, Some(profile_id))
+    }
+
+    /// Plans the reduction of this capture to one 1541 flux medium
+    /// under a declared policy (P29).
+    ///
+    /// Nothing is written and nothing is mutated: the plan computes the
+    /// whole transformation, reports the medium it will produce, and
+    /// enumerates everything the destination will not carry in the
+    /// source own terms. A reduction the policy does not name is a
+    /// refusal rather than a default, so the plan either accounts for
+    /// the whole capture or does not exist.
+    pub fn plan_c1541_mastering(
+        &self,
+        policy: crate::MasteringPolicy,
+    ) -> Result<crate::MasteringPlan> {
+        crate::c1541_mastering::plan(&self.capture, policy)
     }
 }
 

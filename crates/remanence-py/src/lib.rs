@@ -1213,6 +1213,24 @@ impl CaptureSet {
             .map_err(to_py_err)
     }
 
+    /// Plans the reduction of this capture to one 1541 flux medium
+    /// under a declared policy.
+    ///
+    /// Nothing is written and nothing is mutated. A reduction the
+    /// policy does not name is a refusal rather than a default, so the
+    /// plan either accounts for the whole capture or does not exist.
+    fn plan_c1541_mastering(&self, policy: &MasteringPolicy) -> PyResult<MasteringPlan> {
+        let plan = self
+            .get()?
+            .plan_c1541_mastering(policy.to_core()?)
+            .map_err(to_py_err)?;
+        let report = MasteringPlanReport::new(plan.report());
+        Ok(MasteringPlan {
+            inner: Some(plan),
+            report,
+        })
+    }
+
     /// Releases the claim on the archive file and discards the private
     /// session storage the capture decoded into.
     fn close(&mut self) {
@@ -1426,6 +1444,330 @@ impl Recognition {
     }
 }
 
+/// One thing the destination will not carry, in the source's own terms.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct DeclaredLoss {
+    /// The profile's stable spelling for this kind of loss.
+    pub code: String,
+    pub detail: String,
+    /// How much of it there is, in whatever the detail counts.
+    pub count: u64,
+}
+
+#[pymethods]
+impl DeclaredLoss {
+    fn __repr__(&self) -> String {
+        format!("DeclaredLoss(code={:?}, count={})", self.code, self.count)
+    }
+}
+
+/// One half-track the medium will hold.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct MasteredLocation {
+    pub source_position: StepPosition,
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub observation_ordinal: u64,
+    pub pulses: u64,
+    pub strong_pulses: u64,
+    pub weak_pulses: u64,
+    /// Where the circle was given its start, in reference-clock cycles.
+    pub origin_cycles: u64,
+    pub seam_cycles: Option<u64>,
+}
+
+#[pymethods]
+impl MasteredLocation {
+    fn __repr__(&self) -> String {
+        format!(
+            "MasteredLocation(half_track={}/{}, pulses={})",
+            self.half_track_numerator, self.half_track_denominator, self.pulses
+        )
+    }
+}
+
+/// The whole transformation, computed and written nowhere.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct MasteringPlanReport {
+    pub profile_id: String,
+    pub reference_clock_hz: u64,
+    pub cycles_per_rotation: u64,
+    pub origin_rule: String,
+    pub locations: Vec<MasteredLocation>,
+    /// Everything the destination will not carry. A count is not an
+    /// account, so each entry says what was lost and in what terms.
+    pub declared_loss: Vec<DeclaredLoss>,
+    /// The policy that produced this plan, stated in full.
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl MasteringPlanReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "MasteringPlanReport(locations={}, declared_loss={})",
+            self.locations.len(),
+            self.declared_loss.len()
+        )
+    }
+}
+
+impl MasteringPlanReport {
+    fn new(report: &remanence::MasteringPlanReport) -> Self {
+        Self {
+            profile_id: report.profile_id.clone(),
+            reference_clock_hz: report.reference_clock_hz,
+            cycles_per_rotation: report.cycles_per_rotation,
+            origin_rule: report.origin_rule.clone(),
+            locations: report
+                .locations
+                .iter()
+                .map(|location| MasteredLocation {
+                    source_position: StepPosition {
+                        numerator: location.source_position.numerator,
+                        denominator: location.source_position.denominator,
+                    },
+                    half_track_numerator: location.half_track_numerator,
+                    half_track_denominator: location.half_track_denominator,
+                    observation_ordinal: location.observation_ordinal,
+                    pulses: location.pulses,
+                    strong_pulses: location.strong_pulses,
+                    weak_pulses: location.weak_pulses,
+                    origin_cycles: location.origin_cycles,
+                    seam_cycles: location.seam_cycles,
+                })
+                .collect(),
+            declared_loss: report
+                .declared_loss
+                .iter()
+                .map(|loss| DeclaredLoss {
+                    code: loss.code.clone(),
+                    detail: loss.detail.clone(),
+                    count: loss.count,
+                })
+                .collect(),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// The complete declared policy for one reduction.
+///
+/// Every argument is keyword-only and required, deliberately: each is a
+/// decision about evidence, and a reduction that arrived at one by
+/// construction rather than by declaration is what P29 forbids.
+/// `duplicate` is `"declared"`, `"admit-as-observed"` or `"omit"`;
+/// `projection` is `"refuse"` or `"declare-loss"`; `pulse_strength` is
+/// `"declared"` with `strength_state` or `"from-agreement"` with
+/// `strength_window_cycles`; `origin` is `"declared"` or `"angle"` with
+/// `origin_cycles`.
+#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct MasteringPolicy {
+    pub side: u64,
+    pub observation_ordinal: u64,
+    pub duplicate: String,
+    pub projection: String,
+    pub pulse_strength: String,
+    pub strength_state: u32,
+    pub strength_window_cycles: u64,
+    pub origin: String,
+    pub origin_cycles: u64,
+    pub seed: u64,
+}
+
+#[pymethods]
+impl MasteringPolicy {
+    #[new]
+    #[pyo3(signature = (
+        *,
+        side,
+        observation_ordinal,
+        duplicate,
+        projection,
+        pulse_strength,
+        origin,
+        seed,
+        strength_state = 0,
+        strength_window_cycles = 0,
+        origin_cycles = 0,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        side: u64,
+        observation_ordinal: u64,
+        duplicate: String,
+        projection: String,
+        pulse_strength: String,
+        origin: String,
+        seed: u64,
+        strength_state: u32,
+        strength_window_cycles: u64,
+        origin_cycles: u64,
+    ) -> Self {
+        Self {
+            side,
+            observation_ordinal,
+            duplicate,
+            projection,
+            pulse_strength,
+            strength_state,
+            strength_window_cycles,
+            origin,
+            origin_cycles,
+            seed,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MasteringPolicy(side={}, observation_ordinal={}, duplicate={:?})",
+            self.side, self.observation_ordinal, self.duplicate
+        )
+    }
+}
+
+impl MasteringPolicy {
+    fn to_core(&self) -> PyResult<remanence::MasteringPolicy> {
+        let named = |what: &str, given: &str, admitted: &[&str]| {
+            categorized_py_err(
+                remanence::ErrorCategory::Unsupported,
+                format!(
+                    "{what} policy {given:?} is not one this library admits; it takes \
+                     one of {admitted:?}"
+                ),
+            )
+        };
+        Ok(remanence::MasteringPolicy {
+            side: self.side,
+            observation: remanence::ObservationPolicy::Selected {
+                ordinal: self.observation_ordinal,
+            },
+            duplicate: match self.duplicate.as_str() {
+                "declared" => remanence::DuplicatePolicy::Declared,
+                "admit-as-observed" => remanence::DuplicatePolicy::AdmitAsObserved,
+                "omit" => remanence::DuplicatePolicy::Omit,
+                other => {
+                    return Err(named(
+                        "duplicate",
+                        other,
+                        &["declared", "admit-as-observed", "omit"],
+                    ));
+                }
+            },
+            projection: match self.projection.as_str() {
+                "refuse" => remanence::ProjectionPolicy::Refuse,
+                "declare-loss" => remanence::ProjectionPolicy::DeclareLoss,
+                other => return Err(named("projection", other, &["refuse", "declare-loss"])),
+            },
+            pulse_strength: match self.pulse_strength.as_str() {
+                "declared" => remanence::PulseStrengthPolicy::Declared {
+                    state: self.strength_state,
+                },
+                "from-agreement" => remanence::PulseStrengthPolicy::FromAgreement {
+                    window_cycles: self.strength_window_cycles,
+                },
+                other => {
+                    return Err(named(
+                        "pulse strength",
+                        other,
+                        &["declared", "from-agreement"],
+                    ));
+                }
+            },
+            origin: match self.origin.as_str() {
+                "declared" => remanence::OriginPolicy::Declared,
+                "angle" => remanence::OriginPolicy::Angle {
+                    cycles: self.origin_cycles,
+                },
+                other => return Err(named("origin", other, &["declared", "angle"])),
+            },
+            seed: self.seed,
+        })
+    }
+}
+
+/// A planned reduction: everything computed, nothing written.
+#[pyclass(module = "remanence")]
+pub struct MasteringPlan {
+    inner: Option<remanence::MasteringPlan>,
+    report: MasteringPlanReport,
+}
+
+#[pymethods]
+impl MasteringPlan {
+    /// What the transformation will do, and everything it will not
+    /// carry. Read before executing: executing adds nothing to it.
+    fn report(&self) -> MasteringPlanReport {
+        self.report.clone()
+    }
+
+    /// Produces the medium. The sources are untouched.
+    #[pyo3(signature = (*, cache_bytes = None))]
+    fn execute(&mut self, cache_bytes: Option<u64>) -> PyResult<MasteredMedium> {
+        let plan = self.inner.take().ok_or_else(|| {
+            categorized_py_err(
+                remanence::ErrorCategory::Io,
+                "plan has already been executed",
+            )
+        })?;
+        let medium = plan
+            .execute(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+            .map_err(to_py_err)?;
+        Ok(MasteredMedium {
+            report: self.report.clone(),
+            inner: medium,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MasteringPlan(locations={}, declared_loss={})",
+            self.report.locations.len(),
+            self.report.declared_loss.len()
+        )
+    }
+}
+
+/// A mastered medium, held in the session. The pulses stay behind this
+/// surface.
+#[pyclass(module = "remanence")]
+pub struct MasteredMedium {
+    inner: remanence::MasteredMedium,
+    report: MasteringPlanReport,
+}
+
+#[pymethods]
+impl MasteredMedium {
+    /// The plan this medium was produced from, unchanged.
+    fn plan(&self) -> MasteringPlanReport {
+        self.report.clone()
+    }
+
+    /// How many locations the medium claims.
+    #[getter]
+    fn locations(&self) -> u64 {
+        self.inner.locations()
+    }
+
+    #[getter]
+    fn backing_bytes(&self) -> u64 {
+        self.inner.backing_bytes()
+    }
+
+    #[getter]
+    fn resident_bytes(&self) -> u64 {
+        self.inner.resident_bytes()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("MasteredMedium(locations={})", self.inner.locations())
+    }
+}
+
 /// Parses the HDOS directory from raw image bytes.
 #[pyfunction]
 fn list_hdos_files(image: Vec<u8>) -> PyResult<Vec<HdosFile>> {
@@ -1472,6 +1814,12 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ProfileVerdict>()?;
     m.add_class::<LocationVerdict>()?;
     m.add_class::<ZoneClaim>()?;
+    m.add_class::<MasteringPolicy>()?;
+    m.add_class::<MasteringPlan>()?;
+    m.add_class::<MasteringPlanReport>()?;
+    m.add_class::<MasteredMedium>()?;
+    m.add_class::<MasteredLocation>()?;
+    m.add_class::<DeclaredLoss>()?;
     m.add_class::<Session>()?;
     m.add_class::<Identification>()?;
     m.add_class::<Container>()?;

@@ -3313,6 +3313,479 @@ pub unsafe extern "C" fn remanence_recognition_location_refusal(
     })
 }
 
+// ---------------------------------------------------------------------------
+// C1541 mastering: reducing an opened capture to one half-track-addressed
+// flux medium under a declared policy. Every reduction is a named input,
+// the plan writes nothing, and the loss is declared before the medium
+// exists.
+
+use remanence::{MasteredMedium, MasteringPlan};
+
+/// What to do with a location whose content its neighbour also holds.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceDuplicatePolicy {
+    /// Take the profile's declaration, which for a 1541 refuses.
+    Declared = 0,
+    AdmitAsObserved = 1,
+    Omit = 2,
+}
+
+/// What a projection does with two transitions landing on one cycle.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceProjectionPolicy {
+    Refuse = 0,
+    DeclareLoss = 1,
+}
+
+/// How the selected evidence becomes pulse strength.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanencePulseStrengthPolicy {
+    /// Every pulse carries `strength_state`; disagreement across the
+    /// unselected observations is declared loss rather than expressed.
+    Declared = 0,
+    /// A pulse every observation places within `strength_window_cycles`
+    /// is strong; one only some corroborate is weak.
+    FromAgreement = 1,
+}
+
+/// Where the medium's circle begins.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceOriginPolicy {
+    /// The track's own seam, which is what the profile declares.
+    Declared = 0,
+    /// The angle in `origin_cycles`, stated outright by the caller.
+    Angle = 1,
+}
+
+/// The complete declared policy for one reduction. There is no default:
+/// every field is a decision about evidence, and a reduction no input
+/// names is a refusal.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceMasteringPolicy {
+    /// The captured head supplying the family's one recorded surface.
+    pub side: u64,
+    /// Which observation of each location is used.
+    pub observation_ordinal: u64,
+    pub duplicate: RemanenceDuplicatePolicy,
+    pub projection: RemanenceProjectionPolicy,
+    pub pulse_strength: RemanencePulseStrengthPolicy,
+    pub strength_state: u32,
+    pub strength_window_cycles: u64,
+    pub origin: RemanenceOriginPolicy,
+    pub origin_cycles: u64,
+    /// What makes any stochastic element reproducible.
+    pub seed: u64,
+}
+
+/// One half-track the medium will hold.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceMasteredLocation {
+    pub source_position_numerator: u64,
+    pub source_position_denominator: u64,
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub observation_ordinal: u64,
+    pub pulses: u64,
+    pub strong_pulses: u64,
+    pub weak_pulses: u64,
+    pub origin_cycles: u64,
+    pub has_seam: bool,
+    pub seam_cycles: u64,
+}
+
+struct PlanView {
+    profile_id: CString,
+    origin_rule: CString,
+    loss_codes: Vec<CString>,
+    loss_details: Vec<CString>,
+    evidence: Vec<CString>,
+}
+
+impl PlanView {
+    fn new(report: &remanence::MasteringPlanReport) -> Self {
+        Self {
+            profile_id: to_cstring(&report.profile_id),
+            origin_rule: to_cstring(&report.origin_rule),
+            loss_codes: report.declared_loss.iter().map(|l| to_cstring(&l.code)).collect(),
+            loss_details: report
+                .declared_loss
+                .iter()
+                .map(|l| to_cstring(&l.detail))
+                .collect(),
+            evidence: report.evidence.iter().map(|line| to_cstring(line)).collect(),
+        }
+    }
+}
+
+/// A planned reduction: everything computed, nothing written.
+pub struct RemanenceMasteringPlan {
+    plan: Option<MasteringPlan>,
+    report: remanence::MasteringPlanReport,
+    view: PlanView,
+}
+
+/// A mastered medium, held in the session.
+pub struct RemanenceMasteredMedium {
+    medium: MasteredMedium,
+    report: remanence::MasteringPlanReport,
+    view: PlanView,
+}
+
+fn to_policy(policy: &RemanenceMasteringPolicy) -> remanence::MasteringPolicy {
+    remanence::MasteringPolicy {
+        side: policy.side,
+        observation: remanence::ObservationPolicy::Selected {
+            ordinal: policy.observation_ordinal,
+        },
+        duplicate: match policy.duplicate {
+            RemanenceDuplicatePolicy::Declared => remanence::DuplicatePolicy::Declared,
+            RemanenceDuplicatePolicy::AdmitAsObserved => {
+                remanence::DuplicatePolicy::AdmitAsObserved
+            }
+            RemanenceDuplicatePolicy::Omit => remanence::DuplicatePolicy::Omit,
+        },
+        projection: match policy.projection {
+            RemanenceProjectionPolicy::Refuse => remanence::ProjectionPolicy::Refuse,
+            RemanenceProjectionPolicy::DeclareLoss => remanence::ProjectionPolicy::DeclareLoss,
+        },
+        pulse_strength: match policy.pulse_strength {
+            RemanencePulseStrengthPolicy::Declared => remanence::PulseStrengthPolicy::Declared {
+                state: policy.strength_state,
+            },
+            RemanencePulseStrengthPolicy::FromAgreement => {
+                remanence::PulseStrengthPolicy::FromAgreement {
+                    window_cycles: policy.strength_window_cycles,
+                }
+            }
+        },
+        origin: match policy.origin {
+            RemanenceOriginPolicy::Declared => remanence::OriginPolicy::Declared,
+            RemanenceOriginPolicy::Angle => remanence::OriginPolicy::Angle {
+                cycles: policy.origin_cycles,
+            },
+        },
+        seed: policy.seed,
+    }
+}
+
+/// Plans the reduction of a capture set to one 1541 flux medium.
+/// Nothing is written and nothing is mutated. Returns null on failure
+/// and stores a message in `error_out` (free with
+/// `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_plan_c1541_mastering(
+    set: *const RemanenceCaptureSet,
+    policy: *const RemanenceMasteringPolicy,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceMasteringPlan {
+    unsafe { clear_error(error_out) };
+    let (Some(set), Some(policy)) = (unsafe { set.as_ref() }, unsafe { policy.as_ref() }) else {
+        let error = remanence::Error::io("null capture set or policy");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match set.set.plan_c1541_mastering(to_policy(policy)) {
+        Ok(plan) => {
+            let report = plan.report().clone();
+            let view = PlanView::new(&report);
+            Box::into_raw(Box::new(RemanenceMasteringPlan {
+                plan: Some(plan),
+                report,
+                view,
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a plan handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_plan_free(plan: *mut RemanenceMasteringPlan) {
+    if !plan.is_null() {
+        drop(unsafe { Box::from_raw(plan) });
+    }
+}
+
+/// Produces the medium the plan described, consuming the plan: the
+/// handle is freed whether this succeeds or fails, and must not be used
+/// again. Returns null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_plan_execute(
+    plan: *mut RemanenceMasteringPlan,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceMasteredMedium {
+    unsafe { clear_error(error_out) };
+    if plan.is_null() {
+        let error = remanence::Error::io("null plan");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    }
+    let owned = unsafe { Box::from_raw(plan) };
+    let RemanenceMasteringPlan {
+        plan: Some(plan),
+        report,
+        view,
+    } = *owned
+    else {
+        let error = remanence::Error::io("plan has already been executed");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match plan.execute(cache_bytes) {
+        Ok(medium) => Box::into_raw(Box::new(RemanenceMasteredMedium {
+            medium,
+            report,
+            view,
+        })),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a mastered-medium handle, discarding its private session
+/// storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastered_medium_free(medium: *mut RemanenceMasteredMedium) {
+    if !medium.is_null() {
+        drop(unsafe { Box::from_raw(medium) });
+    }
+}
+
+/// How many locations the medium claims.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastered_medium_locations(
+    medium: *const RemanenceMasteredMedium,
+) -> u64 {
+    unsafe { medium.as_ref() }.map_or(0, |medium| medium.medium.locations())
+}
+
+/// How many bytes of private session storage the medium occupies, and
+/// how much of that is currently resident.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastered_medium_backing_bytes(
+    medium: *const RemanenceMasteredMedium,
+) -> u64 {
+    unsafe { medium.as_ref() }.map_or(0, |medium| medium.medium.backing_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastered_medium_resident_bytes(
+    medium: *const RemanenceMasteredMedium,
+) -> u64 {
+    unsafe { medium.as_ref() }.map_or(0, |medium| medium.medium.resident_bytes())
+}
+
+/// A plan and the medium produced from it report the same thing:
+/// executing adds nothing to the account. So the accessors below take
+/// either handle through one small indirection rather than being
+/// written out twice.
+enum ReportedPlan<'a> {
+    Planned(&'a RemanenceMasteringPlan),
+    Mastered(&'a RemanenceMasteredMedium),
+}
+
+impl ReportedPlan<'_> {
+    fn report(&self) -> &remanence::MasteringPlanReport {
+        match self {
+            Self::Planned(plan) => &plan.report,
+            Self::Mastered(medium) => &medium.report,
+        }
+    }
+
+    fn view(&self) -> &PlanView {
+        match self {
+            Self::Planned(plan) => &plan.view,
+            Self::Mastered(medium) => &medium.view,
+        }
+    }
+}
+
+unsafe fn reported<'a>(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> Option<ReportedPlan<'a>> {
+    if let Some(plan) = unsafe { plan.as_ref() } {
+        return Some(ReportedPlan::Planned(plan));
+    }
+    unsafe { medium.as_ref() }.map(ReportedPlan::Mastered)
+}
+
+/// The profile the reduction was declared by. Pass whichever handle you
+/// hold and null for the other.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_profile_id(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> *const c_char {
+    unsafe { reported(plan, medium) }
+        .map_or(ptr::null(), |reported| reported.view().profile_id.as_ptr())
+}
+
+/// The frame the medium is expressed in.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_reference_clock_hz(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> u64 {
+    unsafe { reported(plan, medium) }.map_or(0, |reported| reported.report().reference_clock_hz)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_cycles_per_rotation(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> u64 {
+    unsafe { reported(plan, medium) }.map_or(0, |reported| reported.report().cycles_per_rotation)
+}
+
+/// Which rule placed the circle's origin.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_origin_rule(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> *const c_char {
+    unsafe { reported(plan, medium) }
+        .map_or(ptr::null(), |reported| reported.view().origin_rule.as_ptr())
+}
+
+/// How many half-tracks the reduction produces.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_location_count(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> usize {
+    unsafe { reported(plan, medium) }.map_or(0, |reported| reported.report().locations.len())
+}
+
+/// One of them, written into `out`. Returns false when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_location(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+    index: usize,
+    out: *mut RemanenceMasteredLocation,
+) -> bool {
+    let Some(reported) = (unsafe { reported(plan, medium) }) else {
+        return false;
+    };
+    let Some(location) = reported.report().locations.get(index) else {
+        return false;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = RemanenceMasteredLocation {
+                source_position_numerator: location.source_position.numerator,
+                source_position_denominator: location.source_position.denominator,
+                half_track_numerator: location.half_track_numerator,
+                half_track_denominator: location.half_track_denominator,
+                observation_ordinal: location.observation_ordinal,
+                pulses: location.pulses,
+                strong_pulses: location.strong_pulses,
+                weak_pulses: location.weak_pulses,
+                origin_cycles: location.origin_cycles,
+                has_seam: location.seam_cycles.is_some(),
+                seam_cycles: location.seam_cycles.unwrap_or(0),
+            };
+        }
+    }
+    true
+}
+
+/// How many kinds of loss the destination will not carry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_declared_loss_count(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> usize {
+    unsafe { reported(plan, medium) }.map_or(0, |reported| reported.report().declared_loss.len())
+}
+
+/// One loss entry's stable code, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_declared_loss_code(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+    index: usize,
+) -> *const c_char {
+    unsafe { reported(plan, medium) }.map_or(ptr::null(), |reported| {
+        reported
+            .view()
+            .loss_codes
+            .get(index)
+            .map_or(ptr::null(), |code| code.as_ptr())
+    })
+}
+
+/// What was lost, in the source's own terms. A count is not an account.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_declared_loss_detail(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+    index: usize,
+) -> *const c_char {
+    unsafe { reported(plan, medium) }.map_or(ptr::null(), |reported| {
+        reported
+            .view()
+            .loss_details
+            .get(index)
+            .map_or(ptr::null(), |detail| detail.as_ptr())
+    })
+}
+
+/// How much of it there was, in whatever the detail counts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_declared_loss_amount(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+    index: usize,
+) -> u64 {
+    unsafe { reported(plan, medium) }.map_or(0, |reported| {
+        reported
+            .report()
+            .declared_loss
+            .get(index)
+            .map_or(0, |loss| loss.count)
+    })
+}
+
+/// The policy that produced the plan, stated in full.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_evidence_count(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+) -> usize {
+    unsafe { reported(plan, medium) }.map_or(0, |reported| reported.view().evidence.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastering_evidence(
+    plan: *const RemanenceMasteringPlan,
+    medium: *const RemanenceMasteredMedium,
+    index: usize,
+) -> *const c_char {
+    unsafe { reported(plan, medium) }.map_or(ptr::null(), |reported| {
+        reported
+            .view()
+            .evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -49,6 +49,10 @@ ABI, or Python module.
   stepping, rotation, surfaces, encoding shape and density map, the
   C1541 entry, and the probe that recognizes a capture from interval
   statistics alone and reports a ranked verdict with its evidence;
+  `c1541_mastering.rs` the reduction from capture to medium under a
+  declared policy (P29) — a plan that computes everything and writes
+  nothing, the declared-loss account it carries, and the execution that
+  produces the medium;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable

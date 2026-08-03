@@ -11,6 +11,7 @@
 
 mod adapters;
 mod archive;
+mod c1541_mastering;
 mod cache;
 mod checksum;
 mod device;
@@ -38,6 +39,11 @@ mod volume;
 mod zip;
 
 pub use archive::{Archive, ArchiveEntry};
+pub use c1541_mastering::{
+    DeclaredLoss, DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan,
+    MasteringPlanReport, MasteringPolicy, ObservationPolicy, OriginPolicy, ProjectionPolicy,
+    PulseStrengthPolicy,
+};
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat, DiskGeometry};
