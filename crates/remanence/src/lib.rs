@@ -12,9 +12,11 @@
 mod adapters;
 mod archive;
 mod cache;
+mod checksum;
 mod device;
 mod disk;
 mod error;
+mod evidence;
 mod fat;
 mod file_container;
 mod filesystem;

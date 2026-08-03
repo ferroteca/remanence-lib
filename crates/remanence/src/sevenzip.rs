@@ -21,6 +21,7 @@
 //! byte — the members before it are the price of solid compression, the
 //! members after it are never touched.
 
+use crate::checksum::{Crc32, crc32};
 use std::fs::File;
 use std::sync::Arc;
 
@@ -102,50 +103,6 @@ fn coder_name(id: &[u8]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-const CRC_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let mut index = 0usize;
-    while index < 256 {
-        let mut value = index as u32;
-        let mut bit = 0;
-        while bit < 8 {
-            value = if value & 1 != 0 {
-                (value >> 1) ^ 0xedb8_8320
-            } else {
-                value >> 1
-            };
-            bit += 1;
-        }
-        table[index] = value;
-        index += 1;
-    }
-    table
-};
-
-/// The CRC-32 every 7z digest is, computed as data streams past.
-struct Crc32(u32);
-
-impl Crc32 {
-    fn new() -> Self {
-        Self(u32::MAX)
-    }
-
-    fn update(&mut self, data: &[u8]) {
-        for &byte in data {
-            self.0 = CRC_TABLE[((self.0 ^ u32::from(byte)) & 0xff) as usize] ^ (self.0 >> 8);
-        }
-    }
-
-    fn finish(&self) -> u32 {
-        !self.0
-    }
-}
-
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = Crc32::new();
-    crc.update(data);
-    crc.finish()
-}
 
 /// A reader over header bytes already in memory.
 struct Cursor<'a> {
