@@ -144,12 +144,11 @@ The reason is not tidiness. A downstream name here implies a relationship
 a reusable library should not have, and it goes stale silently inside a
 published artifact — a consumer's rename leaves the falsehood shipped.
 
-Two things are not violations of it. **`planning/DECISIONS.md` entries keep
-the spellings of their time** and are annotated, never rewritten, so a name
-inside one stays. And the fixture-preparation tooling under `testing-prep/`
-*depends on* a named tool the way any dependency is named — the permitted
-direction — which reaches that tooling, the metadata pinning it, and the
-prose documenting them, and nothing else.
+One thing is not a violation of it. The fixture-preparation tooling under
+`testing-prep/` *depends on* a named tool the way any dependency is named —
+the permitted direction — which reaches that tooling, the metadata pinning
+it, and the prose documenting them, and nothing else. Being nameable there
+licenses nothing elsewhere, `planning/DECISIONS.md` included.
 
 ## Licensing
 

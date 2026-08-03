@@ -442,17 +442,21 @@ application outright, inherited from the demand they were dictated from.
 Both are reworded to the caller's voice — every claim, contract and symbol
 unchanged — under authority compression. The rule's home is AGENTS.md,
 "The library does not name its consumers"; it reaches every library-side
-document, not only the ones a registry publishes.
+document, not only the ones a registry publishes — this record included,
+where D2's weighed alternative is reworded to the caller's voice. A name
+that survives sits inside the fixture-tooling permission, which runs the
+other way: the project may name what it builds on.
 
 **Weighed and declined:** keeping the name in the use cases on the grounds
 that they are the owner's demand narrative and a real name is more concrete
 than "my automation layer" — that concreteness is exactly what goes stale
 inside a published artifact, and the use cases are the first library-side
-document a newcomer reads. Sweeping this record too: entries keep the
-spellings of their time, so D1's and D2's mentions stand.
+document a newcomer reads.
 
 **Folded into:** root [USE-CASES.md](../USE-CASES.md) (U3's title, opening
-and drive-letter clause; U4's opening); [AGENTS.md](../AGENTS.md).
+and drive-letter clause; U4's opening); [AGENTS.md](../AGENTS.md); D2's
+weighed alternative; `crates/remanence/src/disk.rs` and
+`crates/remanence/src/fat.rs` doc comments.
 
 ### D6 — Device identity is assigned, not requested
 
@@ -561,7 +565,7 @@ distro-revision model is the point.
 P2's commit point is implemented as an in-memory write overlay over
 the virtual disk: every write buffers, reads see the buffered state,
 `commit` writes through and flushes, `rollback` discards. The drafted
-alternative — reproducing reliquary's qcow2-internal-snapshot
+alternative — reproducing a caller's qcow2-internal-snapshot
 protocol natively (the feature drafted as F4) — was superseded before
 it was pledged.
 

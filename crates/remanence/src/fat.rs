@@ -4,7 +4,7 @@
 //! FAT12/FAT16/FAT16B volume access, read and write, over any byte range
 //! of a [`Device`]. The width is decided by cluster count — the format's
 //! own rule — and FAT32 (or anything else) is a named refusal. Semantics
-//! follow reliquary's `at_rest.py`, whose behavior this absorbs.
+//! follow the Python implementation whose behavior this absorbs.
 
 use crate::device::Device;
 use crate::error::{Error, ErrorCategory, Result};

@@ -590,7 +590,7 @@ mod tests {
         virtual_size
     }
 
-    /// Exercises the whole public qcow2 path reliquary runs: open,
+    /// Exercises the whole public qcow2 path a caller runs: open,
     /// geometry, write, commit, reopen, read back.
     #[test]
     fn fat16_inside_qcow2_end_to_end() {
