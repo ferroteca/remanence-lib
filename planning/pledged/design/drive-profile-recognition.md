@@ -39,7 +39,7 @@ capture and then treated as evidence:
   one is recognized as unused rather than believed.
 - **Revolution rule.** Whether the family's drive observes a selected
   revolution, a repeatable sequence, a seeded variation, or another
-  specified behavior. F30 already refuses to normalize inside the layer;
+  specified behavior. Flux capture already refuses to normalize inside the layer;
   this is where the rule that resolves it is declared.
 
 ## Recognition

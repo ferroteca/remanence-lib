@@ -10,7 +10,8 @@ SPDX-License-Identifier: GPL-3.0-only
 ## Purpose
 
 F37 establishes the second of the flux family's two models. `FluxCapture`
-(F30, renamed by the P22 amendment) holds what an instrument recorded.
+(the delivered flux-capture layer, renamed by the P22 amendment) holds
+what an instrument recorded.
 `FluxMedium` holds what a drive would read: one circular pulse stream per
 location the family addresses, in that family's own frame.
 
@@ -85,7 +86,7 @@ profile's `AdmissionRule`, never silently the first.
 `position` is an exact integer cycle count from the frame's origin, strictly
 less than `cycles_per_rotation`, and positions are strictly increasing. The
 wrap from the last pulse to the first is implied by the frame, so no
-duplicate boundary pulse exists — the same discipline F30 applies to an
+duplicate boundary pulse exists — the same discipline flux capture applies to an
 observation's span. v1 introduces no floating point anywhere: the projection
 from a capture's timebase into this frame is exact rational arithmetic
 against both declared bases, and resolution the frame cannot express is
@@ -104,7 +105,7 @@ resolved.
 
 ## Backing and residence
 
-The backing is F30's, not a second mechanism: the same length-delimited
+The backing is flux capture's, not a second mechanism: the same length-delimited
 record stream and persistent ordered section index, keyed here by
 `(LocationKey, SectionKind, ordinal)` with pulse and fact chunks splitting at
 deterministic record-count boundaries. Pulse positions delta-code as unsigned

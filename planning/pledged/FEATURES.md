@@ -7,23 +7,13 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** pledged, not delivered. Every feature here is owed by the project, but no entry promises an order, date, or implementation approval.
 
-## F30 — Private FluxCapture v1 foundation
-
-Establish the private, durable flux-capture model and its bounded session backing: physical track keys, capture runs, circular observations, exact timebases, parallel marker channels, ordered evidence, provenance, and sparse section-addressable storage. It is the common target of admitted capture adapters, not a flux medium, a public flux iterator, an interchange format, a drive profile, or a sector decoder.
-
-Every source fact maps to a named layer fact, ordered foreign record, or a named refusal. Several observed revolutions remain distinct evidence: the model neither averages timings nor selects a cleanest pass. Unit tests build small synthetic layers and verify ordering, circular bounds, marker separation, and bounded reload without a drive interpretation.
-
-Touches: none. Supports: P3, P4, P13, P22, P23, P27. Needs: the P22 and P23 amendments pledged.
-
-Companion design: [design/flux-capture-foundation.md](design/flux-capture-foundation.md).
-
 ## F31 — KryoFlux capture-set catalog adapter
 
 Recognize a declared KryoFlux capture set assembled from a catalog subtree and materialize its members collectively into `FluxCapture`. The adapter owns the capture-set grammar, member identity, track and side identity, stream ordering, index and control/OOB records, transfer results, and source provenance. An archive member is never silently treated as a disk when the logical capture requires the complete set.
 
 The initial conformance fixture is the prepared two-sided capture set. Tests open it through `SevenZipCatalog`, verify that all selected members form one capture set, and assert preservation of runs, markers, pre/post-index data, and separate sides. An incomplete, duplicate, or contradictory set is a named refusal. The adapter neither merges sides into an ideal disk nor materializes a medium, bitstream, sector, or filesystem.
 
-Touches: S1, S2, S3. Supports: U7; P3, P4, P12, P13, P15, P22, P23, P27. Needs: F30 pledged and delivered; the archive-catalog seam, which is delivered.
+Touches: S1, S2, S3. Supports: U7; P3, P4, P12, P13, P15, P22, P23, P27. Needs: the flux-capture foundation and the archive-catalog seam, both delivered.
 
 Companion design: [design/kryoflux-capture-set.md](design/kryoflux-capture-set.md).
 
@@ -33,7 +23,7 @@ Reduce an opened capture set's `FluxCapture` to one circular, half-track-address
 
 Mastering resolves in two stages: a plan which computes everything and writes nothing, and an execution which writes. A reduction that no policy input names is a named refusal, not a default. The same sources, policy, and seed produce the same mastered state.
 
-Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: F30, F31 and F37 pledged and delivered; F36 for the declarations it consumes.
+Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: the flux-capture foundation, which is delivered; F31 and F37 pledged and delivered; F36 for the declarations it consumes.
 
 Companion design: [design/c1541-flux-mastering.md](design/c1541-flux-mastering.md).
 
@@ -55,18 +45,18 @@ The probe reads flux interval lengths and the patterns they form, and nothing el
 
 Conformance is the prepared capture set: probing the data surface recovers all four speed zones at their documented track boundaries with their documented sector counts, and refuses the half-step positions on cross-pass reproducibility rather than on a tuned threshold. A capture the catalog cannot claim names the refusal.
 
-Touches: S1, S2, S3. Supports: U23; P3, P4, P12, P22, P23, P27, P29, P30. Needs: F30 pledged and delivered; P30 pledged.
+Touches: S1, S2, S3. Supports: U23; P3, P4, P12, P22, P23, P27, P29, P30. Needs: the flux-capture foundation, which is delivered; P30 pledged.
 
 Companion design: [design/drive-profile-recognition.md](design/drive-profile-recognition.md).
 
 ## F37 — Flux medium v1 foundation
 
-Establish the private durable flux-medium model beneath any drive interpretation and above flux capture: one circular pulse stream per family-addressed location, an exact rotational frame against a declared reference clock, per-pulse strength in the profile's declared vocabulary, the medium-level facts that are not per-pulse, and derived provenance on every part of it. It reuses F30's bounded section-addressable backing rather than inventing a second one.
+Establish the private durable flux-medium model beneath any drive interpretation and above flux capture: one circular pulse stream per family-addressed location, an exact rotational frame against a declared reference clock, per-pulse strength in the profile's declared vocabulary, the medium-level facts that are not per-pulse, and derived provenance on every part of it. It reuses the delivered flux-capture layer's bounded section-addressable backing rather than inventing a second one.
 
 It is what a P64 decodes into, what a mastering reduction produces, and what a read channel projects from. It is not a public flux, pulse, or medium iterator, not an interchange format, and not a place any decoding happens: it holds no bitcell, recovered clock, synchronization, symbol, or byte.
 
 Nothing in it carries recovered-evidence provenance. Every pulse is selected-and-projected or synthetic under P13 and P29, and a medium cannot be constructed except by a reduction that declared its policy. Unit tests build small synthetic media and verify circular bounds, exact-rational frame arithmetic, strength round-tripping, sparse locations, and bounded reload, with no capture, profile, or drive present.
 
-Touches: none. Supports: P3, P4, P13, P22, P23, P27, P29, P30. Needs: F30 pledged and delivered; the P22 and P23 amendments pledged.
+Touches: none. Supports: P3, P4, P13, P22, P23, P27, P29, P30. Needs: the flux-capture foundation, which is delivered; the P22 and P23 amendments pledged.
 
 Companion design: [design/flux-medium-foundation.md](design/flux-medium-foundation.md).

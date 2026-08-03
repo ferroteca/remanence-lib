@@ -5,11 +5,23 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # FluxCapture v1 foundation
 
-> **Status:** pledged, not delivered. This design serves F30 and authorizes no implementation outside that feature.
+> **Status:** delivered; the feature that carried it has been struck and its
+> handle retired. This remains the written statement of the model —
+> implemented in `crates/remanence/src/flux_capture.rs`, and what a capture
+> adapter is written against. It describes no application surface, so it
+> stays here rather than moving out (D11).
+>
+> Two things it specifies are deliberately unbuilt, and neither is owed by
+> the delivered feature. `SurfaceCandidate` has no named home yet because no
+> source that records resolved magnetic cells is admitted; under the
+> additive rule below, such a fact is retained as a `ForeignRecord` until a
+> revision gives it one. `DerivedCandidate` holds its source range and
+> provenance rather than payload sections, there being no admitted source
+> that supplies one.
 
 ## Purpose
 
-F30 establishes the private flux-capture model: the lower of the flux family's two models (P22), holding raw magnetic capture evidence without deciding what a medium, drive, codec, sector decoder, or filesystem makes of it.
+This design establishes the private flux-capture model: the lower of the flux family's two models (P22), holding raw magnetic capture evidence without deciding what a medium, drive, codec, sector decoder, or filesystem makes of it.
 
 A capture is never an active layer (P23): it is authoritative image state, read by inspection and by mastering, and it never carries a session's mutable truth. A reduction under P29 turns it into a `FluxMedium` (F37), which is the layer a drive is served from.
 
