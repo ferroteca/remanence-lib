@@ -19,9 +19,9 @@ use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, 
 use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Device, FileDevice};
 use crate::error::{Error, Result};
-use crate::fat::{FatEntry, FatVolume, GeometryVolume};
+use crate::fat::{FatEntry, FatVolume};
 use crate::journal;
-use crate::mbr::{self, Discovery, PartitionInfo, PartitionKind};
+use crate::mbr::{self, Discovery};
 use crate::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
@@ -43,16 +43,6 @@ fn crash_test_process_at(boundary: &str) {
 pub enum DiskFormat {
     Raw,
     Qcow2 { version: u32 },
-}
-
-/// The complete report of one disk, as it actually is (U4).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiskGeometry {
-    /// Sector 0 is all zero: a blank disk with zero volumes — an answer,
-    /// not an error.
-    pub blank: bool,
-    pub partitions: Vec<PartitionInfo>,
-    pub volumes: Vec<GeometryVolume>,
 }
 
 /// A composed view: the session cache over the virtual disk (P27).
@@ -218,96 +208,18 @@ impl Disk {
         Ok(segments)
     }
 
-    fn volume_at(&mut self, id: &str) -> Result<(u64, FatVolume)> {
-        let geometry = self.geometry()?;
-        let offset = geometry
-            .volumes
-            .iter()
-            .find(|volume| volume.id == id)
-            .map(|volume| volume.offset_bytes)
-            .ok_or_else(|| Error::not_found(format!("volume identifier '{id}' not found")))?;
+    /// Resolves a volume the inspection report issued. The identity is
+    /// the only selector: nothing here parses a string, and a caller
+    /// cannot name a volume the library did not report.
+    fn volume_at(&mut self, id: VolumeId) -> Result<(u64, FatVolume)> {
+        let report = self.inspect()?;
+        let offset = report
+            .volume(id)
+            .map(|volume| volume.start_bytes)
+            .ok_or_else(|| Error::not_found("this disk reports no such volume".to_owned()))?;
         let mut composed = self.composed();
         let volume = FatVolume::open(&mut composed, offset)?;
         Ok((offset, volume))
-    }
-
-    fn partition_volume_id(partition: &PartitionInfo) -> String {
-        match partition.kind {
-            PartitionKind::Primary => format!("partition:{}", partition.number),
-            PartitionKind::Logical => format!("logical:{}", partition.number),
-        }
-    }
-
-    /// The complete report (U4): the disk's partitions and
-    /// volumes as they actually are. Blank is an answer — an all-zero
-    /// sector 0 reports a blank disk with zero volumes — and non-zero
-    /// data that is neither a supported filesystem nor a partition
-    /// table is a named refusal kept distinct from blank. A partition
-    /// row outside the pinned claim, or one whose volume cannot be
-    /// read, stays in the report carrying its structured issue instead
-    /// of failing the whole disk or vanishing, and the volumes behind
-    /// it never renumber.
-    pub fn geometry(&mut self) -> Result<DiskGeometry> {
-        self.require_usable()?;
-        let device_identity = self.device_identity;
-        let mut composed = self.composed();
-        match crate::partition::discover(&mut composed)? {
-            // This surface has always refused content no adapter claims,
-            // and keeps refusing it. The layered report states it as an
-            // outcome instead.
-            Discovery::UnknownNonblank { evidence } => Err(mbr::unknown_nonblank(&evidence)),
-            Discovery::Blank => Ok(DiskGeometry {
-                blank: true,
-                partitions: Vec::new(),
-                volumes: Vec::new(),
-            }),
-            Discovery::BareVolume => {
-                let direct = crate::volume::direct(crate::volume::AddressedRegion {
-                    device: device_identity,
-                    offset: 0,
-                    length: composed.len(),
-                });
-                debug_assert_eq!(direct.device, device_identity);
-                let volume = FatVolume::open(&mut composed, direct.offset)?;
-                let info = volume.info(
-                    &mut composed,
-                    "superfloppy:0".to_owned(),
-                    None,
-                    direct.length,
-                )?;
-                Ok(DiskGeometry {
-                    blank: false,
-                    partitions: Vec::new(),
-                    volumes: vec![info],
-                })
-            }
-            Discovery::Partitioned(mut partitions) => {
-                let mut volumes = Vec::new();
-                for partition in &mut partitions {
-                    if partition.issue.is_some() || mbr::is_extended(partition.type_byte) {
-                        continue;
-                    }
-                    match FatVolume::open(&mut composed, partition.start_bytes).and_then(|volume| {
-                        volume.info(
-                            &mut composed,
-                            Self::partition_volume_id(partition),
-                            Some(partition.number),
-                            partition.length_bytes,
-                        )
-                    }) {
-                        Ok(info) => volumes.push(info),
-                        // The row stays, carrying why (U4); the
-                        // volumes behind it never renumber.
-                        Err(error) => partition.issue = Some(error),
-                    }
-                }
-                Ok(DiskGeometry {
-                    blank: false,
-                    partitions,
-                    volumes,
-                })
-            }
-        }
     }
 
     /// The layered inspection of this disk: the block-active device, what
@@ -396,6 +308,7 @@ impl Disk {
                     report.regions.push(RegionInfo {
                         id,
                         declared_number: partition.number,
+                        declared_placement: partition.kind.name().to_owned(),
                         role,
                         declared_type: partition.type_byte,
                         declared_type_reading: mbr::declared_type_reading(partition.type_byte)
@@ -481,7 +394,7 @@ impl Disk {
 
     /// Lists a directory in the volume identified by `volume_id`
     /// ("" = root; "A/B" descends).
-    pub fn entries(&mut self, volume_id: &str, path: &str) -> Result<Vec<FatEntry>> {
+    pub fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
         let segments = Self::split_path(path)?;
         let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
@@ -492,7 +405,7 @@ impl Disk {
     /// entry, or `None` when nothing exists at that path — a missing
     /// leaf, a missing parent, or a parent that is a file alike. Absence
     /// is an answer, distinguished from failure to read the volume (U3).
-    pub fn stat(&mut self, volume_id: &str, path: &str) -> Result<Option<FatEntry>> {
+    pub fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a path is required".to_owned()));
@@ -503,7 +416,7 @@ impl Disk {
     }
 
     /// Copies a file's bytes out of the volume identified by `volume_id`.
-    pub fn read_file(&mut self, volume_id: &str, path: &str) -> Result<Vec<u8>> {
+    pub fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
@@ -518,7 +431,7 @@ impl Disk {
     /// lie within the file.
     pub fn read_file_at(
         &mut self,
-        volume_id: &str,
+        volume_id: VolumeId,
         path: &str,
         offset: u64,
         buf: &mut [u8],
@@ -536,7 +449,7 @@ impl Disk {
     /// in place, a grown region reads as zeros. With
     /// [`Disk::write_file_at`] this is the streamed replacement for
     /// [`Disk::write_file`]. Buffered until commit.
-    pub fn resize_file(&mut self, volume_id: &str, path: &str, size: u64) -> Result<()> {
+    pub fn resize_file(&mut self, volume_id: VolumeId, path: &str, size: u64) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
@@ -552,7 +465,7 @@ impl Disk {
     /// size (resize first to change it). Buffered until commit.
     pub fn write_file_at(
         &mut self,
-        volume_id: &str,
+        volume_id: VolumeId,
         path: &str,
         offset: u64,
         data: &[u8],
@@ -589,7 +502,7 @@ impl Disk {
     /// clusters released and reclaimed, every FAT copy kept in step —
     /// while an existing directory is refused. Buffered until
     /// [`Disk::commit`].
-    pub fn write_file(&mut self, volume_id: &str, path: &str, contents: &[u8]) -> Result<()> {
+    pub fn write_file(&mut self, volume_id: VolumeId, path: &str, contents: &[u8]) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
@@ -604,7 +517,7 @@ impl Disk {
     /// `volume_id`: missing parents are created, and a path that already
     /// leads to a directory — the root included — succeeds unchanged.
     /// Buffered until commit.
-    pub fn make_directory(&mut self, volume_id: &str, path: &str) -> Result<()> {
+    pub fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         let (_, fat) = self.volume_at(volume_id)?;
@@ -720,6 +633,14 @@ impl Disk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The volume a partitionless test image composes, named the only way
+    /// a caller can name one: from the report the library issued.
+    fn only_volume(disk: &mut Disk) -> VolumeId {
+        let report = disk.inspect().expect("inspection reads");
+        assert_eq!(report.volumes.len(), 1, "these images compose one volume");
+        report.volumes[0].id
+    }
     use crate::qcow2::QCOW2_MAGIC;
     use std::process::Command;
 
@@ -780,22 +701,26 @@ mod tests {
         assert!(matches!(disk.format(), DiskFormat::Qcow2 { version: 3 }));
         assert_eq!(disk.size(), virtual_size);
 
-        let geometry = disk.geometry().expect("geometry");
-        assert_eq!(geometry.volumes.len(), 1);
-        assert_eq!(geometry.volumes[0].label.as_deref(), Some("REMANENCE"));
+        let report = disk.inspect().expect("inspection reads");
+        assert_eq!(report.volumes.len(), 1);
+        let volume = report.volumes[0].id;
+        assert_eq!(
+            report.filesystem_on(volume).and_then(|fs| fs.label.clone()),
+            Some("REMANENCE".to_owned())
+        );
 
-        disk.make_directory("superfloppy:0", "GUEST")
+        disk.make_directory(volume, "GUEST")
             .expect("mkdir");
-        disk.write_file("superfloppy:0", "GUEST/PAYLOAD.BIN", b"through the mapping")
+        disk.write_file(volume, "GUEST/PAYLOAD.BIN", b"through the mapping")
             .expect("write");
         assert_eq!(
-            disk.stat("superfloppy:0", "GUEST/PAYLOAD.BIN")
+            disk.stat(volume, "GUEST/PAYLOAD.BIN")
                 .expect("stat")
                 .map(|entry| entry.size_bytes),
             Some(b"through the mapping".len() as u64)
         );
         assert_eq!(
-            disk.stat("superfloppy:0", "GUEST/ABSENT.BIN")
+            disk.stat(volume, "GUEST/ABSENT.BIN")
                 .expect("stat"),
             None
         );
@@ -805,7 +730,7 @@ mod tests {
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", "GUEST/PAYLOAD.BIN")
+                .read_file(volume, "GUEST/PAYLOAD.BIN")
                 .expect("read"),
             b"through the mapping"
         );
@@ -826,7 +751,8 @@ mod tests {
     fn build_committed_raw(path: &std::path::Path) {
         std::fs::write(path, fat16_volume_bytes()).expect("image writes");
         let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
         disk.commit().expect("commits");
     }
@@ -851,7 +777,8 @@ mod tests {
         let path = std::env::var_os(CRASH_IMAGE).expect("the parent supplies an image path");
         let mut disk =
             Disk::open(std::path::PathBuf::from(path), AccessIntent::Write).expect("child opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("child overwrites");
         disk.commit().expect("child commits");
         panic!("the requested crash boundary was not reached");
@@ -877,7 +804,8 @@ mod tests {
     fn build_committed_qcow2(path: &std::path::Path) {
         build_fat16_qcow2(path);
         let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
         disk.commit().expect("commits old state");
     }
@@ -888,8 +816,9 @@ mod tests {
         let top = directory.join("top.qcow2");
         let virtual_size = build_fat16_qcow2(&base);
         let mut base_disk = Disk::open(&base, AccessIntent::Write).expect("base opens");
+        let volume = only_volume(&mut base_disk);
         base_disk
-            .write_file("superfloppy:0", "OLD.BIN", &old_content())
+            .write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
         base_disk.commit().expect("commits old state");
         drop(base_disk);
@@ -939,8 +868,9 @@ mod tests {
 
                 let mut reopened = Disk::open(&path, AccessIntent::Read)
                     .unwrap_or_else(|error| panic!("{shape}/{boundary} reopens: {error}"));
+                let volume = only_volume(&mut reopened);
                 let content = reopened
-                    .read_file("superfloppy:0", "OLD.BIN")
+                    .read_file(volume, "OLD.BIN")
                     .unwrap_or_else(|error| panic!("{shape}/{boundary} reads: {error}"));
                 assert_eq!(
                     content,
@@ -1004,17 +934,18 @@ mod tests {
         let path = temp_image("streamed-verbs");
         std::fs::write(&path, fat16_volume_bytes()).expect("image writes");
         let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        let volume = only_volume(&mut disk);
 
         // Streamed replace: size the file, then write it in chunks.
         let contents = new_content();
-        disk.resize_file("superfloppy:0", "BIG.BIN", contents.len() as u64)
+        disk.resize_file(volume, "BIG.BIN", contents.len() as u64)
             .expect("sizes");
         for (n, chunk) in contents.chunks(10_000).enumerate() {
-            disk.write_file_at("superfloppy:0", "BIG.BIN", (n * 10_000) as u64, chunk)
+            disk.write_file_at(volume, "BIG.BIN", (n * 10_000) as u64, chunk)
                 .expect("writes a chunk");
         }
         assert_eq!(
-            disk.read_file("superfloppy:0", "BIG.BIN")
+            disk.read_file(volume, "BIG.BIN")
                 .expect("whole read"),
             contents,
             "the streamed write equals a whole-file write"
@@ -1025,7 +956,7 @@ mod tests {
         for start in (0..contents.len()).step_by(7_777) {
             let end = (start + 7_777).min(contents.len());
             disk.read_file_at(
-                "superfloppy:0",
+                volume,
                 "BIG.BIN",
                 start as u64,
                 &mut ranged[start..end],
@@ -1035,23 +966,23 @@ mod tests {
         assert_eq!(ranged, contents);
 
         // Shrink keeps the prefix; growth reads as zeros, never stale bytes.
-        disk.resize_file("superfloppy:0", "BIG.BIN", 100)
+        disk.resize_file(volume, "BIG.BIN", 100)
             .expect("shrinks");
-        disk.resize_file("superfloppy:0", "BIG.BIN", 20_000)
+        disk.resize_file(volume, "BIG.BIN", 20_000)
             .expect("regrows");
-        let back = disk.read_file("superfloppy:0", "BIG.BIN").expect("reads");
+        let back = disk.read_file(volume, "BIG.BIN").expect("reads");
         assert_eq!(&back[..100], &contents[..100], "the kept prefix survives");
         assert!(back[100..].iter().all(|&byte| byte == 0), "growth is zeros");
 
         // The bounds are refusals, not clamps.
         let mut probe = [0u8; 8];
         assert!(
-            disk.read_file_at("superfloppy:0", "BIG.BIN", 19_996, &mut probe)
+            disk.read_file_at(volume, "BIG.BIN", 19_996, &mut probe)
                 .is_err(),
             "a read past the size is refused"
         );
         assert!(
-            disk.write_file_at("superfloppy:0", "BIG.BIN", 19_996, &probe)
+            disk.write_file_at(volume, "BIG.BIN", 19_996, &probe)
                 .is_err(),
             "a write past the size is refused"
         );
@@ -1061,7 +992,7 @@ mod tests {
         drop(disk);
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         let back = reopened
-            .read_file("superfloppy:0", "BIG.BIN")
+            .read_file(volume, "BIG.BIN")
             .expect("reads");
         assert_eq!(back.len(), 20_000);
         assert_eq!(&back[..100], &contents[..100]);
@@ -1078,7 +1009,8 @@ mod tests {
         // commit's capture all evict and spill constantly (P27), and
         // the result is byte-identical to an unbounded run.
         let mut disk = Disk::open_with_cache(&path, AccessIntent::Write, 1).expect("opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
         assert!(disk.is_modified());
         disk.commit().expect("commits");
@@ -1087,7 +1019,7 @@ mod tests {
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", "OLD.BIN")
+                .read_file(volume, "OLD.BIN")
                 .expect("reads"),
             new_content()
         );
@@ -1101,7 +1033,9 @@ mod tests {
         build_committed_raw(&path);
 
         let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "NEW.BIN", &new_content())
+
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "NEW.BIN", &new_content())
             .expect("writes");
         disk.commit().expect("commits");
         assert!(
@@ -1113,7 +1047,7 @@ mod tests {
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", "NEW.BIN")
+                .read_file(volume, "NEW.BIN")
                 .expect("reads"),
             new_content()
         );
@@ -1135,9 +1069,10 @@ mod tests {
 
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!sidecar.exists(), "the torn sidecar is discarded");
+        let volume = only_volume(&mut reopened);
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", "OLD.BIN")
+                .read_file(volume, "OLD.BIN")
                 .expect("reads"),
             old_content()
         );
@@ -1151,7 +1086,9 @@ mod tests {
         build_committed_raw(&path);
 
         let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
         let (blocks, new_len) = stage_and_arm(&mut disk);
         assert!(blocks.len() >= 2, "the staged write set spans blocks");
@@ -1171,7 +1108,7 @@ mod tests {
         assert!(!crate::journal::sidecar_path(&path).exists());
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", "OLD.BIN")
+                .read_file(volume, "OLD.BIN")
                 .expect("reads"),
             old_content(),
             "the image reconciles to wholly the old state"
@@ -1180,14 +1117,14 @@ mod tests {
         // The reconciled disk is fully usable: the same overwrite
         // commits durably this time.
         reopened
-            .write_file("superfloppy:0", "OLD.BIN", &new_content())
+            .write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
         reopened.commit().expect("commits");
         drop(reopened);
         let mut committed = Disk::open(&path, AccessIntent::Read).expect("opens");
         assert_eq!(
             committed
-                .read_file("superfloppy:0", "OLD.BIN")
+                .read_file(volume, "OLD.BIN")
                 .expect("reads"),
             new_content()
         );
@@ -1201,7 +1138,9 @@ mod tests {
         build_committed_raw(&path);
 
         let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "NEW.BIN", &new_content())
+
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "NEW.BIN", &new_content())
             .expect("writes");
         let (blocks, new_len) = stage_and_arm(&mut disk);
 
@@ -1220,13 +1159,13 @@ mod tests {
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
         assert_eq!(
-            reopened.stat("superfloppy:0", "NEW.BIN").expect("stats"),
+            reopened.stat(volume, "NEW.BIN").expect("stats"),
             None,
             "the interrupted commit's file never existed"
         );
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", "OLD.BIN")
+                .read_file(volume, "OLD.BIN")
                 .expect("reads"),
             old_content()
         );
@@ -1244,7 +1183,8 @@ mod tests {
 
         // The wholly-old state: one committed file inside the qcow2.
         let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
         disk.commit().expect("commits");
         assert!(!crate::journal::sidecar_path(&path).exists());
@@ -1253,7 +1193,7 @@ mod tests {
         // An interrupted commit: cluster allocations and metadata
         // updates land partially, then the process vanishes.
         let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "NEW.BIN", &new_content())
+        disk.write_file(volume, "NEW.BIN", &new_content())
             .expect("writes");
         let (blocks, new_len) = stage_and_arm(&mut disk);
         assert!(blocks.len() >= 2, "the staged write set spans blocks");
@@ -1270,15 +1210,14 @@ mod tests {
         // consistent, the old file intact, the interrupted one absent.
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
-        let geometry = reopened.geometry().expect("geometry");
-        assert_eq!(geometry.volumes.len(), 1);
+        let volume = only_volume(&mut reopened);
         assert_eq!(
-            reopened.stat("superfloppy:0", "NEW.BIN").expect("stats"),
+            reopened.stat(volume, "NEW.BIN").expect("stats"),
             None
         );
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", "OLD.BIN")
+                .read_file(volume, "OLD.BIN")
                 .expect("reads"),
             old_content()
         );
@@ -1298,7 +1237,8 @@ mod tests {
         ));
         let virtual_size = build_fat16_qcow2(&base);
         let mut disk = Disk::open(&base, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &old_content())
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
         disk.commit().expect("commits");
         drop(disk);
@@ -1306,7 +1246,7 @@ mod tests {
         // An interrupted commit on the base, left behind before it
         // became a backing file.
         let mut disk = Disk::open(&base, AccessIntent::Write).expect("opens");
-        disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
+        disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
         let (blocks, new_len) = stage_and_arm(&mut disk);
         for &(offset, ref block) in blocks.iter().take(blocks.len() / 2) {
@@ -1332,7 +1272,7 @@ mod tests {
         assert!(!crate::journal::sidecar_path(&base).exists());
         assert_eq!(
             chained
-                .read_file("superfloppy:0", "OLD.BIN")
+                .read_file(volume, "OLD.BIN")
                 .expect("reads"),
             old_content()
         );

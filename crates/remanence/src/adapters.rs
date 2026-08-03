@@ -597,11 +597,7 @@ impl ImageFormatAdapter for Qcow2Adapter {
             let Ok(volume) = FatVolume::open(&mut qcow2, offset) else {
                 continue;
             };
-            let id = partition.map_or_else(
-                || "superfloppy:0".to_owned(),
-                |number| format!("partition:{number}"),
-            );
-            let info = volume.info(&mut qcow2, id, partition, length)?;
+            let info = volume.recognized(&mut qcow2)?;
             let kind = info.kind.name();
             let name = match &info.label {
                 Some(label) => format!("{kind} volume '{label}'"),
@@ -619,8 +615,8 @@ impl ImageFormatAdapter for Qcow2Adapter {
                 id: kind.to_ascii_lowercase(),
                 name,
                 confidence: 100,
-                offset: info.offset_bytes,
-                length: info.length_bytes,
+                offset,
+                length,
                 evidence: vec![observation],
             });
         }

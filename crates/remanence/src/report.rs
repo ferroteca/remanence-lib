@@ -95,6 +95,16 @@ impl RegionId {
 }
 
 impl VolumeId {
+    /// Rebuilds an identity from a value a binding carried across an ABI.
+    ///
+    /// This exists so the C and Python presentations can hand back what a
+    /// report gave them, and for nothing else. It is not a way to name a
+    /// volume the library did not report: a value that was never issued
+    /// simply resolves to no volume, and the verb refuses.
+    pub const fn from_value(value: u64) -> Self {
+        Self(value)
+    }
+
     /// The identity of the volume composed from the whole device.
     pub(crate) const fn whole_device() -> Self {
         Self::of(WHOLE_DEVICE)
@@ -217,6 +227,14 @@ pub struct RegionInfo {
     /// Where the region sits in its schema's own vocabulary — the slot or
     /// chain position it was declared at.
     pub declared_number: u32,
+    /// How the schema places this region, in the schema's own vocabulary:
+    /// for MBR, `"primary"` for one of the four slots and `"logical"` for
+    /// an entry on the extended chain.
+    ///
+    /// This is a different axis from [`role`](Self::role) and neither
+    /// implies the other: the extended container is a primary slot whose
+    /// role is structural, while every logical entry is data.
+    pub declared_placement: String,
     /// Whether the schema declares this region as data or as structure.
     pub role: RegionRole,
     /// The type value exactly as the schema records it.

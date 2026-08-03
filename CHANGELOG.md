@@ -50,18 +50,35 @@ rather than bridged. Read every entry below in that light.
   including extended and logical entries, a partitionless direct volume,
   and FAT12/FAT16.
 
+### Removed
+
+- **The `DiskGeometry` snapshot and `Disk::geometry` are gone**, with
+  the flattened partition and volume records that made them up, on all
+  three surfaces at once: `RemanenceDiskGeometry`,
+  `remanence_disk_geometry`, and every `remanence_geometry_*` accessor
+  are removed from the C ABI, and `DiskGeometry`, `PartitionInfo` and
+  `GeometryVolume` from the Python module. No alias, no flattened view
+  of the old model, no deprecation window — the layered report replaces
+  it whole. Volume-scoped file verbs no longer take a caller-parsed
+  string like `"partition:1"`: they take the opaque volume identity the
+  inspection report issued, which is the only way to name a volume now.
+  A caller that built those strings reads the identity out of
+  `Disk::inspect` instead. What the geometry surface reported about a
+  region's placement in its schema — primary slot or extended-chain
+  entry — is carried on the region record, alongside the separate
+  question of whether the schema declares that region as data or as
+  structure.
+
 ### Changed
 
 - **Non-blank content no adapter claims is an outcome of `inspect`
   rather than a refusal.** A disk in no format this release knows is a
   fact about the disk, so the layered report states it and carries the
-  evidence. `Disk::geometry` and identification are unchanged and still
-  refuse it by name; an image that cannot be *read* still fails
-  everywhere.
+  evidence. Identification is unchanged and still refuses it by name; an
+  image that cannot be *read* still fails everywhere.
 - `VolumeInfo` in the Rust crate and the Python module now names the
-  volume record of the layered report. The FAT-shaped record the
-  geometry surface returns is `GeometryVolume`. The C ABI is unaffected,
-  its accessors having always been named for geometry.
+  volume record of the layered report, the FAT-shaped record it replaced
+  having been removed with the rest of the geometry surface.
 
 - **A mastered medium is saved as a P64, and a P64 is opened, on all
   three surfaces.** `MasteredMedium::describe_p64` computes what the

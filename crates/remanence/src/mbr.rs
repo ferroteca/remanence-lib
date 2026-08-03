@@ -17,7 +17,7 @@ const BOOT_SIGNATURE: [u8; 2] = [0x55, 0xaa];
 
 /// Where a partition row sits: an MBR slot, or the extended chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PartitionKind {
+pub(crate) enum PartitionKind {
     /// An MBR slot — the extended container included.
     Primary,
     /// A row of the extended chain.
@@ -26,7 +26,7 @@ pub enum PartitionKind {
 
 impl PartitionKind {
     /// The stable cross-language spelling of this kind.
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Primary => "primary",
             Self::Logical => "logical",
@@ -38,22 +38,22 @@ impl PartitionKind {
 /// reported (U4): a row the library cannot read stays here
 /// carrying its [`issue`](Self::issue) instead of vanishing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PartitionInfo {
+pub(crate) struct PartitionInfo {
     /// 1-based partition number in discovery order (primaries first, then
     /// logicals along the extended chain). A row carrying an issue keeps
     /// its number, so the rows behind it never renumber.
-    pub number: u32,
-    pub kind: PartitionKind,
-    pub type_byte: u8,
+    pub(crate) number: u32,
+    pub(crate) kind: PartitionKind,
+    pub(crate) type_byte: u8,
     /// The pinned type name; `None` when the type byte is outside the
     /// claim — the issue then names the refusal.
-    pub type_name: Option<String>,
-    pub start_bytes: u64,
-    pub length_bytes: u64,
+    pub(crate) type_name: Option<String>,
+    pub(crate) start_bytes: u64,
+    pub(crate) length_bytes: u64,
     /// The structured refusal — a stable category plus its diagnostic —
     /// that keeps this row in the report when its type is outside the
     /// claim or its volume cannot be read; `None` for a row read cleanly.
-    pub issue: Option<Error>,
+    pub(crate) issue: Option<Error>,
 }
 
 /// What sector 0 turned out to be (U4). Blank is an answer, and so is
@@ -68,15 +68,15 @@ pub(crate) enum Discovery {
     /// Sector 0 is all zero: a blank disk with zero volumes.
     Blank,
     /// Sector 0 carries data that is none of the above. The layered
-    /// report states this as an outcome and carries the evidence; the
-    /// geometry surface turns it back into the refusal it has always
-    /// been, which is why the reason travels with the arm.
+    /// report states this as an outcome and carries the evidence, while
+    /// identification refuses it as it always has — which is why the
+    /// reason travels with the arm rather than being reconstructed.
     UnknownNonblank { evidence: String },
 }
 
 /// Why nothing claimed a non-zero sector 0. One sentence, stated once, so
-/// the layered report's evidence and the geometry surface's refusal say
-/// the same thing.
+/// the layered report's evidence and identification's refusal say the
+/// same thing about the same disk.
 pub(crate) const UNKNOWN_NONBLANK: &str =
     "sector 0 carries data but no boot signature: neither a blank disk, a \
      supported filesystem boot record, nor a partition table — corruption, \

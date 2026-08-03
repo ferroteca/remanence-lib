@@ -186,29 +186,6 @@ impl Bpb {
     }
 }
 
-/// A recognized FAT volume: facts for the reporting lane (U4).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GeometryVolume {
-    /// Opaque stable identifier used by every file verb.
-    pub id: String,
-    /// 1-based partition number this volume sits in; `None` for a
-    /// partitionless image.
-    pub partition_number: Option<u32>,
-    pub kind: FatKind,
-    pub label: Option<String>,
-    pub offset_bytes: u64,
-    pub length_bytes: u64,
-    pub cluster_bytes: u64,
-    pub cluster_count: u64,
-    /// Geometry the boot record states, where it states one.
-    pub sectors_per_track: Option<u16>,
-    pub heads: Option<u16>,
-    /// Cylinders, only where an exact derivation exists: the stated
-    /// track geometry divides the total sector count with no remainder.
-    /// Omitted otherwise — never invented (U4).
-    pub cylinders: Option<u64>,
-}
-
 /// What recognizing FAT on one volume established (P18). These are the
 /// filesystem's own declarations: the geometry here is what the boot
 /// record states, and it manufactures no physical drive.
@@ -274,29 +251,6 @@ impl FatVolume {
                 .then_some(self.bpb.sectors_per_track),
             heads: (self.bpb.heads != 0).then_some(self.bpb.heads),
             cylinders: self.bpb.cylinders(),
-        })
-    }
-
-    pub fn info(
-        &self,
-        device: &mut dyn Device,
-        id: String,
-        partition_number: Option<u32>,
-        length_bytes: u64,
-    ) -> Result<GeometryVolume> {
-        let facts = self.recognized(device)?;
-        Ok(GeometryVolume {
-            id,
-            partition_number,
-            kind: facts.kind,
-            label: facts.label,
-            offset_bytes: self.offset,
-            length_bytes,
-            cluster_bytes: facts.cluster_bytes,
-            cluster_count: facts.cluster_count,
-            sectors_per_track: facts.sectors_per_track,
-            heads: facts.heads,
-            cylinders: facts.cylinders,
         })
     }
 

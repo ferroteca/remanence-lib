@@ -78,9 +78,14 @@ disk image with a declared intent: a read session denies writes to
 every other process while admitting other readers; a writable session
 admits no observers at all; and an image whose claim cannot be secured —
 one held by a running VM, say — is refused outright at the open. It
-reports the disk's MBR partitions and FAT12/FAT16 volumes as they
-actually are, gives each reported volume an opaque stable identifier,
-and uses that identifier to work with files — list, stat, read, write
+inspects the disk as a layered report — the block-active device, what
+its leading structure turned out to be, any recognized partition
+schema, every region that schema declares, every volume composed, and
+every filesystem recognized on one, each fact at the seam that owns it.
+Every declared region carries both its raw type value and a reading of
+what that value declares, so a type the release does not read still
+explains itself. It gives each reported volume an opaque stable
+identity, and uses that identity to work with files — list, stat, read, write
 (overwriting in place), and create directories with their missing
 parents — under a commit point: nothing touches the image until
 `commit`, and `rollback` discards everything. A qcow2 whose content

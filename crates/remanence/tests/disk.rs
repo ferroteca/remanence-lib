@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use remanence::{
     AccessIntent, AccessMode, Disk, DiskContent, DiskFormat, ErrorCategory, FatEntryKind, FatKind,
-    PartitionKind, RegionRole, VolumeOrigin,
+    RegionRole, VolumeId, VolumeOrigin,
 };
 
 fn temp_path(tag: &str) -> PathBuf {
@@ -179,6 +179,16 @@ fn synthetic_extended_disk(volume: &[u8], corrupt_second_ebr: bool) -> Vec<u8> {
     disk
 }
 
+
+/// The volume a caller works in, named the only way a caller can name
+/// one: by asking the library what it reported. Nothing here builds an
+/// identity or parses one.
+fn only_volume(disk: &mut Disk) -> remanence::VolumeId {
+    let report = disk.inspect().expect("inspection reads");
+    assert_eq!(report.volumes.len(), 1, "these images compose one volume");
+    report.volumes[0].id
+}
+
 #[test]
 fn fat16_roundtrip_on_a_bare_raw_image() {
     let path = temp_path("bare");
@@ -192,56 +202,56 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     );
     assert_eq!(disk.format(), DiskFormat::Raw);
 
-    let geometry = disk.geometry().expect("geometry reads");
-    assert!(!geometry.blank);
-    assert!(geometry.partitions.is_empty());
-    assert_eq!(geometry.volumes.len(), 1);
-    let volume = &geometry.volumes[0];
-    assert_eq!(volume.id, "superfloppy:0");
-    assert_eq!(volume.kind, FatKind::Fat16);
-    assert_eq!(volume.label.as_deref(), Some("REMANENCE"));
-    assert_eq!(volume.sectors_per_track, Some(18));
-    assert_eq!(volume.heads, Some(2));
+    let report = disk.inspect().expect("inspection reads");
+    assert_eq!(report.content, DiskContent::DirectVolume);
+    assert!(report.regions.is_empty());
+    assert_eq!(report.volumes.len(), 1);
+    let volume = report.volumes[0].id;
+    let filesystem = report.filesystem_on(volume).expect("FAT recognized");
+    assert_eq!(filesystem.kind.as_deref(), Some(FatKind::Fat16.name()));
+    assert_eq!(filesystem.label.as_deref(), Some("REMANENCE"));
+    assert_eq!(filesystem.declared_geometry.sectors_per_track, Some(18));
+    assert_eq!(filesystem.declared_geometry.heads, Some(2));
     // 8000 sectors do not divide into 18x2 tracks: omitted, not invented.
-    assert_eq!(volume.cylinders, None);
+    assert_eq!(filesystem.declared_geometry.cylinders, None);
 
     // Write a directory and a file; read them back through the overlay.
-    disk.make_directory("superfloppy:0", "SUB").expect("mkdir");
+    disk.make_directory(volume, "SUB").expect("mkdir");
     let payload: Vec<u8> = (0..2000u32).flat_map(|n| n.to_le_bytes()).collect();
-    disk.write_file("superfloppy:0", "SUB/HELLO.BIN", &payload)
+    disk.write_file(volume, "SUB/HELLO.BIN", &payload)
         .expect("write");
     assert!(disk.is_modified());
 
-    let entries = disk.entries("superfloppy:0", "SUB").expect("list");
+    let entries = disk.entries(volume, "SUB").expect("list");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "HELLO.BIN");
     assert_eq!(entries[0].kind, FatEntryKind::File);
     assert_eq!(entries[0].size_bytes, payload.len() as u64);
     assert_eq!(
-        disk.read_file("superfloppy:0", "SUB/HELLO.BIN")
+        disk.read_file(volume, "SUB/HELLO.BIN")
             .expect("read"),
         payload
     );
     assert_eq!(
-        disk.read_file("superfloppy:0", "SUB")
+        disk.read_file(volume, "SUB")
             .expect_err("directory is not a file")
             .category(),
         ErrorCategory::IsDirectory
     );
     assert_eq!(
-        disk.entries("superfloppy:0", "SUB/HELLO.BIN")
+        disk.entries(volume, "SUB/HELLO.BIN")
             .expect_err("file is not a directory")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        disk.read_file("superfloppy:0", "SUB/MISSING.BIN")
+        disk.read_file(volume, "SUB/MISSING.BIN")
             .expect_err("missing file is refused")
             .category(),
         ErrorCategory::NotFound
     );
     assert_eq!(
-        disk.write_file("superfloppy:0", "TOO-BIG.BIN", &vec![0u8; 5_000_000],)
+        disk.write_file(volume, "TOO-BIG.BIN", &vec![0u8; 5_000_000],)
             .expect_err("allocation exhaustion is refused")
             .category(),
         ErrorCategory::NoSpace
@@ -250,19 +260,21 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     // Rollback: the image is untouched.
     disk.rollback();
     assert!(!disk.is_modified());
-    assert!(disk.entries("superfloppy:0", "SUB").is_err());
+    assert!(disk.entries(volume, "SUB").is_err());
 
     // Write again and commit this time; overwriting replaces the
     // contents rather than refusing (U3).
-    disk.write_file("superfloppy:0", "KEPT.TXT", b"the first draft, rather longer")
+    disk.write_file(volume, "KEPT.TXT", b"the first draft, rather longer")
         .expect("write");
-    disk.write_file("superfloppy:0", "KEPT.TXT", b"kept bytes")
+    disk.write_file(volume, "KEPT.TXT", b"kept bytes")
         .expect("overwrite");
     disk.commit().expect("commit");
     assert!(!disk.is_modified());
     drop(disk);
 
     let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+
+    let volume_reopened = only_volume(&mut reopened);
     assert_eq!(
         reopened.mode(),
         AccessMode::ReadOnly,
@@ -270,7 +282,7 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     );
     assert_eq!(
         reopened
-            .read_file("superfloppy:0", "KEPT.TXT")
+            .read_file(volume_reopened, "KEPT.TXT")
             .expect("read"),
         b"kept bytes"
     );
@@ -285,27 +297,37 @@ fn fat16_behind_an_mbr_partition() {
     std::fs::write(&path, synthetic_mbr_disk(&synthetic_fat16())).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
-    let geometry = disk.geometry().expect("geometry reads");
-    assert!(!geometry.blank);
-    assert_eq!(geometry.partitions.len(), 1);
-    assert_eq!(geometry.partitions[0].kind, PartitionKind::Primary);
-    assert_eq!(geometry.partitions[0].type_byte, 0x06);
-    assert_eq!(geometry.partitions[0].type_name.as_deref(), Some("FAT16B"));
-    assert_eq!(geometry.partitions[0].start_bytes, 2048 * 512);
-    assert_eq!(geometry.partitions[0].issue, None);
-    assert_eq!(geometry.volumes.len(), 1);
-    assert_eq!(geometry.volumes[0].id, "partition:1");
-    assert_eq!(geometry.volumes[0].partition_number, Some(1));
-    assert_eq!(geometry.volumes[0].label.as_deref(), Some("REMANENCE"));
+    let volume = only_volume(&mut disk);
+    let report = disk.inspect().expect("inspection reads");
+    assert_eq!(report.content, DiskContent::Schema);
+    assert_eq!(report.regions.len(), 1);
+    let region = &report.regions[0];
+    assert_eq!(region.declared_placement, "primary");
+    assert_eq!(region.role, RegionRole::Data);
+    assert_eq!(region.declared_type, 0x06);
+    assert_eq!(region.declared_type_reading, "FAT16B");
+    assert!(region.claimed);
+    assert_eq!(region.start_bytes, 2048 * 512);
+    assert_eq!(region.issue, None);
+    assert_eq!(report.volumes.len(), 1);
+    assert_eq!(report.volumes[0].origin, VolumeOrigin::Regions(vec![region.id]));
+    assert_eq!(
+        report
+            .filesystem_on(report.volumes[0].id)
+            .and_then(|fs| fs.label.clone()),
+        Some("REMANENCE".to_owned())
+    );
 
-    disk.write_file("partition:1", "ROOT.TXT", b"in the partition")
+    disk.write_file(volume, "ROOT.TXT", b"in the partition")
         .expect("write");
     disk.commit().expect("commit");
     drop(disk);
 
     let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+
+    let volume_reopened = only_volume(&mut reopened);
     assert_eq!(
-        reopened.read_file("partition:1", "ROOT.TXT").expect("read"),
+        reopened.read_file(volume_reopened, "ROOT.TXT").expect("read"),
         b"in the partition"
     );
     drop(reopened);
@@ -319,12 +341,13 @@ fn stat_answers_presence_and_absence_distinctly() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
-    disk.make_directory("superfloppy:0", "SUB").expect("mkdir");
-    disk.write_file("superfloppy:0", "SUB/FILE.BIN", b"1234567890")
+    let volume = only_volume(&mut disk);
+    disk.make_directory(volume, "SUB").expect("mkdir");
+    disk.write_file(volume, "SUB/FILE.BIN", b"1234567890")
         .expect("write");
 
     let file = disk
-        .stat("superfloppy:0", "sub/file.bin")
+        .stat(volume, "sub/file.bin")
         .expect("stat succeeds")
         .expect("the file exists");
     assert_eq!(file.name, "FILE.BIN");
@@ -332,7 +355,7 @@ fn stat_answers_presence_and_absence_distinctly() {
     assert_eq!(file.size_bytes, 10);
 
     let directory = disk
-        .stat("superfloppy:0", "SUB")
+        .stat(volume, "SUB")
         .expect("stat succeeds")
         .expect("the directory exists");
     assert_eq!(directory.kind, FatEntryKind::Directory);
@@ -340,30 +363,30 @@ fn stat_answers_presence_and_absence_distinctly() {
     // Absence is an answer, not a failure: a missing leaf, a missing
     // parent, and a parent that is a file all answer None.
     assert_eq!(
-        disk.stat("superfloppy:0", "SUB/MISSING.BIN")
+        disk.stat(volume, "SUB/MISSING.BIN")
             .expect("an answer"),
         None
     );
     assert_eq!(
-        disk.stat("superfloppy:0", "NOWHERE/FILE.BIN")
+        disk.stat(volume, "NOWHERE/FILE.BIN")
             .expect("an answer"),
         None
     );
     assert_eq!(
-        disk.stat("superfloppy:0", "SUB/FILE.BIN/DEEPER.BIN")
+        disk.stat(volume, "SUB/FILE.BIN/DEEPER.BIN")
             .expect("an answer"),
         None
     );
 
     // Failure stays failure: a missing volume identity, an empty path.
     assert_eq!(
-        disk.stat("missing:9", "FILE.BIN")
+        disk.stat(VolumeId::from_value(0xdead_beef), "FILE.BIN")
             .expect_err("no such volume")
             .category(),
         ErrorCategory::NotFound
     );
     assert!(
-        disk.stat("superfloppy:0", "").is_err(),
+        disk.stat(volume, "").is_err(),
         "the root has no entry to answer with"
     );
     drop(disk);
@@ -377,30 +400,31 @@ fn overwrite_releases_and_reclaims_clusters() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+    let volume = only_volume(&mut disk);
     // 7000 of the volume's 7903 data clusters: two of these can never
     // coexist, so each rewrite below only fits by releasing the last.
     let big = vec![0xabu8; 7000 * 512];
-    disk.write_file("superfloppy:0", "BIG.BIN", &big)
+    disk.write_file(volume, "BIG.BIN", &big)
         .expect("first write");
 
     let replacement = vec![0xcdu8; 7000 * 512];
-    disk.write_file("superfloppy:0", "BIG.BIN", &replacement)
+    disk.write_file(volume, "BIG.BIN", &replacement)
         .expect("overwriting releases the old clusters first");
     assert_eq!(
-        disk.read_file("superfloppy:0", "BIG.BIN").expect("read"),
+        disk.read_file(volume, "BIG.BIN").expect("read"),
         replacement
     );
 
     // Shrinking releases clusters for other files to claim.
-    disk.write_file("superfloppy:0", "BIG.BIN", b"now tiny")
+    disk.write_file(volume, "BIG.BIN", b"now tiny")
         .expect("shrinking overwrite");
-    disk.write_file("superfloppy:0", "OTHER.BIN", &big)
+    disk.write_file(volume, "OTHER.BIN", &big)
         .expect("the released clusters are claimable again");
 
     // Overwriting a directory is refused by name.
-    disk.make_directory("superfloppy:0", "DIR").expect("mkdir");
+    disk.make_directory(volume, "DIR").expect("mkdir");
     assert_eq!(
-        disk.write_file("superfloppy:0", "DIR", b"not a file")
+        disk.write_file(volume, "DIR", b"not a file")
             .expect_err("a directory is not overwritable")
             .category(),
         ErrorCategory::IsDirectory
@@ -410,12 +434,14 @@ fn overwrite_releases_and_reclaims_clusters() {
     drop(disk);
 
     let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+
+    let volume_reopened = only_volume(&mut reopened);
     assert_eq!(
-        reopened.read_file("superfloppy:0", "BIG.BIN").expect("read"),
+        reopened.read_file(volume_reopened, "BIG.BIN").expect("read"),
         b"now tiny"
     );
     assert_eq!(
-        reopened.read_file("superfloppy:0", "OTHER.BIN").expect("read"),
+        reopened.read_file(volume_reopened, "OTHER.BIN").expect("read"),
         big
     );
     drop(reopened);
@@ -436,12 +462,13 @@ fn make_directory_creates_parents_and_is_idempotent() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+    let volume = only_volume(&mut disk);
 
     // Missing parents are created in one call.
-    disk.make_directory("superfloppy:0", "A/B/C")
+    disk.make_directory(volume, "A/B/C")
         .expect("missing parents are created");
     assert_eq!(
-        disk.stat("superfloppy:0", "A/B/C")
+        disk.stat(volume, "A/B/C")
             .expect("stat")
             .expect("exists")
             .kind,
@@ -450,28 +477,28 @@ fn make_directory_creates_parents_and_is_idempotent() {
 
     // Already existing — wholly, partly, or the root itself — succeeds
     // unchanged, and the chain extends from wherever it stops.
-    disk.make_directory("superfloppy:0", "A/B/C")
+    disk.make_directory(volume, "A/B/C")
         .expect("idempotent");
-    disk.make_directory("superfloppy:0", "A/B")
+    disk.make_directory(volume, "A/B")
         .expect("an existing prefix succeeds");
-    disk.make_directory("superfloppy:0", "")
+    disk.make_directory(volume, "")
         .expect("the root already exists");
-    disk.make_directory("superfloppy:0", "A/B/C/D")
+    disk.make_directory(volume, "A/B/C/D")
         .expect("extends the existing chain");
 
     // The created directories hold files like any other.
-    disk.write_file("superfloppy:0", "A/B/C/D/DEEP.TXT", b"nested payload")
+    disk.write_file(volume, "A/B/C/D/DEEP.TXT", b"nested payload")
         .expect("write");
 
     // A file in the way is refused by name, at the leaf or mid-path.
     assert_eq!(
-        disk.make_directory("superfloppy:0", "A/B/C/D/DEEP.TXT")
+        disk.make_directory(volume, "A/B/C/D/DEEP.TXT")
             .expect_err("a file at the leaf is refused")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        disk.make_directory("superfloppy:0", "A/B/C/D/DEEP.TXT/E")
+        disk.make_directory(volume, "A/B/C/D/DEEP.TXT/E")
             .expect_err("a file mid-path is refused")
             .category(),
         ErrorCategory::NotDirectory
@@ -481,9 +508,11 @@ fn make_directory_creates_parents_and_is_idempotent() {
     drop(disk);
 
     let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+
+    let volume_reopened = only_volume(&mut reopened);
     assert_eq!(
         reopened
-            .read_file("superfloppy:0", "A/B/C/D/DEEP.TXT")
+            .read_file(volume_reopened, "A/B/C/D/DEEP.TXT")
             .expect("read"),
         b"nested payload"
     );
@@ -498,26 +527,29 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
-    disk.make_directory("superfloppy:0", "SUB").expect("mkdir");
+    let volume = only_volume(&mut disk);
+    disk.make_directory(volume, "SUB").expect("mkdir");
 
     // One 512-byte cluster holds 16 records; "." and ".." take two, so
     // the fifteenth file forces the directory to grow mid-write, and
     // the grown cluster must never collide with a file's data clusters.
     let names: Vec<String> = (0..20).map(|n| format!("FILE{n:02}.BIN")).collect();
     for (n, name) in names.iter().enumerate() {
-        disk.write_file("superfloppy:0", &format!("SUB/{name}"), &vec![n as u8; 700])
+        disk.write_file(volume, &format!("SUB/{name}"), &vec![n as u8; 700])
             .expect("write");
     }
     disk.commit().expect("commit");
     drop(disk);
 
     let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
-    let entries = reopened.entries("superfloppy:0", "SUB").expect("list");
+
+    let volume_reopened = only_volume(&mut reopened);
+    let entries = reopened.entries(volume_reopened, "SUB").expect("list");
     assert_eq!(entries.len(), 20);
     for (n, name) in names.iter().enumerate() {
         assert_eq!(
             reopened
-                .read_file("superfloppy:0", &format!("SUB/{name}"))
+                .read_file(volume_reopened, &format!("SUB/{name}"))
                 .expect("read"),
             vec![n as u8; 700],
             "{name} reads back intact"
@@ -534,170 +566,18 @@ fn a_blank_disk_is_an_answer_with_zero_volumes() {
     std::fs::write(&path, vec![0u8; 8000 * 512]).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("blank is an answer, not an error");
-    assert!(geometry.blank);
-    assert!(geometry.partitions.is_empty());
-    assert!(geometry.volumes.is_empty());
+    let report = disk.inspect().expect("blank is an answer, not an error");
+    assert_eq!(report.content, DiskContent::Blank);
+    assert!(report.regions.is_empty());
+    assert!(report.volumes.is_empty());
 
-    // Zero volumes means every volume address is a named refusal.
+    // Zero volumes means no identity names one. A value this disk never
+    // issued resolves to nothing rather than to something plausible.
     assert_eq!(
-        disk.entries("superfloppy:0", "")
-            .expect_err("missing identifier is refused")
+        disk.entries(VolumeId::from_value(0), "")
+            .expect_err("an unissued identity is refused")
             .category(),
         ErrorCategory::NotFound
-    );
-    drop(disk);
-
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn an_empty_partition_table_is_not_blank() {
-    let path = temp_path("empty-mbr");
-    // A valid boot signature, no BPB shape, and four empty slots.
-    let mut image = vec![0u8; 8000 * 512];
-    image[510] = 0x55;
-    image[511] = 0xaa;
-    std::fs::write(&path, image).expect("image writes");
-
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk
-        .geometry()
-        .expect("an empty table is a complete answer");
-    assert!(!geometry.blank);
-    assert!(geometry.partitions.is_empty());
-    assert!(geometry.volumes.is_empty());
-    drop(disk);
-
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn an_unreadable_image_is_refused_by_name_distinct_from_blank() {
-    let path = temp_path("unreadable");
-    // Non-zero data that is neither a supported filesystem nor a
-    // partition table (no boot signature).
-    std::fs::write(&path, vec![0x51u8; 8000 * 512]).expect("image writes");
-
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let error = disk.geometry().expect_err("an unreadable image is refused");
-    assert_eq!(error.category(), ErrorCategory::InvalidImage);
-    let message = error.to_string();
-    assert!(
-        message.contains("blank"),
-        "the refusal is kept distinct from blank: {message}"
-    );
-    drop(disk);
-
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn a_row_outside_the_claim_stays_and_nothing_renumbers() {
-    let fat = synthetic_fat16();
-    let foreign = vec![0u8; 8000 * 512]; // never read: refused at the type
-    let path = temp_path("foreign-type");
-    std::fs::write(
-        &path,
-        synthetic_multi_mbr(&[(0x06, &fat), (0x83, &foreign), (0x06, &fat)]),
-    )
-    .expect("image writes");
-
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk
-        .geometry()
-        .expect("one foreign row does not fail the disk");
-
-    assert_eq!(geometry.partitions.len(), 3);
-    let numbers: Vec<u32> = geometry
-        .partitions
-        .iter()
-        .map(|partition| partition.number)
-        .collect();
-    assert_eq!(numbers, [1, 2, 3], "rows never renumber");
-
-    let foreign_row = &geometry.partitions[1];
-    assert_eq!(foreign_row.kind, PartitionKind::Primary);
-    assert_eq!(foreign_row.type_byte, 0x83);
-    assert_eq!(
-        foreign_row.type_name, None,
-        "no pinned name outside the claim"
-    );
-    let issue = foreign_row
-        .issue
-        .as_ref()
-        .expect("the row carries its issue");
-    assert_eq!(issue.category(), ErrorCategory::Unsupported);
-    assert!(
-        issue.to_string().contains("0x83"),
-        "the refusal names the type"
-    );
-    assert!(geometry.partitions[0].issue.is_none());
-    assert!(geometry.partitions[2].issue.is_none());
-
-    let referenced: Vec<Option<u32>> = geometry
-        .volumes
-        .iter()
-        .map(|volume| volume.partition_number)
-        .collect();
-    assert_eq!(
-        referenced,
-        [Some(1), Some(3)],
-        "the volumes behind it keep their rows"
-    );
-
-    // The file verbs still address the readable slots on either side.
-    assert!(disk.entries("partition:1", "").is_ok());
-    assert_eq!(
-        disk.entries("partition:2", "")
-            .expect_err("the foreign slot has no volume identifier")
-            .category(),
-        ErrorCategory::NotFound
-    );
-    assert!(disk.entries("partition:3", "").is_ok());
-    drop(disk);
-
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn an_unreadable_volume_keeps_its_row_with_the_issue() {
-    let fat = synthetic_fat16();
-    let garbage = vec![0x51u8; 8000 * 512]; // claimed FAT16B, no BPB inside
-    let path = temp_path("unreadable-volume");
-    std::fs::write(
-        &path,
-        synthetic_multi_mbr(&[(0x06, &garbage), (0x06, &fat)]),
-    )
-    .expect("image writes");
-
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk
-        .geometry()
-        .expect("one unreadable volume does not fail the disk");
-
-    assert_eq!(geometry.partitions.len(), 2);
-    let broken = &geometry.partitions[0];
-    assert_eq!(broken.type_name.as_deref(), Some("FAT16B"));
-    let issue = broken
-        .issue
-        .as_ref()
-        .expect("the row carries why it has no volume");
-    assert_eq!(issue.category(), ErrorCategory::InvalidImage);
-    assert!(geometry.partitions[1].issue.is_none());
-
-    assert_eq!(geometry.volumes.len(), 1);
-    assert_eq!(geometry.volumes[0].partition_number, Some(2));
-    assert_eq!(geometry.volumes[0].id, "partition:2");
-    assert_eq!(
-        disk.entries("partition:1", "")
-            .expect_err("an unreadable row has no volume identifier")
-            .category(),
-        ErrorCategory::NotFound
-    );
-    assert!(
-        disk.entries(&geometry.volumes[0].id, "").is_ok(),
-        "the readable volume keeps the identity of partition 2"
     );
     drop(disk);
 
@@ -711,47 +591,49 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
     std::fs::write(&path, synthetic_extended_disk(&fat, false)).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("geometry reads");
+    let report = disk.inspect().expect("inspection reads");
 
-    assert_eq!(geometry.partitions.len(), 4);
-    let kinds: Vec<PartitionKind> = geometry
-        .partitions
+    assert_eq!(report.regions.len(), 4);
+    let placements: Vec<&str> = report
+        .regions
         .iter()
-        .map(|partition| partition.kind)
+        .map(|region| region.declared_placement.as_str())
         .collect();
     assert_eq!(
-        kinds,
+        placements,
         [
-            PartitionKind::Primary,
-            PartitionKind::Primary, // the extended container
-            PartitionKind::Logical,
-            PartitionKind::Logical,
+            "primary",
+            "primary", // the extended container
+            "logical",
+            "logical",
         ]
     );
+    // Placement and role are different axes: the container occupies a
+    // primary slot, and its role is structural rather than data.
+    assert_eq!(report.regions[1].role, RegionRole::Container);
     assert_eq!(
-        geometry.partitions[1].type_name.as_deref(),
-        Some("extended")
+        report.regions[1].declared_type_reading,
+        "an extended partition, CHS-addressed"
     );
-    assert!(
-        geometry
-            .partitions
-            .iter()
-            .all(|partition| partition.issue.is_none())
-    );
+    assert!(report.regions.iter().all(|region| region.issue.is_none()));
 
-    let referenced: Vec<Option<u32>> = geometry
+    let referenced: Vec<u32> = report
         .volumes
         .iter()
-        .map(|volume| volume.partition_number)
+        .filter_map(|volume| match &volume.origin {
+            VolumeOrigin::Regions(regions) => regions.first().copied(),
+            VolumeOrigin::WholeDevice => None,
+        })
+        .filter_map(|region| report.region(region).map(|found| found.declared_number))
         .collect();
-    assert_eq!(referenced, [Some(1), Some(3), Some(4)]);
+    assert_eq!(referenced, [1, 3, 4]);
 
-    // The file verbs use exactly the identifiers the report supplies.
-    for volume in &geometry.volumes {
+    // The file verbs take exactly the identities the report supplied.
+    let volumes: Vec<_> = report.volumes.iter().map(|volume| volume.id).collect();
+    for volume in volumes {
         assert!(
-            disk.entries(&volume.id, "").is_ok(),
-            "volume {} readable",
-            volume.id
+            disk.entries(volume, "").is_ok(),
+            "volume {volume:?} readable"
         );
     }
     drop(disk);
@@ -766,20 +648,20 @@ fn a_broken_chain_keeps_what_it_found() {
     std::fs::write(&path, synthetic_extended_disk(&fat, true)).expect("image writes");
 
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk
-        .geometry()
+    let report = disk
+        .inspect()
         .expect("a broken link does not fail the disk");
 
     // The primary, the container, and the first logical all stay; the
-    // container row carries why the walk stopped.
-    assert_eq!(geometry.partitions.len(), 3);
-    let numbers: Vec<u32> = geometry
-        .partitions
+    // container region carries why the walk stopped.
+    assert_eq!(report.regions.len(), 3);
+    let numbers: Vec<u32> = report
+        .regions
         .iter()
-        .map(|partition| partition.number)
+        .map(|region| region.declared_number)
         .collect();
     assert_eq!(numbers, [1, 2, 3], "nothing renumbers");
-    let container = &geometry.partitions[1];
+    let container = &report.regions[1];
     let issue = container
         .issue
         .as_ref()
@@ -790,12 +672,16 @@ fn a_broken_chain_keeps_what_it_found() {
         "the refusal says why"
     );
 
-    let referenced: Vec<Option<u32>> = geometry
+    let referenced: Vec<u32> = report
         .volumes
         .iter()
-        .map(|volume| volume.partition_number)
+        .filter_map(|volume| match &volume.origin {
+            VolumeOrigin::Regions(regions) => regions.first().copied(),
+            VolumeOrigin::WholeDevice => None,
+        })
+        .filter_map(|region| report.region(region).map(|r| r.declared_number))
         .collect();
-    assert_eq!(referenced, [Some(1), Some(3)]);
+    assert_eq!(referenced, [1, 3]);
     drop(disk);
 
     std::fs::remove_file(&path).ok();
@@ -807,10 +693,13 @@ fn cylinders_are_reported_only_where_the_derivation_is_exact() {
     let path = temp_path("cylinders-exact");
     std::fs::write(&path, synthetic_fat12_floppy()).expect("image writes");
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("geometry reads");
-    assert_eq!(geometry.volumes.len(), 1);
-    assert_eq!(geometry.volumes[0].kind, FatKind::Fat12);
-    assert_eq!(geometry.volumes[0].cylinders, Some(80));
+    let report = disk.inspect().expect("inspection reads");
+    assert_eq!(report.volumes.len(), 1);
+    let filesystem = report
+        .filesystem_on(report.volumes[0].id)
+        .expect("FAT recognized");
+    assert_eq!(filesystem.kind.as_deref(), Some(FatKind::Fat12.name()));
+    assert_eq!(filesystem.declared_geometry.cylinders, Some(80));
     drop(disk);
     std::fs::remove_file(&path).ok();
 
@@ -821,10 +710,13 @@ fn cylinders_are_reported_only_where_the_derivation_is_exact() {
     image[24..28].fill(0); // sectors/track and heads unstated
     std::fs::write(&path, image).expect("image writes");
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
-    let geometry = disk.geometry().expect("geometry reads");
-    assert_eq!(geometry.volumes[0].sectors_per_track, None);
-    assert_eq!(geometry.volumes[0].heads, None);
-    assert_eq!(geometry.volumes[0].cylinders, None);
+    let report = disk.inspect().expect("inspection reads");
+    let filesystem = report
+        .filesystem_on(report.volumes[0].id)
+        .expect("FAT recognized");
+    assert_eq!(filesystem.declared_geometry.sectors_per_track, None);
+    assert_eq!(filesystem.declared_geometry.heads, None);
+    assert_eq!(filesystem.declared_geometry.cylinders, None);
     drop(disk);
     std::fs::remove_file(&path).ok();
 }
@@ -876,10 +768,11 @@ fn p7_declared_intent_claims_and_refusals() {
         "a writable open on a read-only file fails at the open"
     );
     let mut readonly = Disk::open(&path, AccessIntent::Read).expect("read open proceeds");
+    let volume_readonly = only_volume(&mut readonly);
     assert_eq!(readonly.mode(), AccessMode::ReadOnly);
-    assert!(readonly.geometry().is_ok(), "analysis proceeds");
+    assert!(readonly.inspect().is_ok(), "analysis proceeds");
     let refused = readonly
-        .write_file("superfloppy:0", "NO.TXT", b"denied")
+        .write_file(volume_readonly, "NO.TXT", b"denied")
         .expect_err("write actions are denied on a read session");
     assert_eq!(refused.category(), ErrorCategory::ReadOnly);
     drop(readonly);
@@ -960,11 +853,10 @@ fn a_blank_disk_states_that_it_is_blank() {
     std::fs::remove_file(&path).ok();
 }
 
-/// The one deliberate behavior change in this feature: content no adapter
-/// claims used to fail the whole call and is now an outcome carrying its
-/// evidence. The geometry surface keeps refusing it.
+/// Content no adapter claims is an outcome carrying its evidence, not a
+/// refusal. It stays distinct from blank, and it composes nothing.
 #[test]
-fn unclaimed_nonblank_content_is_an_outcome_here_and_still_a_refusal_there() {
+fn unclaimed_nonblank_content_is_a_reported_outcome() {
     let mut bytes = vec![0u8; 4096];
     bytes[..4].copy_from_slice(b"\xde\xad\xbe\xef");
     let path = image_at("inspect-unknown", &bytes);
@@ -980,14 +872,7 @@ fn unclaimed_nonblank_content_is_an_outcome_here_and_still_a_refusal_there() {
     );
     assert_ne!(report.content, DiskContent::Blank, "never confused with blank");
     assert!(report.volumes.is_empty());
-
-    // Same disk, older surface: still the refusal it has always been.
-    let error = disk.geometry().expect_err("geometry still refuses");
-    assert_eq!(error.category(), ErrorCategory::InvalidImage);
-    assert!(
-        error.to_string().contains(evidence.as_str()),
-        "both surfaces say the same thing about the same disk: {error}"
-    );
+    assert!(report.filesystems.is_empty());
 
     std::fs::remove_file(&path).ok();
 }

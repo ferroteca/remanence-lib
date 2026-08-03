@@ -47,17 +47,16 @@ pub use c1541_mastering::{
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
-pub use disk::{Disk, DiskFormat, DiskGeometry};
+pub use disk::{Disk, DiskFormat};
 pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim};
 pub use error::{Error, ErrorCategory, Result};
 pub use evidence::DeclaredLoss;
-pub use fat::{FatEntry, FatEntryKind, FatKind, GeometryVolume};
+pub use fat::{FatEntry, FatEntryKind, FatKind};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,
 };
-pub use mbr::{PartitionInfo, PartitionKind};
 pub use report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,

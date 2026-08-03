@@ -35,8 +35,8 @@ the host, write a file in, create a directory. Writing a file that
 already exists replaces its contents, shorter or longer, releasing
 and reclaiming clusters; creating a directory creates missing
 parents and succeeds when the directory already exists. The library
-addresses a volume by the stable identifier its geometry report gave
-it, and a path within it — mapping volumes to guest drive letters
+addresses a volume by the opaque identity its inspection report issued
+for it, and a path within it — mapping volumes to guest drive letters
 stays the caller's job, standing on U4's volume enumeration. All of
 this without booting the guest and without any external helper
 process: the library does
@@ -49,19 +49,37 @@ everything I wrote can be rolled back cleanly.
 My automation layer's drive reporting and its guest drive-letter map
 run on host-side facts about a stopped machine's disk images, and this
 library is where those facts come from. For each disk — qcow2 or
-raw — I need: the partition table as it actually is, types pinned
-value by value, an unreadable entry refused with the reason rather
-than skipped (skipping renumbers every volume behind it); each
-volume with its stable identifier, filesystem kind, its label, and
-the geometry its boot record states, where it states one; and the
-volume count per disk, because letters are assigned one per volume
-actually read on the host — a disk holding none takes none, and a
-disk that cannot be read answers with the reason it could not be
-read, never the symptom. For one disk layout, an identifier names
-exactly the same region in every file verb that it named in this
-report. Its spelling belongs to the library and callers treat it as
-opaque; if it is absent on a later open, that volume is gone rather
-than renumbered. All of it from the image alone, booting nothing.
+raw — one inspection answers, keeping each fact at the seam that owns
+it rather than flattening them into one snapshot.
+
+I need what the disk turned out to be, *stated*: blank, a recognized
+partition schema, one unpartitioned volume, or content nothing claims —
+not something I reconstruct from which lists came back empty. I need
+the partition table as it actually is, types pinned value by value,
+each declared region carrying both its raw type value and a reading of
+what that value declares, so a type this library will not read still
+tells me what it says it is and I keep no partition-type table of my
+own. An unreadable entry is refused with the reason rather than
+skipped, and it keeps its place: skipping renumbers every volume behind
+it. I need each volume that actually composed, and each filesystem
+actually recognized on one — its kind, its label, and the geometry its
+boot record states where it states one — with a failed filesystem
+neither erasing its volume nor renumbering what follows.
+
+I need two counts, not one: how many volumes composed, and how many
+carry a filesystem the host read. Letters are assigned one per volume
+actually read — a disk holding none takes none — and an unreadable
+volume stays in the report rather than vanishing to keep that number
+right. A disk that cannot be read answers with the reason it could not
+be read, never the symptom.
+
+For one disk layout, an identity names exactly the same region, volume,
+or filesystem in every file verb that it named in this report, and on
+every later open of an unchanged layout. It belongs to the library and
+I treat it as opaque — I never build one from a partition number, an
+offset, a label, or a position in a list — and if it is absent on a
+later open, that object is gone rather than renumbered. All of it from
+the image alone, booting nothing.
 
 ## U5 — qcow2 images are first-class citizens of identification
 

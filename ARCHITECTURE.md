@@ -402,8 +402,9 @@ user-meaningful identity unless a later interface explicitly claims one.
 
 Device identity qualifies provenance and otherwise-local identifiers only
 where more than one device makes that distinction necessary. An interface
-already scoped to one disk may continue to accept `partition:1` or another
-disk-local identifier without exposing the device identity. A presentation
+already scoped to one disk may continue to accept a disk-local identity —
+the volume identity a disk's inspection report issues, say — without
+exposing the device identity. A presentation
 may report the assigned identity, but never makes callers echo a value that
 does not affect the requested operation.
 

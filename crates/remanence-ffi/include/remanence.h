@@ -145,10 +145,6 @@ typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 // An open disk image.
 typedef struct RemanenceDisk RemanenceDisk;
 
-// A snapshot of a disk's complete report (U4): blank is an
-// answer, and every declared partition row stays, issues and all.
-typedef struct RemanenceDiskGeometry RemanenceDiskGeometry;
-
 // A snapshot of one disk's layered inspection. Owned by the caller and
 // released with `remanence_disk_report_free`; every string and record
 // reached through it is borrowed from it and dies with it.
@@ -575,121 +571,10 @@ uint64_t remanence_disk_size(const RemanenceDisk *disk);
 // Whether uncommitted changes exist.
 bool remanence_disk_is_modified(const RemanenceDisk *disk);
 
-// Reads the disk's complete report (U4): its partitions and
-// volumes as they actually are. Blank is an answer (zero volumes, see
-// `remanence_geometry_is_blank`), a partition row the library cannot read
-// stays in the report carrying its issue, and non-zero data that is
-// neither a supported filesystem nor a partition table fails by name,
-// kept distinct from blank. Free the result with
-// `remanence_disk_geometry_free`.
-RemanenceDiskGeometry *remanence_disk_geometry(RemanenceDisk *disk,
-                                               RemanenceErrorCategory *error_category_out,
-                                               char **error_out);
-
-// Frees a geometry snapshot.
-void remanence_disk_geometry_free(RemanenceDiskGeometry *geometry);
-
-// Whether sector 0 was all zero: a blank disk with zero volumes — an
-// answer, not an error.
-bool remanence_geometry_is_blank(const RemanenceDiskGeometry *geometry);
-
-// Number of partitions (0 for a partitionless image).
-size_t remanence_geometry_partition_count(const RemanenceDiskGeometry *geometry);
-
-// A partition's 1-based number.
-uint32_t remanence_geometry_partition_number(const RemanenceDiskGeometry *geometry, size_t index);
-
-// A partition's MBR type byte.
-uint8_t remanence_geometry_partition_type_byte(const RemanenceDiskGeometry *geometry, size_t index);
-
-// A partition row's kind: "primary" (an MBR slot, the extended
-// container included) or "logical" (a row of the extended chain).
-const char *remanence_geometry_partition_kind(const RemanenceDiskGeometry *geometry, size_t index);
-
-// A partition's pinned type name, or null when the type byte is outside
-// the claim — the row's issue then names the refusal.
-const char *remanence_geometry_partition_type_name(const RemanenceDiskGeometry *geometry,
-                                                   size_t index);
-
-// A partition's start offset in bytes.
-uint64_t remanence_geometry_partition_start_bytes(const RemanenceDiskGeometry *geometry,
-                                                  size_t index);
-
-// A partition's length in bytes.
-uint64_t remanence_geometry_partition_length_bytes(const RemanenceDiskGeometry *geometry,
-                                                   size_t index);
-
-// Stores a partition row's issue category and returns true; returns
-// false when the row was read cleanly (or the index is out of range).
-// A row carrying an issue stays in the report with no volume read from
-// it, and the rows behind it never renumber (U4).
-bool remanence_geometry_partition_issue_category(const RemanenceDiskGeometry *geometry,
-                                                 size_t index,
-                                                 RemanenceErrorCategory *category_out);
-
-// A partition row's issue diagnostic — why no volume was read from the
-// row — or null when the row was read cleanly.
-const char *remanence_geometry_partition_issue(const RemanenceDiskGeometry *geometry, size_t index);
-
-// Number of volumes actually read (one guest drive letter each).
-size_t remanence_geometry_volume_count(const RemanenceDiskGeometry *geometry);
-
-// A volume's opaque stable identifier. The borrowed string is owned by
-// `geometry`.
-const char *remanence_geometry_volume_id(const RemanenceDiskGeometry *geometry, size_t index);
-
-// The 1-based partition number a volume sits in; returns false for a
-// partitionless image.
-bool remanence_geometry_volume_partition_number(const RemanenceDiskGeometry *geometry,
-                                                size_t index,
-                                                uint32_t *out);
-
-// The volume's FAT kind name ("FAT12" or "FAT16").
-const char *remanence_geometry_volume_kind(const RemanenceDiskGeometry *geometry, size_t index);
-
-// The volume label, or null when it has none.
-const char *remanence_geometry_volume_label(const RemanenceDiskGeometry *geometry, size_t index);
-
-// The volume's offset in bytes.
-uint64_t remanence_geometry_volume_offset_bytes(const RemanenceDiskGeometry *geometry,
-                                                size_t index);
-
-// The volume's length in bytes.
-uint64_t remanence_geometry_volume_length_bytes(const RemanenceDiskGeometry *geometry,
-                                                size_t index);
-
-// The volume's cluster size in bytes.
-uint64_t remanence_geometry_volume_cluster_bytes(const RemanenceDiskGeometry *geometry,
-                                                 size_t index);
-
-// The volume's data-cluster count.
-uint64_t remanence_geometry_volume_cluster_count(const RemanenceDiskGeometry *geometry,
-                                                 size_t index);
-
-// The BPB-stated sectors per track; returns false where the boot record
-// states none.
-bool remanence_geometry_volume_sectors_per_track(const RemanenceDiskGeometry *geometry,
-                                                 size_t index,
-                                                 uint32_t *out);
-
-// The BPB-stated head count; returns false where the boot record states
-// none.
-bool remanence_geometry_volume_heads(const RemanenceDiskGeometry *geometry,
-                                     size_t index,
-                                     uint32_t *out);
-
-// The volume's cylinder count, only where an exact derivation exists —
-// the boot record's track geometry divides the total sector count with
-// no remainder; returns false otherwise, never an invented value
-// (U4).
-bool remanence_geometry_volume_cylinders(const RemanenceDiskGeometry *geometry,
-                                         size_t index,
-                                         uint64_t *out);
-
 // Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
 // with `remanence_fat_entry_list_free`.
 RemanenceFatEntryList *remanence_disk_entries(RemanenceDisk *disk,
-                                              const char *volume_id,
+                                              uint64_t volume_id,
                                               const char *path,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out);
@@ -700,7 +585,7 @@ RemanenceFatEntryList *remanence_disk_entries(RemanenceDisk *disk,
 // Absence is an answer, distinguished from failure, which returns null
 // with the error set. Free with `remanence_fat_entry_list_free`.
 RemanenceFatEntryList *remanence_disk_stat(RemanenceDisk *disk,
-                                           const char *volume_id,
+                                           uint64_t volume_id,
                                            const char *path,
                                            RemanenceErrorCategory *error_category_out,
                                            char **error_out);
@@ -723,7 +608,7 @@ uint64_t remanence_fat_entry_size_bytes(const RemanenceFatEntryList *list, size_
 // Copies a file's bytes out of `volume_id`. Free with
 // `remanence_file_data_free`.
 RemanenceFileData *remanence_disk_read_file(RemanenceDisk *disk,
-                                            const char *volume_id,
+                                            uint64_t volume_id,
                                             const char *path,
                                             RemanenceErrorCategory *error_category_out,
                                             char **error_out);
@@ -732,7 +617,7 @@ RemanenceFileData *remanence_disk_read_file(RemanenceDisk *disk,
 // `remanence_disk_read_file`: exactly `length` bytes at `offset`,
 // which must lie within the file.
 bool remanence_disk_read_file_at(RemanenceDisk *disk,
-                                 const char *volume_id,
+                                 uint64_t volume_id,
                                  const char *path,
                                  uint64_t offset,
                                  uint8_t *buffer_out,
@@ -744,7 +629,7 @@ bool remanence_disk_read_file_at(RemanenceDisk *disk,
 // `remanence_disk_write_file_at`, the streamed replacement for
 // `remanence_disk_write_file`. Buffered until commit.
 bool remanence_disk_resize_file(RemanenceDisk *disk,
-                                const char *volume_id,
+                                uint64_t volume_id,
                                 const char *path,
                                 uint64_t size,
                                 RemanenceErrorCategory *error_category_out,
@@ -754,7 +639,7 @@ bool remanence_disk_resize_file(RemanenceDisk *disk,
 // `remanence_disk_write_file`: the span must lie within the file's
 // current size. Buffered until commit.
 bool remanence_disk_write_file_at(RemanenceDisk *disk,
-                                  const char *volume_id,
+                                  uint64_t volume_id,
                                   const char *path,
                                   uint64_t offset,
                                   const uint8_t *bytes,
@@ -772,7 +657,7 @@ void remanence_file_data_free(RemanenceFileData *data);
 // shorter or longer, its old clusters released and reclaimed — while
 // an existing directory is refused. Buffered until `remanence_disk_commit`.
 bool remanence_disk_write_file(RemanenceDisk *disk,
-                               const char *volume_id,
+                               uint64_t volume_id,
                                const char *path,
                                const uint8_t *bytes,
                                size_t length,
@@ -783,7 +668,7 @@ bool remanence_disk_write_file(RemanenceDisk *disk,
 // created, and a path that already leads to a directory succeeds
 // unchanged. Buffered until commit.
 bool remanence_disk_make_directory(RemanenceDisk *disk,
-                                   const char *volume_id,
+                                   uint64_t volume_id,
                                    const char *path,
                                    RemanenceErrorCategory *error_category_out,
                                    char **error_out);
@@ -1394,6 +1279,13 @@ uint64_t remanence_report_region_id(const RemanenceDiskReport *report, size_t in
 
 // The number the schema itself declared this region at.
 uint32_t remanence_report_region_declared_number(const RemanenceDiskReport *report, size_t index);
+
+// How the schema places this region in its own vocabulary: for MBR,
+// "primary" for one of the four slots and "logical" for an entry on the
+// extended chain. A different axis from the role: the extended container
+// is a primary slot whose role is structural.
+const char *remanence_report_region_declared_placement(const RemanenceDiskReport *report,
+                                                       size_t index);
 
 // Whether the schema declares this region as data or as structure.
 RemanenceRegionRole remanence_report_region_role(const RemanenceDiskReport *report, size_t index);

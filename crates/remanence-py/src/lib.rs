@@ -411,55 +411,6 @@ impl Session {
     }
 }
 
-/// One discovered partition row; every entry the table declares is
-/// reported. `kind` is `"primary"` or `"logical"`; `type_name` is `None`
-/// when the type byte is outside the claim. A row the library cannot
-/// read stays here carrying `issue_category` (a stable category string)
-/// and `issue` (the diagnostic) instead of vanishing — no volume is read
-/// from it, and the rows behind it never renumber.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct PartitionInfo {
-    pub number: u32,
-    pub kind: String,
-    pub type_byte: u8,
-    pub type_name: Option<String>,
-    pub start_bytes: u64,
-    pub length_bytes: u64,
-    pub issue_category: Option<String>,
-    pub issue: Option<String>,
-}
-
-/// One FAT volume actually read from a disk. `cylinders` is present only
-/// where an exact derivation exists — the boot record's track geometry
-/// divides the total sector count with no remainder — never invented.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct GeometryVolume {
-    /// Opaque stable identifier accepted by every file verb.
-    pub id: String,
-    pub partition_number: Option<u32>,
-    pub kind: String,
-    pub label: Option<String>,
-    pub offset_bytes: u64,
-    pub length_bytes: u64,
-    pub cluster_bytes: u64,
-    pub cluster_count: u64,
-    pub sectors_per_track: Option<u16>,
-    pub heads: Option<u16>,
-    pub cylinders: Option<u64>,
-}
-
-/// A disk's complete report, as it actually is: `blank` marks an
-/// all-zero sector 0 — a blank disk with zero volumes, an answer rather
-/// than an error.
-#[pyclass(frozen, get_all, module = "remanence")]
-pub struct DiskGeometry {
-    pub blank: bool,
-    pub partitions: Vec<PartitionInfo>,
-    pub volumes: Vec<GeometryVolume>,
-}
-
 /// The one addressed device the image adapter supplied. `id` is scoped to
 /// this open (P21), unlike the layout-derived identities below.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
@@ -495,6 +446,11 @@ pub struct RegionInfo {
     /// Opaque, library-owned. Pass it back; never parse or build one.
     pub id: u64,
     pub declared_number: u32,
+    /// How the schema places this region in its own vocabulary: for MBR,
+    /// `"primary"` for one of the four slots and `"logical"` for an entry
+    /// on the extended chain. A different axis from `role`: the extended
+    /// container is a primary slot whose role is structural.
+    pub declared_placement: String,
     /// `"data"` or `"container"`.
     pub role: String,
     pub declared_type: u8,
@@ -715,53 +671,6 @@ impl Disk {
         Ok(self.get()?.is_modified())
     }
 
-    /// The disk's complete report (U4): its partitions and
-    /// volumes as they actually are. Blank is an answer — zero volumes,
-    /// `blank` set — while non-zero data that is neither a supported
-    /// filesystem nor a partition table raises by name, kept distinct
-    /// from blank. A partition row the library cannot read stays in the
-    /// report carrying its issue instead of failing the whole disk.
-    fn geometry(&mut self) -> PyResult<DiskGeometry> {
-        let geometry = self.get()?.geometry().map_err(to_py_err)?;
-        Ok(DiskGeometry {
-            blank: geometry.blank,
-            partitions: geometry
-                .partitions
-                .iter()
-                .map(|partition| PartitionInfo {
-                    number: partition.number,
-                    kind: partition.kind.name().to_owned(),
-                    type_byte: partition.type_byte,
-                    type_name: partition.type_name.clone(),
-                    start_bytes: partition.start_bytes,
-                    length_bytes: partition.length_bytes,
-                    issue_category: partition
-                        .issue
-                        .as_ref()
-                        .map(|issue| issue.category().as_str().to_owned()),
-                    issue: partition.issue.as_ref().map(|issue| issue.to_string()),
-                })
-                .collect(),
-            volumes: geometry
-                .volumes
-                .iter()
-                .map(|volume| GeometryVolume {
-                    id: volume.id.clone(),
-                    partition_number: volume.partition_number,
-                    kind: volume.kind.name().to_owned(),
-                    label: volume.label.clone(),
-                    offset_bytes: volume.offset_bytes,
-                    length_bytes: volume.length_bytes,
-                    cluster_bytes: volume.cluster_bytes,
-                    cluster_count: volume.cluster_count,
-                    sectors_per_track: volume.sectors_per_track,
-                    heads: volume.heads,
-                    cylinders: volume.cylinders,
-                })
-                .collect(),
-        })
-    }
-
     /// The layered inspection of this disk: the block-active device, what
     /// its leading structure turned out to be, any recognized partition
     /// schema, every declared region, every volume actually composed, and
@@ -802,6 +711,7 @@ impl Disk {
                 .map(|region| RegionInfo {
                     id: region.id.value(),
                     declared_number: region.declared_number,
+                    declared_placement: region.declared_placement.clone(),
                     role: region.role.name().to_owned(),
                     declared_type: region.declared_type,
                     declared_type_reading: region.declared_type_reading.clone(),
@@ -858,10 +768,10 @@ impl Disk {
 
     /// Lists a directory in `volume_id` ("" = root, "A/B" descends).
     #[pyo3(signature = (volume_id, path = ""))]
-    fn entries(&mut self, volume_id: &str, path: &str) -> PyResult<Vec<FatEntry>> {
+    fn entries(&mut self, volume_id: u64, path: &str) -> PyResult<Vec<FatEntry>> {
         Ok(self
             .get()?
-            .entries(volume_id, path)
+            .entries(remanence::VolumeId::from_value(volume_id), path)
             .map_err(to_py_err)?
             .iter()
             .map(FatEntry::new)
@@ -872,10 +782,10 @@ impl Disk {
     /// nothing exists at that path — a missing leaf, a missing parent,
     /// or a parent that is a file alike. Absence is an answer,
     /// distinguished from failure, which raises.
-    fn stat(&mut self, volume_id: &str, path: &str) -> PyResult<Option<FatEntry>> {
+    fn stat(&mut self, volume_id: u64, path: &str) -> PyResult<Option<FatEntry>> {
         Ok(self
             .get()?
-            .stat(volume_id, path)
+            .stat(remanence::VolumeId::from_value(volume_id), path)
             .map_err(to_py_err)?
             .as_ref()
             .map(FatEntry::new))
@@ -885,10 +795,10 @@ impl Disk {
     fn read_file<'py>(
         &mut self,
         py: Python<'py>,
-        volume_id: &str,
+        volume_id: u64,
         path: &str,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self.get()?.read_file(volume_id, path).map_err(to_py_err)?;
+        let bytes = self.get()?.read_file(remanence::VolumeId::from_value(volume_id), path).map_err(to_py_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
 
@@ -898,14 +808,14 @@ impl Disk {
     fn read_file_at<'py>(
         &mut self,
         py: Python<'py>,
-        volume_id: &str,
+        volume_id: u64,
         path: &str,
         offset: u64,
         length: usize,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let mut buffer = vec![0u8; length];
         self.get()?
-            .read_file_at(volume_id, path, offset, &mut buffer)
+            .read_file_at(remanence::VolumeId::from_value(volume_id), path, offset, &mut buffer)
             .map_err(to_py_err)?;
         Ok(PyBytes::new(py, &buffer))
     }
@@ -914,9 +824,9 @@ impl Disk {
     /// shorter or longer, its old clusters released and reclaimed —
     /// while an existing directory is refused. Buffered until
     /// `commit()`.
-    fn write_file(&mut self, volume_id: &str, path: &str, contents: &[u8]) -> PyResult<()> {
+    fn write_file(&mut self, volume_id: u64, path: &str, contents: &[u8]) -> PyResult<()> {
         self.get()?
-            .write_file(volume_id, path, contents)
+            .write_file(remanence::VolumeId::from_value(volume_id), path, contents)
             .map_err(to_py_err)
     }
 
@@ -924,9 +834,9 @@ impl Disk {
     /// kept bytes preserved in place, a grown region reads as zeros.
     /// With `write_file_at` this is the streamed replacement for
     /// `write_file`. Buffered until `commit()`.
-    fn resize_file(&mut self, volume_id: &str, path: &str, size: u64) -> PyResult<()> {
+    fn resize_file(&mut self, volume_id: u64, path: &str, size: u64) -> PyResult<()> {
         self.get()?
-            .resize_file(volume_id, path, size)
+            .resize_file(remanence::VolumeId::from_value(volume_id), path, size)
             .map_err(to_py_err)
     }
 
@@ -935,22 +845,22 @@ impl Disk {
     /// size (resize first to change it). Buffered until `commit()`.
     fn write_file_at(
         &mut self,
-        volume_id: &str,
+        volume_id: u64,
         path: &str,
         offset: u64,
         data: &[u8],
     ) -> PyResult<()> {
         self.get()?
-            .write_file_at(volume_id, path, offset, data)
+            .write_file_at(remanence::VolumeId::from_value(volume_id), path, offset, data)
             .map_err(to_py_err)
     }
 
     /// Ensures a directory exists in `volume_id`: missing parents are
     /// created, and a path that already leads to a directory succeeds
     /// unchanged. Buffered until `commit()`.
-    fn make_directory(&mut self, volume_id: &str, path: &str) -> PyResult<()> {
+    fn make_directory(&mut self, volume_id: u64, path: &str) -> PyResult<()> {
         self.get()?
-            .make_directory(volume_id, path)
+            .make_directory(remanence::VolumeId::from_value(volume_id), path)
             .map_err(to_py_err)
     }
 
@@ -2302,9 +2212,6 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FilesystemLayout>()?;
     m.add_class::<HdosFile>()?;
     m.add_class::<Disk>()?;
-    m.add_class::<DiskGeometry>()?;
-    m.add_class::<PartitionInfo>()?;
-    m.add_class::<GeometryVolume>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;
     m.add_class::<PartitionSchemaInfo>()?;

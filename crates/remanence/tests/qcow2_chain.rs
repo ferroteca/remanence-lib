@@ -159,6 +159,15 @@ fn run_qemu_img(qemu_img: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+
+/// The volume a partitionless image composes, named the only way a caller
+/// can name one: by asking the library what it reported.
+fn only_volume(disk: &mut Disk) -> remanence::VolumeId {
+    let report = disk.inspect().expect("inspection reads");
+    assert_eq!(report.volumes.len(), 1, "a partitionless image, one volume");
+    report.volumes[0].id
+}
+
 #[test]
 fn reads_compose_through_a_raw_backing_file() {
     let dir = chain_dir("raw-base");
@@ -175,11 +184,15 @@ fn reads_compose_through_a_raw_backing_file() {
     assert_eq!(disk.size(), base.len() as u64);
 
     // The FAT volume at the bottom of the chain reads as one disk.
-    let geometry = disk.geometry().expect("geometry composes");
-    assert_eq!(geometry.volumes.len(), 1);
-    assert_eq!(geometry.volumes[0].label.as_deref(), Some("REMANENCE"));
+    let report = disk.inspect().expect("inspection composes");
+    assert_eq!(report.volumes.len(), 1);
+    let volume = report.volumes[0].id;
     assert_eq!(
-        disk.read_file(&geometry.volumes[0].id, "MARKER.TXT")
+        report.filesystem_on(volume).and_then(|fs| fs.label.clone()),
+        Some("REMANENCE".to_owned())
+    );
+    assert_eq!(
+        disk.read_file(volume, "MARKER.TXT")
             .expect("the marker reads through the chain"),
         b"read through the chain"
     );
@@ -191,7 +204,8 @@ fn reads_compose_through_a_raw_backing_file() {
     let untouched_top = std::fs::read(&overlay).expect("top reads");
     let top_header = untouched_top[..CLUSTER as usize].to_vec();
     let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("write chain opens");
-    disk.write_file("superfloppy:0", "MARKER.TXT", b"rolled back")
+    let volume = only_volume(&mut disk);
+    disk.write_file(volume, "MARKER.TXT", b"rolled back")
         .expect("write buffers");
     disk.rollback();
     drop(disk);
@@ -202,7 +216,8 @@ fn reads_compose_through_a_raw_backing_file() {
     );
 
     let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("write chain opens");
-    disk.write_file("superfloppy:0", "MARKER.TXT", b"changed in the top")
+    let volume = only_volume(&mut disk);
+    disk.write_file(volume, "MARKER.TXT", b"changed in the top")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk);
@@ -213,8 +228,9 @@ fn reads_compose_through_a_raw_backing_file() {
         top_header.as_slice()
     );
     let mut reopened = Disk::open(&overlay, AccessIntent::Read).expect("written chain reopens");
+    let volume = only_volume(&mut reopened);
     assert_eq!(
-        reopened.read_file("superfloppy:0", "MARKER.TXT").expect("changed file reads"),
+        reopened.read_file(volume, "MARKER.TXT").expect("changed file reads"),
         b"changed in the top"
     );
 
@@ -240,7 +256,8 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     let before = run_qemu_img(&qemu, &["info", overlay_arg]);
 
     let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("QEMU chain opens");
-    disk.write_file("superfloppy:0", "MARKER.TXT", b"remanence copy-on-write")
+    let volume = only_volume(&mut disk);
+    disk.write_file(volume, "MARKER.TXT", b"remanence copy-on-write")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk);
@@ -258,7 +275,7 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
         Disk::open(&flattened, AccessIntent::Read).expect("QEMU-rendered disk opens");
     assert_eq!(
         qemu_view
-            .read_file("superfloppy:0", "MARKER.TXT")
+            .read_file(volume, "MARKER.TXT")
             .expect("QEMU-rendered changed file reads"),
         b"remanence copy-on-write"
     );
@@ -285,10 +302,11 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     );
 
     let mut disk = Disk::open(&top, AccessIntent::Read).expect("the chain opens");
-    let geometry = disk.geometry().expect("geometry composes");
-    assert_eq!(geometry.volumes.len(), 1);
+    let report = disk.inspect().expect("inspection composes");
+    assert_eq!(report.volumes.len(), 1);
+    let volume = report.volumes[0].id;
     assert_eq!(
-        disk.read_file(&geometry.volumes[0].id, "MARKER.TXT")
+        disk.read_file(volume, "MARKER.TXT")
             .expect("reads through two members"),
         b"read through the chain"
     );
@@ -297,7 +315,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let base_before = std::fs::read(dir.join("base.img")).expect("base reads");
     let mid_before = std::fs::read(dir.join("mid.qcow2")).expect("middle reads");
     let mut disk = Disk::open(&top, AccessIntent::Write).expect("two-level write opens");
-    disk.write_file("superfloppy:0", "MARKER.TXT", b"changed above two levels")
+    let volume = only_volume(&mut disk);
+    disk.write_file(volume, "MARKER.TXT", b"changed above two levels")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk);
@@ -312,7 +331,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let mut reopened = Disk::open(&top, AccessIntent::Read).expect("changed chain reopens");
     assert_eq!(
         reopened
-            .read_file("superfloppy:0", "MARKER.TXT")
+            .read_file(volume, "MARKER.TXT")
             .expect("changed marker reads"),
         b"changed above two levels"
     );
@@ -338,9 +357,9 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
     // No format extension anywhere: the qcow2 middle and the raw base
     // are each told apart by magic, exactly as at the top.
     let mut disk = Disk::open(&top, AccessIntent::Read).expect("the chain opens");
-    let geometry = disk.geometry().expect("geometry composes");
+    let volume = only_volume(&mut disk);
     assert_eq!(
-        disk.read_file(&geometry.volumes[0].id, "MARKER.TXT")
+        disk.read_file(volume, "MARKER.TXT")
             .expect("reads"),
         b"read through the chain"
     );

@@ -76,8 +76,11 @@ ABI, or Python module.
   refuses snapshots and non-16-bit refcounts by name); `mbr.rs`
   partition discovery with
   pinned types; `fat.rs` FAT12/16 volume read/write; `disk.rs` the
-  public `Disk` API (open/geometry/entries/stat/read/write/mkdir/
-  commit/rollback). Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
+  public `Disk` API (open/inspect/entries/stat/read/write/mkdir/
+  commit/rollback), with `report.rs` the layered inspection report its
+  records are returned in — device, content outcome, partition schema,
+  regions, volumes, filesystems, joined by opaque layout-derived
+  identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
   images built in-test, plus the fixture-driven HDOS tests.
 - `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`

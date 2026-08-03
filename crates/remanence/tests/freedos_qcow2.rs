@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{AccessIntent, Disk, DiskFormat};
+use remanence::{AccessIntent, Disk, DiskFormat, RegionRole};
 
 mod common;
 
@@ -28,45 +28,52 @@ fn private_artifact(tag: &str) -> PathBuf {
 }
 
 #[test]
-fn geometry_reports_primaries_extended_and_logicals() {
-    let path = private_artifact("geometry");
+fn inspection_reports_primaries_extended_and_logicals() {
+    let path = private_artifact("regions");
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
     assert!(matches!(disk.format(), DiskFormat::Qcow2 { .. }));
 
-    let geometry = disk.geometry().expect("geometry reads");
-    assert!(!geometry.blank, "an installed disk is not blank");
+    let report = disk.inspect().expect("inspection reads");
+    assert_ne!(report.content, remanence::DiskContent::Blank);
     assert!(
-        geometry
-            .partitions
-            .iter()
-            .all(|partition| partition.issue.is_none()),
-        "every declared row reads cleanly"
+        report.regions.iter().all(|region| region.issue.is_none()),
+        "every declared region reads cleanly"
     );
-    let extended = geometry
-        .partitions
-        .iter()
-        .filter(|partition| {
-            partition
-                .type_name
-                .as_deref()
-                .is_some_and(|name| name.starts_with("extended"))
-        })
-        .count();
-    let logicals = geometry
-        .partitions
-        .iter()
-        .filter(|partition| partition.kind == remanence::PartitionKind::Logical)
-        .count();
-    let data_partitions = geometry.partitions.len() - extended;
-    assert_eq!(extended, 1, "one extended partition");
-    assert!(logicals >= 2, "the chain's rows report as logical");
-    assert!(data_partitions >= 4, "two primaries and two logicals");
-    assert!(geometry.volumes.len() >= 4, "every data partition readable");
 
-    let labels: Vec<_> = geometry
-        .volumes
+    // Placement and role are different axes: the extended container is a
+    // primary slot whose role is structural, and every chain entry is data.
+    let containers = report
+        .regions
         .iter()
-        .filter_map(|volume| volume.label.clone())
+        .filter(|region| region.role == RegionRole::Container)
+        .count();
+    let logicals = report
+        .regions
+        .iter()
+        .filter(|region| region.declared_placement == "logical")
+        .count();
+    let data = report
+        .regions
+        .iter()
+        .filter(|region| region.role == RegionRole::Data)
+        .count();
+    assert_eq!(containers, 1, "one extended container");
+    assert!(logicals >= 2, "the chain's rows report as logical");
+    assert!(data >= 4, "two primaries and two logicals");
+    assert!(
+        report
+            .regions
+            .iter()
+            .any(|region| region.declared_placement == "primary"
+                && region.role == RegionRole::Container),
+        "the extended container is a primary slot with a structural role"
+    );
+    assert!(report.composed_volume_count() >= 4, "every data region composed");
+
+    let labels: Vec<_> = report
+        .filesystems
+        .iter()
+        .filter_map(|filesystem| filesystem.label.clone())
         .collect();
     for expected in ["RMNPRI1", "RMNPRI2", "RMNLOG1", "RMNLOG2"] {
         assert!(
@@ -83,15 +90,20 @@ fn geometry_reports_primaries_extended_and_logicals() {
 fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
     let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
-    let volumes = disk.geometry().expect("geometry").volumes;
+    let volumes: Vec<_> = disk
+        .inspect()
+        .expect("inspection reads")
+        .volumes
+        .iter()
+        .map(|volume| volume.id)
+        .collect();
     for volume in volumes {
         let marker = disk
-            .read_file(&volume.id, "RMNMARK.TXT")
-            .unwrap_or_else(|error| panic!("marker in volume {}: {error}", volume.id));
+            .read_file(volume, "RMNMARK.TXT")
+            .unwrap_or_else(|error| panic!("marker in volume {volume:?}: {error}"));
         assert!(
             marker.starts_with(b"remanence marker:"),
-            "volume {} carries its marker",
-            volume.id
+            "volume {volume:?} carries its marker"
         );
     }
 
@@ -104,21 +116,21 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let path = private_artifact("roundtrip");
     let mut disk = Disk::open(&path, AccessIntent::Write).expect("rig artifact opens");
 
-    let volume_id = disk.geometry().expect("geometry").volumes[0].id.clone();
+    let volume_id = disk.inspect().expect("inspection reads").volumes[0].id;
     disk.write_file(
-        &volume_id,
+        volume_id,
         "RMNDIR/RTRIP.BIN",
         b"buffered write on a real image",
     )
     .expect("write buffers");
     assert_eq!(
-        disk.read_file(&volume_id, "RMNDIR/RTRIP.BIN")
+        disk.read_file(volume_id, "RMNDIR/RTRIP.BIN")
             .expect("reads back"),
         b"buffered write on a real image"
     );
     disk.rollback();
     assert!(
-        disk.read_file(&volume_id, "RMNDIR/RTRIP.BIN").is_err(),
+        disk.read_file(volume_id, "RMNDIR/RTRIP.BIN").is_err(),
         "rollback leaves the image untouched"
     );
 
@@ -126,9 +138,8 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     std::fs::remove_file(&path).ok();
 }
 
-/// The layered report over a real qcow2: the device is block-active, the
-/// schema and its regions are reported, and every volume the geometry
-/// surface counts is composed here too.
+/// The layered report over a real qcow2: the device is block-active, and
+/// the schema, its regions, and its volumes are all reported.
 #[test]
 fn inspection_reports_the_qcow2_device_schema_and_volumes() {
     let path = private_artifact("inspect");
@@ -157,9 +168,11 @@ fn inspection_reports_the_qcow2_device_schema_and_volumes() {
         "every region explains what its type declares"
     );
 
-    // The same volumes the geometry surface reports, composed here.
-    let geometry = disk.geometry().expect("geometry reads");
-    assert_eq!(report.readable_filesystem_volume_count(), geometry.volumes.len());
+    // Every composed volume carries a filesystem the host read.
+    assert_eq!(
+        report.readable_filesystem_volume_count(),
+        report.composed_volume_count()
+    );
 
     std::fs::remove_file(&path).ok();
 }
