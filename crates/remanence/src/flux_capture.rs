@@ -89,14 +89,16 @@ pub(crate) struct Marker {
     position: Tick,
     kind: MarkerKind,
     payload: Vec<u8>,
+    provenance: Provenance,
 }
 
 impl Marker {
-    pub(crate) fn new(position: Tick, kind: MarkerKind) -> Self {
+    pub(crate) fn new(position: Tick, kind: MarkerKind, provenance: Provenance) -> Self {
         Self {
             position,
             kind,
             payload: Vec::new(),
+            provenance,
         }
     }
 
@@ -116,6 +118,16 @@ impl Marker {
 
     pub(crate) fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// How this marker came to be known.
+    ///
+    /// A source's own index record and a pattern some profile
+    /// synthesized are both markers; only this tells them apart, which
+    /// is what keeps an absent marker channel absent evidence rather
+    /// than a regular pattern nobody recorded.
+    pub(crate) fn provenance(&self) -> &Provenance {
+        &self.provenance
     }
 }
 
@@ -602,6 +614,199 @@ fn split_transitions(transitions: &[Tick], records: usize) -> Result<Vec<Transit
         .collect()
 }
 
+/// Writes a marker channel's records into one chunk's payload.
+///
+/// Positions are absolute. A marker channel is not a run of ascending
+/// ticks — two markers may share a position, and a later one may sit
+/// earlier on the circle — so there is no unsigned gap to code against,
+/// and the recorded sequence is what is written.
+fn encode_markers(markers: &[Marker]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for marker in markers {
+        write_varint(&mut out, marker.position);
+        match &marker.kind {
+            MarkerKind::Index => write_varint(&mut out, 0),
+            MarkerKind::HardSector => write_varint(&mut out, 1),
+            MarkerKind::WriteSplice => write_varint(&mut out, 2),
+            MarkerKind::SourceMarker { namespace, code } => {
+                write_varint(&mut out, 3);
+                write_varint(&mut out, namespace.len() as u64);
+                out.extend_from_slice(namespace.as_bytes());
+                write_varint(&mut out, u64::from(*code));
+            }
+        }
+        write_varint(&mut out, marker.payload.len() as u64);
+        out.extend_from_slice(&marker.payload);
+        write_text(&mut out, marker.provenance.source);
+        write_varint(&mut out, marker.provenance.notes.len() as u64);
+        for note in &marker.provenance.notes {
+            write_text(&mut out, note);
+        }
+    }
+    out
+}
+
+/// Writes one length-prefixed UTF-8 string.
+fn write_text(out: &mut Vec<u8>, text: &str) {
+    write_varint(out, text.len() as u64);
+    out.extend_from_slice(text.as_bytes());
+}
+
+/// Reads a marker chunk's payload back into the records it was coded
+/// from, in the order they were recorded.
+fn decode_markers(source: &str, bytes: &[u8], known: &[&'static str]) -> Result<Vec<Marker>> {
+    let mut markers = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let (position, used) = read_varint(source, bytes, at)?;
+        at += used;
+        let (tag, used) = read_varint(source, bytes, at)?;
+        at += used;
+        let kind = match tag {
+            0 => MarkerKind::Index,
+            1 => MarkerKind::HardSector,
+            2 => MarkerKind::WriteSplice,
+            3 => {
+                let (namespace, used) = read_text(source, bytes, at)?;
+                at += used;
+                let (code, used) = read_varint(source, bytes, at)?;
+                at += used;
+                let code = u32::try_from(code).map_err(|_| {
+                    Error::invalid_image(
+                        source,
+                        "marker states a source code wider than the channel carries",
+                    )
+                })?;
+                MarkerKind::SourceMarker { namespace, code }
+            }
+            other => {
+                return Err(Error::invalid_image(
+                    source,
+                    format!(
+                        "marker states a kind {other}, which this version has no \
+                         reading of"
+                    ),
+                ));
+            }
+        };
+        let (length, used) = read_varint(source, bytes, at)?;
+        at += used;
+        let length = usize::try_from(length).map_err(|_| {
+            Error::invalid_image(
+                source,
+                "marker states a payload longer than this host can address",
+            )
+        })?;
+        let payload = bytes
+            .get(at..at + length)
+            .ok_or_else(|| {
+                Error::invalid_image(
+                    source,
+                    "marker chunk ends inside the payload it states, so it holds \
+                     fewer records than it claims",
+                )
+            })?
+            .to_vec();
+        at += length;
+        let (spelling, used) = read_text(source, bytes, at)?;
+        at += used;
+        let namespace = known
+            .iter()
+            .find(|candidate| **candidate == spelling)
+            .copied()
+            .ok_or_else(|| {
+                Error::invalid_image(
+                    source,
+                    format!(
+                        "marker states the namespace {spelling:?}, which this reader \
+                         cannot place"
+                    ),
+                )
+            })?;
+        let (notes, used) = read_varint(source, bytes, at)?;
+        at += used;
+        let mut provenance = Provenance::new(namespace);
+        for _ in 0..notes {
+            let (note, used) = read_text(source, bytes, at)?;
+            at += used;
+            provenance = provenance.note(note);
+        }
+        markers.push(Marker {
+            position,
+            kind,
+            payload,
+            provenance,
+        });
+    }
+    Ok(markers)
+}
+
+/// Reads one length-prefixed UTF-8 string, and the bytes it used.
+fn read_text(source: &str, bytes: &[u8], at: usize) -> Result<(String, usize)> {
+    let (length, used) = read_varint(source, bytes, at)?;
+    let length = usize::try_from(length).map_err(|_| {
+        Error::invalid_image(source, "record states text longer than this host can address")
+    })?;
+    let raw = bytes
+        .get(at + used..at + used + length)
+        .ok_or_else(|| Error::invalid_image(source, "record ends inside the text it states"))?;
+    let text = std::str::from_utf8(raw)
+        .map_err(|_| Error::invalid_image(source, "record states text that is not text"))?;
+    Ok((text.to_owned(), used + length))
+}
+
+/// One addressable run of a marker channel.
+///
+/// Its bounds are the lowest and highest position it holds, not its
+/// first and last: markers are not ordered by position, so the ends
+/// would let a reader skipping by tick range skip a chunk covering the
+/// tick it wanted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MarkerChunk {
+    ordinal: u64,
+    lowest: Tick,
+    highest: Tick,
+    count: u64,
+    payload: Vec<u8>,
+}
+
+impl MarkerChunk {
+    pub(crate) fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    /// The lowest and highest tick this chunk holds, inclusive.
+    pub(crate) fn bounds(&self) -> (Tick, Tick) {
+        (self.lowest, self.highest)
+    }
+
+    pub(crate) fn count(&self) -> u64 {
+        self.count
+    }
+
+    pub(crate) fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+/// Splits a marker channel into chunks of at most `records` each.
+///
+/// Infallible where the transition split is not: any sequence of
+/// markers is a valid one, there being no ordering for it to violate.
+fn split_markers(markers: &[Marker], records: usize) -> Vec<MarkerChunk> {
+    markers
+        .chunks(records.max(1))
+        .enumerate()
+        .map(|(ordinal, run)| MarkerChunk {
+            ordinal: ordinal as u64,
+            lowest: run.iter().map(Marker::position).min().unwrap_or(0),
+            highest: run.iter().map(Marker::position).max().unwrap_or(0),
+            count: run.len() as u64,
+            payload: encode_markers(run),
+        })
+        .collect()
+}
+
 /// A capture-wide handle for one capture run, on the same terms as an
 /// [`ObservationId`]: library-owned identity, never a rank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -712,6 +917,165 @@ impl CaptureRunSlice {
     }
 }
 
+/// Writes one complete section key, self-delimiting so a node can hold
+/// a run of them without a separate length table.
+fn write_section_key(out: &mut Vec<u8>, key: &SectionKey) {
+    let namespace = key.track.namespace.as_bytes();
+    write_varint(out, namespace.len() as u64);
+    out.extend_from_slice(namespace);
+    write_varint(out, key.track.position.numerator);
+    write_varint(out, key.track.position.denominator);
+    // Zero is no head at all, which is a different fact from head zero.
+    match key.track.head {
+        None => write_varint(out, 0),
+        Some(head) => write_varint(out, head.saturating_add(1)),
+    }
+    match key.scope {
+        ScopeId::Track => write_varint(out, 0),
+        ScopeId::Run(CaptureRunId(id)) => {
+            write_varint(out, 1);
+            write_varint(out, id);
+        }
+        ScopeId::Observation(ObservationId(id)) => {
+            write_varint(out, 2);
+            write_varint(out, id);
+        }
+    }
+    write_varint(
+        out,
+        match key.kind {
+            SectionKind::TrackMetadata => 0,
+            SectionKind::CaptureRunMetadata => 1,
+            SectionKind::ObservationMetadata => 2,
+            SectionKind::TransitionChunk => 3,
+            SectionKind::MarkerChunk => 4,
+            SectionKind::IssueChunk => 5,
+        },
+    );
+    write_varint(out, key.ordinal);
+}
+
+/// Reads one complete section key, returning it and the bytes it used.
+///
+/// `known` is the set of namespaces this reader can place. The backing
+/// is private session state, so a namespace outside that set means the
+/// index is not the one this layer wrote, and the layer refuses rather
+/// than resolving it to something plausible and addressing the wrong
+/// sections from then on.
+fn read_section_key(
+    source: &str,
+    bytes: &[u8],
+    at: usize,
+    known: &[&'static str],
+) -> Result<(SectionKey, usize)> {
+    let mut cursor = at;
+    let (length, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+    let length = usize::try_from(length).map_err(|_| {
+        Error::invalid_image(source, "index names a namespace longer than this host can address")
+    })?;
+    let raw = bytes.get(cursor..cursor + length).ok_or_else(|| {
+        Error::invalid_image(source, "index ends inside the namespace it names")
+    })?;
+    cursor += length;
+    let spelling = std::str::from_utf8(raw)
+        .map_err(|_| Error::invalid_image(source, "index names a namespace that is not text"))?;
+    let namespace = known
+        .iter()
+        .find(|candidate| **candidate == spelling)
+        .copied()
+        .ok_or_else(|| {
+            Error::invalid_image(
+                source,
+                format!(
+                    "index names the namespace {spelling:?}, which this reader cannot \
+                     place, so the index is not the one this layer wrote"
+                ),
+            )
+        })?;
+
+    let (numerator, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+    let (denominator, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+    if denominator == 0 {
+        return Err(Error::invalid_image(
+            source,
+            "index states a location over zero steps, which is no position",
+        ));
+    }
+    // A written position is always reduced, so an unreduced one is
+    // corruption — and reducing it here would collide with the key
+    // already indexed under its reduced form, leaving one of the two
+    // sections unreachable while the other answered for it.
+    if greatest_common_divisor(numerator, denominator) != 1 {
+        return Err(Error::invalid_image(
+            source,
+            format!(
+                "index states the location {numerator}/{denominator}, which is not \
+                 in the reduced form every written key carries"
+            ),
+        ));
+    }
+    let (head, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+    let (scope_tag, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+    let scope = match scope_tag {
+        0 => ScopeId::Track,
+        1 | 2 => {
+            let (id, used) = read_varint(source, bytes, cursor)?;
+            cursor += used;
+            if scope_tag == 1 {
+                ScopeId::Run(CaptureRunId(id))
+            } else {
+                ScopeId::Observation(ObservationId(id))
+            }
+        }
+        other => {
+            return Err(Error::invalid_image(
+                source,
+                format!("index states a section scope {other}, which this version has no reading of"),
+            ));
+        }
+    };
+    let (kind_tag, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+    let kind = match kind_tag {
+        0 => SectionKind::TrackMetadata,
+        1 => SectionKind::CaptureRunMetadata,
+        2 => SectionKind::ObservationMetadata,
+        3 => SectionKind::TransitionChunk,
+        4 => SectionKind::MarkerChunk,
+        5 => SectionKind::IssueChunk,
+        other => {
+            return Err(Error::invalid_image(
+                source,
+                format!("index states a section kind {other}, which this version has no reading of"),
+            ));
+        }
+    };
+    let (ordinal, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+
+    Ok((
+        SectionKey {
+            track: TrackKey {
+                namespace,
+                position: SourcePosition {
+                    numerator,
+                    denominator,
+                },
+                head: head.checked_sub(1),
+            },
+            scope,
+            kind,
+            ordinal,
+        },
+        cursor - at,
+    ))
+}
+
 /// Where one section sits in the backing, and what it should check to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SectionLocation {
@@ -734,21 +1098,18 @@ impl SectionLocation {
     }
 }
 
-/// The ordered map from a complete section key to where its bytes are.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct SectionIndex {
-    entries: BTreeMap<SectionKey, SectionLocation>,
-}
+/// How many sections one index leaf describes.
+///
+/// Tests build backings with a tiny capacity to force several leaves
+/// out of a handful of sections, the way the cache tests use a tiny
+/// bound to force eviction.
+const LEAF_ENTRIES: usize = 64;
 
-impl SectionIndex {
-    pub(crate) fn locate(&self, key: &SectionKey) -> Option<SectionLocation> {
-        self.entries.get(key).copied()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.entries.len()
-    }
-}
+/// Marks the end of a backing, and says which shape it is.
+const FOOTER_MAGIC: u32 = 0x464c_5831;
+const FOOTER_VERSION: u32 = 1;
+/// magic, version, root offset, root length.
+const FOOTER_BYTES: usize = 4 + 4 + 8 + 8;
 
 /// Somewhere the backing's bytes can be read from at an offset.
 ///
@@ -764,16 +1125,33 @@ pub(crate) trait ByteSource {
 /// The index is finished only once every section it references is
 /// complete, which is what makes a half-written backing detectable
 /// rather than a layer with holes in it.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SectionWriter {
     bytes: Vec<u8>,
-    entries: BTreeMap<SectionKey, SectionLocation>,
+    entries: Vec<(SectionKey, SectionLocation)>,
     last: Option<SectionKey>,
+    leaf_entries: usize,
+}
+
+impl Default for SectionWriter {
+    fn default() -> Self {
+        Self::with_leaf_capacity(LEAF_ENTRIES)
+    }
 }
 
 impl SectionWriter {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// A writer whose index leaves hold at most `leaf_entries` sections.
+    pub(crate) fn with_leaf_capacity(leaf_entries: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            entries: Vec::new(),
+            last: None,
+            leaf_entries: leaf_entries.max(1),
+        }
     }
 
     /// Appends one section, which must sort after every section already
@@ -797,19 +1175,173 @@ impl SectionWriter {
             checksum: crc32(&payload),
         };
         self.bytes.extend_from_slice(&payload);
-        self.entries.insert(key.clone(), location);
+        self.entries.push((key.clone(), location));
         self.last = Some(key);
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> (Vec<u8>, SectionIndex) {
-        (
-            self.bytes,
-            SectionIndex {
-                entries: self.entries,
-            },
-        )
+    /// Closes the backing: leaves in key order, then a root naming each
+    /// leaf's first key, then the fixed footer that locates the root.
+    ///
+    /// The index is appended only once every section it references is
+    /// complete, so a backing cut short has no footer and is refused
+    /// rather than exposed as a layer with holes in it.
+    pub(crate) fn finish(mut self) -> Vec<u8> {
+        let mut leaves: Vec<(SectionKey, u64, u64)> = Vec::new();
+        for run in self.entries.chunks(self.leaf_entries) {
+            let mut leaf = Vec::new();
+            write_varint(&mut leaf, run.len() as u64);
+            for (key, location) in run {
+                write_section_key(&mut leaf, key);
+                write_varint(&mut leaf, location.offset);
+                write_varint(&mut leaf, location.length);
+                write_varint(&mut leaf, u64::from(location.checksum));
+            }
+            let offset = self.bytes.len() as u64;
+            self.bytes.extend_from_slice(&leaf);
+            leaves.push((run[0].0.clone(), offset, leaf.len() as u64));
+        }
+
+        let mut root = Vec::new();
+        write_varint(&mut root, leaves.len() as u64);
+        for (first, offset, length) in &leaves {
+            write_section_key(&mut root, first);
+            write_varint(&mut root, *offset);
+            write_varint(&mut root, *length);
+        }
+        let root_offset = self.bytes.len() as u64;
+        self.bytes.extend_from_slice(&root);
+
+        self.bytes.extend_from_slice(&FOOTER_MAGIC.to_le_bytes());
+        self.bytes.extend_from_slice(&FOOTER_VERSION.to_le_bytes());
+        self.bytes.extend_from_slice(&root_offset.to_le_bytes());
+        self.bytes
+            .extend_from_slice(&(root.len() as u64).to_le_bytes());
+        self.bytes
     }
+}
+
+/// Finds where one section sits, reading only the index path to it.
+///
+/// Three bounded reads whatever the capture's size: the fixed footer,
+/// the root, and the one leaf whose range covers the key. The index is
+/// never resident whole, which is what lets a capture of any size open
+/// under a bound that knew nothing of that size.
+pub(crate) fn locate_section(
+    source: &impl ByteSource,
+    total_bytes: u64,
+    key: &SectionKey,
+    known: &[&'static str],
+) -> Result<Option<SectionLocation>> {
+    let namespace = key.track.namespace;
+    if total_bytes < FOOTER_BYTES as u64 {
+        return Err(Error::invalid_image(
+            namespace,
+            "backing is shorter than its own footer, so no index was ever appended",
+        ));
+    }
+    let mut footer = [0u8; FOOTER_BYTES];
+    source.read_at(total_bytes - FOOTER_BYTES as u64, &mut footer)?;
+    if u32::from_le_bytes([footer[0], footer[1], footer[2], footer[3]]) != FOOTER_MAGIC {
+        return Err(Error::invalid_image(
+            namespace,
+            "backing does not end in an index footer, so it was never completed",
+        ));
+    }
+    let version = u32::from_le_bytes([footer[4], footer[5], footer[6], footer[7]]);
+    if version != FOOTER_VERSION {
+        return Err(Error::invalid_image(
+            namespace,
+            format!(
+                "backing states index version {version}, which this build has no \
+                 reading of"
+            ),
+        ));
+    }
+    let root_offset = u64::from_le_bytes(footer[8..16].try_into().expect("eight bytes"));
+    let root_length = u64::from_le_bytes(footer[16..24].try_into().expect("eight bytes"));
+    let root = read_span(source, namespace, total_bytes, root_offset, root_length)?;
+
+    // Descend: the last leaf whose first key does not exceed the wanted
+    // one is the only leaf that can hold it.
+    let mut at = 0;
+    let (count, used) = read_varint(namespace, &root, at)?;
+    at += used;
+    let mut chosen: Option<(u64, u64)> = None;
+    for _ in 0..count {
+        let (first, used) = read_section_key(namespace, &root, at, known)?;
+        at += used;
+        let (offset, used) = read_varint(namespace, &root, at)?;
+        at += used;
+        let (length, used) = read_varint(namespace, &root, at)?;
+        at += used;
+        if &first <= key {
+            chosen = Some((offset, length));
+        } else {
+            break;
+        }
+    }
+    let Some((offset, length)) = chosen else {
+        return Ok(None);
+    };
+
+    let leaf = read_span(source, namespace, total_bytes, offset, length)?;
+    let mut at = 0;
+    let (count, used) = read_varint(namespace, &leaf, at)?;
+    at += used;
+    for _ in 0..count {
+        let (held, used) = read_section_key(namespace, &leaf, at, known)?;
+        at += used;
+        let (offset, used) = read_varint(namespace, &leaf, at)?;
+        at += used;
+        let (length, used) = read_varint(namespace, &leaf, at)?;
+        at += used;
+        let (checksum, used) = read_varint(namespace, &leaf, at)?;
+        at += used;
+        if &held == key {
+            let checksum = u32::try_from(checksum).map_err(|_| {
+                Error::invalid_image(namespace, "index states a check wider than a CRC-32")
+            })?;
+            return Ok(Some(SectionLocation {
+                offset,
+                length,
+                checksum,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Reads one bounded span, refusing one the backing cannot contain
+/// before anything is sought or allocated.
+fn read_span(
+    source: &impl ByteSource,
+    namespace: &'static str,
+    total_bytes: u64,
+    offset: u64,
+    length: u64,
+) -> Result<Vec<u8>> {
+    if offset
+        .checked_add(length)
+        .is_none_or(|end| end > total_bytes)
+    {
+        return Err(Error::invalid_image(
+            namespace,
+            format!(
+                "index points at bytes {offset}..+{length}, which lie outside the \
+                 backing's {total_bytes} bytes"
+            ),
+        ));
+    }
+    let length = usize::try_from(length).map_err(|_| {
+        Error::invalid_image(
+            namespace,
+            "index states a record longer than this host can address",
+        )
+    })?;
+    let mut span = vec![0u8; length];
+    source.read_at(offset, &mut span)?;
+    Ok(span)
 }
 
 /// Reads one section, and nothing else.
@@ -820,23 +1352,23 @@ impl SectionWriter {
 /// that never existed.
 pub(crate) fn read_section(
     source: &impl ByteSource,
-    index: &SectionIndex,
+    total_bytes: u64,
     key: &SectionKey,
+    known: &[&'static str],
 ) -> Result<Vec<u8>> {
-    let location = index.locate(key).ok_or_else(|| {
+    let location = locate_section(source, total_bytes, key, known)?.ok_or_else(|| {
         Error::invalid_image(
             key.track.namespace,
             format!("backing holds no section for {:?} of this location", key.kind),
         )
     })?;
-    let length = usize::try_from(location.length).map_err(|_| {
-        Error::invalid_image(
-            key.track.namespace,
-            "backing states a section longer than this host can address",
-        )
-    })?;
-    let mut payload = vec![0u8; length];
-    source.read_at(location.offset, &mut payload)?;
+    let payload = read_span(
+        source,
+        key.track.namespace,
+        total_bytes,
+        location.offset,
+        location.length,
+    )?;
     if crc32(&payload) != location.checksum {
         return Err(Error::invalid_image(
             key.track.namespace,
@@ -848,6 +1380,106 @@ pub(crate) fn read_section(
         ));
     }
     Ok(payload)
+}
+
+/// This layer's bounded working set of decoded sections (P27).
+///
+/// Caching is per modeled durable layer under one declared session
+/// budget, so this is the capture's own and not the disk stack's: that
+/// one is addressed by extent offset over a virtual disk, and a
+/// capture is addressed by section key.
+///
+/// Every entry is clean. A capture is read evidence — a modelled write
+/// has no coherent destination in it, since nothing says which of
+/// several disagreeing observations a drive would overwrite — so there
+/// is no dirty class here to spill. Writes land in the medium reduced
+/// from the capture, which reuses this backing and brings that half of
+/// the policy with it.
+#[derive(Debug)]
+pub(crate) struct SectionCache {
+    resident: BTreeMap<SectionKey, CachedSection>,
+    bytes_resident: u64,
+    bound: u64,
+    clock: u64,
+}
+
+#[derive(Debug)]
+struct CachedSection {
+    payload: Vec<u8>,
+    /// When this entry was last served, for choosing what to drop.
+    used: u64,
+}
+
+impl SectionCache {
+    /// A cache bounded at `bytes` of resident section payloads.
+    ///
+    /// A bound smaller than one section narrows the working set rather
+    /// than refusing service: the section still loads, it simply does
+    /// not stay.
+    pub(crate) fn with_bytes(bytes: u64) -> Self {
+        Self {
+            resident: BTreeMap::new(),
+            bytes_resident: 0,
+            bound: bytes,
+            clock: 0,
+        }
+    }
+
+    pub(crate) fn resident_bytes(&self) -> u64 {
+        self.bytes_resident
+    }
+
+    /// Whether this section is currently in the working set.
+    pub(crate) fn holds(&self, key: &SectionKey) -> bool {
+        self.resident.contains_key(key)
+    }
+
+    /// Serves one section, reading it through the index on a miss.
+    ///
+    /// A hit costs no I/O. A miss reads one bounded record range and
+    /// never a whole capture, which is the promise the whole
+    /// section-addressed backing exists to keep.
+    pub(crate) fn section(
+        &mut self,
+        source: &impl ByteSource,
+        total_bytes: u64,
+        key: &SectionKey,
+        known: &[&'static str],
+    ) -> Result<&[u8]> {
+        self.clock += 1;
+        if !self.resident.contains_key(key) {
+            let payload = read_section(source, total_bytes, key, known)?;
+            self.make_room(payload.len() as u64);
+            self.bytes_resident += payload.len() as u64;
+            self.resident.insert(
+                key.clone(),
+                CachedSection {
+                    payload,
+                    used: self.clock,
+                },
+            );
+        }
+        let clock = self.clock;
+        let entry = self.resident.get_mut(key).expect("just made resident");
+        entry.used = clock;
+        Ok(&entry.payload)
+    }
+
+    /// Drops least-recently-served entries until `wanted` more bytes
+    /// fit. Clean state is always evictable, so this never fails.
+    fn make_room(&mut self, wanted: u64) {
+        while !self.resident.is_empty() && self.bytes_resident + wanted > self.bound {
+            let coldest = self
+                .resident
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone())
+                .expect("the map is not empty");
+            if let Some(dropped) = self.resident.remove(&coldest) {
+                self.bytes_resident -= dropped.payload.len() as u64;
+            }
+        }
+    }
 }
 
 /// One circular, track-relative observation bounded out of a capture
@@ -1084,8 +1716,12 @@ impl CaptureRun {
                     .iter()
                     .filter(|marker| marker.position() >= start && marker.position() < end)
                     .map(|marker| {
-                        Marker::new(marker.position() - start, marker.kind().clone())
-                            .with_payload(marker.payload().to_vec())
+                        Marker::new(
+                            marker.position() - start,
+                            marker.kind().clone(),
+                            marker.provenance().clone(),
+                        )
+                        .with_payload(marker.payload().to_vec())
                     })
                     .collect();
                 Observation::new(
@@ -1322,7 +1958,11 @@ mod tests {
     use crate::error::ErrorCategory;
 
     fn index_at(position: Tick) -> Marker {
-        Marker::new(position, MarkerKind::Index)
+        Marker::new(
+            position,
+            MarkerKind::Index,
+            Provenance::new("kryoflux").note("index OOB record"),
+        )
     }
 
     /// A synthetic observation for this layer's own invariant tests,
@@ -1815,6 +2455,9 @@ mod tests {
         }
     }
 
+    /// The namespaces this layer's own tests can place.
+    const KNOWN: &[&str] = &["kryoflux", "c1541", "a2r", "scp"];
+
     fn transition_section(track: &TrackKey, ordinal: u64) -> (SectionKey, Vec<Tick>, Vec<u8>) {
         let ticks: Vec<Tick> = (0..50).map(|n| ordinal * 1000 + n * 3).collect();
         let chunk = split_transitions(&ticks, 50).expect("the ticks ascend");
@@ -1828,32 +2471,368 @@ mod tests {
     }
 
     #[test]
-    fn loading_one_section_reads_only_that_sections_own_bytes() {
-        // The P27 promise where it begins: a miss reads one bounded
-        // record range, never a whole capture. A backing assembled from
-        // a 168-member capture set would otherwise decode its way
-        // through gigabytes to answer for one span of one track.
+    fn loading_one_section_reads_only_the_index_path_and_that_section() {
+        // The P27 promise, now that the index is in the backing too: a
+        // miss reads one bounded record range plus the index path to
+        // it — the fixed footer, the root, and the one leaf that can
+        // hold the key. Never a leaf that cannot, and never the whole
+        // capture.
         let track = TrackKey::new("kryoflux", 36, 0);
-        let mut writer = SectionWriter::new();
+        // Two sections per leaf, so six sections make three leaves.
+        let mut writer = SectionWriter::with_leaf_capacity(2);
         let mut wanted = None;
-        for ordinal in 0..3 {
+        for ordinal in 0..6 {
             let (key, ticks, payload) = transition_section(&track, ordinal);
-            if ordinal == 1 {
+            if ordinal == 5 {
                 wanted = Some((key.clone(), ticks));
             }
             writer.append(key, payload).expect("keys ascend");
         }
-        let (bytes, index) = writer.finish();
+        let bytes = writer.finish();
+        let total = bytes.len() as u64;
         let (key, expected) = wanted.unwrap();
 
         let source = CountingSource::new(bytes);
-        let payload = read_section(&source, &index, &key).expect("the section is indexed");
+        let payload = read_section(&source, total, &key, KNOWN).expect("the section is indexed");
 
         assert_eq!(decode_transitions(&payload).unwrap(), expected);
-        // Exactly one read, of exactly this section's extent — neither
-        // of its neighbours was touched, let alone decoded.
-        let located = index.locate(&key).expect("the section is indexed");
-        assert_eq!(source.reads(), [(located.offset(), located.length())]);
+
+        // Footer, root, one leaf, one section: four bounded reads, and
+        // the count does not grow with the number of leaves.
+        let reads = source.reads();
+        assert_eq!(reads.len(), 4, "{reads:?}");
+        assert_eq!(reads[0].1, FOOTER_BYTES as u64);
+        let located = locate_section(&source, total, &key, KNOWN)
+            .unwrap()
+            .expect("the section is indexed");
+        assert_eq!(reads[3], (located.offset(), located.length()));
+        // Nothing read spanned the whole backing.
+        assert!(reads.iter().all(|(_, length)| *length < total), "{reads:?}");
+    }
+
+    #[test]
+    fn a_section_touched_twice_is_read_once() {
+        // P27's hit. The working set is whatever the operation touched,
+        // and touching it again costs nothing: the second request is
+        // served from what the first decoded, index path included.
+        let track = TrackKey::new("kryoflux", 36, 0);
+        let mut writer = SectionWriter::new();
+        let (key, ticks, payload) = transition_section(&track, 0);
+        writer.append(key.clone(), payload).expect("keys ascend");
+        let bytes = writer.finish();
+        let total = bytes.len() as u64;
+
+        let source = CountingSource::new(bytes);
+        let mut cache = SectionCache::with_bytes(64 * 1024);
+
+        let first = cache
+            .section(&source, total, &key, KNOWN)
+            .expect("the section is indexed")
+            .to_vec();
+        let after_first = source.reads().len();
+        let second = cache
+            .section(&source, total, &key, KNOWN)
+            .expect("the section is indexed")
+            .to_vec();
+
+        assert_eq!(decode_transitions(&first).unwrap(), ticks);
+        assert_eq!(first, second);
+        assert_eq!(source.reads().len(), after_first, "the second request re-read");
+    }
+
+    #[test]
+    fn a_clean_section_evicts_under_the_bound_and_re_reads_from_the_backing() {
+        // The other half of P27: clean state is always evictable,
+        // sound because the P7 claim pins the source, so a dropped
+        // section re-reads at will. A bound too small for two sections
+        // still serves both — it narrows the working set, it never
+        // refuses.
+        let track = TrackKey::new("kryoflux", 36, 0);
+        let mut writer = SectionWriter::new();
+        let mut keys = Vec::new();
+        for ordinal in 0..2 {
+            let (key, _, payload) = transition_section(&track, ordinal);
+            keys.push(key.clone());
+            writer.append(key, payload).expect("keys ascend");
+        }
+        let bytes = writer.finish();
+        let total = bytes.len() as u64;
+
+        let source = CountingSource::new(bytes);
+        let one_section = locate_section(&source, total, &keys[0], KNOWN)
+            .unwrap()
+            .expect("the section is indexed")
+            .length();
+        let mut cache = SectionCache::with_bytes(one_section);
+
+        cache.section(&source, total, &keys[0], KNOWN).unwrap();
+        cache.section(&source, total, &keys[1], KNOWN).unwrap();
+        let before_reload = source.reads().len();
+        cache.section(&source, total, &keys[0], KNOWN).unwrap();
+
+        // The first was evicted to admit the second, so asking again
+        // costs reads: it came back from the backing rather than
+        // having been kept.
+        assert!(source.reads().len() > before_reload);
+        assert!(cache.resident_bytes() <= one_section);
+    }
+
+    #[test]
+    fn loading_one_section_neither_materializes_nor_invalidates_another() {
+        // Sections are addressed individually the whole way down, so
+        // work on one is work on one. A backing that pulled in
+        // neighbours would turn a bounded read into a cascade; one that
+        // invalidated them would make every read cost the last one.
+        let track = TrackKey::new("kryoflux", 36, 0);
+        let mut writer = SectionWriter::new();
+        let mut keys = Vec::new();
+        for ordinal in 0..3 {
+            let (key, _, payload) = transition_section(&track, ordinal);
+            keys.push(key.clone());
+            writer.append(key, payload).expect("keys ascend");
+        }
+        let bytes = writer.finish();
+        let total = bytes.len() as u64;
+
+        let source = CountingSource::new(bytes);
+        let mut cache = SectionCache::with_bytes(64 * 1024);
+
+        cache.section(&source, total, &keys[0], KNOWN).unwrap();
+        cache.section(&source, total, &keys[2], KNOWN).unwrap();
+
+        // The section between them was never touched.
+        assert!(!cache.holds(&keys[1]));
+
+        // And the first survived the second: it serves without I/O.
+        let settled = source.reads().len();
+        cache.section(&source, total, &keys[0], KNOWN).unwrap();
+        assert_eq!(source.reads().len(), settled);
+    }
+
+    #[test]
+    fn a_section_key_round_trips_through_the_encoding_the_index_stores() {
+        // Every part of the key is addressing, so every part has to
+        // survive: a fractional position, an unnumbered head, and each
+        // scope and kind. What comes back has to sort where it sorted
+        // before, or the index it was written into no longer describes
+        // where anything is.
+        let known = ["kryoflux", "c1541"];
+        let keys = [
+            SectionKey::new(
+                TrackKey::new("kryoflux", 36, 1),
+                ScopeId::Observation(ObservationId(7)),
+                SectionKind::TransitionChunk,
+                3,
+            ),
+            SectionKey::new(
+                TrackKey::at(
+                    "c1541",
+                    SourcePosition::fraction("c1541", 37, 2).unwrap(),
+                    None,
+                ),
+                ScopeId::Track,
+                SectionKind::TrackMetadata,
+                0,
+            ),
+            SectionKey::new(
+                TrackKey::new("c1541", 0, 0),
+                ScopeId::Run(CaptureRunId(0)),
+                SectionKind::MarkerChunk,
+                u64::MAX,
+            ),
+        ];
+
+        for key in &keys {
+            let mut encoded = Vec::new();
+            write_section_key(&mut encoded, key);
+            let (decoded, used) =
+                read_section_key("flux-capture", &encoded, 0, &known).expect("what was written");
+
+            assert_eq!(&decoded, key);
+            assert_eq!(used, encoded.len(), "the key states its own extent");
+        }
+    }
+
+    #[test]
+    fn an_index_stating_an_unreduced_position_is_refused() {
+        // A written key is always reduced, so 74/4 in an index is
+        // corruption. It matters more than it looks: reducing it here
+        // would silently collide with the 37/2 already indexed, and
+        // one of the two sections would become unreachable while the
+        // other answered for it.
+        let mut encoded = Vec::new();
+        write_varint(&mut encoded, "c1541".len() as u64);
+        encoded.extend_from_slice(b"c1541");
+        write_varint(&mut encoded, 74);
+        write_varint(&mut encoded, 4);
+        for value in [0, 0, 0, 0] {
+            write_varint(&mut encoded, value);
+        }
+
+        let error = read_section_key("flux-capture", &encoded, 0, &["c1541"]).unwrap_err();
+
+        assert_eq!(error.category(), ErrorCategory::InvalidImage);
+    }
+
+    #[test]
+    fn an_index_naming_a_namespace_the_reader_does_not_know_is_refused() {
+        // The backing is private session state, so a namespace the
+        // reader cannot place means the index is not the one this
+        // layer wrote. Refusing beats resolving it to something
+        // plausible and addressing the wrong sections thereafter.
+        let key = SectionKey::new(
+            TrackKey::new("kryoflux", 36, 0),
+            ScopeId::Track,
+            SectionKind::TrackMetadata,
+            0,
+        );
+        let mut encoded = Vec::new();
+        write_section_key(&mut encoded, &key);
+
+        let error = read_section_key("flux-capture", &encoded, 0, &["scp"]).unwrap_err();
+
+        assert_eq!(error.category(), ErrorCategory::InvalidImage);
+        assert!(error.to_string().contains("kryoflux"), "{error}");
+    }
+
+    #[test]
+    fn bounding_keeps_each_markers_own_provenance_beside_the_cut() {
+        // Two different facts about one observation. The observation
+        // records that it was cut from a run; a marker inside it
+        // records how that marker came to be known. Bounding rebuilds
+        // its markers from parts, so the second is exactly the fact a
+        // careless rebuild drops — leaving a source's index record
+        // reading as though this layer had inferred it.
+        let index_record = || {
+            Marker::new(
+                0,
+                MarkerKind::Index,
+                Provenance::new("kryoflux").note("index OOB record"),
+            )
+        };
+        let run = CaptureRun::new(
+            "kryoflux",
+            0,
+            Provenance::new("kryoflux"),
+            vec![150, 400],
+            vec![
+                Marker::new(100, MarkerKind::Index, index_record().provenance().clone()),
+                Marker::new(900, MarkerKind::Index, index_record().provenance().clone()),
+            ],
+        )
+        .unwrap();
+
+        let observations = run.observations("kryoflux").unwrap();
+        let observation = &observations[0];
+
+        assert_eq!(
+            observation.markers()[0].provenance().notes,
+            ["index OOB record"]
+        );
+        assert!(
+            observation.provenance().notes[0].contains("bounded"),
+            "{:?}",
+            observation.provenance().notes
+        );
+    }
+
+    #[test]
+    fn a_marker_chunk_keeps_absolute_positions_and_the_recorded_order() {
+        // Markers are parallel timed evidence, not transitions. Two may
+        // share a position and a later one may sit earlier on the
+        // circle, so there is no unsigned gap to delta-code and no
+        // order to restore by sorting: positions stay absolute and the
+        // sequence is kept exactly as recorded.
+        let markers = vec![
+            index_at(700),
+            Marker::new(700, MarkerKind::WriteSplice, Provenance::new("a2r")),
+            index_at(100),
+            Marker::new(
+                42,
+                MarkerKind::SourceMarker {
+                    namespace: "kryoflux".into(),
+                    code: 0x0b,
+                },
+                Provenance::new("kryoflux"),
+            )
+            .with_payload(vec![1, 2, 3]),
+            Marker::new(0, MarkerKind::HardSector, Provenance::new("kryoflux")),
+        ];
+
+        let encoded = encode_markers(&markers);
+        let decoded = decode_markers("kryoflux", &encoded, KNOWN).expect("what was encoded decodes");
+
+        assert_eq!(decoded, markers);
+    }
+
+    #[test]
+    fn a_marker_chunk_states_the_span_it_covers_not_its_ends() {
+        // A transition chunk's bounds are its first and last tick,
+        // which works only because transitions ascend. Markers do not,
+        // so a chunk states the lowest and highest it holds — take the
+        // ends instead and a reader skipping by tick range would skip
+        // a chunk that covers the tick it wanted.
+        let markers = vec![index_at(700), index_at(100), index_at(400)];
+
+        let chunks = split_markers(&markers, 8);
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].bounds(), (100, 700));
+        assert_eq!(chunks[0].count(), 3);
+        assert_eq!(
+            decode_markers("kryoflux", chunks[0].payload(), KNOWN).unwrap(),
+            markers
+        );
+    }
+
+    #[test]
+    fn markers_split_at_deterministic_boundaries_preserving_order() {
+        let markers: Vec<Marker> = (0..5).map(|n| index_at(100 - n * 10)).collect();
+
+        let chunks = split_markers(&markers, 2);
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(
+            chunks.iter().map(MarkerChunk::ordinal).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        let rejoined: Vec<Marker> = chunks
+            .iter()
+            .flat_map(|chunk| decode_markers("kryoflux", chunk.payload(), KNOWN).unwrap())
+            .collect();
+        assert_eq!(rejoined, markers);
+    }
+
+    #[test]
+    fn a_marker_chunk_that_does_not_decode_is_refused() {
+        // Same rule as flux: a chunk yields the markers it claims or
+        // it yields nothing.
+        let intact = encode_markers(&[Marker::new(
+            42,
+            MarkerKind::SourceMarker {
+                namespace: "kryoflux".into(),
+                code: 0x0b,
+            },
+            Provenance::new("kryoflux"),
+        )
+        .with_payload(vec![1, 2, 3])]);
+
+        // Truncated before the payload it promised.
+        assert_eq!(
+            decode_markers("kryoflux", &intact[..intact.len() - 2], KNOWN)
+                .unwrap_err()
+                .category(),
+            ErrorCategory::InvalidImage
+        );
+
+        // A kind this version has no reading of.
+        let mut unknown = Vec::new();
+        write_varint(&mut unknown, 10);
+        write_varint(&mut unknown, 99);
+        assert_eq!(
+            decode_markers("kryoflux", &unknown, KNOWN).unwrap_err().category(),
+            ErrorCategory::InvalidImage
+        );
     }
 
     #[test]
@@ -1864,11 +2843,12 @@ mod tests {
         let mut writer = SectionWriter::new();
         let (key, _, payload) = transition_section(&track, 0);
         writer.append(key.clone(), payload).expect("keys ascend");
-        let (mut bytes, index) = writer.finish();
+        let mut bytes = writer.finish();
+        let total = bytes.len() as u64;
 
         bytes[2] ^= 0x01;
 
-        let error = read_section(&CountingSource::new(bytes), &index, &key).unwrap_err();
+        let error = read_section(&CountingSource::new(bytes), total, &key, KNOWN).unwrap_err();
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
     }
 
@@ -2123,7 +3103,7 @@ mod tests {
         // earlier on the circle: the source's order is the evidence.
         let markers = vec![
             index_at(700),
-            Marker::new(700, MarkerKind::WriteSplice),
+            Marker::new(700, MarkerKind::WriteSplice, Provenance::new("a2r")),
             index_at(100),
         ];
         let observation = observed("a2r", 800, vec![10], markers).unwrap();
@@ -2152,6 +3132,7 @@ mod tests {
                 namespace: "kryoflux".into(),
                 code: 0x0b,
             },
+            Provenance::new("kryoflux"),
         )
         .with_payload(vec![1, 2, 3]);
         let observation = observed("kryoflux", 800, Vec::new(), vec![marker]).unwrap();
