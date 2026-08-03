@@ -58,6 +58,33 @@ removes it is the record either way.
 
 ## Decisions
 
+### D8 — Mastering a capture to P64 stops at flux, and gets its own principle
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** U23, P29.
+
+Two scope calls made while pledging U23.
+
+**It stops at flux.** Converting a KryoFlux capture to P64 descends no
+further than the flux layer: no hardware bitstream is materialized, no GCR
+codec runs, no sector or filesystem interpretation is attempted. Both
+endpoints are flux-shaped, so the intervening layers would be built only to
+be discarded. Proposed F32 is therefore *not* a dependency of U23 and stays
+in `proposed/`, which also keeps U23's pledge from resting on something only
+proposed.
+
+**And it earns a principle.** P13 already licenses the act — choosing another
+authoritative layer is an explicit conversion creating a new image and naming
+its loss — but names no owner for the reduction policy and no mechanism for
+"naming the loss". Reading that into P13 would have made the strongest clause
+in the conversion story an inference. P29 states it instead: declared policy
+inputs, two owners, plan before write, derived provenance, reproducibility.
+
+**Weighed and declined:** requiring F32 so a mastered image could be verified
+by decoding it to sectors (verification is round trip through the P64
+adapter's own decode, which tests the claim actually made); folding the
+mastering rules into F33's design document alone (a design authorizes one
+feature, and this rule binds every future destination format).
+
 ### D7 — The library names no consuming project
 
 **Decided** Paul Galbraith, 2026-08-01. **Supports** (none) — a naming

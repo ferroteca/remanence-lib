@@ -13,9 +13,9 @@ ever reused.
 
 | Class | Next number to issue |
 |---|---:|
-| U | 23 |
-| P | 29 |
+| U | 24 |
+| P | 30 |
 | S | 5 |
-| D | 8 |
-| F | 33 |
+| D | 9 |
+| F | 35 |
 | T | 7 |

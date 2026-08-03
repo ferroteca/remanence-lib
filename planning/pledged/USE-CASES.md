@@ -230,3 +230,157 @@ pulses without routing VIA register accesses into Remanence.
 - A universal signal enumeration shared by unrelated drive families. The
   timed-causality operations are common; this signal bundle is specific to
   the 1541 drive-side electronics.
+
+## U23 — I save a KryoFlux capture of a C64 disk as a P64 image
+
+I have a KryoFlux capture of a Commodore 64 floppy: raw stream files, one per
+drive-step position, recorded as two capture channels and delivered inside
+7z archives. It is capture evidence, not a disk image. Each stream holds
+several recorded revolutions, flux before the first index and after the last,
+index and control/OOB records beside the flux, and a transfer result — and
+nothing in it says which revolution "the" disk was, or which channel to
+believe.
+
+I want a P64 out of it: one file, addressed by 1541 half-track, holding timed
+pulses with strength, which a 1541 drive-hardware instance opens and turns
+back into byte-ready edges (U7). I am asking for a transformation, not a
+reading of the capture, and I want to be told exactly what it will do and
+exactly what it cannot carry **before** it writes anything.
+
+### The exact semantic interface
+
+The names below are semantic pseudocode, not a pledge of literal Rust layout.
+P5 requires the C and Python presentations to carry the same stages, the same
+declared-loss account, and the same refusals in their own idiom.
+
+```rust
+let capture = CaptureSet::open(
+    capture_set_sources,
+    AccessIntent::Read,
+)?;
+
+let report = capture.inspect()?;
+let channel = choose_channel_from_report(&report)?;
+
+let plan = capture.plan_mastering(
+    MasteringRecipe::C1541 {
+        channel,
+        observation: ObservationPolicy::Selected(selection_rule),
+        half_tracks: HalfTrackMap::Declared(drive_steps_per_track),
+        pulse_strength: PulseStrengthPolicy::FromDisagreement { seed },
+    },
+    MasteringTarget::P64(p64_options),
+)?;
+
+for loss in plan.declared_loss() {
+    report_to_caller(loss);
+}
+
+let outcome = plan.write_new_artifact(destination_p64)?;
+```
+
+`CaptureSet::open` takes the P7 claim on every member artifact of the set for
+the operation's lifetime and reads nothing else. `inspect` reports the set as
+F31 recognized it — members and their catalog identities, channels, source
+track positions, capture runs, observations, markers, transfer results, and
+issues — so the recipe names a channel and a policy by an identity Remanence
+already reported, never by an index the caller invented.
+
+`plan_mastering` computes the whole transformation and writes nothing. It
+returns the mastered medium's shape, the provenance every part of it will
+carry, and the complete declared-loss account. `write_new_artifact` is the
+only step that touches the filesystem; it creates the destination under its
+own claim, and an existing destination is a named refusal rather than an
+overwrite.
+
+### What the transformation is, and what owns each half of it
+
+Two owners, and neither infers the other's answer (P29):
+
+- The **C1541 mastering profile** owns the physical reduction. Which channel
+  supplies evidence; which observation of a source position is used and how
+  several are reconciled; how the set's source drive-step positions map onto
+  1541 half-tracks; how each observation's exact `TimeBase` ticks project into
+  the destination's rotation-relative timebase, which for a 1541 is the drive's
+  16 MHz reference clock across one 300 RPM rotation; and how disagreement,
+  weakness, and absence across observations become pulse strength. Every one
+  of those is a named policy input. A reduction no policy names is a refusal,
+  not a default.
+- The **P64 image-format adapter** owns its grammar and its capability claim
+  (P12): what the container can hold, the version it claims (P8), how a
+  mastered medium encodes into it, and what it refuses by name.
+
+The source stays exactly as it was. The capture remains the authoritative
+layer of the artifacts it came from, the set is never edited or consumed, and
+the mastered P64 is a separate artifact with its own authoritative layer —
+P13's explicit conversion, requested, never a side effect of opening or saving.
+
+### The declared-loss account
+
+P64 cannot carry a KryoFlux capture. That is not a defect of either format,
+and it is not something the caller should discover from a smaller file. Before
+the write, the plan enumerates every reduction in the source's own terms: the
+unselected capture channel; the observations of each position not selected;
+flux recorded before the first index and after the last; marker channels and
+control/OOB records that have no P64 expression; retained `ForeignRecord`s,
+capture metadata, and transfer results; and any timing resolution the
+destination's timebase cannot express. A count is not an account, and loss
+reported after the fact does not satisfy this.
+
+The saved image says what it is. Its pulses carry selected-and-projected
+provenance, not recovered-evidence provenance, and nothing in it is presented
+as an observation of the original recording that was not one.
+
+### Reproducibility
+
+The same capture set, the same recipe, and the same seed produce the same
+mastered medium, and — the P64 encoding being deterministic — the same
+destination bytes. A policy whose variation the profile cannot state is
+refused rather than shipped as approximately repeatable.
+
+### One complete conversion
+
+The conformance journey is the prepared Pinball Construction Set disk-one
+capture set: two channels, 84 stream members each, opened through
+`SevenZipCatalog` and recognized as one capture set by F31. The caller
+inspects it, names a channel and a selection policy, reads the declared-loss
+account, and writes the P64.
+
+The smallest useful success is one mastered half-track: the selected
+observation's transitions appear in the saved file at their projected
+positions with their assigned strengths, and reopening the result through the
+P64 adapter's own decode presents that half-track unchanged. The smallest
+complete journey is the whole capture set converted to one P64 which a U7
+drive-hardware instance opens, inserts, and reads.
+
+This use case claims that the declared reduction is performed faithfully,
+reproducibly, and with its loss named. It does not claim that any particular
+protected title loads in an emulator from the result: whether protection
+survives is a property of the capture and the chosen policy, and Remanence
+reports what it did rather than promising an outcome it cannot see.
+
+### Refusals
+
+An incomplete, duplicate, or contradictory capture set is refused by F31
+before mastering begins. Past that: a source position no declared half-track
+map covers; a position whose observations disagree in a way the selection
+policy does not resolve; a run with no two trustworthy index boundaries where
+the policy requires a circular observation; a timebase the destination cannot
+express; a mastered medium the P64 claim cannot encode; and an existing
+destination path. Each names the rule it broke and leaves no file behind (P6,
+P9).
+
+### Deliberately outside this use case
+
+- Recovering GCR, sectors, a filesystem, or files from the capture. Nothing
+  in this journey descends below flux or interprets what the pulses mean.
+- Writing back to KryoFlux streams, editing the capture set, or any mutation
+  of the sources.
+- Repairing a bad capture, filling a gap, averaging timings, or choosing a
+  cleanest pass in the absence of a declared policy that says so.
+- D64, G64, or any destination but P64; disk two of the set; other capture
+  containers; and other drive or machine families.
+- A public flux, pulse, or capture-run iterator. The transformation is the
+  surface; the evidence stays behind it.
+- Emulator integration. Producing the image and consuming it (U7) are
+  separate journeys that meet at the file.

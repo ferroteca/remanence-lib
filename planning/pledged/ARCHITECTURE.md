@@ -5,7 +5,8 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, and P22 remain
+> **Status:** pledged at the owner's direction. P14, P15, P22, the P23
+> amendment, and P29 remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
@@ -581,3 +582,71 @@ conversion.
 The existing P23 clauses for active-layer replacement, cache invalidation,
 bounded backing, and the ban on independently mutable peer copies apply to
 this layer. P22 continues to govern flux and its marker channels.
+
+## P29 — Mastering is declared, reproducible, and states its loss
+
+**Mastering** is deriving a new artifact from evidence Remanence already
+holds: solving several capture runs into one circular medium, choosing among
+channels and observations, projecting one timebase onto another, and encoding
+the result into a format that cannot carry everything the evidence holds. P13
+already permits the act — choosing another authoritative layer is an explicit
+conversion which creates a new image and names its loss. This principle says
+what the act must carry, because a conversion that reduces evidence silently
+is indistinguishable from one that preserves it.
+
+**Mastering is requested, never incidental.** It is not a side effect of
+opening, attaching, presenting, or saving. The sources are read and nothing
+else: their authoritative layers, active layers, and provenance are unchanged
+by the operation, and the result is a separate artifact with its own
+authoritative layer.
+
+**Every reduction is a named policy input.** Which channel supplies evidence;
+which observation of a location is used and how several are reconciled; how
+source location identity maps onto the destination's addressing; how the
+source timebase projects onto the destination's; and how weakness, absence,
+disagreement, and contradiction are expressed in the destination's vocabulary
+— each is supplied by the caller or declared by the profile, and each travels
+into the result as provenance. **A reduction that no policy names is a
+refusal, not a default.** The flux layer already refuses to average timings,
+deduplicate pulses, or select a cleanest pass inside itself; this forbids
+performing those on the way out.
+
+**Two owners, and neither infers the other's answer.** The family mastering
+profile owns the physical reduction; the destination image-format adapter owns
+its grammar, its version claim, its encoding, and its named refusals (P8, P12).
+A profile does not decide what a container can hold, and an adapter does not
+decide which revolution the disk was.
+
+**The loss is declared before the write.** A mastering operation resolves in
+two stages: a plan which computes the whole transformation and writes nothing,
+and an execution which writes. The plan enumerates, in the source's own terms,
+everything the destination will not carry — unselected channels and
+observations, evidence outside the destination's addressable extent, marker
+channels, foreign records, capture metadata, and timing resolution beyond the
+destination's timebase. A count is not an account; loss reported after the
+fact does not satisfy this; and a reduction the plan did not declare is a
+defect, not a detail.
+
+**The result is derived and says so.** Mastered content carries
+selected-and-projected or synthetic provenance under P13, never
+recovered-evidence provenance. Nothing in a mastered artifact is presented as
+an observation of an original recording that was not one.
+
+**Mastering is reproducible.** The same sources, policy, and declared seed
+produce the same mastered state; where the destination encoding is itself
+deterministic, the same bytes. A transformation which cannot state what makes
+it vary is refused rather than shipped as approximately repeatable.
+
+P2, P6, and P9 apply unchanged: the sources are never mutated, nothing is
+written until every check has passed, and an interruption leaves a complete
+destination artifact or none.
+
+### Knock-on requirements
+
+This principle governs the direction *out* of the library's evidence into a
+new artifact; P13 continues to govern write availability *back* to a source,
+and P23 continues to govern which layer is active within a session. It pledges
+no destination format by itself — each is a named claim under P3 delivered by
+its own adapter — and it creates no public evidence iterator: the mastering
+plan and its declared-loss account are the surface, and the evidence stays
+behind them.
