@@ -94,3 +94,100 @@ image identifies as the qcow2 container it is. This entry is about
 the `Disk` surface reaching through the chain — the write half is
 where the consumer's stopped-machine workflow lives today and
 cannot move here without it.)*
+
+## U23 — I save a KryoFlux capture of a C64 disk as a P64 image
+
+I have a KryoFlux capture of a Commodore 64 floppy: raw stream files,
+one per drive-step position, captured from both of the disk's sides
+and delivered inside 7z archives — the second being the unrecorded
+back of a single-sided disk, which the capture cannot tell me and the
+drive family can. It is capture evidence, not a disk image. Each
+stream holds several recorded revolutions, flux before the first index
+and after the last, index and control/OOB records beside the flux, and
+a transfer result — and nothing in it says which revolution "the" disk
+was, or which channel to believe. I want a P64 out of it: one file,
+addressed by 1541 half-track, holding timed pulses with strength. I am
+asking for a transformation, not a reading of the capture, and I am
+told exactly what it will do and exactly what it cannot carry
+**before** it writes anything.
+
+Opening the set takes the P7 claim on every member artifact for the
+operation's lifetime and reads nothing else. Inspecting it reports the
+set as the capture-set adapter recognized it — members and their
+catalog identities, sides, source track positions, capture runs,
+observations, markers, transfer results, and issues — so I name a side
+and a policy by an identity the library already reported, never by an
+index I invented. The C1541 profile declares that the family records
+one surface, so naming the side confirms a declared fact rather than
+choosing between two beliefs about one surface. Planning computes the
+whole transformation and writes nothing: it reports the mastered
+medium's shape, the provenance every part of it will carry, and the
+complete declared-loss account. Writing the artifact is the only step
+that touches the filesystem; it creates the destination under its own
+claim, and an existing destination is a named refusal rather than an
+overwrite.
+
+Two owners, and neither infers the other's answer. The **C1541
+mastering profile** owns the physical reduction: which side supplies
+evidence; which observation of a source position is used and how
+several are reconciled; how the set's source drive-step positions map
+onto 1541 half-tracks; how each observation's exact timebase projects
+into the destination's rotation-relative timebase, which for a 1541 is
+the drive's 16 MHz reference clock across one 300 RPM rotation; and
+how disagreement, weakness, and absence across observations become
+pulse strength. Every one of those is a named policy input, and a
+reduction no policy names is a refusal, not a default. The **P64
+image-format adapter** owns its grammar and its capability claim: what
+the container can hold, the version it claims, how a mastered medium
+encodes into it, and what it refuses by name. Each states its own
+crossing in its own terms, so I read two accounts in sequence rather
+than one assembled by whichever of them ran last.
+
+P64 cannot carry a KryoFlux capture. That is not a defect of either
+format, and it is not something I should discover from a smaller file.
+Before the write, the reduction enumerates what it drops in the
+source's own terms — the unselected side; the observations of each
+position not selected; flux recorded before the first index and after
+the last; marker channels and control/OOB records with no P64
+expression; retained foreign records, capture metadata, and transfer
+results; and any timing resolution the destination's timebase cannot
+express — and the container enumerates what it cannot express of what
+survives: the declared policy itself, each half-track's provenance,
+the located origin, the seam, and the medium's own statement that it
+was derived at all. A count is not an account, and loss reported after
+the fact would not do.
+
+The saved image says what it is. Its pulses carry
+selected-and-projected provenance, not recovered-evidence provenance,
+and nothing in it is presented as an observation of the original
+recording that was not one. The same capture set, the same policy and
+the same seed produce the same mastered medium and — the P64 encoding
+being deterministic — the same destination bytes.
+
+The journey runs on the prepared Pinball Construction Set disk-one
+capture set: both sides, 84 stream members each, opened through the 7z
+catalog and recognized as one capture set. I inspect it, name a side
+and a selection policy, read the declared-loss account, and write the
+P64; reopening the result through the adapter's own decode presents
+the same half-tracks, at the same angles, with the same strengths. An
+incomplete, duplicate, or contradictory capture set is refused before
+mastering begins. Past that: a source position no declared half-track
+map covers; a position that holds no observation the selection policy
+names; a position whose content its neighbour also holds, until I
+declare which it is; a timebase the destination cannot express; a
+mastered medium the P64 claim cannot encode; and an existing
+destination path. Each names the rule it broke and leaves no file
+behind.
+
+*(This entry claims that the declared reduction is performed
+faithfully, reproducibly, and with its loss named. It does not claim
+that any particular protected title loads in an emulator from the
+result: whether protection survives is a property of the capture and
+the chosen policy, and the library reports what it did rather than
+promising an outcome it cannot see. Nothing here descends below flux
+or interprets what the pulses mean — no GCR, no sectors, no
+filesystem, no files — the sources are never edited or consumed, and
+no public flux, pulse, or capture-run iterator is offered: the
+transformation is the surface and the evidence stays behind it.
+Consuming the image is a separate journey that meets this one at the
+file.)*
