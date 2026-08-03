@@ -31,7 +31,7 @@
 
 use crate::drive_profile::{self, C1541, OriginDefault};
 use crate::error::{Error, ErrorCategory, Result};
-use crate::evidence::Provenance;
+use crate::evidence::{DeclaredLoss, LossAccount, Provenance};
 use crate::flux_capture::{FluxCapture, SessionBacking, Tick, TimeBase, Track, TrackKey};
 use crate::flux_medium::{
     Cycle, Derivation, FluxMedium, LocationKey, MediumBuilder, MediumFact, MediumFactKind,
@@ -131,16 +131,6 @@ pub struct MasteringPolicy {
 
 // -------------------------------------------------------- the reporting
 
-/// One thing the destination will not carry, in the source's own terms.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeclaredLoss {
-    /// The profile's stable spelling for this kind of loss.
-    pub code: String,
-    pub detail: String,
-    /// How much of it there is, in whatever the detail counts.
-    pub count: u64,
-}
-
 /// One half-track the medium will hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MasteredLocation {
@@ -216,11 +206,10 @@ impl MasteredMedium {
         self.medium.locations().count() as u64
     }
 
-    /// The crate's own handle on the medium, for the adapter that will
-    /// encode it. That adapter is not delivered, so nothing reads this
-    /// yet — and a medium no one can reach would be a medium produced
-    /// for nobody.
-    #[allow(dead_code)]
+    /// The crate's own handle on the medium, for the image-format
+    /// adapter that encodes it. What a container makes of these pulses
+    /// is that adapter's business; nothing outside the crate reaches
+    /// them.
     pub(crate) fn medium(&self) -> &FluxMedium {
         &self.medium
     }
@@ -858,37 +847,6 @@ fn account_for_the_envelope(capture: &FluxCapture, loss: &mut LossAccount) {
              not carry",
             runs,
         );
-    }
-}
-
-/// The account, kept so that one kind of loss is one entry however many
-/// locations contributed to it.
-struct LossAccount {
-    entries: Vec<DeclaredLoss>,
-}
-
-impl LossAccount {
-    fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
-
-    fn add(&mut self, code: &str, detail: &str, count: u64) {
-        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.code == code) {
-            entry.count += count;
-            return;
-        }
-        self.entries.push(DeclaredLoss {
-            code: code.to_owned(),
-            detail: detail.to_owned(),
-            count,
-        });
-    }
-
-    fn into_entries(mut self) -> Vec<DeclaredLoss> {
-        self.entries.sort_by(|left, right| left.code.cmp(&right.code));
-        self.entries
     }
 }
 

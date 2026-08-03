@@ -30,6 +30,7 @@ mod journal;
 mod kryoflux;
 mod lzma;
 mod mbr;
+mod p64;
 mod partition;
 mod qcow2;
 mod session;
@@ -40,15 +41,15 @@ mod zip;
 
 pub use archive::{Archive, ArchiveEntry};
 pub use c1541_mastering::{
-    DeclaredLoss, DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan,
-    MasteringPlanReport, MasteringPolicy, ObservationPolicy, OriginPolicy, ProjectionPolicy,
-    PulseStrengthPolicy,
+    DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan, MasteringPlanReport,
+    MasteringPolicy, ObservationPolicy, OriginPolicy, ProjectionPolicy, PulseStrengthPolicy,
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat, DiskGeometry};
 pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim};
 pub use error::{Error, ErrorCategory, Result};
+pub use evidence::DeclaredLoss;
 pub use fat::{FatEntry, FatEntryKind, FatKind, VolumeInfo};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
 pub use kryoflux::{
@@ -56,6 +57,7 @@ pub use kryoflux::{
     ObservationReport, StepPosition, TimeBaseReport,
 };
 pub use mbr::{PartitionInfo, PartitionKind};
+pub use p64::{P64HalfTrack, P64Image, P64Report};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout, FilesystemLayout,
     Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, Session, SizeInformation,

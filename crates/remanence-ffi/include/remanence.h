@@ -141,6 +141,13 @@ typedef struct RemanenceMasteredMedium RemanenceMasteredMedium;
 // A planned reduction: everything computed, nothing written.
 typedef struct RemanenceMasteringPlan RemanenceMasteringPlan;
 
+// An opened P64 image, holding its claim on the file and the medium it
+// decoded into private session storage.
+typedef struct RemanenceP64Image RemanenceP64Image;
+
+// What a container carried, or will carry, of one mastered medium.
+typedef struct RemanenceP64Report RemanenceP64Report;
+
 // A recognition result, ranked highest confidence first.
 typedef struct RemanenceRecognition RemanenceRecognition;
 
@@ -234,6 +241,21 @@ typedef struct {
   bool has_seam;
   uint64_t seam_cycles;
 } RemanenceMasteredLocation;
+
+// One half-track a P64 holds, in the container's addressing and the
+// family's both.
+typedef struct {
+  // The container's own index byte, side bit included.
+  uint8_t index;
+  uint64_t side;
+  uint64_t half_track_numerator;
+  uint64_t half_track_denominator;
+  uint64_t pulses;
+  // Pulses that always trigger, that sometimes do, and that never do.
+  uint64_t strong_pulses;
+  uint64_t weak_pulses;
+  uint64_t absent_pulses;
+} RemanenceP64HalfTrack;
 
 #ifdef __cplusplus
 extern "C" {
@@ -1167,6 +1189,124 @@ size_t remanence_mastering_evidence_count(const RemanenceMasteringPlan *plan,
 const char *remanence_mastering_evidence(const RemanenceMasteringPlan *plan,
                                          const RemanenceMasteredMedium *medium,
                                          size_t index);
+
+// Opens the P64 image at `path` (UTF-8), claiming the file and decoding
+// every half-track once into private session storage. The version is
+// checked before anything else is touched, and a version, flag bit, or
+// chunk signature past this release's claim is refused by name. Returns
+// null on failure and stores a message in `error_out` (free with
+// `remanence_string_free`).
+RemanenceP64Image *remanence_p64_image_open(const char *path,
+                                            RemanenceErrorCategory *error_category_out,
+                                            char **error_out);
+
+// Opens a P64 image as `remanence_p64_image_open` does, under a
+// declared cache bound: at most `cache_bytes` of the decoded medium
+// stays resident. The bound narrows the working set; it never refuses
+// service.
+RemanenceP64Image *remanence_p64_image_open_with_cache(const char *path,
+                                                       uint64_t cache_bytes,
+                                                       RemanenceErrorCategory *error_category_out,
+                                                       char **error_out);
+
+// Frees an image handle, releasing its claim on the file and discarding
+// the private session storage the medium decoded into.
+void remanence_p64_image_free(RemanenceP64Image *image);
+
+// The path the image was opened from.
+const char *remanence_p64_image_path(const RemanenceP64Image *image);
+
+// Which P7 mode the open obtained on the file.
+RemanenceAccessMode remanence_p64_image_access_mode(const RemanenceP64Image *image);
+
+// How many bytes of private session storage the decoded medium
+// occupies, and how much of that is currently resident.
+uint64_t remanence_p64_image_backing_bytes(const RemanenceP64Image *image);
+
+uint64_t remanence_p64_image_resident_bytes(const RemanenceP64Image *image);
+
+// Computes what a P64 will and will not carry of a mastered medium,
+// writing nothing. Read it before writing: the write adds nothing to
+// the account. Returns null on failure.
+RemanenceP64Report *remanence_mastered_medium_describe_p64(const RemanenceMasteredMedium *medium,
+                                                           RemanenceErrorCategory *error_category_out,
+                                                           char **error_out);
+
+// Writes a mastered medium into a new P64 image at `path` (UTF-8) and
+// reports what the container carried. The medium is untouched, an
+// existing destination is a named refusal rather than an overwrite, and
+// an interruption leaves the destination absent rather than half an
+// artifact. Returns null on failure.
+RemanenceP64Report *remanence_mastered_medium_write_p64(const RemanenceMasteredMedium *medium,
+                                                        const char *path,
+                                                        RemanenceErrorCategory *error_category_out,
+                                                        char **error_out);
+
+// Frees a report handle.
+void remanence_p64_report_free(RemanenceP64Report *report);
+
+// The container format's stable identifier, "p64".
+const char *remanence_p64_format_id(const RemanenceP64Image *image,
+                                    const RemanenceP64Report *report);
+
+const char *remanence_p64_format_name(const RemanenceP64Image *image,
+                                      const RemanenceP64Report *report);
+
+// The container's declared format version.
+uint32_t remanence_p64_version(const RemanenceP64Image *image, const RemanenceP64Report *report);
+
+bool remanence_p64_write_protected(const RemanenceP64Image *image,
+                                   const RemanenceP64Report *report);
+
+bool remanence_p64_double_sided(const RemanenceP64Image *image, const RemanenceP64Report *report);
+
+// The drive profile the container's own signature names, and the frame
+// that profile declares.
+const char *remanence_p64_profile_id(const RemanenceP64Image *image,
+                                     const RemanenceP64Report *report);
+
+uint64_t remanence_p64_reference_clock_hz(const RemanenceP64Image *image,
+                                          const RemanenceP64Report *report);
+
+uint64_t remanence_p64_cycles_per_rotation(const RemanenceP64Image *image,
+                                           const RemanenceP64Report *report);
+
+// How many half-tracks the container holds.
+size_t remanence_p64_half_track_count(const RemanenceP64Image *image,
+                                      const RemanenceP64Report *report);
+
+// One of them, written into `out`. Returns false when out of range.
+bool remanence_p64_half_track(const RemanenceP64Image *image,
+                              const RemanenceP64Report *report,
+                              size_t index,
+                              RemanenceP64HalfTrack *out);
+
+// How many kinds of loss the crossing does not carry.
+size_t remanence_p64_declared_loss_count(const RemanenceP64Image *image,
+                                         const RemanenceP64Report *report);
+
+// One loss entry's stable code, or null when out of range.
+const char *remanence_p64_declared_loss_code(const RemanenceP64Image *image,
+                                             const RemanenceP64Report *report,
+                                             size_t index);
+
+// What was lost, in the source's own terms. A count is not an account.
+const char *remanence_p64_declared_loss_detail(const RemanenceP64Image *image,
+                                               const RemanenceP64Report *report,
+                                               size_t index);
+
+// How much of it there was, in whatever the detail counts.
+uint64_t remanence_p64_declared_loss_amount(const RemanenceP64Image *image,
+                                            const RemanenceP64Report *report,
+                                            size_t index);
+
+// How the container was recognized and what this adapter claims of it.
+size_t remanence_p64_evidence_count(const RemanenceP64Image *image,
+                                    const RemanenceP64Report *report);
+
+const char *remanence_p64_evidence(const RemanenceP64Image *image,
+                                   const RemanenceP64Report *report,
+                                   size_t index);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -54,6 +54,21 @@ caller says which it is. The plan carries the complete account of what
 the destination will not carry, in the source's own terms and before
 anything exists to carry it.
 
+A mastered medium can then be saved as a P64, and a P64 opened back.
+The container's grammar and its own adaptive range coder are the
+adapter's claim, stated in the module from the published format
+description: the version is validated before anything else is touched,
+every chunk is checked against its stored checksum and all of them
+against the header's, and a version, reserved flag bit, or chunk
+signature past the claim is refused by name. The adapter says what the
+container will carry before it writes — a P64 records no policy, no
+provenance and no located origin, and each of those is named and
+counted first — and refuses a medium its claim cannot encode rather
+than approximating one into it. An existing destination is a named
+refusal, never an overwrite, and the artifact is built beside its
+destination and moved into place whole, so an interruption leaves the
+destination absent rather than half a file.
+
 The library is dependency-free at runtime, including its own ZIP
 central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
 LZMA/LZMA2 decompressors, and native qcow2 v2/v3 driver.
@@ -174,6 +189,15 @@ with remanence.CaptureSet("captures.7z") as capture:
     for loss in plan.report().declared_loss:
         print(loss.code, loss.count, loss.detail)
     medium = plan.execute()
+
+    for loss in medium.describe_p64().declared_loss:
+        print(loss.code, loss.count, loss.detail)
+    medium.write_p64("pinball.p64")
+
+with remanence.P64Image("pinball.p64") as image:
+    for track in image.inspect().half_tracks:
+        print(track.index, track.half_track_numerator, track.pulses,
+              track.strong_pulses, track.weak_pulses)
 ```
 
 ## Changes

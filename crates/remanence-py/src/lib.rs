@@ -1763,8 +1763,235 @@ impl MasteredMedium {
         self.inner.resident_bytes()
     }
 
+    /// What a P64 will and will not carry of this medium, computed and
+    /// written nowhere.
+    ///
+    /// Read it before writing: the write adds nothing to the account. A
+    /// medium the container's claim cannot encode is refused here rather
+    /// than approximated into it.
+    fn describe_p64(&self) -> PyResult<P64Report> {
+        self.inner
+            .describe_p64()
+            .map(|report| P64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
+    /// Writes this medium into a new P64 image at `path`, and reports
+    /// what the container carried and what it did not.
+    ///
+    /// The medium is untouched. An existing destination is a named
+    /// refusal rather than an overwrite, and an interruption leaves the
+    /// destination absent rather than half an artifact.
+    fn write_p64(&self, path: PathBuf) -> PyResult<P64Report> {
+        self.inner
+            .write_p64(path)
+            .map(|report| P64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("MasteredMedium(locations={})", self.inner.locations())
+    }
+}
+
+/// One half-track a P64 holds, in the container's addressing and the
+/// family's both.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct P64HalfTrack {
+    /// The container's own index byte, side bit included.
+    pub index: u8,
+    pub side: u64,
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub pulses: u64,
+    /// Pulses that always trigger, that sometimes do, and that never do.
+    pub strong_pulses: u64,
+    pub weak_pulses: u64,
+    pub absent_pulses: u64,
+}
+
+#[pymethods]
+impl P64HalfTrack {
+    fn __repr__(&self) -> String {
+        format!(
+            "P64HalfTrack(index={}, half_track={}/{}, pulses={})",
+            self.index, self.half_track_numerator, self.half_track_denominator, self.pulses
+        )
+    }
+}
+
+/// A P64 container as the adapter reads or writes one.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct P64Report {
+    pub format_id: String,
+    pub format_name: String,
+    /// The container's declared format version.
+    pub version: u32,
+    pub write_protected: bool,
+    pub double_sided: bool,
+    /// The drive profile the container's own signature names, and the
+    /// frame that profile declares.
+    pub profile_id: String,
+    pub reference_clock_hz: u64,
+    pub cycles_per_rotation: u64,
+    pub half_tracks: Vec<P64HalfTrack>,
+    /// What the crossing does not carry, in the source's own terms. A
+    /// count is not an account, so each entry says what it was.
+    pub declared_loss: Vec<DeclaredLoss>,
+    /// How the container was recognized and what the adapter claims of
+    /// it.
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl P64Report {
+    fn __repr__(&self) -> String {
+        format!(
+            "P64Report(half_tracks={}, declared_loss={})",
+            self.half_tracks.len(),
+            self.declared_loss.len()
+        )
+    }
+}
+
+impl P64Report {
+    fn new(report: &remanence::P64Report) -> Self {
+        Self {
+            format_id: report.format_id.clone(),
+            format_name: report.format_name.clone(),
+            version: report.version,
+            write_protected: report.write_protected,
+            double_sided: report.double_sided,
+            profile_id: report.profile_id.clone(),
+            reference_clock_hz: report.reference_clock_hz,
+            cycles_per_rotation: report.cycles_per_rotation,
+            half_tracks: report
+                .half_tracks
+                .iter()
+                .map(|track| P64HalfTrack {
+                    index: track.index,
+                    side: track.side,
+                    half_track_numerator: track.half_track_numerator,
+                    half_track_denominator: track.half_track_denominator,
+                    pulses: track.pulses,
+                    strong_pulses: track.strong_pulses,
+                    weak_pulses: track.weak_pulses,
+                    absent_pulses: track.absent_pulses,
+                })
+                .collect(),
+            declared_loss: report
+                .declared_loss
+                .iter()
+                .map(|loss| DeclaredLoss {
+                    code: loss.code.clone(),
+                    detail: loss.detail.clone(),
+                    count: loss.count,
+                })
+                .collect(),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// One P64 image, opened and read.
+///
+/// Opening claims the file — writes denied to every other process —
+/// decodes every half-track once into private session storage, and holds
+/// the claim until the image is closed or collected.
+#[pyclass(module = "remanence")]
+pub struct P64Image {
+    inner: Option<remanence::P64Image>,
+    report: P64Report,
+}
+
+#[pymethods]
+impl P64Image {
+    /// Opens the P64 image at `path`. The version is checked before
+    /// anything else is touched, and a version, flag bit, or chunk
+    /// signature past this release's claim is refused by name.
+    #[new]
+    #[pyo3(signature = (path, *, cache_bytes = None))]
+    fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
+        let image = match cache_bytes {
+            Some(cache_bytes) => remanence::P64Image::open_with_cache(path, cache_bytes),
+            None => remanence::P64Image::open(path),
+        }
+        .map_err(to_py_err)?;
+        let report = P64Report::new(image.inspect());
+        Ok(Self {
+            inner: Some(image),
+            report,
+        })
+    }
+
+    /// The container as the adapter read it.
+    fn inspect(&self) -> P64Report {
+        self.report.clone()
+    }
+
+    /// The path the image was opened from.
+    #[getter]
+    fn path(&self) -> PyResult<String> {
+        Ok(self.get()?.path().to_string_lossy().into_owned())
+    }
+
+    #[getter]
+    fn format_id(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_id())
+    }
+
+    #[getter]
+    fn format_name(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_name())
+    }
+
+    /// How many bytes of private session storage the decoded medium
+    /// occupies, and how much of that is currently resident.
+    #[getter]
+    fn backing_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.backing_bytes())
+    }
+
+    #[getter]
+    fn resident_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.resident_bytes())
+    }
+
+    /// Releases the claim on the file and discards the private session
+    /// storage the medium decoded into.
+    fn close(&mut self) {
+        self.inner = None;
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exception_type: Bound<'_, PyAny>,
+        _exception: Bound<'_, PyAny>,
+        _traceback: Bound<'_, PyAny>,
+    ) -> bool {
+        self.inner = None;
+        false
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "P64Image(half_tracks={})",
+            self.report.half_tracks.len()
+        )
+    }
+}
+
+impl P64Image {
+    fn get(&self) -> PyResult<&remanence::P64Image> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "image is closed"))
     }
 }
 
@@ -1818,6 +2045,9 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MasteringPlan>()?;
     m.add_class::<MasteringPlanReport>()?;
     m.add_class::<MasteredMedium>()?;
+    m.add_class::<P64Image>()?;
+    m.add_class::<P64Report>()?;
+    m.add_class::<P64HalfTrack>()?;
     m.add_class::<MasteredLocation>()?;
     m.add_class::<DeclaredLoss>()?;
     m.add_class::<Session>()?;

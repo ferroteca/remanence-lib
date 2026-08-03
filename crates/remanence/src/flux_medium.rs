@@ -20,11 +20,12 @@
 //! first one: the medium is where declared family knowledge and recorded
 //! evidence combine.
 //!
-//! **It is derived, always.** Nothing here carries recovered-evidence
-//! provenance: every pulse is selected-and-projected from a capture or
-//! synthesized downward from a higher layer (P13, P29), and there is no
-//! constructor that does not name the policy that produced it. A medium
-//! cannot be built by opening a capture, only by reducing one.
+//! **It is never recovered evidence.** Every pulse is
+//! selected-and-projected from a capture, synthesized downward from a
+//! higher layer (P13, P29), or found already a medium in a container
+//! that holds one at rest — and there is no constructor that does not
+//! name what put it there. A medium cannot be built by opening a
+//! capture, only by reducing one.
 //!
 //! It holds no bitcell, no recovered clock, no synchronization, no
 //! symbol and no byte. Those are the hardware bitstream and above, and a
@@ -33,8 +34,9 @@
 //!
 //! The backing is the flux-capture layer's, keyed here by the family's
 //! own addressing rather than a source's (P27). Every item is
-//! crate-private and has no consumer until the mastering profile and the
-//! P64 adapter land.
+//! crate-private: the mastering profile builds one of these and the P64
+//! adapter reads and writes one, and nothing outside the crate sees a
+//! pulse.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -54,15 +56,20 @@ pub(crate) type Cycle = u64;
 
 /// How a medium's content came to exist.
 ///
-/// There is no third answer and no default. A medium that could not say
-/// which of these it is would be asserting recovered evidence it does
-/// not have, which is the one claim this layer never makes.
+/// There is no default, and none of these is recovered evidence — which
+/// is the one claim this layer never makes. A medium that could not say
+/// which of them it is would be asserting one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Derivation {
     /// Reduced from recorded evidence under a declared policy (P29).
     SelectedAndProjected,
     /// Synthesized downward from a higher layer (P13).
     Synthetic,
+    /// Found already a medium, in a container that holds one at rest. The
+    /// content was derived by whoever wrote it and the container records
+    /// nothing about how; this library derived none of it and does not
+    /// guess on the writer's behalf.
+    Stored,
 }
 
 impl Derivation {
@@ -70,6 +77,7 @@ impl Derivation {
         match self {
             Self::SelectedAndProjected => "selected-and-projected",
             Self::Synthetic => "synthetic",
+            Self::Stored => "stored",
         }
     }
 }
@@ -889,8 +897,9 @@ pub(crate) struct MediumBuilder<S: ByteSink> {
 }
 
 impl<S: ByteSink> MediumBuilder<S> {
-    /// Starts a medium under `policy`, which must state the reduction
-    /// that produces it.
+    /// Starts a medium under `policy`, which must state what put its
+    /// content there — the reduction that produced it, or the container
+    /// it was found at rest in.
     ///
     /// A policy that names nothing is refused: P29's rule is that a
     /// reduction no policy names is a refusal rather than a default, and

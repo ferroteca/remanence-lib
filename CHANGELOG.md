@@ -20,6 +20,39 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A mastered medium is saved as a P64, and a P64 is opened, on all
+  three surfaces.** `MasteredMedium::describe_p64` computes what the
+  container will and will not carry and writes nothing;
+  `MasteredMedium::write_p64` produces the artifact; `P64Image::open`
+  reads one back. Reflected as
+  `remanence_mastered_medium_describe_p64` /
+  `remanence_mastered_medium_write_p64` / `remanence_p64_image_open`
+  with their accessors, and as the Python `describe_p64` / `write_p64` /
+  `P64Image`. **The container grammar is the adapter's own claim** —
+  signature, version, flags, integrity fields, chunk vocabulary,
+  half-track addressing, and the width and meaning of a stored pulse's
+  position and strength, enumerated in the module from the published
+  format description, along with the format's own adaptive range coder.
+  The version is validated before anything else is touched, and a
+  version, reserved flag bit, or chunk signature past the claim is
+  refused by name. Every chunk is checked against its own stored
+  checksum and all of them against the header's, so a file that did not
+  arrive as it was written is a refusal rather than a plausible medium.
+  Both directions declare their loss before they act: a written
+  container carries no policy, no per-half-track provenance, no located
+  origin, no seam, and no statement that the medium was derived at all,
+  and each of those is named and counted first. A medium the claim
+  cannot encode — another family's addressing, another frame, a position
+  the container cannot address, a strength outside the family's declared
+  vocabulary — is refused rather than approximated into it. **An
+  existing destination is a named refusal, never an overwrite**: the
+  artifact is built beside its destination under this library's own
+  claim and moved into place whole, so an interruption leaves the
+  destination absent rather than half a file. Encoding is deterministic,
+  so the same medium is the same bytes; conformance is a same-layer
+  round trip, the written artifact reopening through the adapter's own
+  decode as the same half-tracks, at the same angles, with the same
+  strengths.
 - **A capture is mastered into a 1541 flux medium, on all three
   surfaces.** `CaptureSet::plan_c1541_mastering` computes the whole
   reduction and writes nothing; `MasteringPlan::execute` produces the

@@ -3786,6 +3786,447 @@ pub unsafe extern "C" fn remanence_mastering_evidence(
     })
 }
 
+// ---------------------------------------------------------------------------
+// The P64 image-format adapter: one container claimed in both
+// directions. Reading it decodes a medium at rest; writing it produces a
+// new artifact from a mastered one, under a claim stated before the file
+// exists.
+
+use remanence::{P64Image, P64Report};
+
+/// One half-track a P64 holds, in the container's addressing and the
+/// family's both.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceP64HalfTrack {
+    /// The container's own index byte, side bit included.
+    pub index: u8,
+    pub side: u64,
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub pulses: u64,
+    /// Pulses that always trigger, that sometimes do, and that never do.
+    pub strong_pulses: u64,
+    pub weak_pulses: u64,
+    pub absent_pulses: u64,
+}
+
+struct P64View {
+    format_id: CString,
+    format_name: CString,
+    profile_id: CString,
+    loss_codes: Vec<CString>,
+    loss_details: Vec<CString>,
+    evidence: Vec<CString>,
+}
+
+impl P64View {
+    fn new(report: &P64Report) -> Self {
+        Self {
+            format_id: to_cstring(&report.format_id),
+            format_name: to_cstring(&report.format_name),
+            profile_id: to_cstring(&report.profile_id),
+            loss_codes: report
+                .declared_loss
+                .iter()
+                .map(|loss| to_cstring(&loss.code))
+                .collect(),
+            loss_details: report
+                .declared_loss
+                .iter()
+                .map(|loss| to_cstring(&loss.detail))
+                .collect(),
+            evidence: report.evidence.iter().map(|line| to_cstring(line)).collect(),
+        }
+    }
+}
+
+/// An opened P64 image, holding its claim on the file and the medium it
+/// decoded into private session storage.
+pub struct RemanenceP64Image {
+    image: P64Image,
+    path: CString,
+    report: P64Report,
+    view: P64View,
+}
+
+/// What a container carried, or will carry, of one mastered medium.
+pub struct RemanenceP64Report {
+    report: P64Report,
+    view: P64View,
+}
+
+unsafe fn open_p64(
+    path: *const c_char,
+    cache_bytes: Option<u64>,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceP64Image {
+    unsafe { clear_error(error_out) };
+    if path.is_null() {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    }
+    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
+    let opened = match cache_bytes {
+        Some(cache_bytes) => P64Image::open_with_cache(path.as_ref(), cache_bytes),
+        None => P64Image::open(path.as_ref()),
+    };
+    match opened {
+        Ok(image) => {
+            let report = image.inspect().clone();
+            let view = P64View::new(&report);
+            Box::into_raw(Box::new(RemanenceP64Image {
+                path: to_cstring(&image.path().to_string_lossy()),
+                image,
+                report,
+                view,
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Opens the P64 image at `path` (UTF-8), claiming the file and decoding
+/// every half-track once into private session storage. The version is
+/// checked before anything else is touched, and a version, flag bit, or
+/// chunk signature past this release's claim is refused by name. Returns
+/// null on failure and stores a message in `error_out` (free with
+/// `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_open(
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceP64Image {
+    unsafe { open_p64(path, None, error_category_out, error_out) }
+}
+
+/// Opens a P64 image as `remanence_p64_image_open` does, under a
+/// declared cache bound: at most `cache_bytes` of the decoded medium
+/// stays resident. The bound narrows the working set; it never refuses
+/// service.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_open_with_cache(
+    path: *const c_char,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceP64Image {
+    unsafe { open_p64(path, Some(cache_bytes), error_category_out, error_out) }
+}
+
+/// Frees an image handle, releasing its claim on the file and discarding
+/// the private session storage the medium decoded into.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_free(image: *mut RemanenceP64Image) {
+    if !image.is_null() {
+        drop(unsafe { Box::from_raw(image) });
+    }
+}
+
+/// The path the image was opened from.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_path(
+    image: *const RemanenceP64Image,
+) -> *const c_char {
+    unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.path.as_ptr())
+}
+
+/// Which P7 mode the open obtained on the file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_access_mode(
+    image: *const RemanenceP64Image,
+) -> RemanenceAccessMode {
+    unsafe { image.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |image| {
+        access_mode(image.image.access_mode())
+    })
+}
+
+/// How many bytes of private session storage the decoded medium
+/// occupies, and how much of that is currently resident.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_backing_bytes(
+    image: *const RemanenceP64Image,
+) -> u64 {
+    unsafe { image.as_ref() }.map_or(0, |image| image.image.backing_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_resident_bytes(
+    image: *const RemanenceP64Image,
+) -> u64 {
+    unsafe { image.as_ref() }.map_or(0, |image| image.image.resident_bytes())
+}
+
+/// Computes what a P64 will and will not carry of a mastered medium,
+/// writing nothing. Read it before writing: the write adds nothing to
+/// the account. Returns null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastered_medium_describe_p64(
+    medium: *const RemanenceMasteredMedium,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceP64Report {
+    unsafe { clear_error(error_out) };
+    let Some(medium) = (unsafe { medium.as_ref() }) else {
+        let error = remanence::Error::io("null mastered medium");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium.medium.describe_p64() {
+        Ok(report) => {
+            let view = P64View::new(&report);
+            Box::into_raw(Box::new(RemanenceP64Report { report, view }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Writes a mastered medium into a new P64 image at `path` (UTF-8) and
+/// reports what the container carried. The medium is untouched, an
+/// existing destination is a named refusal rather than an overwrite, and
+/// an interruption leaves the destination absent rather than half an
+/// artifact. Returns null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastered_medium_write_p64(
+    medium: *const RemanenceMasteredMedium,
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceP64Report {
+    unsafe { clear_error(error_out) };
+    let (Some(medium), false) = (unsafe { medium.as_ref() }, path.is_null()) else {
+        let error = remanence::Error::io("null mastered medium or path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
+    match medium.medium.write_p64(path.as_ref()) {
+        Ok(report) => {
+            let view = P64View::new(&report);
+            Box::into_raw(Box::new(RemanenceP64Report { report, view }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a report handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_report_free(report: *mut RemanenceP64Report) {
+    if !report.is_null() {
+        drop(unsafe { Box::from_raw(report) });
+    }
+}
+
+/// An opened image and a written artifact report the same thing, so the
+/// accessors below take either handle: pass whichever you hold and null
+/// for the other.
+unsafe fn p64_reported<'a>(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> Option<(&'a P64Report, &'a P64View)> {
+    if let Some(image) = unsafe { image.as_ref() } {
+        return Some((&image.report, &image.view));
+    }
+    unsafe { report.as_ref() }.map(|report| (&report.report, &report.view))
+}
+
+/// The container format's stable identifier, "p64".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_format_id(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> *const c_char {
+    unsafe { p64_reported(image, report) }
+        .map_or(ptr::null(), |(_, view)| view.format_id.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_format_name(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> *const c_char {
+    unsafe { p64_reported(image, report) }
+        .map_or(ptr::null(), |(_, view)| view.format_name.as_ptr())
+}
+
+/// The container's declared format version.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_version(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> u32 {
+    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.version)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_write_protected(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> bool {
+    unsafe { p64_reported(image, report) }.is_some_and(|(report, _)| report.write_protected)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_double_sided(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> bool {
+    unsafe { p64_reported(image, report) }.is_some_and(|(report, _)| report.double_sided)
+}
+
+/// The drive profile the container's own signature names, and the frame
+/// that profile declares.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_profile_id(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> *const c_char {
+    unsafe { p64_reported(image, report) }
+        .map_or(ptr::null(), |(_, view)| view.profile_id.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_reference_clock_hz(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> u64 {
+    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.reference_clock_hz)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_cycles_per_rotation(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> u64 {
+    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.cycles_per_rotation)
+}
+
+/// How many half-tracks the container holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_half_track_count(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> usize {
+    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.half_tracks.len())
+}
+
+/// One of them, written into `out`. Returns false when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_half_track(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+    index: usize,
+    out: *mut RemanenceP64HalfTrack,
+) -> bool {
+    let Some((report, _)) = (unsafe { p64_reported(image, report) }) else {
+        return false;
+    };
+    let Some(track) = report.half_tracks.get(index) else {
+        return false;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = RemanenceP64HalfTrack {
+                index: track.index,
+                side: track.side,
+                half_track_numerator: track.half_track_numerator,
+                half_track_denominator: track.half_track_denominator,
+                pulses: track.pulses,
+                strong_pulses: track.strong_pulses,
+                weak_pulses: track.weak_pulses,
+                absent_pulses: track.absent_pulses,
+            };
+        }
+    }
+    true
+}
+
+/// How many kinds of loss the crossing does not carry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_declared_loss_count(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> usize {
+    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.declared_loss.len())
+}
+
+/// One loss entry's stable code, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_declared_loss_code(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+    index: usize,
+) -> *const c_char {
+    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| {
+        view.loss_codes
+            .get(index)
+            .map_or(ptr::null(), |code| code.as_ptr())
+    })
+}
+
+/// What was lost, in the source's own terms. A count is not an account.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_declared_loss_detail(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+    index: usize,
+) -> *const c_char {
+    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| {
+        view.loss_details
+            .get(index)
+            .map_or(ptr::null(), |detail| detail.as_ptr())
+    })
+}
+
+/// How much of it there was, in whatever the detail counts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_declared_loss_amount(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+    index: usize,
+) -> u64 {
+    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| {
+        report
+            .declared_loss
+            .get(index)
+            .map_or(0, |loss| loss.count)
+    })
+}
+
+/// How the container was recognized and what this adapter claims of it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_evidence_count(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+) -> usize {
+    unsafe { p64_reported(image, report) }.map_or(0, |(_, view)| view.evidence.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_evidence(
+    image: *const RemanenceP64Image,
+    report: *const RemanenceP64Report,
+    index: usize,
+) -> *const c_char {
+    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| {
+        view.evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

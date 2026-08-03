@@ -115,6 +115,60 @@ pub(crate) fn open_declared(path: &Path, intent: AccessIntent) -> Result<File> {
     })
 }
 
+/// Creates `path` and claims it exclusively for this process (P7).
+///
+/// The file must not already exist: creation is the claim, and it is the
+/// same call, so nothing can appear between deciding to write and owning
+/// the path. An adapter producing a new artifact writes through this and
+/// nothing else, so the artifact is never observable half-written by
+/// anyone else while it is being built.
+pub(crate) fn create_claimed(path: &Path) -> Result<File> {
+    create_exclusive(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::AlreadyExists => Error::io(format!(
+            "cannot create '{}': something is already there, and this library \
+             never overwrites a destination it did not create",
+            path.display()
+        )),
+        _ if is_sharing_conflict(&error) => Error::locked(format!(
+            "cannot claim '{}': another process has the file open",
+            path.display()
+        )),
+        _ => Error::io(format!("cannot create '{}': {error}", path.display())),
+    })
+}
+
+#[cfg(windows)]
+fn create_exclusive(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // Share mode 0: while this file is being written, no other process
+    // reads it or writes it.
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .share_mode(0)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn create_exclusive(path: &Path) -> std::io::Result<File> {
+    use std::os::fd::AsRawFd;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    unsafe extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+    if unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
 fn is_sharing_conflict(error: &std::io::Error) -> bool {
     // ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33) on Windows;
     // EWOULDBLOCK from a contended advisory lock elsewhere.

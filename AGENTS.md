@@ -52,7 +52,15 @@ ABI, or Python module.
   `c1541_mastering.rs` the reduction from capture to medium under a
   declared policy (P29) — a plan that computes everything and writes
   nothing, the declared-loss account it carries, and the execution that
-  produces the medium;
+  produces the medium; `p64.rs` the P64 image-format adapter, claimed in
+  both directions — the container grammar and its own range coder, the
+  version gate and the structural refusals, decode of a stored medium
+  into the flux-medium layer, and encode of a mastered one into a new
+  artifact under a claim stated before the file exists. It sits outside
+  `adapters.rs`'s catalog deliberately: that catalog's adapters open a
+  byte-addressed device, and block and flux are disjoint families (P13),
+  so a flux container is reached through its own type as the capture-set
+  adapter is;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable

@@ -56,6 +56,56 @@ impl Issue {
     }
 }
 
+/// One thing a destination will not carry, in the source's own terms.
+///
+/// It belongs here rather than beside the first reduction that needed
+/// it: a count is not an account is a claim about evidence, and the
+/// mastering profile and the image-format adapters state it in the same
+/// terms (P29).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredLoss {
+    /// The declaring namespace's stable spelling for this kind of loss.
+    pub code: String,
+    pub detail: String,
+    /// How much of it there is, in whatever the detail counts.
+    pub count: u64,
+}
+
+/// The account being assembled, kept so that one kind of loss is one
+/// entry however many items contributed to it.
+#[derive(Debug)]
+pub(crate) struct LossAccount {
+    entries: Vec<DeclaredLoss>,
+}
+
+impl LossAccount {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub(crate) fn add(&mut self, code: &str, detail: &str, count: u64) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.code == code) {
+            entry.count += count;
+            return;
+        }
+        self.entries.push(DeclaredLoss {
+            code: code.to_owned(),
+            detail: detail.to_owned(),
+            count,
+        });
+    }
+
+    /// The account in code order, so the same reduction reports the same
+    /// account whatever order its parts were discovered in.
+    pub(crate) fn into_entries(mut self) -> Vec<DeclaredLoss> {
+        self.entries
+            .sort_by(|left, right| left.code.cmp(&right.code));
+        self.entries
+    }
+}
+
 /// How a fact came to be known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Provenance {
