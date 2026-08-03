@@ -16,6 +16,7 @@ mod device;
 mod disk;
 mod error;
 mod fat;
+mod file_container;
 mod filesystem;
 mod hdos;
 mod inflate;
