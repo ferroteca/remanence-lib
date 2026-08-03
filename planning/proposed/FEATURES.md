@@ -317,20 +317,10 @@ Touches: S1, S2, S3. Supports: U3; P2–P7, P10, P28. Needs: P28 pledged. The in
 
 Companion design: [design/degraded-evidence-bounded-image-access.md](design/degraded-evidence-bounded-image-access.md).
 
-## F28 — Flux capture and hardware-bitstream foundation
+## F32 — C1541 drive and codec presentation
 
-Establish the durable flux media layer required to admit raw magnetic capture formats, initially including SCP, A2R, and KryoFlux, without treating their captures as reconstructed sectors, encoded bytes, or one normalized stream. An adapter preserves timed flux-transition observations, per-revolution identity and ordering, index and other marker or sensor channels, capture metadata, and provenance at the fidelity the source records. It reports what it cannot interpret rather than averaging away irregularity, weak evidence, missing transitions, or disagreement between captures.
+Materialize a C1541-family hardware bitstream from selected flux observations under declared mechanics and read-channel rules, then materialize the family's encoded GCR bytestream without assigning synchronization, headers, sectors, or files. The drive catalog owns this detailed knowledge; neither a capture adapter nor `FluxLayer` decides what a drive observes.
 
-Above that state, each programmed-drive family owns a durable **hardware-bitstream** layer: the manufactured, track-relative bit state that its hardware would observe from flux, or that a bitstream image such as G64 records directly. It is neither a universal bitcell model nor an encoded-track interchange format. For the 1541 it is the serial bitstream before sync recognition and GCR decoding.
-
-Flux and hardware bitstream are distinct durable active layers under the proposed P23 amendment; an open has exactly one at a time. A flux capture initially activates flux. A G64-style image initially activates its hardware bitstream. A requested hardware path may explicitly materialize hardware bitstream from flux under the declared drive profile; it then becomes the active mutable state, retaining the source flux and profile as provenance. Returning from bitstream to flux is an explicit mastering transition, never an implicit cache refill. Raw captures with several revolutions remain distinguishable evidence: a family must declare its selection or variation behavior and may not silently merge them into an invented ideal revolution.
-
-Above hardware bitstream sits a durable, family-owned **encoded bytestream** layer. For the 1541 it is the circular byte sequence after GCR decoding, but before the library assigns sync, header, data, sector, or filesystem meaning. It may be materialized from hardware bitstream under a declared codec and become the sole active mutable state; it is not assumed that any image format records this layer directly. A later image format that does so may be admitted only by claiming its exact byte framing, track identity, and provenance.
-
-Above encoded bytestream, a declared synchronization and sector interpretation may materialize CHS; above CHS, P18 recognizes and presents a filesystem. This is the magnetic disk path, not an automatic promise that every bytestream contains sectors or every CHS device contains a filesystem.
-
-The initial work defines the common ownership and evidence rules and may land the three image adapters only in separately bounded implementation slices. It does not promise a public flux iterator, a generic bitstream API, sector recovery, or every controller family.
-
-Touches: S1, S2, S3. Supports: U7, U11, U12; P3–P5, P13, P15, P22, P23, P27. Needs: the pledged U7/P15 hardware seam; its public adapter and drive presentations must converge across all three surfaces when they land.
+Touches: S1, S2, S3. Supports: U7; P3–P5, P13, P15, P22, P23, P27. Needs: F30 and F31 pledged and delivered. It does not promise sector recovery, a generic bitstream API, or every drive family.
 
 Companion design: [design/flux-capture-and-hardware-bitstream.md](design/flux-capture-and-hardware-bitstream.md).

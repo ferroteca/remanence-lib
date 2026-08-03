@@ -546,3 +546,38 @@ In-force P12 and P13 recognize timed flux as an authoritative layer and physical
 sector-hole topology. It makes the separate flux-data and marker/sensor
 channels explicit. U7 supplies the concrete P64 journey; P22 does not by
 itself pledge a standalone P64 image adapter or a public flux interface.
+
+## P23 amendment — hardware bitstream and encoded bytestream are durable magnetic layers
+
+P23's durable active-layer vocabulary gains **hardware bitstream** and
+**encoded bytestream** between flux and CHS. Hardware bitstream is circular,
+track-relative, clocked bit state, including the timing and provenance
+required by its declared drive family. G64 illustrates an image whose
+authoritative and initial active layer are hardware bitstream.
+
+Encoded bytestream is the circular, track-relative byte sequence a declared
+family codec materializes from hardware bitstream. For a 1541 it is GCR-decoded
+bytes, before the library identifies synchronization, headers, data fields,
+sectors, or files. No source format is presumed to begin at this layer.
+
+The magnetic-disk path above encoded bytestream is CHS, then filesystem.
+A family-owned synchronization and sector interpretation materializes CHS
+only where its claimed rules support it; a byte sequence is not assumed to
+contain sectors. P18 then recognizes and presents a filesystem above CHS.
+CHS is durable active media state; filesystem remains the higher derived
+seam, not a peer mutable media copy.
+
+Flux, hardware bitstream, and encoded bytestream are distinct durable layers,
+not caches and not mutable peer copies. An authoritative flux capture begins
+flux-active; a hardware profile may explicitly materialize a hardware-
+bitstream active layer from it; a declared codec may then materialize an
+encoded-bytestream active layer. Each transition is atomic, preserves source
+state and codec/profile as provenance, and makes the destination the sole
+mutable session truth. Descending or returning to a lower layer is a separate
+explicit mastering transition. In either direction, P13 governs write
+availability: any unrepresentable projection is refused or requires explicit
+conversion.
+
+The existing P23 clauses for active-layer replacement, cache invalidation,
+bounded backing, and the ban on independently mutable peer copies apply to
+this layer. P22 continues to govern flux and its marker channels.
