@@ -165,43 +165,6 @@ The degraded path is deliberately narrow: it applies only while determining a ca
 Degraded state revokes mutation authority for the session. A write-intent open reports an evidence-driven effective read-only mode and a stable condition; every write, commit, and mutation-capable derived operation is refused with that condition. P7's no-silent-fallback rule still governs an inability to acquire host access — this is a distinct restriction after a safe claim has been made. A session never regains write authority without a new verified open.
 
 P3 and P6 remain intact: the library refuses an unclaimed interpretation and stops the first operation it cannot account for. It does not turn a known, bounded deficiency into an all-or-nothing loss of independently readable evidence. P4 carries the reason, P10 carries the stable condition, and P5 requires equivalent assurance outcome, evidence, bounds, and effective mode in Rust, C, and Python.
-## P10 amendment — a refusal may also name the rule it broke
-
-In-force P10 gives every refusal a stable category from one enumerated set,
-so an embedder maps behavior without parsing text. That set is deliberately
-cross-cutting and small: it answers *how should the caller behave*, and it
-answers it for the whole library at once.
-
-One question it cannot answer is *which rule did this input break*. Where a
-format, namespace, or grammar defines a bounded set of rules an input must
-satisfy — a DOS 8.3 name has six, and FAT is one filesystem of many — the
-category is the same for every one of them, and the only difference between
-them is the sentence. A caller that must act on the distinction, or state
-it to a user in its own words, is then reduced to parsing the message no
-release promises to keep, or to reimplementing the rule set to decide what
-it would have said. Widening the category set instead would dissolve it:
-the categories would grow one per format rule, and the small cross-cutting
-mapping P10 exists to provide would be gone.
-
-The amendment adds one field beside the category, not a second mapping:
-
-Where a refusal is one of an enumerated set of rules defined by a format,
-namespace, or grammar, the error also carries a **rule identity** — a
-stable machine-readable value naming which rule was broken, from the set
-owned by the seam that defines those rules. The category still says how to
-behave and remains the interface an embedder maps onto; the rule identity
-says which rule, and never substitutes for the category. A refusal
-belonging to no such rule set carries none, and that absence is ordinary
-rather than an omission. Each rule set is part of the surface that owns it
-— adding a rule identity is a surface change, and rewording the diagnostic
-that states it is not — and every presentation carries the same identities
-(P5).
-
-The rule identity is not a second diagnostic. It names the rule, and P6's
-human diagnostic still says what was expected, what was found, and where.
-
-U22's DOS 8.3 refusals are the first demand for this; nothing else the
-library refuses today has a rule set behind it.
 
 ## P19 amendment — namespace composition may derive a mapping, not only consume one
 
