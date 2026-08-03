@@ -45,9 +45,10 @@ this fixture to be present in `tests/fixtures/`.
 zip downloads sha256-pinned straight into `tests/fixtures/`, and only
 the one disk image the tests read extracts beside it. It also downloads
 the Pinball Construction Set KryoFlux source archive into
-`testing-prep/downloads/`, then packages only disk one's paired captures
-into two 7z fixtures, one for each capture channel, with their internal
-`.0.raw` or `.1.raw` suffixes renamed to `.raw`.)
+`testing-prep/downloads/`, then packages only disk one into two 7z
+fixtures, one for each of the disk's sides — `.0.raw` and `.1.raw` are the
+KryoFlux head designator, not two passes over one surface — with those
+suffixes renamed to `.raw`.)
 
 ## Prerequisites — the tests fail naming the gap, they do not skip
 

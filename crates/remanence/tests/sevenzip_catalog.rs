@@ -24,9 +24,9 @@ const FIRST_MEMBER_BYTES: u64 = 184_534;
 const SECOND_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)01.raw";
 const SECOND_MEMBER_BYTES: u64 = 210_257;
 const LAST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)83.raw";
-/// The same member in the second capture channel, whose folder decodes
+/// The same member on the disk's second side, whose folder decodes
 /// to more than its declared dictionary.
-const CHANNEL_ONE_LAST_BYTES: u64 = 270_987;
+const SIDE_ONE_LAST_BYTES: u64 = 270_987;
 
 /// Every KryoFlux stream opens with the same out-of-band record.
 const STREAM_PREFIX: [u8; 16] = [
@@ -114,14 +114,14 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
 
 #[test]
 fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
-    // The second capture channel decodes to more than the 16 MiB
+    // The second side decodes to more than the 16 MiB
     // dictionary it declares, so the LZ window flushes mid-stream and
     // back-references reach across the flush. The last member still
     // arrives whole — and the archive's own per-member CRC, which the
     // catalog checks as it spools, is what says so.
     let path = private_copy_of(CAPTURE_ONE, "long");
     let session = Session::open(entry_path(&path, LAST_MEMBER)).expect("the last member opens");
-    assert_eq!(session.size_bytes(), CHANNEL_ONE_LAST_BYTES);
+    assert_eq!(session.size_bytes(), SIDE_ONE_LAST_BYTES);
 
     let mut front = [0u8; 16];
     session.read_at(0, &mut front).expect("the front reads");
@@ -129,7 +129,7 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
 
     let mut tail = [0u8; 16];
     session
-        .read_at(CHANNEL_ONE_LAST_BYTES - 16, &mut tail)
+        .read_at(SIDE_ONE_LAST_BYTES - 16, &mut tail)
         .expect("the tail reads");
     assert_eq!(
         tail,

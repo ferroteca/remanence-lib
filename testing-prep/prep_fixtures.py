@@ -151,13 +151,18 @@ def prepare_hdos_fixtures() -> None:
 
 
 def prepare_pinball_fixture() -> None:
-    """Package disk one's two KryoFlux capture channels as 7z fixtures."""
+    """Package disk one's two captured sides as 7z fixtures.
+
+    The `.0.raw` / `.1.raw` suffix is the KryoFlux head designator, so these
+    are the disk's two sides and not two passes over one surface.  The
+    fixture file names still say "Capture 0" and "Capture 1".
+    """
     print("==> Preparing Pinball Construction Set KryoFlux fixtures...")
     targets = (
         ("0", FIXTURES_DIR / PINBALL_DISK_ONE_CAPTURE_ZERO_NAME),
         ("1", FIXTURES_DIR / PINBALL_DISK_ONE_CAPTURE_ONE_NAME),
     )
-    missing_targets = [(channel, target) for channel, target in targets
+    missing_targets = [(side, target) for side, target in targets
                        if not target.exists()]
     if not missing_targets:
         print("Pinball Construction Set fixtures already present")
@@ -183,27 +188,27 @@ def prepare_pinball_fixture() -> None:
         if result.returncode != 0:
             sys.exit(
                 "7-Zip could not extract the Pinball Construction Set disk "
-                f"one capture channels (exit code {result.returncode})."
+                f"one captured sides (exit code {result.returncode})."
             )
 
-        for channel, target in missing_targets:
+        for side, target in missing_targets:
             captures = sorted(
                 path for path in extract_dir.iterdir()
                 if path.is_file()
                 and path.name.startswith(PINBALL_DISK_ONE_PREFIX)
-                and path.name.endswith(f".{channel}.raw")
+                and path.name.endswith(f".{side}.raw")
             )
             if len(captures) != PINBALL_DISK_ONE_CAPTURE_COUNT:
                 sys.exit(
                     "Pinball Construction Set archive yielded "
-                    f"{len(captures)} disk-one capture-{channel} files; "
+                    f"{len(captures)} disk-one side-{side} files; "
                     f"expected {PINBALL_DISK_ONE_CAPTURE_COUNT}."
                 )
 
-            stage_dir = extract_dir / f"capture-{channel}"
+            stage_dir = extract_dir / f"side-{side}"
             stage_dir.mkdir()
             for capture in captures:
-                renamed = capture.name.removesuffix(f".{channel}.raw") + ".raw"
+                renamed = capture.name.removesuffix(f".{side}.raw") + ".raw"
                 shutil.copyfile(capture, stage_dir / renamed)
             members = list(stage_dir.glob("*.raw"))
             if len(members) != len(captures):
@@ -212,7 +217,7 @@ def prepare_pinball_fixture() -> None:
                     "duplicate member names."
                 )
 
-            print(f"Packaging {len(captures)} disk-one capture-{channel} files "
+            print(f"Packaging {len(captures)} disk-one side-{side} files "
                   f"into {target.name}...")
             result = subprocess.run(
                 [seven_zip, "a", "-t7z", "-mx=9", str(target), "*.raw"],

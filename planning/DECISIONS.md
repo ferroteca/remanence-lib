@@ -58,6 +58,55 @@ removes it is the record either way.
 
 ## Decisions
 
+### D13 — The capture set's two archives are the disk's sides, not two capture channels
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** U23, P29, P30.
+
+A factual correction to pledged text, and a scope call that follows from it.
+
+**The fixture was misread.** `testing-prep/prep_fixtures.py` splits the
+Pinball Construction Set capture on the `.0.raw` / `.1.raw` suffix, which is
+the KryoFlux head designator: the two archives are the disk's two **sides**,
+not two passes over one surface. Side 1 is the unrecorded back of a
+single-sided disk, measured as noise on every position sampled — roughly
+49,000 transitions per revolution with the count varying by hundreds between
+passes, against side 0's tracks reproducing transition for transition.
+
+**"Capture-channel identity" was never a second concept.** F31 already owned
+"track and side identity", so the clause is struck rather than renamed.
+
+**Side selection stays a policy input but stops being a judgment.** F33's
+first input read as choosing which of two beliefs about one surface to
+trust, and weighed accordingly. It is not that: P30's `Surfaces` declares
+how many surfaces a family records and how a captured side maps onto one, so
+for a 1541 the answer is declared, and a captured side the mapping does not
+cover is refused. This is why the correction is not cosmetic — the input
+that looked like the reduction's hardest call is answered by declaration,
+and the reductions that actually carry risk are the timebase projection,
+half-track admission, and the partial revolution outside the destination's
+one rotation.
+
+**The fixture file names keep their spelling.** They still say "Capture 0"
+and "Capture 1", and renaming them reaches that directory's `.gitignore`,
+`package.exclude`, a delivered test, and a re-run of the prep script against
+pinned downloads. The prose says what they are; the rename is separate work
+and is not owed by this entry.
+
+**Weighed and declined:** leaving the vocabulary and adding a note (the
+misreading had already been weighed into a pledged policy input, which is
+exactly the damage a note does not undo); renaming "channel" to "side"
+mechanically without revisiting F33's input (it would have preserved the
+weighing that was the actual error); and recording this as an open question
+rather than a decision, which would leave pledged text stating something
+measured to be false.
+
+**Folded into:** U23 in [pledged/USE-CASES.md](pledged/USE-CASES.md); F31 and
+F33 in [pledged/FEATURES.md](pledged/FEATURES.md);
+[pledged/design/c1541-flux-mastering.md](pledged/design/c1541-flux-mastering.md);
+[AGENTS.md](../AGENTS.md); `testing-prep/prep_fixtures.py`;
+`testing-prep/test-rigs/README.md`;
+`crates/remanence/tests/sevenzip_catalog.rs`.
+
 ### D12 — Drive profiles own the knowledge a capture does not contain, and recognize structure without reading content
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** P4, P12, P22, P23, P29,

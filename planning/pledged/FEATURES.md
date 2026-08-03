@@ -19,7 +19,7 @@ Companion design: [design/flux-layer-foundation.md](design/flux-layer-foundation
 
 ## F31 — KryoFlux capture-set catalog adapter
 
-Recognize a declared KryoFlux capture set assembled from a catalog subtree and materialize its members collectively into `FluxLayer`. The adapter owns the capture-set grammar, member identity, track and side identity, capture-channel identity, stream ordering, index and control/OOB records, transfer results, and source provenance. An archive member is never silently treated as a disk when the logical capture requires the complete set.
+Recognize a declared KryoFlux capture set assembled from a catalog subtree and materialize its members collectively into `FluxLayer`. The adapter owns the capture-set grammar, member identity, track and side identity, stream ordering, index and control/OOB records, transfer results, and source provenance. An archive member is never silently treated as a disk when the logical capture requires the complete set.
 
 The initial conformance fixture is the prepared paired-channel capture set. Tests open it through `SevenZipCatalog`, verify that all selected members form one capture set, and assert preservation of runs, markers, pre/post-index data, and separate channels. An incomplete, duplicate, or contradictory set is a named refusal. The adapter neither merges channels into an ideal disk nor materializes a bitstream, sector, or filesystem.
 
@@ -29,7 +29,7 @@ Companion design: [design/kryoflux-capture-set.md](design/kryoflux-capture-set.m
 
 ## F33 — C1541 flux mastering profile
 
-Reduce an opened capture set's `FluxLayer` to one circular, half-track-addressed 1541 medium under a declared mastering policy, and account for the reduction. The profile owns channel selection, per-location observation selection and reconciliation, the source-position to 1541 half-track map, projection of each observation's exact `TimeBase` onto the drive's rotation-relative timebase, and the expression of disagreement, weakness, and absence as pulse strength. It produces a mastered medium and a complete declared-loss account; it writes no artifact and encodes no container.
+Reduce an opened capture set's `FluxLayer` to one circular, half-track-addressed 1541 medium under a declared mastering policy, and account for the reduction. The profile owns side selection, per-location observation selection and reconciliation, the source-position to 1541 half-track map, projection of each observation's exact `TimeBase` onto the drive's rotation-relative timebase, and the expression of disagreement, weakness, and absence as pulse strength. It produces a mastered medium and a complete declared-loss account; it writes no artifact and encodes no container.
 
 Mastering resolves in two stages: a plan which computes everything and writes nothing, and an execution which writes. A reduction that no policy input names is a named refusal, not a default. The same sources, policy, and seed produce the same mastered state.
 

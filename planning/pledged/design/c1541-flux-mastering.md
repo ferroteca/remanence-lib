@@ -13,7 +13,7 @@ F33 consumes the `FluxLayer` produced by F30 and F31 and produces one circular, 
 
 Each is supplied by the caller or declared by the profile, is reported in the plan, and travels into the result as provenance. None has a silent default; a reduction no input names is a named refusal.
 
-- **Channel selection.** Which capture channel of the set supplies evidence, named by the identity F31 reported. Channels are never merged or averaged.
+- **Side selection.** Which captured side of the set supplies evidence for the family's recorded surface, named by the identity F31 reported. The C1541 profile declares that the family records one surface (P30), so this input is answered by declaration rather than by choosing between two beliefs about one surface; a captured side the profile's surface mapping does not cover is refused. Sides are never merged or averaged.
 - **Observation selection.** Which observation of a source location is used, and how several are reconciled when the rule admits more than one. A location whose observations disagree beyond what the rule resolves is a refusal, not a vote.
 - **Half-track map.** How the set's source drive-step positions map onto 1541 half-tracks. The paired-channel fixture supplies 84 positions per channel; that the mapping is two steps per 1541 track is a declared fact of the capture, not arithmetic the profile performs unasked. A source position no map covers is refused.
 - **Timebase projection.** How an observation's exact `TimeBase` ticks and declared span project onto the destination's rotation-relative timebase — for a 1541, the drive's 16 MHz reference clock across one 300 RPM rotation. The projection is exact rational arithmetic against both declared bases; v1 introduces no floating point and no library-chosen sample rate. Resolution the destination cannot express is declared loss, never silent rounding.
@@ -21,7 +21,7 @@ Each is supplied by the caller or declared by the profile, is reported in the pl
 
 ## What the plan reports
 
-The plan computes the whole transformation before anything is written: the mastered medium's half-tracks and their provenance, and the complete declared-loss account in the source's own terms — the unselected channel, unselected observations, flux recorded before the first index and after the last, marker channels and control/OOB records with no destination expression, retained `ForeignRecord`s, capture metadata, transfer results, and unexpressible timing resolution. A count is not an account.
+The plan computes the whole transformation before anything is written: the mastered medium's half-tracks and their provenance, and the complete declared-loss account in the source's own terms — the unselected side, unselected observations, flux recorded before the first index and after the last, marker channels and control/OOB records with no destination expression, retained `ForeignRecord`s, capture metadata, transfer results, and unexpressible timing resolution. A count is not an account.
 
 ## What it does not own
 

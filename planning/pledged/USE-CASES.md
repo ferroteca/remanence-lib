@@ -234,8 +234,9 @@ pulses without routing VIA register accesses into Remanence.
 ## U23 — I save a KryoFlux capture of a C64 disk as a P64 image
 
 I have a KryoFlux capture of a Commodore 64 floppy: raw stream files, one per
-drive-step position, recorded as two capture channels and delivered inside
-7z archives. It is capture evidence, not a disk image. Each stream holds
+drive-step position, captured from both of the disk's sides and delivered
+inside 7z archives — the second being the unrecorded back of a single-sided
+disk, which the capture cannot tell me and the drive family can. It is capture evidence, not a disk image. Each stream holds
 several recorded revolutions, flux before the first index and after the last,
 index and control/OOB records beside the flux, and a transfer result — and
 nothing in it says which revolution "the" disk was, or which channel to
@@ -260,11 +261,11 @@ let capture = CaptureSet::open(
 )?;
 
 let report = capture.inspect()?;
-let channel = choose_channel_from_report(&report)?;
+let side = choose_side_from_report(&report)?;
 
 let plan = capture.plan_mastering(
     MasteringRecipe::C1541 {
-        channel,
+        side,
         observation: ObservationPolicy::Selected(selection_rule),
         half_tracks: HalfTrackMap::Declared(drive_steps_per_track),
         pulse_strength: PulseStrengthPolicy::FromDisagreement { seed },
@@ -281,10 +282,13 @@ let outcome = plan.write_new_artifact(destination_p64)?;
 
 `CaptureSet::open` takes the P7 claim on every member artifact of the set for
 the operation's lifetime and reads nothing else. `inspect` reports the set as
-F31 recognized it — members and their catalog identities, channels, source
+F31 recognized it — members and their catalog identities, sides, source
 track positions, capture runs, observations, markers, transfer results, and
-issues — so the recipe names a channel and a policy by an identity Remanence
-already reported, never by an index the caller invented.
+issues — so the recipe names a side and a policy by an identity Remanence
+already reported, never by an index the caller invented. The C1541 profile
+declares that the family records one surface (P30), so naming the side
+confirms a declared fact rather than choosing between two beliefs about one
+surface.
 
 `plan_mastering` computes the whole transformation and writes nothing. It
 returns the mastered medium's shape, the provenance every part of it will
@@ -297,7 +301,7 @@ overwrite.
 
 Two owners, and neither infers the other's answer (P29):
 
-- The **C1541 mastering profile** owns the physical reduction. Which channel
+- The **C1541 mastering profile** owns the physical reduction. Which side
   supplies evidence; which observation of a source position is used and how
   several are reconciled; how the set's source drive-step positions map onto
   1541 half-tracks; how each observation's exact `TimeBase` ticks project into
@@ -320,7 +324,7 @@ P13's explicit conversion, requested, never a side effect of opening or saving.
 P64 cannot carry a KryoFlux capture. That is not a defect of either format,
 and it is not something the caller should discover from a smaller file. Before
 the write, the plan enumerates every reduction in the source's own terms: the
-unselected capture channel; the observations of each position not selected;
+unselected side; the observations of each position not selected;
 flux recorded before the first index and after the last; marker channels and
 control/OOB records that have no P64 expression; retained `ForeignRecord`s,
 capture metadata, and transfer results; and any timing resolution the
@@ -341,9 +345,9 @@ refused rather than shipped as approximately repeatable.
 ### One complete conversion
 
 The conformance journey is the prepared Pinball Construction Set disk-one
-capture set: two channels, 84 stream members each, opened through
+capture set: both sides, 84 stream members each, opened through
 `SevenZipCatalog` and recognized as one capture set by F31. The caller
-inspects it, names a channel and a selection policy, reads the declared-loss
+inspects it, names a side and a selection policy, reads the declared-loss
 account, and writes the P64.
 
 The smallest useful success is one mastered half-track: the selected
