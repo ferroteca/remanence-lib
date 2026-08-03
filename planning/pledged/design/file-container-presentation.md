@@ -109,8 +109,8 @@ never a pipe, and holds no content.
 
 ## The account
 
-`account()` is the P19 amendment made concrete, and it applies to every
-presentation because every presentation has a floor. Every addressable unit
+`account()` is the P19 scope-of-claim amendment made concrete, and it applies
+to every presentation because every presentation has a floor. Every addressable unit
 of the floor falls in exactly one class: the **data hook** of a named item,
 the **structures the interpretation claims for itself**, space the
 allocation metadata **claims free** (that claim, never a verdict that the

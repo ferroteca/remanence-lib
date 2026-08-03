@@ -5,8 +5,8 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, P25, P31, and the
-> P23, P19 and P10 amendments remain
+> **Status:** pledged at the owner's direction. P14, P15, P25, P31, the P23
+> and P10 amendments, and both P19 amendments remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
@@ -879,3 +879,60 @@ identities, the generated header is committed with them, and the first rule
 set is enumerated in the seam that owns it rather than in the error type —
 which is the whole point of the field being a seam's value rather than a
 second global set. F25 is the feature that carries it.
+
+## P19 amendment — namespace composition may derive a mapping, not only consume one
+
+Pledged P19 admits a namespace-composition adapter which "consume[s] file
+containers plus explicit drive, mount, folder, or volume mappings and
+expose[s] another file container". Both routes to that mapping assume it
+already exists somewhere: recovered as evidence where an operating system
+persisted it (U13, U16), or asserted outright by the caller.
+
+A DOS machine persists no such mapping. Its drive letters were assigned at
+boot by a rule over the machine's own configuration — which media occupied
+which slots, in which order the disks were attached — and nothing on the
+disks records the result. There is no evidence to read and nothing for the
+caller to assert but the answer it came for. Under P19 as pledged, the only
+remaining home for that rule is the caller, which is the one place it
+cannot be checked against the volumes the library composed.
+
+The amendment admits a third form at the same seam:
+
+A **namespace-mapping composer** consumes composed volumes with their
+identities, plus the machine facts its caller asserts, applies one named
+assignment rule, and returns the mapping it establishes. Producing a
+mapping and composing a file container over it are separate acts: the
+mapping answers on its own, and a composer that can establish only part of
+one still answers with that part.
+
+Three constraints keep the derivation from becoming a guess:
+
+- **The rule is an enumerated claim (P3).** The composer names the
+  assignment rule it applied. Where variants of one system assign
+  differently, it claims the variants it implements and refuses the rest by
+  name; it does not average them or pick the most common.
+- **Evidence outranks a rule.** Where a system persists its own mapping,
+  that mapping governs and no rule may stand in for it. This form exists
+  for systems which persist nothing, and it never becomes a fallback for a
+  persisted mapping that could not be read — U13's and U16's refusal to
+  invent `C:` is untouched.
+- **A derived mapping is not evidence.** The asserted machine facts and the
+  applied rule travel with the result as provenance, under the same
+  discipline that keeps a caller-selected installation out of the evidence
+  (U16). Whatever the rule cannot settle is reported undetermined, at the
+  granularity of the mapping it failed to establish, and is never filled
+  from position, size, order, label, or which volume happened to read
+  cleanly.
+
+The composer takes reports the caller already holds and returns a mapping;
+it opens nothing. D5's deferral of multi-device topology, multi-device
+volumes, and cross-source transactions is therefore untouched, and this
+form requires none of the atomic multi-artifact open U16 proposes.
+
+### Two amendments, one principle
+
+P19 now carries two pledged amendments, and they touch different halves of
+it. The scope-of-claim amendment above governs what a file-bearing view owes
+about its floor; this one governs where a namespace mapping may come from.
+Neither depends on the other, they arm separately, and a citation naming
+only "the P19 amendment" is ambiguous from here on — name the half.

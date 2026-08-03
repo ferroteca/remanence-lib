@@ -443,7 +443,7 @@ a view and whose results *present* an interface. The word "layer" entered
 through the F35 drafts and nowhere else. What F35 delivers is therefore the
 interface providers present through and the vocabulary they answer in.
 
-Four consequences fold into the pledged P19 amendment and the F35 design.
+Four consequences fold into the pledged P19 scope-of-claim amendment and the F35 design.
 **No materialized model**, so a provider answers about the directory it was
 asked about instead of building an item pool for fifty thousand files, and
 identity is the provider's own rather than an index into a pool that no
@@ -465,7 +465,7 @@ unowned; and treating an archive's unaccounted bytes as adapter evidence
 rather than opaque regions, which duplicated one concept in two
 vocabularies.
 
-**Folded into:** the pledged P19 amendment in
+**Folded into:** the pledged P19 scope-of-claim amendment in
 [pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); the annotation on D9;
 pledged F35, whose companion design is renamed by this ruling to
 [pledged/design/file-container-presentation.md](pledged/design/file-container-presentation.md).
@@ -519,7 +519,7 @@ kitchen-sink union record with every metadata field optional (rejected once
 already at the flux layer; the two-outcome rule is reused instead);
 itemizing deleted entries (a recovery claim in disguise).
 
-**Folded into:** the pledged P19 amendment in
+**Folded into:** the pledged P19 scope-of-claim amendment in
 [pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); pledged F35 and its
 companion design, drafted as `file-container-layer-foundation.md` and
 renamed by D10 to

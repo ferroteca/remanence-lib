@@ -129,48 +129,6 @@ prerequisites, and none of them presents a filesystem through the P19 seam.
 Companion design:
 [design/computer-tape-representations.md](design/computer-tape-representations.md).
 
-## F26 — The DOS drive-letter composer
-
-Deliver the namespace-mapping composer of the P19 amendment for DOS. Given the
-machine facts the caller asserts — medium, slot, and attachment order — and the
-volumes already composed from the images it inspected, return which volume each
-drive letter names, as an answer built from a named rule rather than from the
-order things happen to appear in.
-
-Floppy slots take `A:` and `B:`, and a single-floppy machine's second letter is
-the phantom-drive convention rather than a second volume. Hard-disk volumes take
-letters from `C:` upward under the claimed rule. CD-ROM letters follow only
-where the caller declares the resident driver's placement, because nothing on
-the disks records it and the driver could put it anywhere.
-
-The assignment rule is the substance of this feature and its whole risk. DOS
-did not letter volumes in the order a report lists them: the usual rule takes
-the first primary DOS partition of each disk in attachment order, then the
-logical drives of the extended partitions across those disks in the same order,
-then such remaining primaries as the variant assigns at all — and the variants
-differ exactly there. F26 therefore claims named rules by variant (P3). Where
-the caller states which variant the machine ran, the composer applies that
-rule; where it does not, a letter on which the claimed variants disagree is
-reported undetermined rather than settled by choosing the most common one.
-`LASTDRIVE`, `SUBST`, `JOIN`, `ASSIGN`, a block-device driver, and a network
-redirector are outside every claimed rule, and a mapping they would have
-changed is undetermined, not approximated.
-
-The composer answers with mappings: each established letter names a volume by
-the identity its report issued, and every letter it could not establish says so
-with the reason. It opens no artifact, takes the reports the caller already
-holds, and composes no file container over the result — the letter is what a
-consumer shows a user, and the identity is what it passes back into a file
-verb. Composing a rooted namespace over the mapping is separately admitted by
-P19 and is not this feature.
-
-Touches: S1, S2, S3. Supports: U22; P3, P4, P5, P19, P21. Needs: F38
-delivered, for the stable volume identities and the composed-volume report
-this maps over; and the P19 amendment
-([ARCHITECTURE.md](ARCHITECTURE.md)) pledged, which is what admits a composer
-that derives a mapping instead of consuming one. D5's deferral is untouched:
-nothing here opens several artifacts together.
-
 ## F27 — Degraded, evidence-bounded image access
 
 Replace all-or-nothing failure for a known deficient image with P28's verified, degraded, and refused outcomes. A degraded open preserves the observed deficiency and permits only reads whose complete interpretation is bounded by available evidence; it is irrevocably read-only. This is not recovery, repair, fabricated fill data, or a weaker way to accept an unsupported format.
