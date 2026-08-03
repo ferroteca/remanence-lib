@@ -46,7 +46,8 @@ zip downloads sha256-pinned straight into `tests/fixtures/`, and only
 the one disk image the tests read extracts beside it. It also downloads
 the Pinball Construction Set KryoFlux source archive into
 `testing-prep/downloads/`, then packages only disk one's paired captures
-into `tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).zip`.)
+into two 7z fixtures, one for each capture channel, with their internal
+`.0.raw` or `.1.raw` suffixes renamed to `.raw`.)
 
 ## Prerequisites — the tests fail naming the gap, they do not skip
 

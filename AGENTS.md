@@ -235,8 +235,9 @@ compiled into the wheel.
   right), extracts only the one disk image the tests read beside it
   plus a generated single-image zip; downloads the sha256-pinned
   Pinball Construction Set KryoFlux source archive into
-  `testing-prep/downloads/` and packages only disk one's paired
-  captures into a local ZIP fixture; and builds the FreeDOS qcow2
+  `testing-prep/downloads/` and packages disk one's two capture channels
+  into local 7z fixtures, renaming each archive's `.0.raw` or `.1.raw`
+  members to `.raw`; and builds the FreeDOS qcow2
   rig artifact there. The FreeDOS LiveCD downloads through
   reliquary's own media mechanism into
   `testing-prep/test-rigs/cache/media`; downloads that are not

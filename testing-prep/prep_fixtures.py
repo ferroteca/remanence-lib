@@ -72,9 +72,11 @@ PINBALL_ARCHIVE_NAME = "Bill Budge Pinball Construction Set [Commodore 64].7z"
 PINBALL_ARCHIVE_SHA256 = \
     "3cf001b21f76d4c932bbd1a385f13f551fdb01735ce8d12a26c69f3ab9367889"
 PINBALL_DISK_ONE_PREFIX = "Bill Budge Pinball Construction Set[Commodore 64](1of2)"
-PINBALL_DISK_ONE_ZIP_NAME = \
-    "Bill Budge Pinball Construction Set [Commodore 64] (1of2).zip"
-PINBALL_DISK_ONE_CAPTURE_COUNT = 168
+PINBALL_DISK_ONE_CAPTURE_ZERO_NAME = \
+    "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 0.7z"
+PINBALL_DISK_ONE_CAPTURE_ONE_NAME = \
+    "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 1.7z"
+PINBALL_DISK_ONE_CAPTURE_COUNT = 84
 
 RIG_BLUEPRINT = "remanence-parttest"
 FREEDOS_QCOW2_NAME = "freedos-parttest.qcow2"
@@ -149,52 +151,85 @@ def prepare_hdos_fixtures() -> None:
 
 
 def prepare_pinball_fixture() -> None:
-    """Package only disk one's paired KryoFlux captures into a ZIP fixture."""
-    print("==> Preparing Pinball Construction Set KryoFlux fixture...")
-    target = FIXTURES_DIR / PINBALL_DISK_ONE_ZIP_NAME
-    if target.exists():
-        print(f"Pinball Construction Set fixture already present at {target}")
+    """Package disk one's two KryoFlux capture channels as 7z fixtures."""
+    print("==> Preparing Pinball Construction Set KryoFlux fixtures...")
+    targets = (
+        ("0", FIXTURES_DIR / PINBALL_DISK_ONE_CAPTURE_ZERO_NAME),
+        ("1", FIXTURES_DIR / PINBALL_DISK_ONE_CAPTURE_ONE_NAME),
+    )
+    missing_targets = [(channel, target) for channel, target in targets
+                       if not target.exists()]
+    if not missing_targets:
+        print("Pinball Construction Set fixtures already present")
         return
 
     seven_zip = shutil.which("7z") or shutil.which("7z.exe")
     if seven_zip is None:
         sys.exit(
-            "7-Zip is required to extract the Pinball Construction Set "
-            "source archive; install 7-Zip and rerun this script."
+            "7-Zip is required to extract and package the Pinball "
+            "Construction Set source archive; install 7-Zip and rerun "
+            "this script."
         )
 
     archive = DOWNLOADS_DIR / PINBALL_ARCHIVE_NAME
     with tempfile.TemporaryDirectory() as temp_dir:
         extract_dir = Path(temp_dir)
-        capture_pattern = f"{PINBALL_DISK_ONE_PREFIX}*.raw"
         result = subprocess.run(
             [seven_zip, "x", "-y", f"-o{extract_dir}", str(archive),
-             capture_pattern],
+             f"{PINBALL_DISK_ONE_PREFIX}*.0.raw",
+             f"{PINBALL_DISK_ONE_PREFIX}*.1.raw"],
             check=False,
         )
         if result.returncode != 0:
             sys.exit(
                 "7-Zip could not extract the Pinball Construction Set disk "
-                f"one captures (exit code {result.returncode})."
+                f"one capture channels (exit code {result.returncode})."
             )
 
-        captures = sorted(
-            path for path in extract_dir.iterdir()
-            if path.is_file()
-            and path.name.startswith(PINBALL_DISK_ONE_PREFIX)
-            and path.name.endswith(".raw")
-        )
-        if len(captures) != PINBALL_DISK_ONE_CAPTURE_COUNT:
-            sys.exit(
-                "Pinball Construction Set archive yielded "
-                f"{len(captures)} disk-one captures; expected "
-                f"{PINBALL_DISK_ONE_CAPTURE_COUNT}."
+        for channel, target in missing_targets:
+            captures = sorted(
+                path for path in extract_dir.iterdir()
+                if path.is_file()
+                and path.name.startswith(PINBALL_DISK_ONE_PREFIX)
+                and path.name.endswith(f".{channel}.raw")
             )
+            if len(captures) != PINBALL_DISK_ONE_CAPTURE_COUNT:
+                sys.exit(
+                    "Pinball Construction Set archive yielded "
+                    f"{len(captures)} disk-one capture-{channel} files; "
+                    f"expected {PINBALL_DISK_ONE_CAPTURE_COUNT}."
+                )
 
-        print(f"Packaging {len(captures)} disk-one captures into {target.name}...")
-        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zip_out:
+            stage_dir = extract_dir / f"capture-{channel}"
+            stage_dir.mkdir()
             for capture in captures:
-                zip_out.write(capture, arcname=capture.name)
+                renamed = capture.name.removesuffix(f".{channel}.raw") + ".raw"
+                shutil.copyfile(capture, stage_dir / renamed)
+            members = list(stage_dir.glob("*.raw"))
+            if len(members) != len(captures):
+                sys.exit(
+                    "Pinball Construction Set capture renaming produced "
+                    "duplicate member names."
+                )
+
+            print(f"Packaging {len(captures)} disk-one capture-{channel} files "
+                  f"into {target.name}...")
+            result = subprocess.run(
+                [seven_zip, "a", "-t7z", "-mx=9", str(target), "*.raw"],
+                cwd=stage_dir,
+                check=False,
+            )
+            if result.returncode != 0:
+                sys.exit(
+                    f"7-Zip could not package {target.name} "
+                    f"(exit code {result.returncode})."
+                )
+            result = subprocess.run([seven_zip, "t", str(target)], check=False)
+            if result.returncode != 0:
+                sys.exit(
+                    f"7-Zip could not verify {target.name} "
+                    f"(exit code {result.returncode})."
+                )
 
 
 
