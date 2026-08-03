@@ -160,11 +160,13 @@ and the reductions that actually carry risk are the timebase projection,
 half-track admission, and the partial revolution outside the destination's
 one rotation.
 
-**The fixture file names keep their spelling.** They still say "Capture 0"
-and "Capture 1", and renaming them reaches that directory's `.gitignore`,
-`package.exclude`, a delivered test, and a re-run of the prep script against
-pinned downloads. The prose says what they are; the rename is separate work
-and is not owed by this entry.
+**The fixture keeps the capture tool's spelling.** Members carry the
+`.0.raw` / `.1.raw` designator rather than having it stripped: a stream
+declares no track or side in its own out-of-band data, so a member's name is
+the only place its position exists, and a fixture renamed out of the
+convention would admit a grammar no real capture has. The archive files still
+say "Capture 0" and "Capture 1"; renaming those is separate work and is not
+owed by this entry.
 
 **Weighed and declined:** leaving the vocabulary and adding a note (the
 misreading had already been weighed into a pledged policy input, which is

@@ -47,8 +47,9 @@ the one disk image the tests read extracts beside it. It also downloads
 the Pinball Construction Set KryoFlux source archive into
 `testing-prep/downloads/`, then packages only disk one into two 7z
 fixtures, one for each of the disk's sides — `.0.raw` and `.1.raw` are the
-KryoFlux head designator, not two passes over one surface — with those
-suffixes renamed to `.raw`.)
+KryoFlux head designator, not two passes over one surface. Members keep
+those suffixes, because a stream records its position nowhere but its
+name.)
 
 ## Prerequisites — the tests fail naming the gap, they do not skip
 

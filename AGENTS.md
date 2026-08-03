@@ -253,8 +253,11 @@ compiled into the wheel.
   `testing-prep/downloads/` and packages disk one's two captured sides
   into local 7z fixtures, splitting on the `.0.raw` / `.1.raw` suffix —
   which is the KryoFlux head designator, so these are the disk's two
-  sides and not two passes over one surface — and renaming each
-  archive's members to `.raw`. The fixture file names still say
+  sides and not two passes over one surface. Members keep that suffix:
+  a KryoFlux stream records no track or side in its own out-of-band
+  data, so the member name is the only place a capture's position
+  exists, and stripping it would admit a grammar no real capture has.
+  The fixture file names still say
   "Capture 0" and "Capture 1"; and it builds the FreeDOS qcow2
   rig artifact there. The FreeDOS LiveCD downloads through
   reliquary's own media mechanism into

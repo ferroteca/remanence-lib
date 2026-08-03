@@ -154,7 +154,12 @@ def prepare_pinball_fixture() -> None:
     """Package disk one's two captured sides as 7z fixtures.
 
     The `.0.raw` / `.1.raw` suffix is the KryoFlux head designator, so these
-    are the disk's two sides and not two passes over one surface.  The
+    are the disk's two sides and not two passes over one surface.  Members
+    keep that suffix rather than having it stripped: the stream itself
+    records no track or side anywhere, so the name is the only place a
+    capture's position exists, and it is the convention the capture tool
+    writes and the rest of the toolchain reads.  A fixture renamed out of
+    that convention would admit a grammar no real capture has.  The
     fixture file names still say "Capture 0" and "Capture 1".
     """
     print("==> Preparing Pinball Construction Set KryoFlux fixtures...")
@@ -205,23 +210,12 @@ def prepare_pinball_fixture() -> None:
                     f"expected {PINBALL_DISK_ONE_CAPTURE_COUNT}."
                 )
 
-            stage_dir = extract_dir / f"side-{side}"
-            stage_dir.mkdir()
-            for capture in captures:
-                renamed = capture.name.removesuffix(f".{side}.raw") + ".raw"
-                shutil.copyfile(capture, stage_dir / renamed)
-            members = list(stage_dir.glob("*.raw"))
-            if len(members) != len(captures):
-                sys.exit(
-                    "Pinball Construction Set capture renaming produced "
-                    "duplicate member names."
-                )
-
             print(f"Packaging {len(captures)} disk-one side-{side} files "
                   f"into {target.name}...")
             result = subprocess.run(
-                [seven_zip, "a", "-t7z", "-mx=9", str(target), "*.raw"],
-                cwd=stage_dir,
+                [seven_zip, "a", "-t7z", "-mx=9", str(target),
+                 f"*.{side}.raw"],
+                cwd=extract_dir,
                 check=False,
             )
             if result.returncode != 0:

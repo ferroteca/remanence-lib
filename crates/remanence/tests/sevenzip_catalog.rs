@@ -17,15 +17,22 @@ const CAPTURE_ZERO: &str =
     "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 0.7z";
 const CAPTURE_ONE: &str =
     "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 1.7z";
-const ARCHIVE_BYTES: u64 = 11_014_194;
+const ARCHIVE_BYTES: u64 = 11_014_196;
 const MEMBER_COUNT: usize = 84;
-const FIRST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)00.raw";
+/// Members keep the capture tool's `.0.raw` / `.1.raw` head designator.
+/// A KryoFlux stream records no track or side in its own out-of-band
+/// data, so the member name is the only place a capture's position
+/// exists — which is why the fixture carries the real convention rather
+/// than a spelling the prep script invented.
+const FIRST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)00.0.raw";
 const FIRST_MEMBER_BYTES: u64 = 184_534;
-const SECOND_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)01.raw";
+const SECOND_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)01.0.raw";
 const SECOND_MEMBER_BYTES: u64 = 210_257;
-const LAST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)83.raw";
-/// The same member on the disk's second side, whose folder decodes
+const LAST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)83.0.raw";
+/// The same position on the disk's second side, whose folder decodes
 /// to more than its declared dictionary.
+const SIDE_ONE_LAST_MEMBER: &str =
+    "Bill Budge Pinball Construction Set[Commodore 64](1of2)83.1.raw";
 const SIDE_ONE_LAST_BYTES: u64 = 270_987;
 
 /// Every KryoFlux stream opens with the same out-of-band record.
@@ -76,7 +83,7 @@ fn the_catalog_lists_every_member_in_archive_order() {
     // Archive order, not sorted order: the members read back in the
     // capture's own track sequence.
     for (index, entry) in entries.iter().enumerate() {
-        assert_eq!(entry.name, format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){index:02}.raw"));
+        assert_eq!(entry.name, format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){index:02}.0.raw"));
         assert!(!entry.is_dir);
     }
 
@@ -120,7 +127,8 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     // arrives whole — and the archive's own per-member CRC, which the
     // catalog checks as it spools, is what says so.
     let path = private_copy_of(CAPTURE_ONE, "long");
-    let session = Session::open(entry_path(&path, LAST_MEMBER)).expect("the last member opens");
+    let session =
+        Session::open(entry_path(&path, SIDE_ONE_LAST_MEMBER)).expect("the last member opens");
     assert_eq!(session.size_bytes(), SIDE_ONE_LAST_BYTES);
 
     let mut front = [0u8; 16];
