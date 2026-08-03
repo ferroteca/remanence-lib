@@ -47,9 +47,9 @@ enum Backing {
     /// an uncompressed archive entry read in place. Source-backed
     /// (P27) — reads stream from the claim through the session cache.
     Claim { offset: u64 },
-    /// Private session storage holding a decoded archive entry.
-    /// Session-backed (P27) — served through the same cache.
-    Spool(Arc<File>),
+    /// Private session storage holding a decoded archive entry, from
+    /// `offset`. Session-backed (P27) — served through the same cache.
+    Spool { spool: Arc<File>, offset: u64 },
 }
 
 /// The predictive reader (P27): a worker that follows a sequential
@@ -159,7 +159,7 @@ impl ImageSource {
         let cache = Arc::new(Mutex::new(SessionCache::with_bytes(cache_bytes)));
         let (file, base) = match &backing {
             Backing::Claim { offset } => (Arc::clone(&claim), *offset),
-            Backing::Spool(spool) => (Arc::clone(spool), 0),
+            Backing::Spool { spool, offset } => (Arc::clone(spool), *offset),
         };
         let prefetcher = (len > 0).then(|| Prefetcher::spawn(Arc::clone(&cache), file, base, len));
         Self {
@@ -193,7 +193,7 @@ impl ImageSource {
         }
         let mut device = match &self.backing {
             Backing::Claim { offset: base } => FileRangeDevice::new(&self.claim, *base, self.len),
-            Backing::Spool(spool) => FileRangeDevice::new(spool, 0, self.len),
+            Backing::Spool { spool, offset } => FileRangeDevice::new(spool, *offset, self.len),
         };
         self.cache
             .lock()
@@ -340,7 +340,11 @@ fn resolve_archive_entry(
 
     let (backing, len) = match catalog.entry_source(index)? {
         EntrySource::InPlace { offset, length } => (Backing::Claim { offset }, length),
-        EntrySource::Spooled { spool, length } => (Backing::Spool(spool), length),
+        EntrySource::Spooled {
+            spool,
+            offset,
+            length,
+        } => (Backing::Spool { spool, offset }, length),
     };
 
     Ok(ResolvedImage {

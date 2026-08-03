@@ -2292,6 +2292,596 @@ pub unsafe extern "C" fn remanence_archive_entry_compressed_size(
     unsafe { write_opt_u64(entry.compressed_size, out) }
 }
 
+// ---------------------------------------------------------------------------
+// The KryoFlux capture set: one disk spread over a stream per head per
+// drive-step position, recognized from a catalog subtree and reported as
+// the adapter recognized it. Counts, identities and shapes cross this
+// surface; the pulses stay behind it.
+
+use remanence::CaptureSet;
+
+struct ObservationView {
+    ordinal: u64,
+    span_ticks: u64,
+    transitions: u64,
+    markers: u64,
+}
+
+struct CaptureRunView {
+    ordinal: u64,
+    transitions: u64,
+    extent_ticks: u64,
+    markers: u64,
+    index_markers: u64,
+    transfer_result: Option<u32>,
+    transitions_before_first_index: u64,
+    transitions_after_last_index: u64,
+    observations: Vec<ObservationView>,
+}
+
+struct CaptureIssueView {
+    code: CString,
+    detail: CString,
+}
+
+struct CaptureMemberView {
+    entry_name: CString,
+    entry_bytes: u64,
+    position_numerator: u64,
+    position_denominator: u64,
+    head: Option<u64>,
+    runs: Vec<CaptureRunView>,
+    issues: Vec<CaptureIssueView>,
+}
+
+/// An open capture set, holding the claim on its archive.
+pub struct RemanenceCaptureSet {
+    set: CaptureSet,
+    path: CString,
+    subtree: Option<CString>,
+    format_id: CString,
+    format_name: CString,
+    archive_format_id: CString,
+    evidence: Vec<CString>,
+    members: Vec<CaptureMemberView>,
+}
+
+impl RemanenceCaptureSet {
+    fn new(set: CaptureSet) -> Self {
+        let report = set.inspect();
+        let members = report
+            .members
+            .iter()
+            .map(|member| CaptureMemberView {
+                entry_name: to_cstring(&member.entry_name),
+                entry_bytes: member.entry_bytes,
+                position_numerator: member.position.numerator,
+                position_denominator: member.position.denominator,
+                head: member.head,
+                runs: member
+                    .runs
+                    .iter()
+                    .map(|run| CaptureRunView {
+                        ordinal: run.ordinal,
+                        transitions: run.transitions,
+                        extent_ticks: run.extent_ticks,
+                        markers: run.markers,
+                        index_markers: run.index_markers,
+                        transfer_result: run.transfer_result,
+                        transitions_before_first_index: run.transitions_before_first_index,
+                        transitions_after_last_index: run.transitions_after_last_index,
+                        observations: run
+                            .observations
+                            .iter()
+                            .map(|observation| ObservationView {
+                                ordinal: observation.ordinal,
+                                span_ticks: observation.span_ticks,
+                                transitions: observation.transitions,
+                                markers: observation.markers,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                issues: member
+                    .issues
+                    .iter()
+                    .map(|issue| CaptureIssueView {
+                        code: to_cstring(&issue.code),
+                        detail: to_cstring(&issue.detail),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let evidence = report.evidence.iter().map(|line| to_cstring(line)).collect();
+        let path = to_cstring(&set.path().display().to_string());
+        let subtree = set.subtree().map(to_cstring);
+        let format_id = to_cstring(set.format_id());
+        let format_name = to_cstring(set.format_name());
+        let archive_format_id = to_cstring(set.archive_format_id());
+        Self {
+            set,
+            path,
+            subtree,
+            format_id,
+            format_name,
+            archive_format_id,
+            evidence,
+            members,
+        }
+    }
+}
+
+unsafe fn capture_member<'a>(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+) -> Option<&'a CaptureMemberView> {
+    unsafe { set.as_ref() }?.members.get(member)
+}
+
+unsafe fn capture_run<'a>(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> Option<&'a CaptureRunView> {
+    unsafe { capture_member(set, member) }?.runs.get(run)
+}
+
+unsafe fn capture_observation<'a>(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+    observation: usize,
+) -> Option<&'a ObservationView> {
+    unsafe { capture_run(set, member, run) }?
+        .observations
+        .get(observation)
+}
+
+unsafe fn open_capture_set(
+    path: *const c_char,
+    cache_bytes: Option<u64>,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceCaptureSet {
+    unsafe { clear_error(error_out) };
+    if path.is_null() {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    }
+    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
+    let opened = match cache_bytes {
+        Some(cache_bytes) => CaptureSet::open_with_cache(path.as_ref(), cache_bytes),
+        None => CaptureSet::open(path.as_ref()),
+    };
+    match opened {
+        Ok(set) => Box::into_raw(Box::new(RemanenceCaptureSet::new(set))),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Opens the KryoFlux capture set held by `path` (UTF-8) — an archive
+/// this library reads, optionally followed by the subtree inside it that
+/// holds the members — with the stated default session cache bound.
+/// An incomplete, duplicate, contradictory, or unrelated member refuses
+/// the whole set. Returns null on failure and stores a message in
+/// `error_out` (free with `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_open(
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceCaptureSet {
+    unsafe { open_capture_set(path, None, error_category_out, error_out) }
+}
+
+/// Opens a capture set as `remanence_capture_set_open` does, under a
+/// declared cache bound: at most `cache_bytes` of the decoded capture
+/// stays resident. The bound narrows the working set; it never refuses
+/// service.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_open_with_cache(
+    path: *const c_char,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceCaptureSet {
+    unsafe { open_capture_set(path, Some(cache_bytes), error_category_out, error_out) }
+}
+
+/// Frees a capture-set handle, releasing its claim on the archive and
+/// discarding the private session storage the capture decoded into.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_free(set: *mut RemanenceCaptureSet) {
+    if !set.is_null() {
+        drop(unsafe { Box::from_raw(set) });
+    }
+}
+
+/// The path the set was opened from.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_path(
+    set: *const RemanenceCaptureSet,
+) -> *const c_char {
+    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.path.as_ptr())
+}
+
+/// The subtree inside the archive the members were read from, or null
+/// when the whole archive is the set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_subtree(
+    set: *const RemanenceCaptureSet,
+) -> *const c_char {
+    unsafe { set.as_ref() }.map_or(ptr::null(), |set| {
+        set.subtree
+            .as_ref()
+            .map_or(ptr::null(), |subtree| subtree.as_ptr())
+    })
+}
+
+/// The capture format's stable identifier, "kryoflux".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_format_id(
+    set: *const RemanenceCaptureSet,
+) -> *const c_char {
+    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.format_id.as_ptr())
+}
+
+/// The capture format's human-readable name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_format_name(
+    set: *const RemanenceCaptureSet,
+) -> *const c_char {
+    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.format_name.as_ptr())
+}
+
+/// The archive grammar the members were read through, e.g. "7z".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_archive_format_id(
+    set: *const RemanenceCaptureSet,
+) -> *const c_char {
+    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.archive_format_id.as_ptr())
+}
+
+/// Which P7 mode the open obtained on the archive file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_access_mode(
+    set: *const RemanenceCaptureSet,
+) -> RemanenceAccessMode {
+    unsafe { set.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |set| {
+        access_mode(set.set.access_mode())
+    })
+}
+
+/// The capture's declared timing basis, as an exact ratio of ticks per
+/// second. Returns false when the handle is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_ticks_per_second(
+    set: *const RemanenceCaptureSet,
+    numerator_out: *mut u64,
+    denominator_out: *mut u64,
+) -> bool {
+    let Some(set) = (unsafe { set.as_ref() }) else {
+        return false;
+    };
+    let base = set.set.inspect().time_base;
+    if !numerator_out.is_null() {
+        unsafe { *numerator_out = base.ticks_per_second_numerator };
+    }
+    if !denominator_out.is_null() {
+        unsafe { *denominator_out = base.ticks_per_second_denominator };
+    }
+    true
+}
+
+/// How many bytes of private session storage the decoded capture
+/// occupies.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_backing_bytes(
+    set: *const RemanenceCaptureSet,
+) -> u64 {
+    unsafe { set.as_ref() }.map_or(0, |set| set.set.backing_bytes())
+}
+
+/// How much of that backing is currently resident. The capture is never
+/// held whole.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_resident_bytes(
+    set: *const RemanenceCaptureSet,
+) -> u64 {
+    unsafe { set.as_ref() }.map_or(0, |set| set.set.resident_bytes())
+}
+
+/// Number of evidence lines behind the recognition.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_evidence_count(
+    set: *const RemanenceCaptureSet,
+) -> usize {
+    unsafe { set.as_ref() }.map_or(0, |set| set.evidence.len())
+}
+
+/// One evidence line, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_evidence(
+    set: *const RemanenceCaptureSet,
+    index: usize,
+) -> *const c_char {
+    unsafe { set.as_ref() }.map_or(ptr::null(), |set| {
+        set.evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
+/// Number of members the set holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_count(
+    set: *const RemanenceCaptureSet,
+) -> usize {
+    unsafe { set.as_ref() }.map_or(0, |set| set.members.len())
+}
+
+/// One member's catalog identity, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_entry_name(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+) -> *const c_char {
+    unsafe { capture_member(set, member) }.map_or(ptr::null(), |member| member.entry_name.as_ptr())
+}
+
+/// One member's size in bytes as the catalog declares it; 0 when out of
+/// range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_entry_bytes(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+) -> u64 {
+    unsafe { capture_member(set, member) }.map_or(0, |member| member.entry_bytes)
+}
+
+/// One member's drive-step position, as an exact ratio. Returns false
+/// when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_position(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    numerator_out: *mut u64,
+    denominator_out: *mut u64,
+) -> bool {
+    let Some(member) = (unsafe { capture_member(set, member) }) else {
+        return false;
+    };
+    if !numerator_out.is_null() {
+        unsafe { *numerator_out = member.position_numerator };
+    }
+    if !denominator_out.is_null() {
+        unsafe { *denominator_out = member.position_denominator };
+    }
+    true
+}
+
+/// The head that captured this position; returns false when the source
+/// numbers no head, which is a different fact from head zero, or when
+/// the index is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_head(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    out: *mut u64,
+) -> bool {
+    let Some(member) = (unsafe { capture_member(set, member) }) else {
+        return false;
+    };
+    unsafe { write_opt_u64(member.head, out) }
+}
+
+/// Number of things recorded as qualified about this member.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_issue_count(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+) -> usize {
+    unsafe { capture_member(set, member) }.map_or(0, |member| member.issues.len())
+}
+
+/// One issue's stable code, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_issue_code(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    issue: usize,
+) -> *const c_char {
+    unsafe { capture_member(set, member) }.map_or(ptr::null(), |member| {
+        member
+            .issues
+            .get(issue)
+            .map_or(ptr::null(), |issue| issue.code.as_ptr())
+    })
+}
+
+/// One issue's human-readable detail, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_issue_detail(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    issue: usize,
+) -> *const c_char {
+    unsafe { capture_member(set, member) }.map_or(ptr::null(), |member| {
+        member
+            .issues
+            .get(issue)
+            .map_or(ptr::null(), |issue| issue.detail.as_ptr())
+    })
+}
+
+/// Number of source transfers recorded at this member's location.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_member_run_count(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+) -> usize {
+    unsafe { capture_member(set, member) }.map_or(0, |member| member.runs.len())
+}
+
+/// One run's place in the member's recorded order; 0 when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_ordinal(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> u64 {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.ordinal)
+}
+
+/// How many flux transitions the run recorded.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_transitions(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> u64 {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.transitions)
+}
+
+/// The last transition's tick: the extent of what was recorded, not a
+/// circumference. A run states no period.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_extent_ticks(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> u64 {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.extent_ticks)
+}
+
+/// How many timed markers sit on channels parallel to the run's flux.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_markers(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> u64 {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.markers)
+}
+
+/// How many of those markers are index events.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_index_markers(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> u64 {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.index_markers)
+}
+
+/// The result the capture tool declared for this transfer, where it
+/// declared one; zero is a clean read. Returns false when it declared
+/// none or the index is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_transfer_result(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+    out: *mut u32,
+) -> bool {
+    let Some(run) = (unsafe { capture_run(set, member, run) }) else {
+        return false;
+    };
+    match run.transfer_result {
+        Some(result) => {
+            if !out.is_null() {
+                unsafe { *out = result };
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// Transitions recorded before the run's first index: evidence that
+/// bounding into circular observations does not consume.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_transitions_before_first_index(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> u64 {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.transitions_before_first_index)
+}
+
+/// Transitions recorded after the run's last index, on the same terms.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_transitions_after_last_index(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> u64 {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.transitions_after_last_index)
+}
+
+/// How many circular observations the run's indices bounded.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_run_observation_count(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+) -> usize {
+    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.observations.len())
+}
+
+/// One observation's place in the location's source-record order. Not a
+/// rank: nothing here says it is a good or complete revolution.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_observation_ordinal(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+    observation: usize,
+) -> u64 {
+    unsafe { capture_observation(set, member, run, observation) }
+        .map_or(0, |observation| observation.ordinal)
+}
+
+/// The observation's declared circumference, in the capture's own ticks.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_observation_span_ticks(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+    observation: usize,
+) -> u64 {
+    unsafe { capture_observation(set, member, run, observation) }
+        .map_or(0, |observation| observation.span_ticks)
+}
+
+/// How many transitions the observation holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_observation_transitions(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+    observation: usize,
+) -> u64 {
+    unsafe { capture_observation(set, member, run, observation) }
+        .map_or(0, |observation| observation.transitions)
+}
+
+/// How many markers the observation holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_observation_markers(
+    set: *const RemanenceCaptureSet,
+    member: usize,
+    run: usize,
+    observation: usize,
+) -> u64 {
+    unsafe { capture_observation(set, member, run, observation) }
+        .map_or(0, |observation| observation.markers)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

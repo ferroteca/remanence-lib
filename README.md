@@ -19,6 +19,20 @@ place from the archive, and a coded entry decodes once into private
 session storage — one member of a solid 7z folder without materializing
 the rest.
 
+A `CaptureSet` opens a KryoFlux capture of a floppy disk — one stream
+file per head per drive-step position, archived together — as the one
+logical capture it is, rather than as a hundred and sixty-eight
+unrelated members. It reads each stream's flux, its asynchronous index
+records, its transport control records and its transfer result, keeps
+the flux recorded before the first index and after the last, and bounds
+the circular observations the indices bracket. The two heads stay two
+locations: nothing merges them into an ideal disk, chooses a cleanest
+pass, or averages a timing. An incomplete, duplicate, contradictory, or
+unrelated member refuses the whole set by name, with the catalog
+evidence that refused it. The decoded capture lives in private session
+storage and is addressed a bounded section at a time, so a forty-megabyte
+capture opens under whatever working set the caller declared.
+
 The library is dependency-free at runtime, including its own ZIP
 central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
 LZMA/LZMA2 decompressors, and native qcow2 v2/v3 driver.
@@ -95,6 +109,18 @@ for entry in archive.entries() {
     println!("{} ({} bytes)", entry.name, entry.uncompressed_size);
 }
 let member = remanence::Session::open("captures.7z/track00.raw")?;
+
+let capture = remanence::CaptureSet::open("captures.7z")?;
+for member in &capture.inspect().members {
+    let run = &member.runs[0];
+    println!(
+        "step {} head {:?}: {} transitions, {} revolutions",
+        member.position.numerator,
+        member.head,
+        run.transitions,
+        run.observations.len()
+    );
+}
 ```
 
 ```python
@@ -108,6 +134,12 @@ for f in session.list_hdos_files():
 with remanence.Archive("captures.7z") as archive:
     for entry in archive.entries:
         print(entry.name, entry.uncompressed_size)
+
+with remanence.CaptureSet("captures.7z") as capture:
+    for member in capture.inspect().members:
+        run = member.runs[0]
+        print(member.position.numerator, member.head, run.transitions,
+              len(run.observations))
 ```
 
 ## Changes

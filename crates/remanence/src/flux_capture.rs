@@ -16,10 +16,11 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use crate::checksum::crc32;
 use crate::error::{Error, Result};
-use crate::evidence::Provenance;
+use crate::evidence::{Issue, Provenance};
 
 /// One tick of a capture's declared [`TimeBase`]. Never a wall-clock
 /// unit, and never converted to floating point.
@@ -275,6 +276,7 @@ impl ForeignRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MetadataRecord {
     namespace: &'static str,
+    source: SourceId,
     key: String,
     value: String,
     ordinal: u64,
@@ -283,11 +285,13 @@ pub(crate) struct MetadataRecord {
 impl MetadataRecord {
     pub(crate) fn new(
         namespace: &'static str,
+        source: SourceId,
         key: impl Into<String>,
         value: impl Into<String>,
     ) -> Self {
         Self {
             namespace,
+            source,
             key: key.into(),
             value: value.into(),
             ordinal: 0,
@@ -296,6 +300,13 @@ impl MetadataRecord {
 
     pub(crate) fn namespace(&self) -> &'static str {
         self.namespace
+    }
+
+    /// The artifact that stated it. A capture assembled from many
+    /// members has many sources stating the same key, and a fact whose
+    /// speaker is unrecorded is a fact nobody can go back to.
+    pub(crate) fn source(&self) -> SourceId {
+        self.source
     }
 
     pub(crate) fn key(&self) -> &str {
@@ -1120,34 +1131,72 @@ pub(crate) trait ByteSource {
     fn read_at(&self, offset: u64, into: &mut [u8]) -> Result<()>;
 }
 
+/// Somewhere a backing's bytes are appended as it is built.
+///
+/// The seam is the other half of [`ByteSource`], and it exists for the
+/// same reason the reader is bounded: a capture assembled from a
+/// hundred and sixty-eight members would otherwise be built whole in
+/// memory before a byte of it could be read back, which is the one
+/// thing P27 says a session never does. A vector sink serves the
+/// layer's own tests; private session storage serves an adapter.
+pub(crate) trait ByteSink {
+    fn append(&mut self, bytes: &[u8]) -> Result<()>;
+}
+
+impl ByteSink for Vec<u8> {
+    fn append(&mut self, bytes: &[u8]) -> Result<()> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
 /// Builds a backing by appending sections in key order.
 ///
 /// The index is finished only once every section it references is
 /// complete, which is what makes a half-written backing detectable
 /// rather than a layer with holes in it.
 #[derive(Debug)]
-pub(crate) struct SectionWriter {
-    bytes: Vec<u8>,
+pub(crate) struct SectionWriter<S: ByteSink = Vec<u8>> {
+    sink: S,
+    /// How many bytes have gone into the sink, which is where the next
+    /// section will sit. The sink itself is not asked: it may be a file
+    /// this writer is not the only holder of.
+    written: u64,
     entries: Vec<(SectionKey, SectionLocation)>,
     last: Option<SectionKey>,
     leaf_entries: usize,
 }
 
-impl Default for SectionWriter {
+impl Default for SectionWriter<Vec<u8>> {
     fn default() -> Self {
         Self::with_leaf_capacity(LEAF_ENTRIES)
     }
 }
 
-impl SectionWriter {
+impl SectionWriter<Vec<u8>> {
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// A writer whose index leaves hold at most `leaf_entries` sections.
     pub(crate) fn with_leaf_capacity(leaf_entries: usize) -> Self {
+        Self::to_sink(Vec::new(), leaf_entries)
+    }
+
+    /// Closes a backing built in memory. Infallible where the general
+    /// form is not: a vector accepts every byte offered to it.
+    pub(crate) fn finish(self) -> Vec<u8> {
+        self.seal().expect("a vector sink accepts every byte").0
+    }
+}
+
+impl<S: ByteSink> SectionWriter<S> {
+    /// A writer emitting into `sink`, whose index leaves hold at most
+    /// `leaf_entries` sections.
+    pub(crate) fn to_sink(sink: S, leaf_entries: usize) -> Self {
         Self {
-            bytes: Vec::new(),
+            sink,
+            written: 0,
             entries: Vec::new(),
             last: None,
             leaf_entries: leaf_entries.max(1),
@@ -1170,11 +1219,12 @@ impl SectionWriter {
             ));
         }
         let location = SectionLocation {
-            offset: self.bytes.len() as u64,
+            offset: self.written,
             length: payload.len() as u64,
             checksum: crc32(&payload),
         };
-        self.bytes.extend_from_slice(&payload);
+        self.sink.append(&payload)?;
+        self.written += payload.len() as u64;
         self.entries.push((key.clone(), location));
         self.last = Some(key);
         Ok(())
@@ -1182,11 +1232,12 @@ impl SectionWriter {
 
     /// Closes the backing: leaves in key order, then a root naming each
     /// leaf's first key, then the fixed footer that locates the root.
+    /// Returns the sink and the backing's total length.
     ///
     /// The index is appended only once every section it references is
     /// complete, so a backing cut short has no footer and is refused
     /// rather than exposed as a layer with holes in it.
-    pub(crate) fn finish(mut self) -> Vec<u8> {
+    pub(crate) fn seal(mut self) -> Result<(S, u64)> {
         let mut leaves: Vec<(SectionKey, u64, u64)> = Vec::new();
         for run in self.entries.chunks(self.leaf_entries) {
             let mut leaf = Vec::new();
@@ -1197,8 +1248,9 @@ impl SectionWriter {
                 write_varint(&mut leaf, location.length);
                 write_varint(&mut leaf, u64::from(location.checksum));
             }
-            let offset = self.bytes.len() as u64;
-            self.bytes.extend_from_slice(&leaf);
+            let offset = self.written;
+            self.sink.append(&leaf)?;
+            self.written += leaf.len() as u64;
             leaves.push((run[0].0.clone(), offset, leaf.len() as u64));
         }
 
@@ -1209,15 +1261,18 @@ impl SectionWriter {
             write_varint(&mut root, *offset);
             write_varint(&mut root, *length);
         }
-        let root_offset = self.bytes.len() as u64;
-        self.bytes.extend_from_slice(&root);
+        let root_offset = self.written;
+        self.sink.append(&root)?;
+        self.written += root.len() as u64;
 
-        self.bytes.extend_from_slice(&FOOTER_MAGIC.to_le_bytes());
-        self.bytes.extend_from_slice(&FOOTER_VERSION.to_le_bytes());
-        self.bytes.extend_from_slice(&root_offset.to_le_bytes());
-        self.bytes
-            .extend_from_slice(&(root.len() as u64).to_le_bytes());
-        self.bytes
+        let mut footer = Vec::with_capacity(FOOTER_BYTES);
+        footer.extend_from_slice(&FOOTER_MAGIC.to_le_bytes());
+        footer.extend_from_slice(&FOOTER_VERSION.to_le_bytes());
+        footer.extend_from_slice(&root_offset.to_le_bytes());
+        footer.extend_from_slice(&(root.len() as u64).to_le_bytes());
+        self.sink.append(&footer)?;
+        self.written += footer.len() as u64;
+        Ok((self.sink, self.written))
     }
 }
 
@@ -1228,7 +1283,7 @@ impl SectionWriter {
 /// never resident whole, which is what lets a capture of any size open
 /// under a bound that knew nothing of that size.
 pub(crate) fn locate_section(
-    source: &impl ByteSource,
+    source: &dyn ByteSource,
     total_bytes: u64,
     key: &SectionKey,
     known: &[&'static str],
@@ -1315,7 +1370,7 @@ pub(crate) fn locate_section(
 /// Reads one bounded span, refusing one the backing cannot contain
 /// before anything is sought or allocated.
 fn read_span(
-    source: &impl ByteSource,
+    source: &dyn ByteSource,
     namespace: &'static str,
     total_bytes: u64,
     offset: u64,
@@ -1351,7 +1406,7 @@ fn read_span(
 /// changed under the index is refused rather than handed back as flux
 /// that never existed.
 pub(crate) fn read_section(
-    source: &impl ByteSource,
+    source: &dyn ByteSource,
     total_bytes: u64,
     key: &SectionKey,
     known: &[&'static str],
@@ -1441,7 +1496,7 @@ impl SectionCache {
     /// section-addressed backing exists to keep.
     pub(crate) fn section(
         &mut self,
-        source: &impl ByteSource,
+        source: &dyn ByteSource,
         total_bytes: u64,
         key: &SectionKey,
         known: &[&'static str],
@@ -1843,6 +1898,126 @@ impl TrackKey {
     }
 }
 
+/// What an opened capture keeps resident for one capture run: its
+/// identity, its shape, and how it came to be known — never its
+/// payload.
+///
+/// The transitions and markers themselves live in the backing and load
+/// one bounded section at a time, because a capture set is routinely a
+/// hundred and sixty-eight members and holding every pulse of it
+/// resident is the assumption P27 forbids.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CaptureRunEntry {
+    id: CaptureRunId,
+    ordinal: u64,
+    source: SourceId,
+    transitions: u64,
+    markers: u64,
+    indices: u64,
+    /// The last transition's tick — the extent of what was recorded,
+    /// not a circumference. A run states no period.
+    extent: Tick,
+    before_first_index: u64,
+    after_last_index: u64,
+    transition_chunks: u64,
+    marker_chunks: u64,
+    provenance: Provenance,
+}
+
+impl CaptureRunEntry {
+    pub(crate) fn id(&self) -> CaptureRunId {
+        self.id
+    }
+
+    pub(crate) fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    /// The artifact this run was transferred from.
+    pub(crate) fn source(&self) -> SourceId {
+        self.source
+    }
+
+    pub(crate) fn transitions(&self) -> u64 {
+        self.transitions
+    }
+
+    pub(crate) fn markers(&self) -> u64 {
+        self.markers
+    }
+
+    /// How many of those markers are index events — the count that
+    /// says how many circular observations the run could bound.
+    pub(crate) fn indices(&self) -> u64 {
+        self.indices
+    }
+
+    pub(crate) fn extent(&self) -> Tick {
+        self.extent
+    }
+
+    /// Transitions recorded before the first index and after the last:
+    /// evidence bounding into circular observations does not consume,
+    /// counted here so it is visibly retained rather than assumed.
+    pub(crate) fn before_first_index(&self) -> u64 {
+        self.before_first_index
+    }
+
+    pub(crate) fn after_last_index(&self) -> u64 {
+        self.after_last_index
+    }
+
+    pub(crate) fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+}
+
+/// What an opened capture keeps resident for one observation, on the
+/// same terms as [`CaptureRunEntry`]: identity and shape, never the
+/// pulses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ObservationEntry {
+    id: ObservationId,
+    ordinal: u64,
+    span: Tick,
+    source: CaptureRunSlice,
+    transitions: u64,
+    markers: u64,
+    provenance: Provenance,
+}
+
+impl ObservationEntry {
+    pub(crate) fn id(&self) -> ObservationId {
+        self.id
+    }
+
+    /// Its place in this location's source-record order. Not a rank.
+    pub(crate) fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    pub(crate) fn span(&self) -> Tick {
+        self.span
+    }
+
+    /// The run and range this was bounded from.
+    pub(crate) fn source(&self) -> CaptureRunSlice {
+        self.source
+    }
+
+    pub(crate) fn transitions(&self) -> u64 {
+        self.transitions
+    }
+
+    pub(crate) fn markers(&self) -> u64 {
+        self.markers
+    }
+
+    pub(crate) fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+}
+
 /// Everything a capture holds for one location.
 ///
 /// A track that exists with no observations is not the same fact as a
@@ -1853,14 +2028,18 @@ impl TrackKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Track {
     key: TrackKey,
-    observations: Vec<Observation>,
+    runs: Vec<CaptureRunEntry>,
+    observations: Vec<ObservationEntry>,
+    issues: Vec<Issue>,
 }
 
 impl Track {
     pub(crate) fn new(key: TrackKey) -> Self {
         Self {
             key,
+            runs: Vec::new(),
             observations: Vec::new(),
+            issues: Vec::new(),
         }
     }
 
@@ -1868,27 +2047,64 @@ impl Track {
         &self.key
     }
 
-    pub(crate) fn observations(&self) -> &[Observation] {
+    /// The source transfers recorded at this location, in the order
+    /// they were transferred.
+    pub(crate) fn runs(&self) -> &[CaptureRunEntry] {
+        &self.runs
+    }
+
+    pub(crate) fn observations(&self) -> &[ObservationEntry] {
         &self.observations
+    }
+
+    pub(crate) fn issues(&self) -> &[Issue] {
+        &self.issues
     }
 
     /// Takes an observation the capture has already identified, giving
     /// it the next ordinal in this location's source-record order.
-    fn push_observation(&mut self, id: ObservationId, mut observation: Observation) {
-        observation.id = id;
-        observation.ordinal = self.observations.len() as u64;
-        self.observations.push(observation);
+    fn push_observation(&mut self, id: ObservationId, observation: &Observation) {
+        self.observations.push(ObservationEntry {
+            id,
+            ordinal: self.observations.len() as u64,
+            span: observation.span,
+            source: observation.source,
+            transitions: observation.transitions.len() as u64,
+            markers: observation.markers.len() as u64,
+            provenance: observation.provenance.clone(),
+        });
+    }
+}
+
+/// Where an opened capture's sections are read back from, and the
+/// bounded working set they are served through (P27).
+struct CaptureBacking {
+    bytes: Box<dyn ByteSource + Send + Sync>,
+    total_bytes: u64,
+    cache: Mutex<SectionCache>,
+    /// The namespaces this reader can place. An index naming another
+    /// one is not the index this layer wrote.
+    known: Vec<&'static str>,
+}
+
+impl std::fmt::Debug for CaptureBacking {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CaptureBacking")
+            .field("total_bytes", &self.total_bytes)
+            .finish()
     }
 }
 
 /// One opened capture: its declared timing basis and the locations it
 /// supplied evidence for.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct FluxCapture {
     envelope: CaptureEnvelope,
     time_base: TimeBase,
     tracks: BTreeMap<TrackKey, Track>,
     next_observation_id: u64,
+    next_run_id: u64,
+    backing: Option<CaptureBacking>,
 }
 
 impl FluxCapture {
@@ -1898,7 +2114,13 @@ impl FluxCapture {
             time_base,
             tracks: BTreeMap::new(),
             next_observation_id: 0,
+            next_run_id: 0,
+            backing: None,
         }
+    }
+
+    pub(crate) fn time_base(&self) -> TimeBase {
+        self.time_base
     }
 
     /// Everything the source stated besides its flux.
@@ -1919,7 +2141,7 @@ impl FluxCapture {
     pub(crate) fn admit_observation(
         &mut self,
         key: &TrackKey,
-        observation: Observation,
+        observation: &Observation,
     ) -> Result<ObservationId> {
         let id = ObservationId(self.next_observation_id);
         let track = self.tracks.get_mut(key).ok_or_else(|| {
@@ -1950,6 +2172,523 @@ impl FluxCapture {
     pub(crate) fn tracks(&self) -> impl Iterator<Item = &Track> {
         self.tracks.values()
     }
+
+    fn backing(&self, namespace: &'static str) -> Result<&CaptureBacking> {
+        self.backing.as_ref().ok_or_else(|| {
+            Error::invalid_image(
+                namespace,
+                "capture has no backing to read its evidence from, so nothing \
+                 was ever written for it to serve",
+            )
+        })
+    }
+
+    /// Reads one section through the bounded working set.
+    fn section(&self, key: &SectionKey) -> Result<Vec<u8>> {
+        let backing = self.backing(key.track.namespace)?;
+        let mut cache = backing
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .section(backing.bytes.as_ref(), backing.total_bytes, key, &backing.known)
+            .map(<[u8]>::to_vec)
+    }
+
+    /// Whether a section is currently in the working set. The layer's
+    /// own bounded-reload test asks; nothing else does.
+    fn holds_section(&self, key: &SectionKey) -> bool {
+        self.backing.as_ref().is_some_and(|backing| {
+            backing
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .holds(key)
+        })
+    }
+
+    /// One run's transitions, read back from the backing a chunk at a
+    /// time. Never the whole capture, and never another location.
+    pub(crate) fn run_transitions(
+        &self,
+        key: &TrackKey,
+        run: &CaptureRunEntry,
+    ) -> Result<Vec<Tick>> {
+        let mut ticks = Vec::with_capacity(run.transitions as usize);
+        for ordinal in 0..run.transition_chunks {
+            let section = SectionKey::new(
+                key.clone(),
+                ScopeId::Run(run.id),
+                SectionKind::TransitionChunk,
+                ordinal,
+            );
+            ticks.extend(decode_transitions(&self.section(&section)?)?);
+        }
+        Ok(ticks)
+    }
+
+    /// One run's marker channels, in the order they were recorded.
+    pub(crate) fn run_markers(&self, key: &TrackKey, run: &CaptureRunEntry) -> Result<Vec<Marker>> {
+        let backing = self.backing(key.namespace)?;
+        let known = backing.known.clone();
+        let mut markers = Vec::with_capacity(run.markers as usize);
+        for ordinal in 0..run.marker_chunks {
+            let section = SectionKey::new(
+                key.clone(),
+                ScopeId::Run(run.id),
+                SectionKind::MarkerChunk,
+                ordinal,
+            );
+            markers.extend(decode_markers(
+                key.namespace,
+                &self.section(&section)?,
+                &known,
+            )?);
+        }
+        Ok(markers)
+    }
+
+    /// One observation, rebuilt from the run it was bounded from.
+    ///
+    /// The observation's payload shares the run's indexed chunks rather
+    /// than duplicating them, so this reads the run's evidence over the
+    /// recorded range and rebases it to the observation's own origin —
+    /// the same cut, made again from the same bytes.
+    pub(crate) fn observation(
+        &self,
+        key: &TrackKey,
+        entry: &ObservationEntry,
+    ) -> Result<Observation> {
+        let run = self
+            .track(key)
+            .and_then(|track| {
+                track
+                    .runs
+                    .iter()
+                    .find(|run| run.ordinal == entry.source.run_ordinal())
+            })
+            .ok_or_else(|| {
+                Error::invalid_image(
+                    key.namespace,
+                    format!(
+                        "observation was bounded from capture run {}, which this \
+                         location does not hold",
+                        entry.source.run_ordinal()
+                    ),
+                )
+            })?;
+        let (start, end) = (entry.source.start(), entry.source.end());
+        let transitions = self
+            .run_transitions(key, run)?
+            .into_iter()
+            .filter(|position| *position >= start && *position < end)
+            .map(|position| position - start)
+            .collect();
+        let markers = self
+            .run_markers(key, run)?
+            .into_iter()
+            .filter(|marker| marker.position() >= start && marker.position() < end)
+            .map(|marker| {
+                Marker::new(
+                    marker.position() - start,
+                    marker.kind().clone(),
+                    marker.provenance().clone(),
+                )
+                .with_payload(marker.payload().to_vec())
+            })
+            .collect();
+        let mut observation = Observation::new(
+            key.namespace,
+            entry.provenance.clone(),
+            entry.source,
+            entry.span,
+            transitions,
+            markers,
+        )?;
+        observation.id = entry.id;
+        observation.ordinal = entry.ordinal;
+        Ok(observation)
+    }
+}
+
+/// How many transitions or markers one chunk of the backing holds.
+///
+/// A record count rather than a byte count, so the same evidence always
+/// splits the same way however the backing is rebuilt.
+pub(crate) const CHUNK_RECORDS: usize = 4096;
+
+/// Builds an opened capture and its backing together: the payload
+/// streams into the sink as each location arrives, and only identity
+/// and shape stay resident.
+///
+/// Locations must arrive in ascending key order, which is what the
+/// section index requires and what makes a half-written backing
+/// detectable rather than a layer with holes in it.
+pub(crate) struct CaptureBuilder<S: ByteSink> {
+    writer: SectionWriter<S>,
+    capture: FluxCapture,
+    chunk_records: usize,
+}
+
+impl<S: ByteSink> CaptureBuilder<S> {
+    pub(crate) fn new(time_base: TimeBase, sink: S) -> Self {
+        Self {
+            writer: SectionWriter::to_sink(sink, LEAF_ENTRIES),
+            capture: FluxCapture::new(time_base),
+            chunk_records: CHUNK_RECORDS,
+        }
+    }
+
+    /// A builder whose chunks hold at most `records` each. The layer's
+    /// own tests use a tiny value to force several chunks out of a
+    /// handful of transitions.
+    pub(crate) fn with_chunk_records(mut self, records: usize) -> Self {
+        self.chunk_records = records;
+        self
+    }
+
+    pub(crate) fn envelope_mut(&mut self) -> &mut CaptureEnvelope {
+        self.capture.envelope_mut()
+    }
+
+    /// Adds one location and everything captured at it: its transfers,
+    /// the circular observations they bound, and whatever was qualified
+    /// about either.
+    pub(crate) fn add_location(
+        &mut self,
+        key: TrackKey,
+        source: SourceId,
+        runs: &[CaptureRun],
+        issues: Vec<Issue>,
+    ) -> Result<()> {
+        let namespace = key.namespace;
+        let mut track = Track::new(key.clone());
+        track.issues = issues;
+        self.writer.append(
+            SectionKey::new(key.clone(), ScopeId::Track, SectionKind::TrackMetadata, 0),
+            encode_track_metadata(runs.len() as u64, &track.issues),
+        )?;
+        if !track.issues.is_empty() {
+            self.writer.append(
+                SectionKey::new(key.clone(), ScopeId::Track, SectionKind::IssueChunk, 0),
+                encode_issues(&track.issues),
+            )?;
+        }
+
+        // Every run's sections before any observation's: a run scope
+        // sorts ahead of an observation scope, so interleaving them
+        // would emit the backing out of key order.
+        for run in runs {
+            let id = CaptureRunId(self.capture.next_run_id);
+            self.capture.next_run_id += 1;
+            let transitions = split_transitions(run.transitions(), self.chunk_records)?;
+            let markers = split_markers(run.markers(), self.chunk_records);
+            let indices: Vec<Tick> = run
+                .markers()
+                .iter()
+                .filter(|marker| marker.kind() == &MarkerKind::Index)
+                .map(Marker::position)
+                .collect();
+            let entry = CaptureRunEntry {
+                id,
+                ordinal: run.ordinal(),
+                source,
+                transitions: run.transitions().len() as u64,
+                markers: run.markers().len() as u64,
+                indices: indices.len() as u64,
+                extent: run.transitions().last().copied().unwrap_or(0),
+                before_first_index: match indices.first() {
+                    Some(first) => count_below(run.transitions(), *first),
+                    None => run.transitions().len() as u64,
+                },
+                after_last_index: match indices.last() {
+                    Some(last) => run.transitions().len() as u64 - count_below(run.transitions(), *last),
+                    None => 0,
+                },
+                transition_chunks: transitions.len() as u64,
+                marker_chunks: markers.len() as u64,
+                provenance: run.provenance().clone(),
+            };
+            self.writer.append(
+                SectionKey::new(
+                    key.clone(),
+                    ScopeId::Run(id),
+                    SectionKind::CaptureRunMetadata,
+                    0,
+                ),
+                encode_run_metadata(&entry),
+            )?;
+            for chunk in &transitions {
+                self.writer.append(
+                    SectionKey::new(
+                        key.clone(),
+                        ScopeId::Run(id),
+                        SectionKind::TransitionChunk,
+                        chunk.ordinal(),
+                    ),
+                    chunk.payload().to_vec(),
+                )?;
+            }
+            for chunk in &markers {
+                self.writer.append(
+                    SectionKey::new(
+                        key.clone(),
+                        ScopeId::Run(id),
+                        SectionKind::MarkerChunk,
+                        chunk.ordinal(),
+                    ),
+                    chunk.payload().to_vec(),
+                )?;
+            }
+            track.runs.push(entry);
+        }
+        self.capture.insert_track(track);
+
+        for run in runs {
+            for observation in run.observations(namespace)? {
+                let id = self.capture.admit_observation(&key, &observation)?;
+                let entry = self
+                    .capture
+                    .track(&key)
+                    .and_then(|track| track.observations().last())
+                    .expect("the observation was just admitted")
+                    .clone();
+                self.writer.append(
+                    SectionKey::new(
+                        key.clone(),
+                        ScopeId::Observation(id),
+                        SectionKind::ObservationMetadata,
+                        0,
+                    ),
+                    encode_observation_metadata(&entry),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Closes the backing and hands back the capture it addresses,
+    /// together with the sink and its length so the caller can attach
+    /// whatever it wrote into.
+    pub(crate) fn seal(self) -> Result<(FluxCapture, S, u64)> {
+        let (sink, total) = self.writer.seal()?;
+        Ok((self.capture, sink, total))
+    }
+}
+
+/// How many of `transitions` sit strictly below `tick`. The list
+/// ascends, so this is a bound rather than a scan.
+fn count_below(transitions: &[Tick], tick: Tick) -> u64 {
+    transitions.partition_point(|position| *position < tick) as u64
+}
+
+impl FluxCapture {
+    /// Attaches the backing this capture's sections were written into,
+    /// with the working set they are served through.
+    pub(crate) fn attach_backing(
+        &mut self,
+        bytes: Box<dyn ByteSource + Send + Sync>,
+        total_bytes: u64,
+        cache_bytes: u64,
+        known: Vec<&'static str>,
+    ) {
+        self.backing = Some(CaptureBacking {
+            bytes,
+            total_bytes,
+            cache: Mutex::new(SectionCache::with_bytes(cache_bytes)),
+            known,
+        });
+    }
+
+    /// The backing's total length in bytes.
+    pub(crate) fn backing_bytes(&self) -> u64 {
+        self.backing.as_ref().map_or(0, |backing| backing.total_bytes)
+    }
+
+    /// How much of the backing is currently resident.
+    pub(crate) fn resident_bytes(&self) -> u64 {
+        self.backing.as_ref().map_or(0, |backing| {
+            backing
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .resident_bytes()
+        })
+    }
+}
+
+/// The version every metadata section this layer writes carries. An
+/// unknown one refuses that section rather than being read as this one.
+const METADATA_VERSION: u64 = 1;
+
+fn encode_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
+    write_text(out, provenance.source);
+    write_varint(out, provenance.notes.len() as u64);
+    for note in &provenance.notes {
+        write_text(out, note);
+    }
+}
+
+fn decode_provenance(
+    source: &str,
+    bytes: &[u8],
+    at: usize,
+    known: &[&'static str],
+) -> Result<(Provenance, usize)> {
+    let mut cursor = at;
+    let (spelling, used) = read_text(source, bytes, cursor)?;
+    cursor += used;
+    let namespace = known
+        .iter()
+        .find(|candidate| **candidate == spelling)
+        .copied()
+        .ok_or_else(|| {
+            Error::invalid_image(
+                source,
+                format!(
+                    "backing states the provenance namespace {spelling:?}, which this \
+                     reader cannot place, so the backing is not the one this layer wrote"
+                ),
+            )
+        })?;
+    let (count, used) = read_varint(source, bytes, cursor)?;
+    cursor += used;
+    let mut provenance = Provenance::new(namespace);
+    for _ in 0..count {
+        let (note, used) = read_text(source, bytes, cursor)?;
+        cursor += used;
+        provenance = provenance.note(note);
+    }
+    Ok((provenance, cursor - at))
+}
+
+fn encode_track_metadata(runs: u64, issues: &[Issue]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_varint(&mut out, METADATA_VERSION);
+    write_varint(&mut out, runs);
+    write_varint(&mut out, issues.len() as u64);
+    out
+}
+
+fn encode_issues(issues: &[Issue]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_varint(&mut out, METADATA_VERSION);
+    write_varint(&mut out, issues.len() as u64);
+    for issue in issues {
+        write_text(&mut out, issue.code);
+        write_text(&mut out, &issue.detail);
+    }
+    out
+}
+
+fn encode_run_metadata(entry: &CaptureRunEntry) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_varint(&mut out, METADATA_VERSION);
+    write_varint(&mut out, entry.id.0);
+    write_varint(&mut out, entry.ordinal);
+    write_varint(&mut out, entry.source.0);
+    write_varint(&mut out, entry.transitions);
+    write_varint(&mut out, entry.markers);
+    write_varint(&mut out, entry.indices);
+    write_varint(&mut out, entry.extent);
+    write_varint(&mut out, entry.before_first_index);
+    write_varint(&mut out, entry.after_last_index);
+    write_varint(&mut out, entry.transition_chunks);
+    write_varint(&mut out, entry.marker_chunks);
+    encode_provenance(&mut out, &entry.provenance);
+    out
+}
+
+/// Reads one run's metadata section back into the entry it was written
+/// from. `known` places the namespaces the reader can resolve.
+fn decode_run_metadata(
+    source: &str,
+    bytes: &[u8],
+    known: &[&'static str],
+) -> Result<CaptureRunEntry> {
+    let mut at = 0;
+    let next = |at: &mut usize| -> Result<u64> {
+        let (value, used) = read_varint(source, bytes, *at)?;
+        *at += used;
+        Ok(value)
+    };
+    let version = next(&mut at)?;
+    if version != METADATA_VERSION {
+        return Err(Error::invalid_image(
+            source,
+            format!("backing states run metadata version {version}, which this build has no reading of"),
+        ));
+    }
+    let entry = CaptureRunEntry {
+        id: CaptureRunId(next(&mut at)?),
+        ordinal: next(&mut at)?,
+        source: SourceId(next(&mut at)?),
+        transitions: next(&mut at)?,
+        markers: next(&mut at)?,
+        indices: next(&mut at)?,
+        extent: next(&mut at)?,
+        before_first_index: next(&mut at)?,
+        after_last_index: next(&mut at)?,
+        transition_chunks: next(&mut at)?,
+        marker_chunks: next(&mut at)?,
+        provenance: Provenance::new("flux-capture"),
+    };
+    let (provenance, _) = decode_provenance(source, bytes, at, known)?;
+    Ok(CaptureRunEntry { provenance, ..entry })
+}
+
+fn encode_observation_metadata(entry: &ObservationEntry) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_varint(&mut out, METADATA_VERSION);
+    write_varint(&mut out, entry.id.0);
+    write_varint(&mut out, entry.ordinal);
+    write_varint(&mut out, entry.span);
+    write_varint(&mut out, entry.source.run_ordinal());
+    write_varint(&mut out, entry.source.start());
+    write_varint(&mut out, entry.source.end());
+    write_varint(&mut out, entry.transitions);
+    write_varint(&mut out, entry.markers);
+    encode_provenance(&mut out, &entry.provenance);
+    out
+}
+
+fn decode_observation_metadata(
+    source: &str,
+    bytes: &[u8],
+    known: &[&'static str],
+) -> Result<ObservationEntry> {
+    let mut at = 0;
+    let next = |at: &mut usize| -> Result<u64> {
+        let (value, used) = read_varint(source, bytes, *at)?;
+        *at += used;
+        Ok(value)
+    };
+    let version = next(&mut at)?;
+    if version != METADATA_VERSION {
+        return Err(Error::invalid_image(
+            source,
+            format!(
+                "backing states observation metadata version {version}, which this \
+                 build has no reading of"
+            ),
+        ));
+    }
+    let id = ObservationId(next(&mut at)?);
+    let ordinal = next(&mut at)?;
+    let span = next(&mut at)?;
+    let slice = CaptureRunSlice::new(next(&mut at)?, next(&mut at)?, next(&mut at)?);
+    let transitions = next(&mut at)?;
+    let markers = next(&mut at)?;
+    let (provenance, _) = decode_provenance(source, bytes, at, known)?;
+    Ok(ObservationEntry {
+        id,
+        ordinal,
+        span,
+        source: slice,
+        transitions,
+        markers,
+        provenance,
+    })
 }
 
 #[cfg(test)]
@@ -2087,7 +2826,7 @@ mod tests {
         capture.insert_track(Track::new(key.clone()));
         for observation in run.observations("kryoflux").unwrap() {
             capture
-                .admit_observation(&key, observation)
+                .admit_observation(&key, &observation)
                 .expect("the location was declared");
         }
 
@@ -2095,7 +2834,7 @@ mod tests {
         let ordinals: Vec<u64> = track
             .observations()
             .iter()
-            .map(Observation::ordinal)
+            .map(ObservationEntry::ordinal)
             .collect();
         assert_eq!(ordinals, [0, 1]);
 
@@ -2163,16 +2902,25 @@ mod tests {
         // `ick` as a rounding that is not even that value over eight.
         // The layer records what was written and believes neither.
         let mut envelope = CaptureEnvelope::new();
+        let source = envelope.declare_source(SourceDescriptor::new(
+            "kryoflux",
+            "capture00.0.raw",
+            SourceRange::new(0, 184_534),
+        ));
         for (key, value) in [
             ("host_date", "2014.11.01"),
             ("sck", "24027428.5714285"),
             ("ick", "3003428.5714285625"),
             ("host_date", "2014.11.02"),
         ] {
-            envelope.record_metadata(MetadataRecord::new("kryoflux", key, value));
+            envelope.record_metadata(MetadataRecord::new("kryoflux", source, key, value));
         }
 
         let held = envelope.metadata();
+        // Every stated fact names the member that stated it: with a
+        // hundred and sixty-eight of them saying the same keys, a fact
+        // whose speaker went unrecorded is one nobody can go back to.
+        assert!(held.iter().all(|record| record.source() == source));
         assert_eq!(
             held.iter().map(MetadataRecord::key).collect::<Vec<_>>(),
             ["host_date", "sck", "ick", "host_date"]
@@ -2197,7 +2945,7 @@ mod tests {
         let mut capture = FluxCapture::new(kryoflux_timebase());
         capture.insert_track(Track::new(key.clone()));
         capture
-            .admit_observation(&key, observed("a2r", 800, vec![10], Vec::new()).unwrap())
+            .admit_observation(&key, &observed("a2r", 800, vec![10], Vec::new()).unwrap())
             .expect("the location was declared");
 
         capture.envelope_mut().retain_derived(DerivedCandidate::new(
@@ -2909,10 +3657,10 @@ mod tests {
         capture.insert_track(Track::new(second.clone()));
 
         let one = capture
-            .admit_observation(&first, observed("kryoflux", 800, vec![10], Vec::new()).unwrap())
+            .admit_observation(&first, &observed("kryoflux", 800, vec![10], Vec::new()).unwrap())
             .expect("the location was declared");
         let other = capture
-            .admit_observation(&second, observed("kryoflux", 800, vec![10], Vec::new()).unwrap())
+            .admit_observation(&second, &observed("kryoflux", 800, vec![10], Vec::new()).unwrap())
             .expect("the location was declared");
 
         assert_ne!(one, other);
@@ -2933,7 +3681,7 @@ mod tests {
         let error = capture
             .admit_observation(
                 &TrackKey::new("kryoflux", 36, 0),
-                observed("kryoflux", 800, vec![10], Vec::new()).unwrap(),
+                &observed("kryoflux", 800, vec![10], Vec::new()).unwrap(),
             )
             .unwrap_err();
 
@@ -3211,5 +3959,227 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("800"), "should name the offending tick: {message}");
         assert!(message.contains("span"), "should name the span: {message}");
+    }
+
+    /// A capture of two locations, each one transfer of five
+    /// transitions bracketed by three index records, built through the
+    /// same route an adapter takes.
+    fn built() -> (FluxCapture, TrackKey, TrackKey) {
+        let front = TrackKey::new("kryoflux", 0, 0);
+        let back = TrackKey::new("kryoflux", 0, 1);
+        let mut builder = CaptureBuilder::new(kryoflux_timebase(), Vec::new())
+            // Two records a chunk, so the evidence below spans several
+            // sections and a read has to walk them.
+            .with_chunk_records(2);
+        let source = builder.envelope_mut().declare_source(SourceDescriptor::new(
+            "kryoflux",
+            "capture00.0.raw",
+            SourceRange::new(0, 4096),
+        ));
+        for key in [&front, &back] {
+            let run = captured(
+                "kryoflux",
+                0,
+                vec![50, 150, 400, 950, 1400],
+                vec![index_at(100), index_at(900), index_at(1300)],
+            )
+            .unwrap();
+            builder
+                .add_location(
+                    key.clone(),
+                    source,
+                    std::slice::from_ref(&run),
+                    vec![Issue::new("kryoflux-example", "a qualification")],
+                )
+                .expect("locations arrive in key order");
+        }
+        let (mut capture, bytes, total) = builder.seal().expect("the backing seals");
+        capture.attach_backing(Box::new(Bytes(bytes)), total, 1 << 20, vec!["kryoflux"]);
+        (capture, front, back)
+    }
+
+    struct Bytes(Vec<u8>);
+
+    impl ByteSource for Bytes {
+        fn read_at(&self, offset: u64, into: &mut [u8]) -> Result<()> {
+            let at = offset as usize;
+            into.copy_from_slice(&self.0[at..at + into.len()]);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_built_capture_keeps_only_shape_resident_and_reads_evidence_from_the_backing() {
+        let (capture, front, _) = built();
+        let track = capture.track(&front).expect("the location was added");
+        let run = &track.runs()[0];
+
+        // What stays in memory is a count, not a pulse.
+        assert_eq!(run.transitions(), 5);
+        assert_eq!(run.markers(), 3);
+        assert_eq!(run.indices(), 3);
+        assert_eq!(run.extent(), 1400);
+        assert_eq!(run.before_first_index(), 1);
+        assert_eq!(run.after_last_index(), 1);
+        assert_eq!(track.issues()[0].code, "kryoflux-example");
+
+        // And the evidence itself comes back exactly as recorded,
+        // including the flux outside the indices.
+        assert_eq!(
+            capture.run_transitions(&front, run).expect("the run reads"),
+            [50, 150, 400, 950, 1400]
+        );
+        let markers = capture.run_markers(&front, run).expect("the markers read");
+        assert_eq!(
+            markers.iter().map(Marker::position).collect::<Vec<_>>(),
+            [100, 900, 1300]
+        );
+        assert!(markers.iter().all(|marker| marker.kind() == &MarkerKind::Index));
+    }
+
+    #[test]
+    fn an_observation_is_read_back_from_the_run_it_shares_chunks_with() {
+        // The backing holds no second copy of an observation's pulses:
+        // the slice addresses the run's own chunks, and reading the
+        // observation makes the same cut again from the same bytes.
+        let (capture, front, _) = built();
+        let track = capture.track(&front).expect("the location was added");
+        let entry = &track.observations()[0];
+
+        assert_eq!(entry.span(), 800);
+        assert_eq!(entry.transitions(), 2);
+        assert_eq!((entry.source().start(), entry.source().end()), (100, 900));
+
+        let observation = capture.observation(&front, entry).expect("it reads back");
+        assert_eq!(observation.transitions(), [50, 300]);
+        assert_eq!(observation.span(), 800);
+        assert_eq!(observation.id(), entry.id());
+        assert_eq!(observation.ordinal(), entry.ordinal());
+        assert_eq!(observation.markers()[0].position(), 0);
+    }
+
+    #[test]
+    fn one_locations_evidence_loads_without_touching_another() {
+        // Two locations, one backing: reading the first leaves the
+        // second exactly where it was, which is what a section-keyed
+        // backing exists to give.
+        let (capture, front, back) = built();
+        let front_run = &capture.track(&front).expect("added").runs()[0];
+        let back_run = &capture.track(&back).expect("added").runs()[0];
+
+        capture
+            .run_transitions(&front, front_run)
+            .expect("the first location reads");
+
+        let chunk = |key: &TrackKey, run: &CaptureRunEntry| {
+            SectionKey::new(
+                key.clone(),
+                ScopeId::Run(run.id()),
+                SectionKind::TransitionChunk,
+                0,
+            )
+        };
+        assert!(capture.holds_section(&chunk(&front, front_run)));
+        assert!(!capture.holds_section(&chunk(&back, back_run)));
+    }
+
+    #[test]
+    fn a_declared_bound_evicts_and_re_reads_rather_than_refusing() {
+        // The bound narrows the working set; it never refuses service.
+        let front = TrackKey::new("kryoflux", 0, 0);
+        let mut builder = CaptureBuilder::new(kryoflux_timebase(), Vec::new()).with_chunk_records(1);
+        let source = builder.envelope_mut().declare_source(SourceDescriptor::new(
+            "kryoflux",
+            "capture00.0.raw",
+            SourceRange::new(0, 4096),
+        ));
+        let run = captured(
+            "kryoflux",
+            0,
+            vec![50, 150, 400, 950, 1400],
+            vec![index_at(100), index_at(1300)],
+        )
+        .unwrap();
+        builder
+            .add_location(front.clone(), source, std::slice::from_ref(&run), Vec::new())
+            .expect("one location");
+        let (mut capture, bytes, total) = builder.seal().expect("the backing seals");
+        // One byte of working set: every chunk still loads, none stays.
+        capture.attach_backing(Box::new(Bytes(bytes)), total, 1, vec!["kryoflux"]);
+
+        let entry = &capture.track(&front).expect("added").runs()[0];
+        assert_eq!(
+            capture.run_transitions(&front, entry).expect("reads"),
+            [50, 150, 400, 950, 1400]
+        );
+        assert!(capture.resident_bytes() <= 8, "{}", capture.resident_bytes());
+    }
+
+    #[test]
+    fn the_backings_metadata_sections_read_back_into_what_wrote_them() {
+        // The sections are what makes the backing self-describing, so
+        // they are written to be read rather than only to be counted.
+        let (capture, front, _) = built();
+        let track = capture.track(&front).expect("added");
+        let run = &track.runs()[0];
+        let entry = &track.observations()[0];
+
+        let section = capture
+            .section(&SectionKey::new(
+                front.clone(),
+                ScopeId::Run(run.id()),
+                SectionKind::CaptureRunMetadata,
+                0,
+            ))
+            .expect("the run metadata reads");
+        assert_eq!(
+            &decode_run_metadata("kryoflux", &section, &["kryoflux"]).expect("it decodes"),
+            run
+        );
+
+        let section = capture
+            .section(&SectionKey::new(
+                front.clone(),
+                ScopeId::Observation(entry.id()),
+                SectionKind::ObservationMetadata,
+                0,
+            ))
+            .expect("the observation metadata reads");
+        assert_eq!(
+            &decode_observation_metadata("kryoflux", &section, &["kryoflux"]).expect("it decodes"),
+            entry
+        );
+    }
+
+    #[test]
+    fn locations_arriving_out_of_key_order_are_refused() {
+        // The section index is ordered, so a builder handed a location
+        // out of order is refused rather than writing a backing whose
+        // index cannot address it.
+        let mut builder = CaptureBuilder::new(kryoflux_timebase(), Vec::new());
+        let source = builder.envelope_mut().declare_source(SourceDescriptor::new(
+            "kryoflux",
+            "capture00.0.raw",
+            SourceRange::new(0, 4096),
+        ));
+        let run = captured("kryoflux", 0, vec![50], Vec::new()).unwrap();
+        builder
+            .add_location(
+                TrackKey::new("kryoflux", 1, 0),
+                source,
+                std::slice::from_ref(&run),
+                Vec::new(),
+            )
+            .expect("the first location");
+        let error = builder
+            .add_location(
+                TrackKey::new("kryoflux", 0, 0),
+                source,
+                std::slice::from_ref(&run),
+                Vec::new(),
+            )
+            .expect_err("a location behind the last is refused");
+
+        assert_eq!(error.category(), ErrorCategory::InvalidImage);
     }
 }

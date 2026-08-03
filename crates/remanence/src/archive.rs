@@ -68,8 +68,13 @@ pub(crate) enum EntrySource {
     /// read in place — source-backed, nothing copied.
     InPlace { offset: u64, length: u64 },
     /// The entry had to be decoded, and was produced once into private
-    /// session storage — session-backed.
-    Spooled { spool: Arc<File>, length: u64 },
+    /// session storage — session-backed. Several entries obtained
+    /// together may share one spool, each at its own offset.
+    Spooled {
+        spool: Arc<File>,
+        offset: u64,
+        length: u64,
+    },
 }
 
 /// One archive grammar's reader over a claimed file.
@@ -81,6 +86,23 @@ pub(crate) trait ArchiveCatalog: Send + Sync {
     fn entries(&self) -> &[ArchiveEntry];
     /// The bytes of the entry at `index`, bounded.
     fn entry_source(&self, index: usize) -> Result<EntrySource>;
+
+    /// The bytes of several entries, obtained in one pass over the
+    /// archive's coded stream.
+    ///
+    /// A logical artifact spread over many members — a capture set is
+    /// one disk per stream per head per step position — asks for them
+    /// together so a grammar whose members share one coded stream
+    /// decodes it once rather than once per member. The default is the
+    /// honest one for a grammar where each entry stands alone; a solid
+    /// archive overrides it, because there the difference is the whole
+    /// cost of the operation.
+    fn entry_group(&self, indices: &[usize]) -> Result<Vec<EntrySource>> {
+        indices
+            .iter()
+            .map(|&index| self.entry_source(index))
+            .collect()
+    }
 }
 
 /// One enrolled archive grammar.

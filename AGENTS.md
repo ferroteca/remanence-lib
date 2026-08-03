@@ -33,6 +33,13 @@ ABI, or Python module.
   LZ window into private session storage, never resident whole; the 7z
   claim is a single-coder folder using Copy, LZMA, or LZMA2, and
   everything outside it refuses by name;
+  `flux_capture.rs` the private flux-capture model — locations, capture
+  runs, circular observations, exact timebases, parallel marker
+  channels, and the section-addressable backing they stream into — with
+  `kryoflux.rs` the KryoFlux capture-set adapter above it: the member
+  grammar and its completeness, the stream grammar, and the public
+  `CaptureSet` that reads one disk out of a catalog subtree of a stream
+  per head per drive-step position;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable

@@ -231,6 +231,7 @@ impl ArchiveCatalog for ZipCatalog {
                 }
                 Ok(EntrySource::Spooled {
                     spool,
+                    offset: 0,
                     length: record.uncompressed_size,
                 })
             }

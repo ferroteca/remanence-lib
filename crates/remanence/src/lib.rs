@@ -24,6 +24,7 @@ mod flux_capture;
 mod hdos;
 mod inflate;
 mod journal;
+mod kryoflux;
 mod lzma;
 mod mbr;
 mod partition;
@@ -41,6 +42,10 @@ pub use disk::{Disk, DiskFormat, DiskGeometry};
 pub use error::{Error, ErrorCategory, Result};
 pub use fat::{FatEntry, FatEntryKind, FatKind, VolumeInfo};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
+pub use kryoflux::{
+    CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
+    ObservationReport, StepPosition, TimeBaseReport,
+};
 pub use mbr::{PartitionInfo, PartitionKind};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout, FilesystemLayout,

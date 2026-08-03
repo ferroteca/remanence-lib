@@ -81,6 +81,9 @@ typedef enum {
 // An open archive listing, holding the claim on its file.
 typedef struct RemanenceArchive RemanenceArchive;
 
+// An open capture set, holding the claim on its archive.
+typedef struct RemanenceCaptureSet RemanenceCaptureSet;
+
 // An open disk image.
 typedef struct RemanenceDisk RemanenceDisk;
 
@@ -680,6 +683,183 @@ uint64_t remanence_archive_entry_uncompressed_size(const RemanenceArchive *archi
 bool remanence_archive_entry_compressed_size(const RemanenceArchive *archive,
                                              size_t index,
                                              uint64_t *out);
+
+// Opens the KryoFlux capture set held by `path` (UTF-8) — an archive
+// this library reads, optionally followed by the subtree inside it that
+// holds the members — with the stated default session cache bound.
+// An incomplete, duplicate, contradictory, or unrelated member refuses
+// the whole set. Returns null on failure and stores a message in
+// `error_out` (free with `remanence_string_free`).
+RemanenceCaptureSet *remanence_capture_set_open(const char *path,
+                                                RemanenceErrorCategory *error_category_out,
+                                                char **error_out);
+
+// Opens a capture set as `remanence_capture_set_open` does, under a
+// declared cache bound: at most `cache_bytes` of the decoded capture
+// stays resident. The bound narrows the working set; it never refuses
+// service.
+RemanenceCaptureSet *remanence_capture_set_open_with_cache(const char *path,
+                                                           uint64_t cache_bytes,
+                                                           RemanenceErrorCategory *error_category_out,
+                                                           char **error_out);
+
+// Frees a capture-set handle, releasing its claim on the archive and
+// discarding the private session storage the capture decoded into.
+void remanence_capture_set_free(RemanenceCaptureSet *set);
+
+// The path the set was opened from.
+const char *remanence_capture_set_path(const RemanenceCaptureSet *set);
+
+// The subtree inside the archive the members were read from, or null
+// when the whole archive is the set.
+const char *remanence_capture_set_subtree(const RemanenceCaptureSet *set);
+
+// The capture format's stable identifier, "kryoflux".
+const char *remanence_capture_set_format_id(const RemanenceCaptureSet *set);
+
+// The capture format's human-readable name.
+const char *remanence_capture_set_format_name(const RemanenceCaptureSet *set);
+
+// The archive grammar the members were read through, e.g. "7z".
+const char *remanence_capture_set_archive_format_id(const RemanenceCaptureSet *set);
+
+// Which P7 mode the open obtained on the archive file.
+RemanenceAccessMode remanence_capture_set_access_mode(const RemanenceCaptureSet *set);
+
+// The capture's declared timing basis, as an exact ratio of ticks per
+// second. Returns false when the handle is null.
+bool remanence_capture_set_ticks_per_second(const RemanenceCaptureSet *set,
+                                            uint64_t *numerator_out,
+                                            uint64_t *denominator_out);
+
+// How many bytes of private session storage the decoded capture
+// occupies.
+uint64_t remanence_capture_set_backing_bytes(const RemanenceCaptureSet *set);
+
+// How much of that backing is currently resident. The capture is never
+// held whole.
+uint64_t remanence_capture_set_resident_bytes(const RemanenceCaptureSet *set);
+
+// Number of evidence lines behind the recognition.
+size_t remanence_capture_set_evidence_count(const RemanenceCaptureSet *set);
+
+// One evidence line, or null when out of range.
+const char *remanence_capture_set_evidence(const RemanenceCaptureSet *set, size_t index);
+
+// Number of members the set holds.
+size_t remanence_capture_set_member_count(const RemanenceCaptureSet *set);
+
+// One member's catalog identity, or null when out of range.
+const char *remanence_capture_set_member_entry_name(const RemanenceCaptureSet *set, size_t member);
+
+// One member's size in bytes as the catalog declares it; 0 when out of
+// range.
+uint64_t remanence_capture_set_member_entry_bytes(const RemanenceCaptureSet *set, size_t member);
+
+// One member's drive-step position, as an exact ratio. Returns false
+// when out of range.
+bool remanence_capture_set_member_position(const RemanenceCaptureSet *set,
+                                           size_t member,
+                                           uint64_t *numerator_out,
+                                           uint64_t *denominator_out);
+
+// The head that captured this position; returns false when the source
+// numbers no head, which is a different fact from head zero, or when
+// the index is out of range.
+bool remanence_capture_set_member_head(const RemanenceCaptureSet *set,
+                                       size_t member,
+                                       uint64_t *out);
+
+// Number of things recorded as qualified about this member.
+size_t remanence_capture_set_member_issue_count(const RemanenceCaptureSet *set, size_t member);
+
+// One issue's stable code, or null when out of range.
+const char *remanence_capture_set_member_issue_code(const RemanenceCaptureSet *set,
+                                                    size_t member,
+                                                    size_t issue);
+
+// One issue's human-readable detail, or null when out of range.
+const char *remanence_capture_set_member_issue_detail(const RemanenceCaptureSet *set,
+                                                      size_t member,
+                                                      size_t issue);
+
+// Number of source transfers recorded at this member's location.
+size_t remanence_capture_set_member_run_count(const RemanenceCaptureSet *set, size_t member);
+
+// One run's place in the member's recorded order; 0 when out of range.
+uint64_t remanence_capture_set_run_ordinal(const RemanenceCaptureSet *set,
+                                           size_t member,
+                                           size_t run);
+
+// How many flux transitions the run recorded.
+uint64_t remanence_capture_set_run_transitions(const RemanenceCaptureSet *set,
+                                               size_t member,
+                                               size_t run);
+
+// The last transition's tick: the extent of what was recorded, not a
+// circumference. A run states no period.
+uint64_t remanence_capture_set_run_extent_ticks(const RemanenceCaptureSet *set,
+                                                size_t member,
+                                                size_t run);
+
+// How many timed markers sit on channels parallel to the run's flux.
+uint64_t remanence_capture_set_run_markers(const RemanenceCaptureSet *set,
+                                           size_t member,
+                                           size_t run);
+
+// How many of those markers are index events.
+uint64_t remanence_capture_set_run_index_markers(const RemanenceCaptureSet *set,
+                                                 size_t member,
+                                                 size_t run);
+
+// The result the capture tool declared for this transfer, where it
+// declared one; zero is a clean read. Returns false when it declared
+// none or the index is out of range.
+bool remanence_capture_set_run_transfer_result(const RemanenceCaptureSet *set,
+                                               size_t member,
+                                               size_t run,
+                                               uint32_t *out);
+
+// Transitions recorded before the run's first index: evidence that
+// bounding into circular observations does not consume.
+uint64_t remanence_capture_set_run_transitions_before_first_index(const RemanenceCaptureSet *set,
+                                                                  size_t member,
+                                                                  size_t run);
+
+// Transitions recorded after the run's last index, on the same terms.
+uint64_t remanence_capture_set_run_transitions_after_last_index(const RemanenceCaptureSet *set,
+                                                                size_t member,
+                                                                size_t run);
+
+// How many circular observations the run's indices bounded.
+size_t remanence_capture_set_run_observation_count(const RemanenceCaptureSet *set,
+                                                   size_t member,
+                                                   size_t run);
+
+// One observation's place in the location's source-record order. Not a
+// rank: nothing here says it is a good or complete revolution.
+uint64_t remanence_capture_set_observation_ordinal(const RemanenceCaptureSet *set,
+                                                   size_t member,
+                                                   size_t run,
+                                                   size_t observation);
+
+// The observation's declared circumference, in the capture's own ticks.
+uint64_t remanence_capture_set_observation_span_ticks(const RemanenceCaptureSet *set,
+                                                      size_t member,
+                                                      size_t run,
+                                                      size_t observation);
+
+// How many transitions the observation holds.
+uint64_t remanence_capture_set_observation_transitions(const RemanenceCaptureSet *set,
+                                                       size_t member,
+                                                       size_t run,
+                                                       size_t observation);
+
+// How many markers the observation holds.
+uint64_t remanence_capture_set_observation_markers(const RemanenceCaptureSet *set,
+                                                   size_t member,
+                                                   size_t run,
+                                                   size_t observation);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -871,6 +871,345 @@ impl Archive {
     }
 }
 
+/// A capture's declared timing basis: an exact count of ticks per
+/// second, as a ratio, because the common capture clocks are not exactly
+/// representable any other way.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct TimeBaseReport {
+    pub ticks_per_second_numerator: u64,
+    pub ticks_per_second_denominator: u64,
+}
+
+#[pymethods]
+impl TimeBaseReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "TimeBaseReport({}/{} Hz)",
+            self.ticks_per_second_numerator, self.ticks_per_second_denominator
+        )
+    }
+}
+
+/// A source's own drive-step position, held exactly. Sources step in
+/// fractions, so this is a ratio and never a rounded whole number.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct StepPosition {
+    pub numerator: u64,
+    pub denominator: u64,
+}
+
+#[pymethods]
+impl StepPosition {
+    fn __repr__(&self) -> String {
+        format!("StepPosition({}/{})", self.numerator, self.denominator)
+    }
+}
+
+/// Something qualified about a member, recorded rather than repaired.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct CaptureIssue {
+    /// The adapter's stable spelling for this kind of issue.
+    pub code: String,
+    pub detail: String,
+}
+
+#[pymethods]
+impl CaptureIssue {
+    fn __repr__(&self) -> String {
+        format!("CaptureIssue(code={:?})", self.code)
+    }
+}
+
+/// One circular observation bounded out of a capture run.
+///
+/// It reports the observation's shape, never its pulses: the evidence
+/// stays behind this surface.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ObservationReport {
+    /// Its place in this location's source-record order — not a rank,
+    /// and no claim that it is a good or complete revolution.
+    pub ordinal: u64,
+    /// The declared circumference, in the capture's own ticks.
+    pub span_ticks: u64,
+    pub transitions: u64,
+    pub markers: u64,
+}
+
+#[pymethods]
+impl ObservationReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "ObservationReport(ordinal={}, span_ticks={}, transitions={})",
+            self.ordinal, self.span_ticks, self.transitions
+        )
+    }
+}
+
+/// One source transfer, as the set holds it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct CaptureRunReport {
+    pub ordinal: u64,
+    pub transitions: u64,
+    /// The last transition's tick: the extent of what was recorded, not
+    /// a circumference. A run states no period.
+    pub extent_ticks: u64,
+    pub markers: u64,
+    pub index_markers: u64,
+    /// The result the capture tool declared for this transfer, where it
+    /// declared one. Zero is a clean read.
+    pub transfer_result: Option<u32>,
+    /// Transitions recorded before the first index and after the last:
+    /// evidence bounding into circular observations does not consume.
+    pub transitions_before_first_index: u64,
+    pub transitions_after_last_index: u64,
+    pub observations: Vec<ObservationReport>,
+}
+
+#[pymethods]
+impl CaptureRunReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "CaptureRunReport(ordinal={}, transitions={}, index_markers={})",
+            self.ordinal, self.transitions, self.index_markers
+        )
+    }
+}
+
+/// One member of the set, and everything read out of it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct CaptureSetMember {
+    /// The catalog's own identity for this member.
+    pub entry_name: String,
+    pub entry_bytes: u64,
+    pub position: StepPosition,
+    /// The head that captured this position. `None` is a source that
+    /// numbers no head, which is a different fact from head zero.
+    pub head: Option<u64>,
+    pub runs: Vec<CaptureRunReport>,
+    pub issues: Vec<CaptureIssue>,
+}
+
+#[pymethods]
+impl CaptureSetMember {
+    fn __repr__(&self) -> String {
+        format!(
+            "CaptureSetMember(entry_name={:?}, position={}/{}, head={})",
+            self.entry_name,
+            self.position.numerator,
+            self.position.denominator,
+            self.head
+                .map_or_else(|| "None".to_owned(), |head| head.to_string())
+        )
+    }
+}
+
+/// The set as the adapter recognized it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct CaptureSetReport {
+    pub format_id: String,
+    pub format_name: String,
+    pub time_base: TimeBaseReport,
+    pub members: Vec<CaptureSetMember>,
+    /// How the set was recognized, in human-readable terms.
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl CaptureSetReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "CaptureSetReport(format_id={:?}, members={})",
+            self.format_id,
+            self.members.len()
+        )
+    }
+}
+
+impl CaptureSetReport {
+    fn new(report: &remanence::CaptureSetReport) -> Self {
+        Self {
+            format_id: report.format_id.clone(),
+            format_name: report.format_name.clone(),
+            time_base: TimeBaseReport {
+                ticks_per_second_numerator: report.time_base.ticks_per_second_numerator,
+                ticks_per_second_denominator: report.time_base.ticks_per_second_denominator,
+            },
+            members: report
+                .members
+                .iter()
+                .map(|member| CaptureSetMember {
+                    entry_name: member.entry_name.clone(),
+                    entry_bytes: member.entry_bytes,
+                    position: StepPosition {
+                        numerator: member.position.numerator,
+                        denominator: member.position.denominator,
+                    },
+                    head: member.head,
+                    runs: member
+                        .runs
+                        .iter()
+                        .map(|run| CaptureRunReport {
+                            ordinal: run.ordinal,
+                            transitions: run.transitions,
+                            extent_ticks: run.extent_ticks,
+                            markers: run.markers,
+                            index_markers: run.index_markers,
+                            transfer_result: run.transfer_result,
+                            transitions_before_first_index: run.transitions_before_first_index,
+                            transitions_after_last_index: run.transitions_after_last_index,
+                            observations: run
+                                .observations
+                                .iter()
+                                .map(|observation| ObservationReport {
+                                    ordinal: observation.ordinal,
+                                    span_ticks: observation.span_ticks,
+                                    transitions: observation.transitions,
+                                    markers: observation.markers,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    issues: member
+                        .issues
+                        .iter()
+                        .map(|issue| CaptureIssue {
+                            code: issue.code.clone(),
+                            detail: issue.detail.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// One KryoFlux capture set, opened from a catalog subtree.
+///
+/// A capture of a disk is one stream file per head per drive-step
+/// position, and the logical capture is all of them together. Opening
+/// claims the archive — writes denied to every other process — decodes
+/// every member once into private session storage, and holds the claim
+/// until the object is closed or dropped. An incomplete, duplicate,
+/// contradictory, or unrelated member refuses the whole set by name.
+#[pyclass(module = "remanence")]
+pub struct CaptureSet {
+    inner: Option<remanence::CaptureSet>,
+}
+
+impl CaptureSet {
+    fn get(&self) -> PyResult<&remanence::CaptureSet> {
+        self.inner.as_ref().ok_or_else(|| {
+            categorized_py_err(remanence::ErrorCategory::Io, "capture set is closed")
+        })
+    }
+}
+
+#[pymethods]
+impl CaptureSet {
+    /// Opens the capture set held by `path` — an archive this library
+    /// reads, optionally followed by the subtree inside it that holds
+    /// the members. `cache_bytes` declares the session working set; the
+    /// bound narrows what stays resident and never refuses service.
+    #[new]
+    #[pyo3(signature = (path, *, cache_bytes = None))]
+    fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
+        let opened = match cache_bytes {
+            Some(cache_bytes) => remanence::CaptureSet::open_with_cache(path, cache_bytes),
+            None => remanence::CaptureSet::open(path),
+        };
+        opened
+            .map(|inner| Self { inner: Some(inner) })
+            .map_err(to_py_err)
+    }
+
+    /// The path the set was opened from.
+    #[getter]
+    fn path(&self) -> PyResult<String> {
+        Ok(self.get()?.path().display().to_string())
+    }
+
+    /// The subtree inside the archive the members were read from, or
+    /// `None` when the whole archive is the set.
+    #[getter]
+    fn subtree(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.subtree().map(str::to_owned))
+    }
+
+    /// The capture format's stable identifier: `"kryoflux"`.
+    #[getter]
+    fn format_id(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_id())
+    }
+
+    /// The capture format's human-readable name.
+    #[getter]
+    fn format_name(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_name())
+    }
+
+    /// The archive grammar the members were read through.
+    #[getter]
+    fn archive_format_id(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.archive_format_id())
+    }
+
+    /// `"read-write"` or `"read-only"`: which mode the deny-write claim
+    /// on the archive file was obtained in.
+    #[getter]
+    fn access_mode(&self) -> PyResult<&'static str> {
+        Ok(mode_str(self.get()?.access_mode()))
+    }
+
+    /// How many bytes of private session storage the decoded capture
+    /// occupies.
+    #[getter]
+    fn backing_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.backing_bytes())
+    }
+
+    /// How much of that backing is currently resident. The capture is
+    /// never held whole.
+    #[getter]
+    fn resident_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.resident_bytes())
+    }
+
+    /// The set as the adapter recognized it: its members, their catalog
+    /// identities, positions and heads, the transfers read out of them,
+    /// and the evidence behind the recognition.
+    fn inspect(&self) -> PyResult<CaptureSetReport> {
+        Ok(CaptureSetReport::new(self.get()?.inspect()))
+    }
+
+    /// Releases the claim on the archive file and discards the private
+    /// session storage the capture decoded into.
+    fn close(&mut self) {
+        self.inner = None;
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exception_type: Bound<'_, PyAny>,
+        _exception: Bound<'_, PyAny>,
+        _traceback: Bound<'_, PyAny>,
+    ) -> bool {
+        self.inner = None;
+        false
+    }
+}
+
 /// Parses the HDOS directory from raw image bytes.
 #[pyfunction]
 fn list_hdos_files(image: Vec<u8>) -> PyResult<Vec<HdosFile>> {
@@ -905,6 +1244,14 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
     m.add_class::<Archive>()?;
     m.add_class::<ArchiveEntry>()?;
+    m.add_class::<CaptureSet>()?;
+    m.add_class::<CaptureSetReport>()?;
+    m.add_class::<CaptureSetMember>()?;
+    m.add_class::<CaptureRunReport>()?;
+    m.add_class::<ObservationReport>()?;
+    m.add_class::<CaptureIssue>()?;
+    m.add_class::<StepPosition>()?;
+    m.add_class::<TimeBaseReport>()?;
     m.add_class::<Session>()?;
     m.add_class::<Identification>()?;
     m.add_class::<Container>()?;

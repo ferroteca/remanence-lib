@@ -20,6 +20,32 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A KryoFlux capture set is opened as one capture, on all three
+  surfaces.** `CaptureSet` reads a capture of a floppy disk — one stream
+  file per head per drive-step position, archived together — out of a
+  catalog subtree, and `inspect` reports it as the adapter recognized it:
+  every member with its catalog identity, its exact drive-step position
+  and head, the transfer read out of it, and the circular observations
+  that transfer's index records bracket. Reflected as
+  `remanence_capture_set_open` and its accessors, and as the Python
+  `CaptureSet` class with its report types. The flux recorded before a
+  transfer's first index and after its last is retained rather than
+  consumed by the bounding; the transport's own control records and its
+  declared transfer result stay beside the run as provenance or as a
+  recorded issue; and a record the grammar has no home for is kept
+  verbatim rather than dropped. The two heads stay two locations —
+  nothing merges them into an ideal disk, chooses a cleanest pass, or
+  averages a timing — and no medium, bitstream, sector, or file is
+  materialized. What the set admits is an enumerated claim: members of
+  one capture, named `<capture><SS>.<H>.raw`, complete across every step
+  position and head. An absent, duplicate, contradictory, or unrelated
+  member refuses the whole set by name, with the catalog evidence that
+  refused it, rather than leaving a member to be read as a disk of its
+  own. The capture is timed against the device's exact sample clock,
+  which the stream's own rounded declaration is checked against and never
+  replaced by. Members are decoded once into private session storage and
+  addressed a bounded section at a time, so peak memory follows the
+  declared cache bound rather than the capture's size.
 - **7z archives are read, and archives are listable, on all three
   surfaces.** `Archive` opens an archive under the deny-write claim and
   reports its entries in the archive's own order, reading the archive's

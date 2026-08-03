@@ -22,6 +22,7 @@
 //! members after it are never touched.
 
 use crate::checksum::{Crc32, crc32};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::sync::Arc;
 
@@ -327,26 +328,18 @@ impl SevenZipCatalog {
         })
     }
 
-    /// Decodes the folder holding `location`, spooling only that span.
-    fn spool(&self, location: &StreamLocation) -> Result<EntrySource> {
-        let folder = &self.folders[location.folder];
-        let spool = Arc::new(session_storage_file()?);
-        let mut sink = SpoolRange {
-            spool: &spool,
-            start: location.offset,
-            end: location.offset + location.size,
-            written: 0,
-            crc: Crc32::new(),
-        };
-        let mut source =
-            FileByteSource::new(&self.file, folder.pack_offset, folder.pack_size);
+    /// Decodes one folder's coded stream into `sink`, which keeps the
+    /// spans it wants and stops the decode once it wants no more.
+    fn decode_folder(&self, folder: usize, sink: &mut impl DecodedSink) -> Result<()> {
+        let folder = &self.folders[folder];
+        let mut source = FileByteSource::new(&self.file, folder.pack_offset, folder.pack_size);
         let properties = &folder.coder.properties;
         match folder.coder.id.as_slice() {
             CODER_LZMA2 => {
                 let &[properties] = properties.as_slice() else {
                     return Err(malformed("an LZMA2 coder carries no dictionary property"));
                 };
-                decode_lzma2(&mut source, properties, folder.unpacked_size, &mut sink)?;
+                decode_lzma2(&mut source, properties, folder.unpacked_size, sink)?;
             }
             CODER_LZMA => {
                 if properties.len() < 5 {
@@ -360,7 +353,7 @@ impl SevenZipCatalog {
                     properties[0],
                     dictionary,
                     folder.unpacked_size,
-                    &mut sink,
+                    sink,
                 )?;
             }
             id => return Err(unsupported(format!("compression method {}", coder_name(id)))),
@@ -368,6 +361,20 @@ impl SevenZipCatalog {
         if source.failed() {
             return Err(Error::io("reading the coded stream failed".to_owned()));
         }
+        Ok(())
+    }
+
+    /// Decodes the folder holding `location`, spooling only that span.
+    fn spool(&self, location: &StreamLocation) -> Result<EntrySource> {
+        let spool = Arc::new(session_storage_file()?);
+        let mut sink = SpoolRange {
+            spool: &spool,
+            start: location.offset,
+            end: location.offset + location.size,
+            written: 0,
+            crc: Crc32::new(),
+        };
+        self.decode_folder(location.folder, &mut sink)?;
 
         if sink.written != location.size {
             return Err(malformed(format!(
@@ -385,6 +392,7 @@ impl SevenZipCatalog {
         }
         Ok(EntrySource::Spooled {
             spool,
+            offset: 0,
             length: location.size,
         })
     }
@@ -429,6 +437,106 @@ impl ArchiveCatalog for SevenZipCatalog {
         }
         self.spool(location)
     }
+
+    /// Decodes each folder the requested entries share exactly once,
+    /// spooling every wanted member out of that one pass.
+    ///
+    /// A solid folder is the reason this override exists: asking for a
+    /// hundred and sixty-eight members one at a time would decode the
+    /// whole folder a hundred and sixty-eight times, which is the cost
+    /// of solid compression paid over and over rather than once.
+    fn entry_group(&self, indices: &[usize]) -> Result<Vec<EntrySource>> {
+        let mut sources: Vec<Option<EntrySource>> = (0..indices.len()).map(|_| None).collect();
+        // Coded members, grouped by the folder they decode out of and
+        // ordered within it, because a folder's decoded output is
+        // delivered once, forwards.
+        let mut coded: BTreeMap<usize, Vec<(usize, StreamLocation)>> = BTreeMap::new();
+
+        for (slot, &index) in indices.iter().enumerate() {
+            let location = self
+                .locations
+                .get(index)
+                .ok_or_else(|| malformed(format!("entry {index} is out of range")))?;
+            let Some(location) = location else {
+                sources[slot] = Some(EntrySource::InPlace {
+                    offset: 0,
+                    length: 0,
+                });
+                continue;
+            };
+            let folder = &self.folders[location.folder];
+            if folder.coder.id == CODER_COPY {
+                if folder.pack_size != folder.unpacked_size {
+                    return Err(malformed(
+                        "a stored folder declares disagreeing packed and unpacked sizes",
+                    ));
+                }
+                sources[slot] = Some(EntrySource::InPlace {
+                    offset: folder.pack_offset + location.offset,
+                    length: location.size,
+                });
+                continue;
+            }
+            coded
+                .entry(location.folder)
+                .or_default()
+                .push((slot, *location));
+        }
+
+        for (folder, mut members) in coded {
+            members.sort_by_key(|(_, location)| location.offset);
+            let spool = Arc::new(session_storage_file()?);
+            let mut spooled = 0;
+            let mut wanted = Vec::with_capacity(members.len());
+            for (slot, location) in &members {
+                wanted.push(SpooledMember {
+                    slot: *slot,
+                    start: location.offset,
+                    end: location.offset + location.size,
+                    at: spooled,
+                    written: 0,
+                    crc: Crc32::new(),
+                    digest: location.digest,
+                });
+                spooled += location.size;
+            }
+            let end = wanted.last().map_or(0, |member| member.end);
+            let mut sink = SpoolGroup {
+                spool: &spool,
+                wanted,
+                next: 0,
+                end,
+            };
+            self.decode_folder(folder, &mut sink)?;
+            for member in &sink.wanted {
+                let size = member.end - member.start;
+                if member.written != size {
+                    return Err(malformed(format!(
+                        "member decoded to {} bytes, expected {size}",
+                        member.written
+                    )));
+                }
+                let computed = member.crc.finish();
+                if let Some(expected) = member.digest
+                    && computed != expected
+                {
+                    return Err(malformed(format!(
+                        "member fails its CRC ({computed:08x}, expected {expected:08x})"
+                    )));
+                }
+                sources[member.slot] = Some(EntrySource::Spooled {
+                    spool: Arc::clone(&spool),
+                    offset: member.at,
+                    length: size,
+                });
+            }
+        }
+
+        sources
+            .into_iter()
+            .map(|source| source.ok_or_else(|| malformed("an entry produced no source")))
+            .collect()
+    }
 }
 
 fn read_span(file: &File, offset: u64, buf: &mut [u8]) -> Result<()> {
@@ -462,6 +570,67 @@ impl DecodedSink for SpoolRange<'_> {
             .map_err(|error| Error::io(format!("failed to spool an archive member: {error}")))?;
         self.written += slice.len() as u64;
         self.crc.update(slice);
+        Ok(())
+    }
+
+    fn wants(&self, at: u64) -> bool {
+        at < self.end
+    }
+}
+
+/// One member of a group being spooled out of a single folder decode.
+struct SpooledMember {
+    /// Which of the caller's requested entries this answers.
+    slot: usize,
+    /// The member's span in the folder's decoded output.
+    start: u64,
+    end: u64,
+    /// Where the member lands in the shared spool.
+    at: u64,
+    written: u64,
+    crc: Crc32,
+    digest: Option<u32>,
+}
+
+/// Decoded bytes filtered down to several members' spans and spooled
+/// into one file of private session storage, each at its own offset.
+///
+/// The members are held in ascending order of their span in the
+/// folder's output, and `next` is the first one not yet finished, so a
+/// long run of decoded bytes costs a walk over the members it actually
+/// covers rather than over all of them.
+struct SpoolGroup<'a> {
+    spool: &'a File,
+    wanted: Vec<SpooledMember>,
+    next: usize,
+    end: u64,
+}
+
+impl DecodedSink for SpoolGroup<'_> {
+    fn accept(&mut self, at: u64, data: &[u8]) -> Result<()> {
+        let length = data.len() as u64;
+        while self.next < self.wanted.len() {
+            let member = &mut self.wanted[self.next];
+            if at >= member.end {
+                self.next += 1;
+                continue;
+            }
+            if member.start >= at + length {
+                break;
+            }
+            let from = member.start.saturating_sub(at);
+            let to = (member.end - at).min(length);
+            let slice = &data[from as usize..to as usize];
+            write_all_at(self.spool, member.at + member.written, slice).map_err(|error| {
+                Error::io(format!("failed to spool an archive member: {error}"))
+            })?;
+            member.written += slice.len() as u64;
+            member.crc.update(slice);
+            if at + length < member.end {
+                break;
+            }
+            self.next += 1;
+        }
         Ok(())
     }
 
