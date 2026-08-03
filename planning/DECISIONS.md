@@ -58,6 +58,132 @@ removes it is the record either way.
 
 ## Decisions
 
+### D16 — NIB enters at the flux medium, with synthetic timings, to keep one ladder
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** P13, P22, P23, P29, P31.
+
+**NIB and NBZ enter the flux family, materializing into a flux medium whose
+pulse timings are synthesized.** A pulse's position is computed from a bit
+index and a declared cell width; nothing about it is recorded evidence, and the
+flux medium's model already refuses to call it so, since every pulse names what
+put it there. In-force P22 governs the rest unchanged — synthetic provenance is
+retained, and protection, weak regions and timing evidence the source never
+stored cannot be reproduced from it.
+
+**What settles the rung is a characteristic, not a convenience.** The flux
+layer's defining trait is that a rotational recording's start and stop are not
+crisp — a disk has no natural beginning, its origin is given rather than found,
+and the delivered medium already carries an origin statement saying which rule
+located its circle, with the C1541 defaulting to the longest gap because that
+drive never observes an index. One rung up the circle is crisp: a bitstream has
+a definite cell count per revolution and a G64 writes each track's length down.
+A NIB has the flux trait and not the bitstream one — a fixed window longer than
+a revolution, overlapping itself, wrap nowhere recorded — so that is where it
+enters, and the synthesized timings are the price of the placement rather than
+the case for it.
+
+**Corollary: manufactured transitions carry jitter, at half the family's
+admissible reading deviation.** No drive writes at the tick, so pulses are not
+placed at exact multiples of a declared cell; each is drawn seeded and recorded
+as every other draw in this family is. The amount is derived from the profile's
+existing reading band rather than declared as a second number, which says the
+writing drive sat comfortably inside its own family's tolerance — and, more
+usefully, makes a property checkable: every synthesized transition stays well
+within the band that classifies it, so recovering a bitstream from a synthesized
+medium returns exactly the bits that were synthesized. A round trip that could
+lose a bit would make this whole placement unsafe.
+
+Two constraints keep the factor honest. **Jitter is drawn on the interval, not
+the absolute position** — two independently jittered positions put twice the
+deviation into the interval between them, landing on the band edge and
+misclassifying. And **the circle closes exactly**: jitter redistributes within a
+revolution and never changes its total, so the wrap stays the one the reduction
+declared rather than the sum of a random walk. Spindle speed variation is a
+third thing, correlated across a revolution where these are per-transition, and
+is left to its own declaration rather than folded in.
+
+**The reason the placement was wanted is the hierarchy, and it is the owner's
+call over an argued objection.** One entry point below one ladder keeps the model solid: everything
+above the medium is then the ordinary route every other flux source takes —
+read channel, bitstream, codec — instead of a second adapter shape entering
+partway up. The artifact needs materialization either way, so materializing it
+one rung lower costs a synthesis that is declared and buys a path that already
+exists.
+
+**What was weighed against it, and lost:** that a NIB records bits rather than
+timings, so entering at flux asserts a content the file never held (D15, now
+annotated). The objection is answered rather than dismissed — the timings are
+declared synthetic at every pulse, so no claim of recorded evidence is made —
+and the residue is accepted deliberately: the read channel will recover bits
+from timings computed from bits, and the loop-point analysis a NIB needs does
+not disappear by moving rungs, it moves with it. Both are the price of the
+single ladder.
+
+**G64 does not move with it.** It records its track lengths and positions, so it
+is servable at the hardware bitstream as it stands, and the pledged P23
+amendment already names it there as an image whose authoritative and initial
+active layer are hardware bitstream. What sends NIB down is that it must be
+materialized regardless; an artifact that need not be keeps its own rung.
+
+**Read-only here is a capability, not a property of the rung.** No flux artifact
+receives a write and no writable flux composition is claimed today, which is
+what makes this placement simple — but that is each adapter's enumerated claim
+under P3 and P13, and the project's current scope. In-force P22 continues to
+say that a low-level composition claiming the physical path holds flux as
+durable mutable state which receives modeled writes; it constrains work not yet
+done, exactly as it did when it was armed. Nothing in this entry narrows it, and
+a later write path — a modified medium encoded to a new artifact — needs no
+amendment to arrive.
+
+### D15 — A capture-form artifact is sorted by servability, not writability
+
+> **Partly overruled by D16**, which moves NIB and NBZ into the flux family
+> with synthesized timings. The first ruling below — that a capture-form
+> artifact is not placed at a rung whose content it does not record — no longer
+> binds for that class; the entry rung is a family's declared convention, and
+> the honesty it protected is carried instead by declaring the synthesis at
+> every pulse. **The second ruling stands unchanged**: servability, not
+> writability, is what sorts the two modalities. Kept as written, per this
+> record's rule that an entry only partly overruled is annotated rather than
+> rewritten.
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** P13, P22, P23, P27, P29,
+P31.
+
+Two rulings made while pledging P31, neither of which that principle's own
+text would otherwise carry.
+
+**NIB stays at the hardware bitstream and is not moved down to flux.** It was
+weighed: the format records no track length, so a reader must analyse the
+stream before it can serve a circle, and needing analysis before use reads
+like raw evidence. It is not. P13's authoritative layer states what an
+artifact actually records, and a NIB records bits a drive's read channel had
+already recovered — placing it at flux would assert transition timings the
+file has never held, which is the false provenance claim the P23 amendment
+refuses from the other direction when it rules that generate-flux is
+generate-medium. **Needing a reduction is what the modality is, and says
+nothing about the content.** Where a composition genuinely wants a flux floor
+beneath a NIB, that is the ordinary generate-flux transition, carrying
+synthetic provenance and unable to reproduce evidence the source never stored.
+
+**Writability sorts nothing, and the first cut at this used it.** The
+distinction was initially drawn as G64 writable against NIB read-only, which
+is wrong twice over: no artifact in this family is a writable backing, P64 and
+G64 included, because writes land in the active layer and an artifact appears
+only by an explicit encode building a new file. The axis is **servability** —
+whether a session can truthfully serve one location by key from the file as it
+stands, under P27's source-backed residence. That puts P64 and G64 on one side
+and a stream set and a NIB on the other, which is the line that was actually
+meant.
+
+**Weighed and declined:** a new active-layer row for capture-form artifacts
+(they carry no session's mutable truth at any rung, exactly as flux capture
+carries none, so a row would have to be a row nothing is ever active at);
+amending in-force P22's two-model clause to cover every rung (the clause is
+scoped to the flux family where the models were found, and it is true as
+written — generalizing the shape does not require rewriting the place it was
+discovered).
+
 ### D14 — The flux family holds two models, and only the medium is ever active
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** P13, P22, P23, P27, P29,

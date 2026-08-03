@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, P25, and the
+> **Status:** pledged at the owner's direction. P14, P15, P25, P31, and the
 > P23 and P19 amendments remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
@@ -692,3 +692,143 @@ view is likewise regenerated rather than migrated when the floor moves — a
 sector image whose composition later descends to flux is presented by a new
 view in flux addressing. Several views may coexist over one floor, since
 none of them is mutable and none is the truth.
+
+## P31 — Capture is a modality, not a layer
+
+An artifact that records a magnetic layer holds it in one of two modalities,
+and which one is a property of the artifact rather than of the layer. This
+principle lifts a distinction the project had already made once, at one rung,
+and states it where it belongs.
+
+**Capture form** is a layer as an instrument recorded it, in that instrument's
+own conventions and without the frame that would make it servable. **Served
+form** is the same layer as a drive would meet it, complete enough to answer
+by location. A capture-form artifact is materialized by a declared reduction
+before anything reads it as a layer; a served-form artifact backs its layer
+directly.
+
+The distinction was found at flux, where a KryoFlux stream set holds several
+observations of one location and no opinion about which the disk was, and a
+P64 holds one circular stream per location in a declared frame. It recurs
+above flux without being put there: NIB and NBZ hold a hardware bitstream in
+capture form — a fixed window longer than a revolution, with the wrap nowhere
+recorded — and G64 holds the same layer in served form, with each track's
+length and position written down. Two rungs, four formats, and nothing chosen
+to make the pattern come out.
+
+### The test is servability, not writability
+
+**No artifact in this family is a writable backing**, in either modality. A
+session's writes land in its active layer, and an artifact appears only by an
+explicit encode under P13 which builds a new file rather than mutating one in
+place. Writability therefore sorts nothing, and a reading that used it would
+put G64 and P64 on opposite sides of a line neither is on.
+
+What sorts is whether the artifact can truthfully back its layer for reading:
+whether a session can serve one location by key from the file as it stands,
+under P27's source-backed residence. A P64 and a G64 can. A stream set and a
+NIB cannot — the first has made no selection, the second has established no
+circle — so each materializes into private session storage first, and what it
+gains there is derived, not read.
+
+### What a capture-form artifact owes
+
+The reduction is a P29 act wherever it happens: declared policy inputs, a plan
+that computes before anything is written, a declared-loss account in the
+source's own terms, derived provenance on the result, and the same inputs
+producing the same output. P29 was stated for mastering a capture to a medium
+and binds every such reduction, which is what makes this principle a statement
+about vocabulary rather than a new mechanism.
+
+Two obligations follow for any adapter reading a capture-form artifact. The
+frame the artifact lacks is **derived and declared as derived**, never
+presented as recorded — a track length recovered by analysis says so, and a
+location whose frame cannot be established is refused rather than served at
+whatever length the file happened to hold. And evidence the artifact could not
+record is **absent rather than asserted**: a single reading of an indeterminate
+region says the source could not tell, and never that the region is stable.
+
+### An artifact enters at the rung whose defining characteristics it shares
+
+A capture form is defined by needing materialization, not by the rung its bytes
+resemble, and the two can differ. What settles the entry rung is which layer's
+defining characteristics the artifact actually has; content the entry rung
+requires but the artifact never held is then **synthesized under declared policy
+and recorded as synthesized**.
+
+**The flux layer's defining characteristic is that a rotational recording's
+start and stop are not crisp.** A disk has no natural beginning, an origin is
+given rather than found, and the only physical trace of where a write began is a
+splice. The delivered model says exactly this already: a flux medium carries an
+origin *statement* recording which rule located its circle and on what evidence,
+the C1541 profile defaults to the longest gap because that drive never observes
+an index, and a located splice is a stated fact rather than a boundary. One rung
+up the circle is crisp — a hardware bitstream has a definite cell count per
+revolution, and a G64 writes each track's length down.
+
+NIB and NBZ share the flux characteristic and not the bitstream one: a fixed
+window longer than a revolution, overlapping itself, with the wrap nowhere
+recorded. **That is why they enter at flux** (D16). Their bits carry no
+transition timings, so a pulse materialized from them has a position computed
+from a bit index and a declared cell width — synthetic, and the flux medium's
+own model already refuses to call it anything else, since every pulse names what
+put it there. In-force P22 governs the result unchanged: synthetic provenance is
+retained, and protection, weak regions and timing evidence the source never
+stored cannot be reproduced from it.
+
+**Synthesis places nothing at an exact nominal position.** No drive writes at
+the tick, so manufactured transitions carry **jitter**, drawn seeded and
+recorded like every other draw in this family, with the amount and the seed
+travelling as provenance. Pulses at perfect multiples of a declared cell would
+be a recording no mechanism has ever produced, and would let a channel or a
+recognizer be exercised against a regularity nothing downstream will meet.
+
+**The amount is derived, not separately declared: half the family's admissible
+reading deviation.** A profile already states what deviation from `k × cell` its
+reader accepts, and synthesizing at half of it says the writing drive was
+comfortably inside its own family's tolerance. The reason to fix the factor
+rather than declare a second number is that it makes a property checkable: every
+synthesized transition stays well within the band that classifies it, so
+recovering the bitstream from a synthesized medium returns exactly the bits that
+were synthesized. A round trip that can lose a bit would make the whole
+placement unsafe. A caller may declare its own amount as a policy input, and a
+looser one is answerable for that guarantee.
+
+Two constraints keep the factor meaning what it says. **Jitter is drawn on the
+interval, not on the absolute position** — two independently jittered positions
+put twice the deviation into the interval between them, which lands exactly on
+the band edge and misclassifies. And **the circle closes exactly**: jitter
+redistributes inside a revolution and never changes its total, so the frame's
+wrap is the one the reduction declared rather than the sum of a random walk.
+
+Jitter and the reading band are per-transition and uncorrelated. **Spindle speed
+variation is a third thing and is folded into neither** — it moves every
+transition on a revolution together rather than each independently, so a family
+that models it declares it separately or not at all.
+
+The synthesized timing is the **compromise accepted for that placement**, not
+the argument for it. What the placement buys is one path instead of two:
+everything above the flux medium is the ordinary ladder — read channel,
+bitstream, codec — so the class reaches a drive by the route every other flux
+source already takes. What it costs is stated rather than hidden: the read
+channel recovers bits from timings that were themselves computed from bits.
+
+**This is not licence to place an artifact wherever is convenient.** The test is
+the characteristic, applied to the artifact and stated with the reduction it
+implies; what P13 continues to forbid is the claim that the artifact *recorded*
+what was synthesized for it.
+
+**It adds no active-layer row.** The durable vocabulary is unchanged: a
+capture-form artifact carries no session's mutable truth at any rung, for the
+reason already stated of flux capture — a write has no coherent destination in
+an artifact that records several disagreeing observations, or one window whose
+wrap nobody established. What P23 says of flux capture holds of every capture
+form.
+
+### Knock-on requirements
+
+In-force P22's two-model clause is scoped to the flux family, which is where
+the models were found; this principle generalizes the shape without amending
+that clause, and P22's own statement of it stands as written. The pledged P23
+amendment's upper half gains one sentence when it arms: capture-form artifacts
+take no row at any rung, as flux capture takes none at its own.
