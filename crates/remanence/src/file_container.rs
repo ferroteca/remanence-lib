@@ -1,53 +1,59 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The private file-container model behind the P19 seam.
+//! The file-container presentation: the interface every file-bearing
+//! provider presents through at the P19 seam, and the vocabulary they
+//! answer in.
 //!
-//! This is the one representation every file-bearing provider
-//! materializes into: serialized-container catalogs, filesystem
-//! adapters, and namespace composers alike. It is not a public
-//! interface, an interchange format, or an archive grammar — it holds
-//! what a listing *is*, so that no provider keeps a private second
-//! notion of it.
+//! **There is no file-container layer here.** P19 makes file containers
+//! a seam: adapters *expose* a view and results *present* an interface.
+//! A ZIP grammar, a FAT volume, a Commodore directory and a composed
+//! namespace are real systems that already hold their own structure,
+//! and each of them can present a view of it. Nothing in this module
+//! materializes a container above them — there is no intermediate
+//! representation to copy into, and so no second place a listing lives
+//! and nothing to invalidate when the truth beneath changes.
 //!
-//! The model serves both standings P23 distinguishes, and
-//! [`Standing`] is where that difference lives. Over a serialized
-//! container the model is itself the durable active layer, and there is
-//! nothing beneath it to address. Over a filesystem on materialized
-//! media it is a derived presentation, items carry footprints in the
-//! backing layer's own addressing, and the P19 scope amendment's
-//! [`CoverageAccount`] states what the interpretation does and does not
-//! claim.
+//! That is what keeps reads bounded (P27): a provider answers for the
+//! container it was asked about by reading that container, rather than
+//! building an item pool for fifty thousand files before the caller can
+//! list one of them.
 //!
-//! Two rules shape everything here:
+//! Every presentation is a view *of* something — the lowest durable
+//! layer the session has materialized, which is the source of truth and
+//! which a presentation never is. That floor may be an archive's own
+//! named-entry state, addressed CHS records, logical blocks, or timed
+//! flux. Each item's [`FloorExtent`] hook says where it sits in the
+//! floor's own addressing, and nothing is ever written through a
+//! presentation.
 //!
-//! - **Names and items are different things.** The namespace is edges
-//!   over an item pool, so one item may carry several names (hard
-//!   links), a flat filesystem is one root whose edges all reach
-//!   leaves, and hierarchy costs nothing extra. Directory order is
-//!   evidence and is preserved as each edge's ordinal; nothing here
-//!   re-sorts a source's listing.
-//! - **The unclaimed remainder is itemized, never named.** In-force
-//!   P19 refuses to manufacture pseudo-files, so an
-//!   [`ItemBody::OpaqueRegion`] can never be linked into the
-//!   namespace. It is reached through the coverage account instead,
-//!   which is what lets a view hold holes without lying about them in
-//!   either direction.
+//! Two rules shape the vocabulary:
+//!
+//! - **Names and items are different things.** [`entries`] returns
+//!   names reaching targets, so one item may be reached by several
+//!   names, a flat filesystem is one root whose entries all reach
+//!   leaves, and hierarchy is a container whose entries reach
+//!   containers. Listing order is evidence, carried as each entry's
+//!   ordinal; nothing here re-sorts a source's listing.
+//! - **The unclaimed remainder is itemized, never named.** In-force P19
+//!   refuses to manufacture pseudo-files, so an [`ItemKind::OpaqueRegion`]
+//!   is reached through the account rather than by path. That is what
+//!   lets a view hold holes without lying in either direction: a
+//!   presentation may be incomplete precisely because it is not the
+//!   truth.
 //!
 //! Metadata follows the two-outcome rule the flux layer established one
 //! seam down: a source fact either maps to a named field here, or is
 //! retained as a [`DeclaredFact`] under its provider's namespace with
 //! its source spelling and order intact. Nothing is normalized on the
-//! way in — a timestamp keeps its source precision, epoch, and zone
-//! semantics because the provider's namespace says what its value
-//! means, and this model never reinterprets it.
+//! way through — a timestamp keeps its source precision, epoch and zone
+//! semantics, because the provider's namespace says what its value
+//! means.
 //!
-//! Nothing is read whole (P27): file content stays behind a bounded
-//! [`ContentSource`] descriptor, so a layer over a hundred-gigabyte
-//! artifact costs its structure and nothing more.
+//! [`entries`]: FileContainerView::entries
 
-// The providers that will materialize into this model arrive with their
-// own features; until then its constructors have no non-test callers.
+// The providers that will present through this contract arrive with
+// their own features; until then it has no non-test implementors.
 #![allow(dead_code)]
 
 use std::fs::File;
@@ -55,19 +61,22 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 
-/// A library-owned item identity, stable for the layer's lifetime.
+/// A provider's own identity for one item.
 ///
-/// It is an index into the layer's item pool and means nothing outside
-/// the layer that issued it.
+/// The value belongs to the provider that issued it — a directory
+/// entry's location, a central-directory index, an inode — and means
+/// nothing to anyone else. Nothing in this module assigns identities,
+/// because nothing here holds a pool to index into. Callers pass a ref
+/// back to the provider that gave it to them and never interpret it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct ItemId(pub(crate) u32);
+pub(crate) struct ItemRef(pub(crate) u64);
 
 /// The encoding a provider claims for a recorded name.
 ///
 /// The set grows additively as providers are admitted, exactly as the
 /// flux layer's named homes do: a provider whose encoding has no
-/// variant here retains the name's bytes and refuses to claim an
-/// encoding it does not implement.
+/// variant here keeps the name's bytes and does not claim an encoding
+/// it has not implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NameEncoding {
     Ascii,
@@ -79,8 +88,7 @@ pub(crate) enum NameEncoding {
     OemCodepage(u16),
 }
 
-/// How faithfully a recorded name's decoded presentation represents its
-/// bytes.
+/// How faithfully a decoded presentation represents the recorded bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NameConversion {
     /// Every byte mapped, and the presentation is reversible.
@@ -94,8 +102,9 @@ pub(crate) enum NameConversion {
 ///
 /// The bytes are what the source stored and are never rewritten. The
 /// decoded presentation sits beside them with the provenance of its
-/// conversion, never in place of them — irregular names (trailing
-/// spaces, shift characters, bytes outside the claimed encoding) stay
+/// conversion, never in place of them: a ZIP name is UTF-8 only when
+/// the grammar's own flag says so, and irregular names — trailing
+/// spaces, shift characters, bytes outside the claimed encoding — stay
 /// as recorded and are reported as issues rather than repaired.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecordedName {
@@ -132,22 +141,46 @@ impl RecordedName {
     }
 }
 
-/// One edge of the namespace: a name, in one container, reaching one
-/// item.
+/// One name in one container, reaching one item.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Edge {
+pub(crate) struct Entry {
     pub(crate) name: RecordedName,
-    pub(crate) target: ItemId,
-    /// The edge's position in the source's own listing order.
+    pub(crate) target: ItemRef,
+    /// The entry's position in the source's own listing order.
     pub(crate) ordinal: u64,
+}
+
+/// What an item is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ItemKind {
+    /// A namespace level, whose entries name other items. It claims
+    /// namespace structure, not allocation in the floor.
+    Container,
+    /// An item with extractable content, reached through its hook.
+    File,
+    /// The itemized remainder of the account: an extent of the floor
+    /// this interpretation does not claim. It is never named, never a
+    /// verdict about what the extent holds, and never a pseudo-file.
+    OpaqueRegion,
+}
+
+impl ItemKind {
+    /// The kind's stable spelling, for diagnostics.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Container => "container",
+            Self::File => "file",
+            Self::OpaqueRegion => "opaque region",
+        }
+    }
 }
 
 /// What a provider's size claim is actually a claim *about*.
 ///
 /// These are different claims, not one number: an exactly stored byte
 /// count, a size expressed in allocation units, and a rounded count of
-/// fixed-length records each mean something different about the bytes
-/// a read will produce.
+/// fixed-length records each say something different about the bytes a
+/// read will produce.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SizeBasis {
     /// The source stores the byte length itself.
@@ -155,7 +188,7 @@ pub(crate) enum SizeBasis {
     /// The source states a count of allocation units only.
     AllocationUnits { unit_bytes: u64, units: u64 },
     /// The source states a count of fixed-length records, so the byte
-    /// length is rounded up to the record boundary (CP/M's 128-byte
+    /// length is rounded to the record boundary (CP/M's 128-byte
     /// records).
     RecordCount { record_bytes: u64, records: u64 },
 }
@@ -178,17 +211,16 @@ impl SizeClaim {
 
 /// Where a file item's bytes come from, bounded (P27).
 ///
-/// This is a descriptor, never the bytes: the model holds no file
-/// content resident, and a read resolves it through the owning
-/// provider when the caller asks.
+/// This is a descriptor, never the bytes: a presentation is a map and
+/// not a pipe, and reading resolves through the provider that owns the
+/// floor.
 pub(crate) enum ContentSource {
     /// A span of the claimed source artifact, read in place.
     InPlace { offset: u64, length: u64 },
     /// Decoded once into private session storage.
     Spooled { spool: Arc<File>, length: u64 },
-    /// Assembled from extents of the materialized backing layer, in
-    /// the order the provider gives them.
-    Backing { extents: Vec<BackingExtent> },
+    /// Assembled from extents of the floor, in the order given.
+    Floor { extents: Vec<FloorExtent> },
     /// The item holds no bytes at all.
     Empty,
 }
@@ -204,8 +236,8 @@ impl std::fmt::Debug for ContentSource {
             Self::Spooled { length, .. } => {
                 f.debug_struct("Spooled").field("length", length).finish()
             }
-            Self::Backing { extents } => f
-                .debug_struct("Backing")
+            Self::Floor { extents } => f
+                .debug_struct("Floor")
                 .field("extents", &extents.len())
                 .finish(),
             Self::Empty => f.write_str("Empty"),
@@ -213,14 +245,17 @@ impl std::fmt::Debug for ContentSource {
     }
 }
 
-/// What one addressable unit of a materialized backing layer *is*.
+/// What one addressable unit of the floor *is*.
 ///
-/// A layer speaks exactly one of these, so footprints and the coverage
-/// account share one unit ordering and totality is checkable. The
-/// descriptor keeps the vocabulary's own spelling recoverable; the
-/// extents below index units in it.
+/// A presentation has exactly one floor, so hooks and the account share
+/// one unit ordering and totality is checkable. The descriptor keeps
+/// the vocabulary's own spelling recoverable; extents index units in
+/// it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BackingAddressing {
+pub(crate) enum FloorAddressing {
+    /// Bytes of a serialized artifact — an archive's own named-entry
+    /// state is presented over its file this way.
+    Bytes,
     /// Geometry-opaque logical blocks numbered from zero.
     Blocks { bytes_per_block: u32 },
     /// Records addressed by cylinder, head and sector under a declared
@@ -235,14 +270,35 @@ pub(crate) enum BackingAddressing {
     Flux { ticks_per_revolution: u64 },
 }
 
-/// A half-open run of addressable units in the backing layer.
+impl FloorAddressing {
+    /// The unit's stable spelling, for diagnostics.
+    pub(crate) const fn unit(self) -> &'static str {
+        match self {
+            Self::Bytes => "byte",
+            Self::Blocks { .. } => "block",
+            Self::Chs { .. } => "record",
+            Self::Flux { .. } => "flux unit",
+        }
+    }
+}
+
+/// The lowest durable layer the session has materialized: the truth a
+/// presentation is a view of, and never is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BackingExtent {
+pub(crate) struct Floor {
+    pub(crate) addressing: FloorAddressing,
+    /// The addressable extent the account must cover in full.
+    pub(crate) total_units: u64,
+}
+
+/// A half-open run of addressable units in the floor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FloorExtent {
     pub(crate) start: u64,
     pub(crate) count: u64,
 }
 
-impl BackingExtent {
+impl FloorExtent {
     pub(crate) const fn new(start: u64, count: u64) -> Self {
         Self { start, count }
     }
@@ -253,43 +309,11 @@ impl BackingExtent {
     }
 }
 
-/// What an item is, and the facts only that kind carries.
-///
-/// Modeling the kinds this way is what keeps the illegal combinations
-/// unrepresentable: only a container owns edges, only a file claims a
-/// size and content, and an opaque region can claim neither.
-#[derive(Debug)]
-pub(crate) enum ItemBody {
-    /// A named namespace level. It claims container structure, not disk
-    /// allocation.
-    Container { edges: Vec<Edge> },
-    /// An item with extractable content.
-    File {
-        size: SizeClaim,
-        content: ContentSource,
-    },
-    /// The itemized remainder of the coverage account: an extent the
-    /// interpretation does not claim. It never carries a name, and
-    /// interpreting it belongs to whatever lower seam claims it.
-    OpaqueRegion,
-}
-
-impl ItemBody {
-    /// The kind's stable spelling, for diagnostics.
-    pub(crate) const fn kind(&self) -> &'static str {
-        match self {
-            Self::Container { .. } => "container",
-            Self::File { .. } => "file",
-            Self::OpaqueRegion => "opaque region",
-        }
-    }
-}
-
 /// A fact a provider declares under its own namespace.
 ///
-/// The value means whatever that namespace says it means. The model
-/// neither interprets nor normalizes it — which is exactly what lets a
-/// timestamp keep its source precision, epoch and zone semantics.
+/// The value means whatever that namespace says it means. Nothing here
+/// interprets or normalizes it, which is what lets a timestamp keep its
+/// source precision, epoch and zone semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeclaredFact {
     /// The provider namespace that owns the fact's meaning.
@@ -310,28 +334,26 @@ pub(crate) enum FactValue {
     Flag(bool),
 }
 
-/// A source structure retained verbatim because the model has no named
-/// home for it yet.
+/// A source structure retained verbatim because the vocabulary has no
+/// named home for it yet.
 ///
 /// Retaining it is the first of the two outcomes, not the permanent
 /// one: a fact stays foreign only until a later revision gives it a
-/// named field, which is what stops this from becoming the model's
-/// blind spot.
+/// named field, which is what stops this becoming a blind spot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ForeignRecord {
     pub(crate) namespace: &'static str,
     pub(crate) type_id: String,
     pub(crate) version: Option<u32>,
     pub(crate) ordinal: u64,
-    /// Where it sat in the source artifact, where the provider can say.
-    pub(crate) source_range: Option<BackingExtent>,
+    /// Where it sat in the floor, where the provider can say.
+    pub(crate) source_range: Option<FloorExtent>,
     pub(crate) payload: Vec<u8>,
     /// Whatever the provider could safely decode, if anything.
     pub(crate) decoded_summary: Vec<DeclaredFact>,
 }
 
-/// Something qualified about an item or the layer, recorded rather than
-/// repaired.
+/// Something qualified about an item, recorded rather than repaired.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Issue {
     /// The owning provider's stable spelling for this kind of issue.
@@ -348,7 +370,7 @@ impl Issue {
     }
 }
 
-/// How a fact in this model came to be known.
+/// How a fact came to be known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Provenance {
     /// The provider namespace that established it.
@@ -371,91 +393,145 @@ impl Provenance {
     }
 }
 
-/// One item: its identity, its kind-specific body, and everything the
-/// provider claimed about it.
+/// Everything a provider claims about one item.
 #[derive(Debug)]
-pub(crate) struct Item {
-    pub(crate) id: ItemId,
-    pub(crate) body: ItemBody,
-    /// Where the item sits in the materialized backing layer. Always
-    /// empty in the active standing, where there is no layer beneath.
-    pub(crate) footprint: Vec<BackingExtent>,
+pub(crate) struct ItemFacts {
+    pub(crate) kind: ItemKind,
+    /// Present for a file item; a claim, with what it is a claim about.
+    pub(crate) size: Option<SizeClaim>,
+    /// Where the item sits in the floor, in the floor's addressing.
+    pub(crate) hook: Vec<FloorExtent>,
     pub(crate) facts: Vec<DeclaredFact>,
     pub(crate) issues: Vec<Issue>,
     pub(crate) provenance: Provenance,
 }
 
-impl Item {
-    /// The item's edges, or an empty slice for a non-container.
-    pub(crate) fn edges(&self) -> &[Edge] {
-        match &self.body {
-            ItemBody::Container { edges } => edges,
-            _ => &[],
+impl ItemFacts {
+    pub(crate) fn new(kind: ItemKind, provenance: Provenance) -> Self {
+        Self {
+            kind,
+            size: None,
+            hook: Vec::new(),
+            facts: Vec::new(),
+            issues: Vec::new(),
+            provenance,
         }
     }
 }
 
-/// Which P23 standing the layer holds, and so what it can carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Standing {
-    /// The file container is itself the durable active layer — a
-    /// serialized container such as ZIP. There is no layer beneath it,
-    /// so there are no footprints and no coverage account. Source bytes
-    /// the grammar does not account for are that adapter's evidence
-    /// under P3 and P4, not opaque regions.
-    Active,
-    /// A derived presentation over a materialized backing layer.
-    Derived {
-        addressing: BackingAddressing,
-        /// The addressable extent the account must cover in full.
-        total_units: u64,
-    },
+/// The view a file-bearing system presents at the P19 seam.
+///
+/// Implementors are the real systems themselves — an archive grammar, a
+/// filesystem adapter, a namespace composer — answering about their own
+/// structure. The shape is navigational rather than wholesale so that
+/// answering one question costs one question's worth of reading (P27);
+/// [`account`] is the deliberate exception, being a whole-artifact
+/// report produced only when asked for.
+///
+/// [`account`]: FileContainerView::account
+pub(crate) trait FileContainerView {
+    /// The provider namespace, which attributes its refusals.
+    fn source(&self) -> &'static str;
+
+    /// The floor this is a view of.
+    fn floor(&self) -> Floor;
+
+    /// The namespace's roots, each a container. Several are ordinary:
+    /// a composed namespace may have one per drive letter or mount.
+    fn roots(&self) -> Result<Vec<ItemRef>>;
+
+    /// The entries of one container, in the source's own order.
+    ///
+    /// An entry never targets an opaque region: the namespace lists
+    /// only what the source names.
+    fn entries(&self, container: ItemRef) -> Result<Vec<Entry>>;
+
+    /// What the provider claims about one item.
+    fn item(&self, item: ItemRef) -> Result<ItemFacts>;
+
+    /// Where one file item's bytes come from, bounded.
+    fn content(&self, item: ItemRef) -> Result<ContentSource>;
+
+    /// The total account of the floor, computed on request.
+    fn account(&self) -> Result<CoverageAccount>;
 }
 
-/// How one addressable unit of the backing is accounted for.
+/// The refusal for an operation that needs a container.
+pub(crate) fn not_a_container(source: &'static str, kind: ItemKind) -> Error {
+    Error::invalid_image(source, format!("a {} holds no names", kind.as_str()))
+}
+
+/// The refusal for an item ref this provider did not issue.
+pub(crate) fn no_such_item(source: &'static str, item: ItemRef) -> Error {
+    Error::invalid_image(source, format!("this view holds no item {}", item.0))
+}
+
+/// The refusal for content asked of something that holds none.
+pub(crate) fn not_a_file(source: &'static str, kind: ItemKind) -> Error {
+    Error::invalid_image(
+        source,
+        format!("a {} has no extractable content", kind.as_str()),
+    )
+}
+
+/// How one addressable unit of the floor is accounted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CoverageClass {
-    /// The data footprint of an item the namespace names.
-    ItemData(ItemId),
-    /// The namespace's own structures — directory records, allocation
-    /// metadata, boot and reserved structures the interpretation
-    /// claims. Deleted-but-present directory entries are accounted
-    /// here, inside the structures they occupy; itemizing them would be
-    /// a recovery claim this model does not make.
-    NamespaceStructures,
+    /// The data hook of an item the namespace names.
+    ItemData(ItemRef),
+    /// Structures the interpretation claims for itself — directory
+    /// records, allocation metadata, boot and reserved areas, an
+    /// archive's local headers and central directory. Deleted-but-
+    /// present entries are accounted here, inside the structures they
+    /// occupy; itemizing them would be a recovery claim.
+    Structures,
     /// Space the allocation metadata claims is free. This records that
-    /// claim and nothing else: it is not a verdict that the extent is
-    /// empty, disposable, or safe to reuse.
+    /// claim and nothing else: not a verdict that the extent is empty,
+    /// disposable, or safe to reuse.
     ClaimedFree,
     /// An extent the interpretation does not claim, itemized as the
     /// opaque region it names.
-    Opaque(ItemId),
+    Opaque(ItemRef),
 }
 
-/// One classified run of the backing layer.
+impl CoverageClass {
+    /// The class's stable spelling, for diagnostics.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ItemData(_) => "item data",
+            Self::Structures => "interpretation structures",
+            Self::ClaimedFree => "claimed-free space",
+            Self::Opaque(_) => "opaque region",
+        }
+    }
+}
+
+/// One classified run of the floor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CoverageRegion {
-    pub(crate) extent: BackingExtent,
+    pub(crate) extent: FloorExtent,
     pub(crate) class: CoverageClass,
     /// Why the class was assigned, in human-readable terms (P4).
     pub(crate) evidence: Vec<String>,
 }
 
-/// A total, exclusive account of the backing layer's addressable extent.
+/// A total, exclusive account of the floor.
 ///
 /// Totality is true by construction rather than by assertion: the
-/// provider claims what its interpretation covers, and whatever remains
-/// becomes opaque regions. Its regions are ordered by position and
-/// together span exactly `[0, total_units)`.
+/// provider claims what its interpretation covers and whatever remains
+/// becomes opaque regions, so the regions are ordered by position and
+/// together span exactly `[0, floor.total_units)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CoverageAccount {
-    pub(crate) addressing: BackingAddressing,
-    pub(crate) total_units: u64,
+    pub(crate) floor: Floor,
     pub(crate) regions: Vec<CoverageRegion>,
+    /// The first ref assigned to an opaque region; refs run upward from
+    /// it in position order.
+    opaque_base: u64,
 }
 
 impl CoverageAccount {
-    /// The regions of one class, in position order.
+    /// The regions whose class matches, in position order.
     pub(crate) fn regions_of(
         &self,
         matching: impl Fn(&CoverageClass) -> bool,
@@ -465,78 +541,94 @@ impl CoverageAccount {
             .filter(move |region| matching(&region.class))
     }
 
-    /// The number of units accounted to classes matching `matching`.
+    /// The number of units accounted to matching classes.
     pub(crate) fn units_of(&self, matching: impl Fn(&CoverageClass) -> bool) -> u64 {
         self.regions_of(matching)
             .map(|region| region.extent.count)
             .sum()
     }
+
+    /// Whether `item` names one of this account's opaque regions.
+    pub(crate) fn is_opaque(&self, item: ItemRef) -> bool {
+        self.opaque_region(item).is_some()
+    }
+
+    /// The opaque region `item` names, if it names one.
+    pub(crate) fn opaque_region(&self, item: ItemRef) -> Option<&CoverageRegion> {
+        self.regions
+            .iter()
+            .find(|region| region.class == CoverageClass::Opaque(item))
+    }
+
+    /// The facts of an opaque region, so a provider can answer
+    /// [`FileContainerView::item`] for one without tracking it itself.
+    pub(crate) fn opaque_facts(&self, item: ItemRef, source: &'static str) -> Option<ItemFacts> {
+        let region = self.opaque_region(item)?;
+        let mut facts = ItemFacts::new(
+            ItemKind::OpaqueRegion,
+            Provenance::new(source).note("the interpretation claims no structure over this extent"),
+        );
+        facts.hook = vec![region.extent];
+        Some(facts)
+    }
 }
 
-/// Builds a [`CoverageAccount`] by claiming what the interpretation
+/// Builds a [`CoverageAccount`] by claiming what an interpretation
 /// covers and deriving the rest.
 ///
-/// Claims are checked as they arrive (P6): an extent outside the
-/// backing, an empty run, or an overlap with an existing claim is
-/// refused there and then, naming both sides, rather than producing an
-/// account that quietly contradicts itself.
+/// Claims are checked as they arrive (P6): an extent outside the floor,
+/// an empty run, or an overlap with an existing claim is refused there
+/// and then, naming both sides, rather than producing an account that
+/// quietly contradicts itself.
 pub(crate) struct CoverageBuilder {
     source: &'static str,
-    addressing: BackingAddressing,
-    total_units: u64,
+    floor: Floor,
+    opaque_base: u64,
     /// Kept ordered by `extent.start`, and disjoint by construction.
     claimed: Vec<CoverageRegion>,
 }
 
 impl CoverageBuilder {
-    /// Begins an account for `layer`, which must hold the derived
-    /// standing — the active standing has no layer beneath to account
-    /// for.
-    pub(crate) fn for_layer(layer: &FileContainerLayer) -> Result<Self> {
-        let Standing::Derived {
-            addressing,
-            total_units,
-        } = layer.standing
-        else {
-            return Err(layer.refuse(
-                "a coverage account needs a materialized backing layer, and this \
-                 file container is itself the active layer",
-            ));
-        };
-        Ok(Self {
-            source: layer.provenance.source,
-            addressing,
-            total_units,
+    /// Begins an account of `floor`.
+    ///
+    /// `opaque_base` is the first [`ItemRef`] value the builder may
+    /// assign to a derived opaque region; the provider chooses a range
+    /// that cannot collide with the refs it issues itself.
+    pub(crate) fn new(source: &'static str, floor: Floor, opaque_base: u64) -> Self {
+        Self {
+            source,
+            floor,
+            opaque_base,
             claimed: Vec::new(),
-        })
+        }
     }
 
     /// Claims `extent` for `class`, with the evidence for that reading.
     pub(crate) fn claim(
         &mut self,
-        extent: BackingExtent,
+        extent: FloorExtent,
         class: CoverageClass,
         evidence: Vec<String>,
     ) -> Result<()> {
+        let unit = self.floor.addressing.unit();
         if extent.count == 0 {
             return Err(self.refuse(format!(
-                "coverage claim at unit {} spans no units; an item that occupies \
-                 nothing carries no extent at all",
+                "coverage claim at {unit} {} spans nothing; an item that occupies \
+                 no {unit}s carries no extent at all",
                 extent.start
             )));
         }
         let end = extent.end().ok_or_else(|| {
             self.refuse(format!(
-                "coverage claim at unit {} for {} units runs past the end of the \
-                 unit space",
+                "coverage claim at {unit} {} for {} {unit}s runs past the end of \
+                 the unit space",
                 extent.start, extent.count
             ))
         })?;
-        if end > self.total_units {
+        if end > self.floor.total_units {
             return Err(self.refuse(format!(
-                "coverage claim covers units {}..{end}, past the backing layer's \
-                 {} units",
-                extent.start, self.total_units
+                "coverage claim covers {unit}s {}..{end}, past the floor's {} {unit}s",
+                extent.start, self.floor.total_units
             )));
         }
 
@@ -568,61 +660,62 @@ impl CoverageBuilder {
         Ok(())
     }
 
-    /// Derives the opaque remainder, itemizes it in `layer`, and
-    /// installs the finished account.
+    /// Derives the opaque remainder and returns the finished account.
     ///
-    /// Every gap between claims becomes one opaque region item, so the
-    /// resulting account spans the backing layer exactly.
-    pub(crate) fn finish(self, layer: &mut FileContainerLayer) -> Result<()> {
-        for region in &self.claimed {
-            if let CoverageClass::ItemData(id) | CoverageClass::Opaque(id) = region.class
-                && layer.get(id).is_none()
-            {
-                return Err(layer.refuse(format!(
-                    "coverage claims units {}..{} for item {}, which this layer \
-                     does not hold",
-                    region.extent.start,
-                    region.extent.end().unwrap_or(u64::MAX),
-                    id.0
-                )));
-            }
-        }
-
+    /// Every gap between claims becomes one opaque region, so the
+    /// account spans the floor exactly.
+    pub(crate) fn finish(self) -> CoverageAccount {
+        let unit = self.floor.addressing.unit();
         let mut regions: Vec<CoverageRegion> = Vec::with_capacity(self.claimed.len() + 1);
+        let mut opaque_next = self.opaque_base;
         let mut position = 0_u64;
+
+        let mut derive = |extent: FloorExtent, regions: &mut Vec<CoverageRegion>| {
+            let item = ItemRef(opaque_next);
+            opaque_next += 1;
+            regions.push(CoverageRegion {
+                extent,
+                class: CoverageClass::Opaque(item),
+                evidence: vec![format!(
+                    "{unit}s {}..{} are covered by no claim of this interpretation",
+                    extent.start,
+                    extent.end().unwrap_or(u64::MAX)
+                )],
+            });
+        };
+
         for region in self.claimed {
             if region.extent.start > position {
-                regions.push(
-                    layer.itemize_opaque(BackingExtent::new(
-                        position,
-                        region.extent.start - position,
-                    )),
+                derive(
+                    FloorExtent::new(position, region.extent.start - position),
+                    &mut regions,
                 );
             }
             position = region.extent.end().expect("claims were bounds-checked");
             regions.push(region);
         }
-        if position < self.total_units {
-            regions.push(
-                layer.itemize_opaque(BackingExtent::new(position, self.total_units - position)),
+        if position < self.floor.total_units {
+            derive(
+                FloorExtent::new(position, self.floor.total_units - position),
+                &mut regions,
             );
         }
 
-        layer.coverage = Some(CoverageAccount {
-            addressing: self.addressing,
-            total_units: self.total_units,
+        CoverageAccount {
+            floor: self.floor,
             regions,
-        });
-        Ok(())
+            opaque_base: self.opaque_base,
+        }
     }
 
-    fn overlap(&self, existing: &CoverageRegion, incoming: BackingExtent) -> Error {
+    fn overlap(&self, existing: &CoverageRegion, incoming: FloorExtent) -> Error {
+        let unit = self.floor.addressing.unit();
         self.refuse(format!(
-            "coverage claim covering units {}..{} overlaps the {} already claimed \
-             at units {}..{}",
+            "coverage claim covering {unit}s {}..{} overlaps the {} already claimed \
+             at {unit}s {}..{}",
             incoming.start,
             incoming.end().unwrap_or(u64::MAX),
-            class_name(&existing.class),
+            existing.class.as_str(),
             existing.extent.start,
             existing.extent.end().unwrap_or(u64::MAX),
         ))
@@ -633,264 +726,84 @@ impl CoverageBuilder {
     }
 }
 
-const fn class_name(class: &CoverageClass) -> &'static str {
-    match class {
-        CoverageClass::ItemData(_) => "item data",
-        CoverageClass::NamespaceStructures => "namespace structures",
-        CoverageClass::ClaimedFree => "claimed-free space",
-        CoverageClass::Opaque(_) => "opaque region",
-    }
-}
+/// Checks one presentation against the contract's invariants.
+///
+/// This is a conformance harness for tests and for a new provider's own
+/// verification, not a runtime path: it walks the whole namespace, which
+/// is exactly what the interface exists to avoid doing during ordinary
+/// use. It proves what the interface promises and a provider could
+/// otherwise get wrong on its own: that the account is total and
+/// exclusive over the declared floor, and that no entry names an opaque
+/// region.
+pub(crate) fn check_conformance(view: &dyn FileContainerView) -> Result<()> {
+    let source = view.source();
+    let floor = view.floor();
+    let account = view.account()?;
 
-/// One file container's namespace, items, and — in the derived
-/// standing — the account of what it claims over its backing.
-#[derive(Debug)]
-pub(crate) struct FileContainerLayer {
-    standing: Standing,
-    /// Each a container item. Several roots are ordinary: a composed
-    /// namespace may have one per drive letter or mount.
-    roots: Vec<ItemId>,
-    /// The item pool, indexed by [`ItemId`].
-    items: Vec<Item>,
-    coverage: Option<CoverageAccount>,
-    /// Container-level metadata, in source order.
-    facts: Vec<DeclaredFact>,
-    foreign_records: Vec<ForeignRecord>,
-    provenance: Provenance,
-}
-
-impl FileContainerLayer {
-    pub(crate) fn new(standing: Standing, provenance: Provenance) -> Self {
-        Self {
-            standing,
-            roots: Vec::new(),
-            items: Vec::new(),
-            coverage: None,
-            facts: Vec::new(),
-            foreign_records: Vec::new(),
-            provenance,
-        }
+    if account.floor != floor {
+        return Err(Error::invalid_image(
+            source,
+            "the account describes a different floor than the view declares",
+        ));
     }
 
-    pub(crate) const fn standing(&self) -> Standing {
-        self.standing
-    }
-
-    pub(crate) fn roots(&self) -> &[ItemId] {
-        &self.roots
-    }
-
-    pub(crate) fn coverage(&self) -> Option<&CoverageAccount> {
-        self.coverage.as_ref()
-    }
-
-    pub(crate) fn facts(&self) -> &[DeclaredFact] {
-        &self.facts
-    }
-
-    pub(crate) fn foreign_records(&self) -> &[ForeignRecord] {
-        &self.foreign_records
-    }
-
-    pub(crate) fn provenance(&self) -> &Provenance {
-        &self.provenance
-    }
-
-    /// Every item the layer holds, named or not.
-    pub(crate) fn items(&self) -> &[Item] {
-        &self.items
-    }
-
-    pub(crate) fn get(&self, id: ItemId) -> Option<&Item> {
-        self.items.get(id.0 as usize)
-    }
-
-    pub(crate) fn get_mut(&mut self, id: ItemId) -> Option<&mut Item> {
-        self.items.get_mut(id.0 as usize)
-    }
-
-    /// Adds a container item and returns its identity. It is linked
-    /// into the namespace by [`Self::link`], or declared a root by
-    /// [`Self::add_root`].
-    pub(crate) fn add_container(&mut self, provenance: Provenance) -> ItemId {
-        self.push(ItemBody::Container { edges: Vec::new() }, provenance)
-    }
-
-    /// Adds a file item and returns its identity.
-    pub(crate) fn add_file(
-        &mut self,
-        size: SizeClaim,
-        content: ContentSource,
-        provenance: Provenance,
-    ) -> ItemId {
-        self.push(ItemBody::File { size, content }, provenance)
-    }
-
-    /// Declares an existing container item a root of the namespace.
-    pub(crate) fn add_root(&mut self, id: ItemId) -> Result<()> {
-        match self.get(id).map(|item| &item.body) {
-            Some(ItemBody::Container { .. }) => {}
-            Some(body) => {
-                let kind = body.kind();
-                return Err(self.refuse(format!("a {kind} cannot be a namespace root")));
-            }
-            None => return Err(self.no_such_item(id)),
-        }
-        if !self.roots.contains(&id) {
-            self.roots.push(id);
-        }
-        Ok(())
-    }
-
-    /// Names `target` inside the container `parent`.
-    ///
-    /// Calling this more than once for one target is ordinary — that is
-    /// what a hard link is. The edge's ordinal is its position in the
-    /// source's own listing order, so the model preserves that order
-    /// without ever re-sorting it.
-    ///
-    /// An opaque region is refused: the namespace lists only what the
-    /// source names, and manufacturing an entry for the unclaimed
-    /// remainder is the pseudo-file P19 forbids.
-    pub(crate) fn link(
-        &mut self,
-        parent: ItemId,
-        name: RecordedName,
-        target: ItemId,
-    ) -> Result<()> {
-        match self.get(target).map(|item| &item.body) {
-            Some(ItemBody::OpaqueRegion) => {
-                return Err(self.refuse(format!(
-                    "the opaque region at item {} cannot be given the name '{}': \
-                     the namespace lists only what the source names",
-                    target.0, name.decoded
-                )));
-            }
-            Some(_) => {}
-            None => return Err(self.no_such_item(target)),
-        }
-        match self.get(parent).map(|item| &item.body) {
-            Some(ItemBody::Container { edges }) => {
-                let ordinal = edges.len() as u64;
-                let Some(Item {
-                    body: ItemBody::Container { edges },
-                    ..
-                }) = self.items.get_mut(parent.0 as usize)
-                else {
-                    unreachable!("the parent was just observed to be a container");
-                };
-                edges.push(Edge {
-                    name,
-                    target,
-                    ordinal,
-                });
-                Ok(())
-            }
-            Some(body) => {
-                let kind = body.kind();
-                Err(self.refuse(format!("a {kind} holds no names")))
-            }
-            None => Err(self.no_such_item(parent)),
-        }
-    }
-
-    /// Records `extent` as this item's footprint in the backing layer.
-    pub(crate) fn set_footprint(&mut self, id: ItemId, extents: Vec<BackingExtent>) -> Result<()> {
-        if matches!(self.standing, Standing::Active) {
-            return Err(self.refuse(
-                "a footprint needs a materialized backing layer, and this file \
-                 container is itself the active layer",
+    let unit = floor.addressing.unit();
+    let mut position = 0_u64;
+    for region in &account.regions {
+        if region.extent.start != position {
+            return Err(Error::invalid_image(
+                source,
+                format!(
+                    "the account skips or repeats at {unit} {position}: the next \
+                     region starts at {}",
+                    region.extent.start
+                ),
             ));
         }
-        match self.items.get_mut(id.0 as usize) {
-            Some(item) => {
-                item.footprint = extents;
-                Ok(())
+        position = region.extent.end().ok_or_else(|| {
+            Error::invalid_image(
+                source,
+                format!("an account region overflows at {unit} {position}"),
+            )
+        })?;
+    }
+    if position != floor.total_units {
+        return Err(Error::invalid_image(
+            source,
+            format!(
+                "the account covers {position} of the floor's {} {unit}s",
+                floor.total_units
+            ),
+        ));
+    }
+
+    let mut pending = view.roots()?;
+    let mut seen: Vec<ItemRef> = Vec::new();
+    while let Some(item) = pending.pop() {
+        if seen.contains(&item) {
+            continue;
+        }
+        seen.push(item);
+        let facts = view.item(item)?;
+        if facts.kind != ItemKind::Container {
+            continue;
+        }
+        for entry in view.entries(item)? {
+            if account.is_opaque(entry.target) {
+                return Err(Error::invalid_image(
+                    source,
+                    format!(
+                        "the entry '{}' names an opaque region; the namespace lists \
+                         only what the source names",
+                        entry.name.decoded
+                    ),
+                ));
             }
-            None => Err(self.no_such_item(id)),
+            pending.push(entry.target);
         }
     }
 
-    pub(crate) fn declare(&mut self, key: impl Into<String>, value: FactValue) {
-        let ordinal = self.facts.len() as u64;
-        self.facts.push(DeclaredFact {
-            namespace: self.provenance.source,
-            key: key.into(),
-            value,
-            ordinal,
-        });
-    }
-
-    pub(crate) fn retain_foreign(&mut self, record: ForeignRecord) {
-        self.foreign_records.push(record);
-    }
-
-    /// The items an ordinary namespace walk reaches from the roots.
-    ///
-    /// An item with no edge to it — the opaque remainder — is
-    /// unreachable here by construction, which is the whole point: it
-    /// is reached through the coverage account instead.
-    pub(crate) fn reachable(&self) -> Vec<ItemId> {
-        let mut seen = vec![false; self.items.len()];
-        let mut order = Vec::new();
-        let mut pending: Vec<ItemId> = self.roots.iter().rev().copied().collect();
-        while let Some(id) = pending.pop() {
-            let index = id.0 as usize;
-            if seen.get(index).copied().unwrap_or(true) {
-                continue;
-            }
-            seen[index] = true;
-            order.push(id);
-            let Some(item) = self.items.get(index) else {
-                continue;
-            };
-            for edge in item.edges().iter().rev() {
-                pending.push(edge.target);
-            }
-        }
-        order
-    }
-
-    fn push(&mut self, body: ItemBody, provenance: Provenance) -> ItemId {
-        let id = ItemId(self.items.len() as u32);
-        self.items.push(Item {
-            id,
-            body,
-            footprint: Vec::new(),
-            facts: Vec::new(),
-            issues: Vec::new(),
-            provenance,
-        });
-        id
-    }
-
-    /// Adds the unnamed item standing for one unclaimed extent, and
-    /// returns the coverage region naming it.
-    fn itemize_opaque(&mut self, extent: BackingExtent) -> CoverageRegion {
-        let id = self.push(
-            ItemBody::OpaqueRegion,
-            Provenance::new(self.provenance.source)
-                .note("the interpretation claims no structure over this extent"),
-        );
-        self.items[id.0 as usize].footprint = vec![extent];
-        CoverageRegion {
-            extent,
-            class: CoverageClass::Opaque(id),
-            evidence: vec![format!(
-                "units {}..{} are covered by no claim of this interpretation",
-                extent.start,
-                extent.end().unwrap_or(u64::MAX)
-            )],
-        }
-    }
-
-    fn no_such_item(&self, id: ItemId) -> Error {
-        self.refuse(format!("this layer holds no item {}", id.0))
-    }
-
-    fn refuse(&self, reason: impl Into<String>) -> Error {
-        Error::invalid_image(self.provenance.source, reason)
-    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -899,210 +812,208 @@ mod tests {
     use crate::error::ErrorCategory;
 
     const PROVIDER: &str = "test-provider";
+    const OPAQUE_BASE: u64 = 1 << 32;
 
-    fn derived_layer(total_units: u64) -> FileContainerLayer {
-        FileContainerLayer::new(
-            Standing::Derived {
-                addressing: BackingAddressing::Blocks {
-                    bytes_per_block: 256,
+    /// A synthetic system that presents a view of its own structure —
+    /// the contract's test surface, standing in for a real grammar.
+    struct SyntheticProvider {
+        floor: Floor,
+        /// `(kind, size, hook, entries)` by ref value.
+        items: Vec<(ItemKind, Option<SizeClaim>, Vec<FloorExtent>, Vec<Entry>)>,
+        roots: Vec<ItemRef>,
+        claims: Vec<(FloorExtent, CoverageClass)>,
+    }
+
+    impl SyntheticProvider {
+        fn new(total_units: u64) -> Self {
+            Self {
+                floor: Floor {
+                    addressing: FloorAddressing::Blocks {
+                        bytes_per_block: 256,
+                    },
+                    total_units,
                 },
+                items: Vec::new(),
+                roots: Vec::new(),
+                claims: Vec::new(),
+            }
+        }
+
+        fn bytes_floor(total_units: u64) -> Self {
+            let mut provider = Self::new(total_units);
+            provider.floor = Floor {
+                addressing: FloorAddressing::Bytes,
                 total_units,
-            },
-            Provenance::new(PROVIDER),
-        )
+            };
+            provider
+        }
+
+        fn add(&mut self, kind: ItemKind, hook: Vec<FloorExtent>) -> ItemRef {
+            self.items.push((kind, None, hook, Vec::new()));
+            ItemRef(self.items.len() as u64 - 1)
+        }
+
+        fn add_file(&mut self, size: SizeClaim, hook: Vec<FloorExtent>) -> ItemRef {
+            let item = self.add(ItemKind::File, hook);
+            self.items[item.0 as usize].1 = Some(size);
+            item
+        }
+
+        fn link(&mut self, parent: ItemRef, name: RecordedName, target: ItemRef) {
+            let ordinal = self.items[parent.0 as usize].3.len() as u64;
+            self.items[parent.0 as usize].3.push(Entry {
+                name,
+                target,
+                ordinal,
+            });
+        }
+
+        fn claim(&mut self, extent: FloorExtent, class: CoverageClass) {
+            self.claims.push((extent, class));
+        }
+
+        fn entry_names(&self, container: ItemRef) -> Vec<String> {
+            self.entries(container)
+                .expect("the container exists")
+                .into_iter()
+                .map(|entry| entry.name.decoded)
+                .collect()
+        }
     }
 
-    fn active_layer() -> FileContainerLayer {
-        FileContainerLayer::new(Standing::Active, Provenance::new(PROVIDER))
-    }
+    impl FileContainerView for SyntheticProvider {
+        fn source(&self) -> &'static str {
+            PROVIDER
+        }
 
-    fn named(layer: &FileContainerLayer, parent: ItemId) -> Vec<String> {
-        layer
-            .get(parent)
-            .expect("the parent exists")
-            .edges()
-            .iter()
-            .map(|edge| edge.name.decoded.clone())
-            .collect()
+        fn floor(&self) -> Floor {
+            self.floor
+        }
+
+        fn roots(&self) -> Result<Vec<ItemRef>> {
+            Ok(self.roots.clone())
+        }
+
+        fn entries(&self, container: ItemRef) -> Result<Vec<Entry>> {
+            let item = self
+                .items
+                .get(container.0 as usize)
+                .ok_or_else(|| no_such_item(PROVIDER, container))?;
+            if item.0 != ItemKind::Container {
+                return Err(not_a_container(PROVIDER, item.0));
+            }
+            Ok(item.3.clone())
+        }
+
+        fn item(&self, item: ItemRef) -> Result<ItemFacts> {
+            if let Some(facts) = self.account()?.opaque_facts(item, PROVIDER) {
+                return Ok(facts);
+            }
+            let held = self
+                .items
+                .get(item.0 as usize)
+                .ok_or_else(|| no_such_item(PROVIDER, item))?;
+            let mut facts = ItemFacts::new(held.0, Provenance::new(PROVIDER));
+            facts.size = held.1;
+            facts.hook = held.2.clone();
+            Ok(facts)
+        }
+
+        fn content(&self, item: ItemRef) -> Result<ContentSource> {
+            let held = self
+                .items
+                .get(item.0 as usize)
+                .ok_or_else(|| no_such_item(PROVIDER, item))?;
+            if held.0 != ItemKind::File {
+                return Err(not_a_file(PROVIDER, held.0));
+            }
+            Ok(ContentSource::Floor {
+                extents: held.2.clone(),
+            })
+        }
+
+        fn account(&self) -> Result<CoverageAccount> {
+            let mut builder = CoverageBuilder::new(PROVIDER, self.floor, OPAQUE_BASE);
+            for (extent, class) in &self.claims {
+                builder.claim(*extent, *class, Vec::new())?;
+            }
+            Ok(builder.finish())
+        }
     }
 
     #[test]
-    fn one_item_may_carry_several_names() {
-        let mut layer = active_layer();
-        let root = layer.add_container(Provenance::new(PROVIDER));
-        layer.add_root(root).expect("a container may be a root");
-        let file = layer.add_file(
-            SizeClaim::exact(12),
-            ContentSource::InPlace {
-                offset: 0,
-                length: 12,
-            },
-            Provenance::new(PROVIDER),
-        );
+    fn one_item_may_be_reached_by_several_names() {
+        let mut provider = SyntheticProvider::new(16);
+        let root = provider.add(ItemKind::Container, Vec::new());
+        provider.roots.push(root);
+        let file = provider.add_file(SizeClaim::exact(12), vec![FloorExtent::new(4, 1)]);
 
-        layer
-            .link(root, RecordedName::utf8("README"), file)
-            .expect("the first name links");
-        layer
-            .link(root, RecordedName::utf8("readme.txt"), file)
-            .expect("a hard link is ordinary");
+        provider.link(root, RecordedName::utf8("README"), file);
+        provider.link(root, RecordedName::utf8("readme.txt"), file);
 
-        let edges = layer.get(root).expect("the root exists").edges();
-        assert_eq!(edges.len(), 2);
-        assert_eq!(edges[0].target, edges[1].target);
-        // One item, two names: the pool did not grow with the namespace.
-        assert_eq!(layer.items().len(), 2);
-        assert_eq!(layer.reachable().len(), 2);
+        let entries = provider.entries(root).expect("the root is a container");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].target, entries[1].target);
+        check_conformance(&provider).expect("the contract holds");
     }
 
     #[test]
     fn source_listing_order_is_preserved_as_evidence() {
-        let mut layer = active_layer();
-        let root = layer.add_container(Provenance::new(PROVIDER));
-        layer.add_root(root).expect("a container may be a root");
+        let mut provider = SyntheticProvider::new(16);
+        let root = provider.add(ItemKind::Container, Vec::new());
+        provider.roots.push(root);
         for name in ["ZEBRA", "alpha", "Middle"] {
-            let file = layer.add_file(
-                SizeClaim::exact(0),
-                ContentSource::Empty,
-                Provenance::new(PROVIDER),
-            );
-            layer
-                .link(root, RecordedName::utf8(name), file)
-                .expect("the name links");
+            let file = provider.add_file(SizeClaim::exact(0), Vec::new());
+            provider.link(root, RecordedName::utf8(name), file);
         }
 
-        assert_eq!(named(&layer, root), ["ZEBRA", "alpha", "Middle"]);
-        let ordinals: Vec<u64> = layer
-            .get(root)
-            .expect("the root exists")
-            .edges()
+        assert_eq!(provider.entry_names(root), ["ZEBRA", "alpha", "Middle"]);
+        let ordinals: Vec<u64> = provider
+            .entries(root)
+            .expect("the root is a container")
             .iter()
-            .map(|edge| edge.ordinal)
+            .map(|entry| entry.ordinal)
             .collect();
         assert_eq!(ordinals, [0, 1, 2]);
     }
 
     #[test]
     fn a_name_keeps_its_recorded_bytes_and_claimed_encoding() {
-        let mut layer = active_layer();
-        let root = layer.add_container(Provenance::new(PROVIDER));
-        let file = layer.add_file(
-            SizeClaim::exact(2),
-            ContentSource::Empty,
-            Provenance::new(PROVIDER),
-        );
+        let mut provider = SyntheticProvider::new(16);
+        let root = provider.add(ItemKind::Container, Vec::new());
+        let file = provider.add_file(SizeClaim::exact(2), Vec::new());
         // A CBM name padded with shifted spaces: the bytes are the
         // evidence, and the presentation never replaces them.
-        let recorded = RecordedName::new(
-            vec![0x50, 0x49, 0x43, 0xa0, 0xa0],
-            NameEncoding::Petscii,
-            "PIC",
-            NameConversion::Lossy {
-                detail: "two trailing shifted spaces are not presentable".to_owned(),
-            },
+        provider.link(
+            root,
+            RecordedName::new(
+                vec![0x50, 0x49, 0x43, 0xa0, 0xa0],
+                NameEncoding::Petscii,
+                "PIC",
+                NameConversion::Lossy {
+                    detail: "two trailing shifted spaces are not presentable".to_owned(),
+                },
+            ),
+            file,
         );
-        layer.link(root, recorded, file).expect("the name links");
 
-        let edge = &layer.get(root).expect("the root exists").edges()[0];
-        assert_eq!(edge.name.bytes, [0x50, 0x49, 0x43, 0xa0, 0xa0]);
-        assert_eq!(edge.name.encoding, NameEncoding::Petscii);
-        assert_eq!(edge.name.decoded, "PIC");
-        assert!(matches!(edge.name.conversion, NameConversion::Lossy { .. }));
+        let entries = provider.entries(root).expect("the root is a container");
+        let name = &entries[0].name;
+        assert_eq!(name.bytes, [0x50, 0x49, 0x43, 0xa0, 0xa0]);
+        assert_eq!(name.encoding, NameEncoding::Petscii);
+        assert_eq!(name.decoded, "PIC");
+        assert!(matches!(name.conversion, NameConversion::Lossy { .. }));
     }
 
     #[test]
-    fn declared_facts_keep_their_source_spelling_and_order() {
-        let mut layer = active_layer();
-        layer.declare("created", FactValue::Unsigned(0x2f_1a_63_00));
-        layer.declare("Comment", FactValue::Text("as recorded".to_owned()));
+    fn the_account_is_total_because_the_remainder_is_derived() {
+        let mut provider = SyntheticProvider::new(100);
+        let file = provider.add_file(SizeClaim::exact(2560), vec![FloorExtent::new(10, 10)]);
+        provider.claim(FloorExtent::new(0, 4), CoverageClass::Structures);
+        provider.claim(FloorExtent::new(10, 10), CoverageClass::ItemData(file));
+        provider.claim(FloorExtent::new(20, 60), CoverageClass::ClaimedFree);
 
-        let facts = layer.facts();
-        assert_eq!(facts[0].key, "created");
-        assert_eq!(facts[0].ordinal, 0);
-        assert_eq!(facts[1].key, "Comment");
-        assert_eq!(facts[1].ordinal, 1);
-        assert!(facts.iter().all(|fact| fact.namespace == PROVIDER));
-    }
-
-    #[test]
-    fn an_opaque_region_can_never_be_given_a_name() {
-        let mut layer = derived_layer(16);
-        let root = layer.add_container(Provenance::new(PROVIDER));
-        layer.add_root(root).expect("a container may be a root");
-
-        let mut coverage = CoverageBuilder::for_layer(&layer).expect("the layer is derived");
-        coverage
-            .claim(
-                BackingExtent::new(0, 4),
-                CoverageClass::NamespaceStructures,
-                vec!["the directory occupies the first four blocks".to_owned()],
-            )
-            .expect("the claim is in bounds");
-        coverage.finish(&mut layer).expect("the account completes");
-
-        let opaque = layer
-            .coverage()
-            .expect("the account is installed")
-            .regions
-            .iter()
-            .find_map(|region| match region.class {
-                CoverageClass::Opaque(id) => Some(id),
-                _ => None,
-            })
-            .expect("the remainder was itemized");
-
-        let error = layer
-            .link(root, RecordedName::utf8("PROTECTION"), opaque)
-            .expect_err("the pseudo-file rule holds");
-        assert_eq!(error.category(), ErrorCategory::InvalidImage);
-        assert!(
-            error
-                .to_string()
-                .contains("lists only what the source names"),
-            "{error}"
-        );
-        // And it stays out of the walk that a caller would list.
-        assert!(!layer.reachable().contains(&opaque));
-    }
-
-    #[test]
-    fn coverage_is_total_because_the_remainder_is_derived() {
-        let mut layer = derived_layer(100);
-        let file = layer.add_file(
-            SizeClaim::exact(2560),
-            ContentSource::Backing {
-                extents: vec![BackingExtent::new(10, 10)],
-            },
-            Provenance::new(PROVIDER),
-        );
-
-        let mut coverage = CoverageBuilder::for_layer(&layer).expect("the layer is derived");
-        coverage
-            .claim(
-                BackingExtent::new(0, 4),
-                CoverageClass::NamespaceStructures,
-                Vec::new(),
-            )
-            .expect("in bounds");
-        coverage
-            .claim(
-                BackingExtent::new(10, 10),
-                CoverageClass::ItemData(file),
-                Vec::new(),
-            )
-            .expect("in bounds");
-        coverage
-            .claim(
-                BackingExtent::new(20, 60),
-                CoverageClass::ClaimedFree,
-                Vec::new(),
-            )
-            .expect("in bounds");
-        coverage.finish(&mut layer).expect("the account completes");
-
-        let account = layer.coverage().expect("the account is installed");
-        // Every unit is accounted for exactly once, and the regions run
-        // in position order without a gap.
+        let account = provider.account().expect("the account computes");
         let mut position = 0;
         for region in &account.regions {
             assert_eq!(region.extent.start, position);
@@ -1112,140 +1023,191 @@ mod tests {
         assert_eq!(
             account.units_of(|class| matches!(class, CoverageClass::Opaque(_))),
             26,
-            "units 4..10 and 80..100 belong to no claim"
+            "blocks 4..10 and 80..100 belong to no claim"
         );
-        assert_eq!(
-            account.units_of(|class| matches!(class, CoverageClass::ClaimedFree)),
-            60
+        check_conformance(&provider).expect("the contract holds");
+    }
+
+    #[test]
+    fn an_archive_floor_accounts_its_unclaimed_bytes_the_same_way() {
+        // A self-extractor stub ahead of the first local header is an
+        // opaque region exactly as a protection track is.
+        let mut provider = SyntheticProvider::bytes_floor(4096);
+        let member = provider.add_file(SizeClaim::exact(512), vec![FloorExtent::new(2048, 512)]);
+        provider.claim(FloorExtent::new(2048, 512), CoverageClass::ItemData(member));
+        provider.claim(FloorExtent::new(2560, 1536), CoverageClass::Structures);
+
+        let account = provider.account().expect("the account computes");
+        let opaque: Vec<&CoverageRegion> = account
+            .regions_of(|class| matches!(class, CoverageClass::Opaque(_)))
+            .collect();
+        assert_eq!(opaque.len(), 1);
+        assert_eq!(opaque[0].extent, FloorExtent::new(0, 2048));
+        assert!(
+            opaque[0].evidence[0].contains("bytes 0..2048"),
+            "{:?}",
+            opaque[0]
         );
     }
 
     #[test]
-    fn claimed_free_and_opaque_are_different_answers() {
-        let mut layer = derived_layer(10);
-        let mut coverage = CoverageBuilder::for_layer(&layer).expect("the layer is derived");
-        coverage
-            .claim(
-                BackingExtent::new(0, 5),
-                CoverageClass::ClaimedFree,
-                Vec::new(),
-            )
-            .expect("in bounds");
-        coverage.finish(&mut layer).expect("the account completes");
+    fn an_opaque_region_is_never_named_in_the_namespace() {
+        let mut provider = SyntheticProvider::new(16);
+        let root = provider.add(ItemKind::Container, Vec::new());
+        provider.roots.push(root);
+        provider.claim(FloorExtent::new(0, 4), CoverageClass::Structures);
 
-        let account = layer.coverage().expect("the account is installed");
-        assert_eq!(account.regions.len(), 2);
-        assert!(matches!(
-            account.regions[0].class,
-            CoverageClass::ClaimedFree
-        ));
-        assert!(matches!(account.regions[1].class, CoverageClass::Opaque(_)));
+        let account = provider.account().expect("the account computes");
+        let opaque = account
+            .regions_of(|class| matches!(class, CoverageClass::Opaque(_)))
+            .next()
+            .expect("the remainder was itemized");
+        let CoverageClass::Opaque(opaque_ref) = opaque.class else {
+            panic!("the class is opaque");
+        };
+
+        // It is a real item, reachable through the account...
+        let facts = provider
+            .item(opaque_ref)
+            .expect("the account answers for it");
+        assert_eq!(facts.kind, ItemKind::OpaqueRegion);
+        assert_eq!(facts.hook, vec![FloorExtent::new(4, 12)]);
+        check_conformance(&provider).expect("nothing names it");
+
+        // ...and naming it is what the contract catches.
+        provider.link(root, RecordedName::utf8("PROTECTION"), opaque_ref);
+        let error = check_conformance(&provider).expect_err("the pseudo-file rule holds");
+        assert_eq!(error.category(), ErrorCategory::InvalidImage);
+        assert!(
+            error
+                .to_string()
+                .contains("lists only what the source names"),
+            "{error}"
+        );
     }
 
     #[test]
     fn overlapping_claims_are_refused_naming_both_sides() {
-        let layer = derived_layer(50);
-        let mut coverage = CoverageBuilder::for_layer(&layer).expect("the layer is derived");
-        coverage
+        let mut builder = CoverageBuilder::new(
+            PROVIDER,
+            Floor {
+                addressing: FloorAddressing::Blocks {
+                    bytes_per_block: 256,
+                },
+                total_units: 50,
+            },
+            OPAQUE_BASE,
+        );
+        builder
             .claim(
-                BackingExtent::new(10, 10),
-                CoverageClass::NamespaceStructures,
+                FloorExtent::new(10, 10),
+                CoverageClass::Structures,
                 Vec::new(),
             )
             .expect("in bounds");
 
-        let error = coverage
+        let error = builder
             .claim(
-                BackingExtent::new(15, 10),
+                FloorExtent::new(15, 10),
                 CoverageClass::ClaimedFree,
                 Vec::new(),
             )
             .expect_err("the extents overlap");
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         let message = error.to_string();
-        assert!(message.contains("15..25"), "{message}");
-        assert!(message.contains("namespace structures"), "{message}");
-        assert!(message.contains("10..20"), "{message}");
+        assert!(message.contains("blocks 15..25"), "{message}");
+        assert!(message.contains("interpretation structures"), "{message}");
+        assert!(message.contains("blocks 10..20"), "{message}");
     }
 
     #[test]
-    fn a_claim_past_the_backing_layer_is_refused() {
-        let layer = derived_layer(32);
-        let mut coverage = CoverageBuilder::for_layer(&layer).expect("the layer is derived");
-        let error = coverage
+    fn a_claim_past_the_floor_is_refused_in_the_floors_own_units() {
+        let mut builder = CoverageBuilder::new(
+            PROVIDER,
+            Floor {
+                addressing: FloorAddressing::Flux {
+                    ticks_per_revolution: 3_200_000,
+                },
+                total_units: 32,
+            },
+            OPAQUE_BASE,
+        );
+        let error = builder
             .claim(
-                BackingExtent::new(30, 8),
+                FloorExtent::new(30, 8),
                 CoverageClass::ClaimedFree,
                 Vec::new(),
             )
             .expect_err("the claim runs past the end");
         assert!(
-            error
-                .to_string()
-                .contains("past the backing layer's 32 units")
+            error.to_string().contains("past the floor's 32 flux units"),
+            "{error}"
         );
-
         assert!(
-            coverage
+            builder
                 .claim(
-                    BackingExtent::new(0, 0),
+                    FloorExtent::new(0, 0),
                     CoverageClass::ClaimedFree,
                     Vec::new()
                 )
                 .is_err(),
-            "an extent spanning no units claims nothing"
+            "an extent spanning nothing claims nothing"
         );
     }
 
     #[test]
-    fn coverage_referring_to_an_absent_item_is_refused() {
-        let mut layer = derived_layer(20);
-        let mut coverage = CoverageBuilder::for_layer(&layer).expect("the layer is derived");
-        coverage
-            .claim(
-                BackingExtent::new(0, 4),
-                CoverageClass::ItemData(ItemId(7)),
-                Vec::new(),
-            )
-            .expect("bounds are checked before identity");
+    fn conformance_catches_an_account_that_does_not_cover_its_floor() {
+        struct ShortAccount;
 
-        let error = coverage
-            .finish(&mut layer)
-            .expect_err("item 7 does not exist");
-        assert!(error.to_string().contains("does not hold"), "{error}");
-        assert!(layer.coverage().is_none(), "no account was installed");
-    }
+        impl FileContainerView for ShortAccount {
+            fn source(&self) -> &'static str {
+                PROVIDER
+            }
+            fn floor(&self) -> Floor {
+                Floor {
+                    addressing: FloorAddressing::Bytes,
+                    total_units: 64,
+                }
+            }
+            fn roots(&self) -> Result<Vec<ItemRef>> {
+                Ok(Vec::new())
+            }
+            fn entries(&self, container: ItemRef) -> Result<Vec<Entry>> {
+                Err(no_such_item(PROVIDER, container))
+            }
+            fn item(&self, item: ItemRef) -> Result<ItemFacts> {
+                Err(no_such_item(PROVIDER, item))
+            }
+            fn content(&self, item: ItemRef) -> Result<ContentSource> {
+                Err(no_such_item(PROVIDER, item))
+            }
+            fn account(&self) -> Result<CoverageAccount> {
+                // Declares 64 bytes, accounts for 32.
+                let mut builder = CoverageBuilder::new(
+                    PROVIDER,
+                    Floor {
+                        addressing: FloorAddressing::Bytes,
+                        total_units: 32,
+                    },
+                    OPAQUE_BASE,
+                );
+                builder.claim(
+                    FloorExtent::new(0, 32),
+                    CoverageClass::Structures,
+                    Vec::new(),
+                )?;
+                Ok(builder.finish())
+            }
+        }
 
-    #[test]
-    fn the_active_standing_has_no_backing_to_account_for() {
-        let mut layer = active_layer();
-        let file = layer.add_file(
-            SizeClaim::exact(1),
-            ContentSource::Empty,
-            Provenance::new(PROVIDER),
-        );
-
-        let error = CoverageBuilder::for_layer(&layer)
-            .err()
-            .expect("there is no layer beneath");
-        assert!(
-            error.to_string().contains("itself the active layer"),
-            "{error}"
-        );
-
-        let error = layer
-            .set_footprint(file, vec![BackingExtent::new(0, 1)])
-            .expect_err("a footprint needs a backing layer");
-        assert!(
-            error.to_string().contains("itself the active layer"),
-            "{error}"
-        );
+        let error = check_conformance(&ShortAccount).expect_err("the floors disagree");
+        assert!(error.to_string().contains("different floor"), "{error}");
     }
 
     #[test]
     fn content_stays_a_bounded_descriptor() {
-        let mut layer = active_layer();
-        let huge = layer.add_file(
+        let mut provider = SyntheticProvider::bytes_floor(96 * 1024 * 1024 * 1024);
+        let huge = provider.add_file(
             SizeClaim {
                 bytes: 96 * 1024 * 1024 * 1024,
                 basis: SizeBasis::AllocationUnits {
@@ -1253,29 +1215,19 @@ mod tests {
                     units: 25_165_824,
                 },
             },
-            ContentSource::InPlace {
-                offset: 512,
-                length: 96 * 1024 * 1024 * 1024,
-            },
-            Provenance::new(PROVIDER),
+            vec![FloorExtent::new(512, 96 * 1024 * 1024 * 1024 - 512)],
         );
 
-        // The layer describes ninety-six gibibytes without holding any
-        // of it: the size is a claim and the content is a descriptor.
-        let ItemBody::File { size, content } = &layer.get(huge).expect("the item exists").body
-        else {
-            panic!("the item is a file");
-        };
-        assert_eq!(size.bytes, 96 * 1024 * 1024 * 1024);
-        assert!(matches!(
-            content,
-            ContentSource::InPlace { offset: 512, .. }
-        ));
+        // Ninety-six gibibytes described without holding any of it.
+        let content = provider.content(huge).expect("the item is a file");
+        assert!(matches!(content, ContentSource::Floor { .. }));
+        let facts = provider.item(huge).expect("the item exists");
+        assert_eq!(facts.size.expect("a file claims a size").bytes, 96 << 30);
     }
 
     #[test]
     fn a_size_claim_records_what_it_is_a_claim_about() {
-        // CP/M states records, not bytes: 3 records is 384 bytes of
+        // CP/M states records, not bytes: three records is 384 bytes of
         // allocation and says nothing exact about the file's tail.
         let rounded = SizeClaim {
             bytes: 384,
@@ -1284,89 +1236,35 @@ mod tests {
                 records: 3,
             },
         };
-        assert_ne!(rounded.basis, SizeBasis::Exact);
         assert_eq!(SizeClaim::exact(384).bytes, rounded.bytes);
         assert_ne!(SizeClaim::exact(384).basis, rounded.basis);
     }
 
     #[test]
     fn a_flat_namespace_is_one_root_of_leaves() {
-        let mut layer = derived_layer(8);
-        let root = layer.add_container(Provenance::new(PROVIDER));
-        layer.add_root(root).expect("a container may be a root");
-        let file = layer.add_file(
-            SizeClaim::exact(4),
-            ContentSource::Empty,
-            Provenance::new(PROVIDER),
-        );
-        layer
-            .link(root, RecordedName::utf8("A"), file)
-            .expect("the name links");
+        let mut provider = SyntheticProvider::new(8);
+        let root = provider.add(ItemKind::Container, Vec::new());
+        provider.roots.push(root);
+        let file = provider.add_file(SizeClaim::exact(4), Vec::new());
+        provider.link(root, RecordedName::utf8("A"), file);
 
-        assert_eq!(layer.roots().len(), 1);
-        assert_eq!(layer.reachable(), vec![root, file]);
-        assert!(layer.get(file).expect("the file exists").edges().is_empty());
-    }
-
-    #[test]
-    fn only_a_container_holds_names_or_roots_the_namespace() {
-        let mut layer = active_layer();
-        let file = layer.add_file(
-            SizeClaim::exact(0),
-            ContentSource::Empty,
-            Provenance::new(PROVIDER),
-        );
-        let other = layer.add_file(
-            SizeClaim::exact(0),
-            ContentSource::Empty,
-            Provenance::new(PROVIDER),
-        );
-
-        let error = layer
-            .link(file, RecordedName::utf8("child"), other)
-            .expect_err("a file holds no names");
+        assert_eq!(provider.roots().expect("roots answer").len(), 1);
+        let error = provider
+            .entries(file)
+            .expect_err("a file is not a container");
         assert!(error.to_string().contains("holds no names"), "{error}");
-
-        let error = layer
-            .add_root(file)
-            .expect_err("a file cannot root a namespace");
-        assert!(
-            error.to_string().contains("cannot be a namespace root"),
-            "{error}"
-        );
+        check_conformance(&provider).expect("the contract holds");
     }
 
     #[test]
-    fn a_refusal_is_attributed_to_the_provider_that_claimed_the_layer() {
-        let mut layer = active_layer();
-        let error = layer
-            .add_root(ItemId(3))
-            .expect_err("the layer holds no item 3");
+    fn a_refusal_is_attributed_to_the_provider_that_presents() {
+        let provider = SyntheticProvider::new(4);
+        let error = provider
+            .item(ItemRef(3))
+            .expect_err("the view holds no item 3");
         assert_eq!(
             error.to_string(),
-            format!("invalid {PROVIDER} disk image: this layer holds no item 3")
+            format!("invalid {PROVIDER} disk image: this view holds no item 3")
         );
-    }
-
-    #[test]
-    fn foreign_records_are_retained_in_order() {
-        let mut layer = active_layer();
-        for (ordinal, type_id) in ["0x5455", "0x7875"].into_iter().enumerate() {
-            layer.retain_foreign(ForeignRecord {
-                namespace: PROVIDER,
-                type_id: type_id.to_owned(),
-                version: None,
-                ordinal: ordinal as u64,
-                source_range: None,
-                payload: vec![0xde, 0xad],
-                decoded_summary: Vec::new(),
-            });
-        }
-
-        let records = layer.foreign_records();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0].type_id, "0x5455");
-        assert_eq!(records[1].ordinal, 1);
-        assert_eq!(records[1].payload, [0xde, 0xad]);
     }
 }
