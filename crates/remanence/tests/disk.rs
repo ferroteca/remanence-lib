@@ -9,7 +9,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, Disk, DiskFormat, ErrorCategory, FatEntryKind, FatKind, PartitionKind,
+    AccessIntent, AccessMode, Disk, DiskContent, DiskFormat, ErrorCategory, FatEntryKind, FatKind,
+    PartitionKind, RegionRole, VolumeOrigin,
 };
 
 fn temp_path(tag: &str) -> PathBuf {
@@ -904,6 +905,296 @@ fn p8_refuses_a_future_qcow2_version_by_name() {
         message.contains("version 9") && message.contains("ceiling"),
         "refusal names the version and the ceiling: {message}"
     );
+
+    std::fs::remove_file(&path).ok();
+}
+
+// The layered inspection report. These exercise `Disk::inspect` through
+// the public surface only: no test reaches for an internal record, and
+// every relationship is traversed by the identity the report issued.
+
+/// Writes `bytes` to a fresh temp image and returns its path.
+fn image_at(tag: &str, bytes: &[u8]) -> PathBuf {
+    let path = temp_path(tag);
+    std::fs::write(&path, bytes).expect("image writes");
+    path
+}
+
+#[test]
+fn a_partitionless_volume_inspects_as_one_whole_device_volume() {
+    let path = image_at("inspect-bare", &synthetic_fat16());
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    assert_eq!(report.content, DiskContent::DirectVolume);
+    assert!(report.partition_schema.is_none(), "no schema was recognized");
+    assert!(report.regions.is_empty(), "nothing declared a region");
+    assert_eq!(report.volumes.len(), 1);
+    assert_eq!(report.volumes[0].origin, VolumeOrigin::WholeDevice);
+
+    // The filesystem is reached by identity, never by position.
+    let volume = report.volumes[0].id;
+    let filesystem = report
+        .filesystem_on(volume)
+        .expect("FAT is recognized on the whole-device volume");
+    assert_eq!(filesystem.kind.as_deref(), Some("FAT16"));
+    assert_eq!(filesystem.volume, volume);
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_blank_disk_states_that_it_is_blank() {
+    let path = image_at("inspect-blank", &vec![0u8; 4096]);
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    // Blank is stated, not left to be inferred from two empty lists.
+    assert_eq!(report.content, DiskContent::Blank);
+    assert!(report.volumes.is_empty());
+    assert!(report.filesystems.is_empty());
+    assert_eq!(report.composed_volume_count(), 0);
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// The one deliberate behavior change in this feature: content no adapter
+/// claims used to fail the whole call and is now an outcome carrying its
+/// evidence. The geometry surface keeps refusing it.
+#[test]
+fn unclaimed_nonblank_content_is_an_outcome_here_and_still_a_refusal_there() {
+    let mut bytes = vec![0u8; 4096];
+    bytes[..4].copy_from_slice(b"\xde\xad\xbe\xef");
+    let path = image_at("inspect-unknown", &bytes);
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection succeeds on unknown content");
+    let DiskContent::UnknownNonblank { evidence } = &report.content else {
+        panic!("expected the unknown-nonblank outcome, got {:?}", report.content);
+    };
+    assert!(
+        !evidence.is_empty(),
+        "the outcome carries why nothing claimed it"
+    );
+    assert_ne!(report.content, DiskContent::Blank, "never confused with blank");
+    assert!(report.volumes.is_empty());
+
+    // Same disk, older surface: still the refusal it has always been.
+    let error = disk.geometry().expect_err("geometry still refuses");
+    assert_eq!(error.category(), ErrorCategory::InvalidImage);
+    assert!(
+        error.to_string().contains(evidence.as_str()),
+        "both surfaces say the same thing about the same disk: {error}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_partitioned_disk_reports_schema_regions_and_composed_volumes() {
+    let path = image_at("inspect-mbr", &synthetic_mbr_disk(&synthetic_fat16()));
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    assert_eq!(report.content, DiskContent::Schema);
+    let schema = report.partition_schema.as_ref().expect("MBR recognized");
+    assert_eq!(schema.kind, "mbr");
+    assert!(!schema.evidence.is_empty(), "recognition carries evidence");
+
+    assert_eq!(report.regions.len(), 1);
+    let region = &report.regions[0];
+    assert_eq!(region.role, RegionRole::Data);
+    assert_eq!(region.declared_type, 0x06);
+    assert_eq!(region.declared_type_reading, "FAT16B");
+    assert!(region.claimed);
+    assert!(region.issue.is_none());
+
+    // The volume names the region it came from by identity.
+    assert_eq!(report.volumes.len(), 1);
+    assert_eq!(
+        report.volumes[0].origin,
+        VolumeOrigin::Regions(vec![region.id])
+    );
+    assert_eq!(report.volumes[0].start_bytes, region.start_bytes);
+
+    // And the whole chain is traversable without a single array index.
+    let volume = report.volumes[0].id;
+    assert_eq!(report.volume(volume).map(|found| found.id), Some(volume));
+    assert_eq!(
+        report.filesystem_on(volume).and_then(|fs| fs.kind.clone()),
+        Some("FAT16".to_owned())
+    );
+    assert_eq!(report.region(region.id).map(|found| found.id), Some(region.id));
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// A structural container is reported and is not thereby a volume, and a
+/// region this release will not read keeps its place: the regions behind
+/// an unread one never renumber, and its reading still explains it.
+#[test]
+fn an_unread_region_is_explained_kept_and_composes_nothing() {
+    let volume = synthetic_fat16();
+    let disk_bytes = synthetic_multi_mbr(&[(0x06, &volume), (0x07, &volume), (0x06, &volume)]);
+    let path = image_at("inspect-unread", &disk_bytes);
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    assert_eq!(report.regions.len(), 3, "every declared region is reported");
+    let unread = &report.regions[1];
+    assert_eq!(unread.declared_type, 0x07);
+    assert!(!unread.claimed, "0x07 is outside this release's claim");
+    assert_eq!(
+        unread.declared_type_reading, "NTFS or exFAT",
+        "the refusal is quotable without a second type table"
+    );
+    assert!(unread.issue.is_some(), "the refusal stays on the region");
+
+    // The region behind it kept its declared number and its identity.
+    assert_eq!(report.regions[2].declared_number, 3);
+    assert!(report.regions[2].claimed);
+
+    // Two volumes composed, from the first and third regions only.
+    assert_eq!(report.composed_volume_count(), 2);
+    let origins: Vec<&VolumeOrigin> = report.volumes.iter().map(|v| &v.origin).collect();
+    assert_eq!(
+        origins,
+        vec![
+            &VolumeOrigin::Regions(vec![report.regions[0].id]),
+            &VolumeOrigin::Regions(vec![report.regions[2].id]),
+        ],
+        "the unread region composed nothing and shifted nothing"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// Identity is a function of the layout's structure, so a later open in a
+/// later process names the same objects. Nothing here parses the value.
+#[test]
+fn identities_survive_a_separate_open_of_an_unchanged_layout() {
+    let path = image_at("inspect-stable", &synthetic_mbr_disk(&synthetic_fat16()));
+
+    let first = {
+        let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+        disk.inspect().expect("inspection reads")
+    };
+    let second = {
+        let mut disk = Disk::open(&path, AccessIntent::Read).expect("image reopens");
+        disk.inspect().expect("inspection reads")
+    };
+
+    assert_eq!(first.regions[0].id, second.regions[0].id);
+    assert_eq!(first.volumes[0].id, second.volumes[0].id);
+    assert_eq!(first.filesystems[0].id, second.filesystems[0].id);
+    // A volume identity from one report resolves in the other.
+    assert!(second.volume(first.volumes[0].id).is_some());
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// Recognition failing does not erase the volume it failed on, and the
+/// two counts are separately available because of it.
+#[test]
+fn a_volume_whose_filesystem_is_unrecognized_stays_a_volume() {
+    // A second region declared FAT16B whose payload is not in fact FAT.
+    let good = synthetic_fat16();
+    let mut rubbish = vec![0u8; good.len()];
+    rubbish[..2].copy_from_slice(b"\xeb\x3c");
+    rubbish[510] = 0x55;
+    rubbish[511] = 0xaa;
+    let path = image_at(
+        "inspect-unrecognized",
+        &synthetic_multi_mbr(&[(0x06, &good), (0x06, &rubbish)]),
+    );
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    assert_eq!(report.composed_volume_count(), 2, "both regions composed");
+    assert_eq!(
+        report.readable_filesystem_volume_count(),
+        1,
+        "only one carries a filesystem the host read"
+    );
+    let failed = report.volumes[1].id;
+    assert!(
+        report.volume(failed).is_some(),
+        "the volume survives its filesystem's refusal"
+    );
+    let attempt = report
+        .filesystem_on(failed)
+        .expect("the attempt is recorded at the filesystem seam");
+    assert!(attempt.kind.is_none(), "nothing was recognized");
+    assert!(!attempt.issues.is_empty(), "and the refusal says why");
+    assert!(
+        report.volumes[1].issues.is_empty(),
+        "the refusal belongs to the filesystem seam, not the volume"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// An extended container is a region and not a volume; its logicals are
+/// regions in their own right, each composing one.
+#[test]
+fn a_structural_container_is_reported_and_is_not_a_volume() {
+    let path = image_at(
+        "inspect-extended",
+        &synthetic_extended_disk(&synthetic_fat16(), false),
+    );
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    let containers: Vec<_> = report
+        .regions
+        .iter()
+        .filter(|region| region.role == RegionRole::Container)
+        .collect();
+    assert_eq!(containers.len(), 1, "one extended container");
+    assert_eq!(containers[0].declared_type, 0x05);
+    assert_eq!(
+        containers[0].declared_type_reading,
+        "an extended partition, CHS-addressed"
+    );
+
+    let container = containers[0].id;
+    assert!(
+        !report.volumes.iter().any(|volume| matches!(
+            &volume.origin,
+            VolumeOrigin::Regions(regions) if regions.contains(&container)
+        )),
+        "the container composed no volume"
+    );
+    // One primary plus two logicals.
+    assert_eq!(report.composed_volume_count(), 3);
+    assert_eq!(report.readable_filesystem_volume_count(), 3);
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// A valid schema with no data regions is the schema outcome with zero
+/// volumes — not blank, and not an unknown payload.
+#[test]
+fn an_empty_partition_table_inspects_as_a_schema_with_no_volumes() {
+    let mut bytes = vec![0u8; 4096];
+    bytes[510] = 0x55;
+    bytes[511] = 0xaa;
+    let path = image_at("inspect-empty-table", &bytes);
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("image opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    assert_eq!(report.content, DiskContent::Schema);
+    assert!(report.partition_schema.is_some(), "the schema was recognized");
+    assert!(report.regions.is_empty(), "it declares no region");
+    assert_eq!(report.composed_volume_count(), 0);
+    assert_ne!(report.content, DiskContent::Blank, "distinct from blank");
 
     std::fs::remove_file(&path).ok();
 }

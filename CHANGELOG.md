@@ -20,6 +20,49 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **One deep inspection of a disk, layered rather than flattened, on all
+  three surfaces.** `Disk::inspect` returns a report whose records keep
+  the seams apart: the block-active device, what the device's leading
+  structure turned out to be, any recognized partition schema, every
+  region that schema declares, every volume actually composed, and every
+  filesystem recognition attempted on one. Reflected as
+  `remanence_disk_inspect` with an owned `RemanenceDiskReport` handle and
+  its indexed accessors, and as the Python `Disk.inspect` returning a
+  `DiskReport`. **What the disk turned out to be is stated, not
+  inferred**: `content` is exactly one of blank, a recognized schema, a
+  direct unpartitioned volume, or non-blank content no adapter claims,
+  so no caller reconstructs that judgement from lists that are each
+  empty for more than one reason. **Every declared region is reported
+  twice over** — the type value exactly as the schema records it, and a
+  reading of what that value declares, present whether or not this
+  release reads the type, so a refusal is quotable without a consumer
+  keeping a second partition-type table. The reading describes the
+  declaration and never the content. **Region, volume, and filesystem
+  identities are opaque and derived from the layout's structure**, so an
+  unchanged single-disk layout names the same objects on a later open,
+  and no relationship is traversed by a string or an array position.
+  **A failure at one seam neither erases nor renumbers what another owns**:
+  a region whose type is refused keeps its place, and a volume whose
+  filesystem could not be recognized stays a volume with the refusal
+  recorded at the filesystem seam. Composed-volume count and
+  host-readable filesystem-volume count are separately available for
+  that reason. Scope is what is already claimed: raw and qcow2, MBR
+  including extended and logical entries, a partitionless direct volume,
+  and FAT12/FAT16.
+
+### Changed
+
+- **Non-blank content no adapter claims is an outcome of `inspect`
+  rather than a refusal.** A disk in no format this release knows is a
+  fact about the disk, so the layered report states it and carries the
+  evidence. `Disk::geometry` and identification are unchanged and still
+  refuse it by name; an image that cannot be *read* still fails
+  everywhere.
+- `VolumeInfo` in the Rust crate and the Python module now names the
+  volume record of the layered report. The FAT-shaped record the
+  geometry surface returns is `GeometryVolume`. The C ABI is unaffected,
+  its accessors having always been named for geometry.
+
 - **A mastered medium is saved as a P64, and a P64 is opened, on all
   three surfaces.** `MasteredMedium::describe_p64` computes what the
   container will and will not carry and writes nothing;

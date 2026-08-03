@@ -110,6 +110,32 @@ typedef enum {
   REMANENCE_ORIGIN_POLICY_ANGLE = 1,
 } RemanenceOriginPolicy;
 
+// What the device's leading structure turned out to be. The report states
+// this rather than leaving a caller to reconstruct it from empty lists.
+typedef enum {
+  // All zero: a blank disk, which is an answer.
+  REMANENCE_DISK_CONTENT_BLANK,
+  // A partition schema was recognized, whether or not a volume composed.
+  REMANENCE_DISK_CONTENT_SCHEMA,
+  // No schema, and the whole device is one volume.
+  REMANENCE_DISK_CONTENT_DIRECT_VOLUME,
+  // Not blank, and no adapter claims it. An outcome, not a refusal.
+  REMANENCE_DISK_CONTENT_UNKNOWN_NONBLANK,
+} RemanenceDiskContent;
+
+// How a schema declares a region: data, which composition may consume, or
+// structure, which it may not.
+typedef enum {
+  REMANENCE_REGION_ROLE_DATA,
+  REMANENCE_REGION_ROLE_CONTAINER,
+} RemanenceRegionRole;
+
+// Where a volume's storage came from.
+typedef enum {
+  REMANENCE_VOLUME_ORIGIN_WHOLE_DEVICE,
+  REMANENCE_VOLUME_ORIGIN_REGIONS,
+} RemanenceVolumeOrigin;
+
 // An open archive listing, holding the claim on its file.
 typedef struct RemanenceArchive RemanenceArchive;
 
@@ -122,6 +148,11 @@ typedef struct RemanenceDisk RemanenceDisk;
 // A snapshot of a disk's complete report (U4): blank is an
 // answer, and every declared partition row stays, issues and all.
 typedef struct RemanenceDiskGeometry RemanenceDiskGeometry;
+
+// A snapshot of one disk's layered inspection. Owned by the caller and
+// released with `remanence_disk_report_free`; every string and record
+// reached through it is borrowed from it and dies with it.
+typedef struct RemanenceDiskReport RemanenceDiskReport;
 
 // A directory listing.
 typedef struct RemanenceFatEntryList RemanenceFatEntryList;
@@ -1307,6 +1338,186 @@ size_t remanence_p64_evidence_count(const RemanenceP64Image *image,
 const char *remanence_p64_evidence(const RemanenceP64Image *image,
                                    const RemanenceP64Report *report,
                                    size_t index);
+
+// Inspects an open disk and returns its layered report. Null on failure,
+// with the category and message written to the out-parameters.
+RemanenceDiskReport *remanence_disk_inspect(RemanenceDisk *disk,
+                                            RemanenceErrorCategory *error_category_out,
+                                            char **error_out);
+
+// Frees an inspection report and everything borrowed from it.
+void remanence_disk_report_free(RemanenceDiskReport *report);
+
+// The device identity assigned by this loaded composition (P21), scoped
+// to the open.
+uint64_t remanence_report_device_id(const RemanenceDiskReport *report);
+
+// The image format the container turned out to be.
+const char *remanence_report_device_image_format(const RemanenceDiskReport *report);
+
+// The device's addressable length in bytes.
+uint64_t remanence_report_device_length_bytes(const RemanenceDiskReport *report);
+
+// The layer the image is authoritative at (P13).
+const char *remanence_report_device_authoritative_layer(const RemanenceDiskReport *report);
+
+// The layer active for this composition (P23).
+const char *remanence_report_device_active_layer(const RemanenceDiskReport *report);
+
+// What the device's leading structure turned out to be.
+RemanenceDiskContent remanence_report_content(const RemanenceDiskReport *report);
+
+// Why no adapter claimed the content, for the unknown-nonblank outcome;
+// null for every other outcome.
+const char *remanence_report_content_evidence(const RemanenceDiskReport *report);
+
+// Whether a partition schema was recognized.
+bool remanence_report_has_partition_schema(const RemanenceDiskReport *report);
+
+// The recognized schema's kind, or null where none was recognized.
+const char *remanence_report_partition_schema_kind(const RemanenceDiskReport *report);
+
+// How many evidence lines the schema recognition carries.
+size_t remanence_report_partition_schema_evidence_count(const RemanenceDiskReport *report);
+
+// One evidence line from the schema recognition.
+const char *remanence_report_partition_schema_evidence(const RemanenceDiskReport *report,
+                                                       size_t index);
+
+// How many regions the schema declares. Every declared region is
+// reported, refused ones included.
+size_t remanence_report_region_count(const RemanenceDiskReport *report);
+
+// A region's opaque identity. Pass it back to the library; never parse
+// it, and never build one.
+uint64_t remanence_report_region_id(const RemanenceDiskReport *report, size_t index);
+
+// The number the schema itself declared this region at.
+uint32_t remanence_report_region_declared_number(const RemanenceDiskReport *report, size_t index);
+
+// Whether the schema declares this region as data or as structure.
+RemanenceRegionRole remanence_report_region_role(const RemanenceDiskReport *report, size_t index);
+
+// The type value exactly as the schema records it.
+uint8_t remanence_report_region_declared_type(const RemanenceDiskReport *report, size_t index);
+
+// What that value declares, in a sentence fit to quote in a refusal.
+// Present whether or not this release reads the type, and it describes
+// the declaration rather than the content.
+const char *remanence_report_region_declared_type_reading(const RemanenceDiskReport *report,
+                                                          size_t index);
+
+// Whether this release reads the declared type.
+bool remanence_report_region_is_claimed(const RemanenceDiskReport *report, size_t index);
+
+// Where the region starts, in bytes.
+uint64_t remanence_report_region_start_bytes(const RemanenceDiskReport *report, size_t index);
+
+// How long the region is, in bytes.
+uint64_t remanence_report_region_length_bytes(const RemanenceDiskReport *report, size_t index);
+
+// The region's refusal category; false where the region reads cleanly.
+bool remanence_report_region_issue_category(const RemanenceDiskReport *report,
+                                            size_t index,
+                                            RemanenceErrorCategory *category_out);
+
+// The region's refusal, or null where the region reads cleanly.
+const char *remanence_report_region_issue(const RemanenceDiskReport *report, size_t index);
+
+// How many volumes were composed, whatever was recognized on them.
+size_t remanence_report_volume_count(const RemanenceDiskReport *report);
+
+// How many volumes carry a filesystem the host actually read. Distinct
+// from the composed count on purpose: an unrecognized volume stays in the
+// report rather than vanishing to keep one number correct.
+size_t remanence_report_readable_filesystem_volume_count(const RemanenceDiskReport *report);
+
+// A volume's opaque identity.
+uint64_t remanence_report_volume_id(const RemanenceDiskReport *report, size_t index);
+
+// What this volume was composed from.
+RemanenceVolumeOrigin remanence_report_volume_origin(const RemanenceDiskReport *report,
+                                                     size_t index);
+
+// How many regions this volume was composed from; 0 for a whole-device
+// volume.
+size_t remanence_report_volume_origin_region_count(const RemanenceDiskReport *report, size_t index);
+
+// The identity of one region this volume was composed from.
+uint64_t remanence_report_volume_origin_region_id(const RemanenceDiskReport *report,
+                                                  size_t index,
+                                                  size_t region_index);
+
+// Where the volume starts, in bytes.
+uint64_t remanence_report_volume_start_bytes(const RemanenceDiskReport *report, size_t index);
+
+// How long the volume is, in bytes.
+uint64_t remanence_report_volume_length_bytes(const RemanenceDiskReport *report, size_t index);
+
+// How many evidence lines this volume's composition carries.
+size_t remanence_report_volume_evidence_count(const RemanenceDiskReport *report, size_t index);
+
+// One evidence line from this volume's composition.
+const char *remanence_report_volume_evidence(const RemanenceDiskReport *report,
+                                             size_t index,
+                                             size_t evidence_index);
+
+// How many volumes filesystem recognition was attempted on. A refused
+// attempt is recorded here, at the seam that owns the refusal.
+size_t remanence_report_filesystem_count(const RemanenceDiskReport *report);
+
+// A filesystem's opaque identity.
+uint64_t remanence_report_filesystem_id(const RemanenceDiskReport *report, size_t index);
+
+// The identity of the volume this recognition was attempted on.
+uint64_t remanence_report_filesystem_volume_id(const RemanenceDiskReport *report, size_t index);
+
+// The recognized filesystem kind, or null where recognition was refused —
+// the issue then says why, and the volume still stands.
+const char *remanence_report_filesystem_kind(const RemanenceDiskReport *report, size_t index);
+
+// The volume label, or null where the filesystem records none.
+const char *remanence_report_filesystem_label(const RemanenceDiskReport *report, size_t index);
+
+// The allocation unit size, where the filesystem states one.
+bool remanence_report_filesystem_cluster_bytes(const RemanenceDiskReport *report,
+                                               size_t index,
+                                               uint64_t *value_out);
+
+// The allocation unit count, where the filesystem states one.
+bool remanence_report_filesystem_cluster_count(const RemanenceDiskReport *report,
+                                               size_t index,
+                                               uint64_t *value_out);
+
+// Sectors per track as the filesystem's own structures declare it. A
+// filesystem declaration, which manufactures no physical drive.
+bool remanence_report_filesystem_sectors_per_track(const RemanenceDiskReport *report,
+                                                   size_t index,
+                                                   uint16_t *value_out);
+
+// Heads as the filesystem's own structures declare it.
+bool remanence_report_filesystem_heads(const RemanenceDiskReport *report,
+                                       size_t index,
+                                       uint16_t *value_out);
+
+// Cylinders, only where the derivation is exact. Never invented.
+bool remanence_report_filesystem_cylinders(const RemanenceDiskReport *report,
+                                           size_t index,
+                                           uint64_t *value_out);
+
+// How many issues this recognition carries.
+size_t remanence_report_filesystem_issue_count(const RemanenceDiskReport *report, size_t index);
+
+// One issue's stable category.
+bool remanence_report_filesystem_issue_category(const RemanenceDiskReport *report,
+                                                size_t index,
+                                                size_t issue_index,
+                                                RemanenceErrorCategory *category_out);
+
+// One issue's diagnostic.
+const char *remanence_report_filesystem_issue(const RemanenceDiskReport *report,
+                                              size_t index,
+                                              size_t issue_index);
 
 #ifdef __cplusplus
 }  // extern "C"

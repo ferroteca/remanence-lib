@@ -435,7 +435,7 @@ pub struct PartitionInfo {
 /// divides the total sector count with no remainder — never invented.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
-pub struct VolumeInfo {
+pub struct GeometryVolume {
     /// Opaque stable identifier accepted by every file verb.
     pub id: String,
     pub partition_number: Option<u32>,
@@ -457,7 +457,154 @@ pub struct VolumeInfo {
 pub struct DiskGeometry {
     pub blank: bool,
     pub partitions: Vec<PartitionInfo>,
+    pub volumes: Vec<GeometryVolume>,
+}
+
+/// The one addressed device the image adapter supplied. `id` is scoped to
+/// this open (P21), unlike the layout-derived identities below.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct DeviceInfo {
+    pub id: u64,
+    pub image_format: String,
+    pub length_bytes: u64,
+    pub authoritative_layer: String,
+    pub active_layer: String,
+}
+
+/// A recognized partition schema on the device (P16). At most one, and it
+/// agrees with the report's `content`.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct PartitionSchemaInfo {
+    pub kind: String,
+    pub evidence: Vec<String>,
+    pub issues: Vec<String>,
+}
+
+/// One region a partition schema declares (P16). Every declared region is
+/// reported, including one whose type this release declines to read, and a
+/// region carrying an issue keeps its place so nothing behind it renumbers.
+///
+/// `declared_type_reading` says what the type value *declares*, in a
+/// sentence fit to quote in a refusal, and is present whether or not
+/// `claimed` is true. It describes the declaration, never the content.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct RegionInfo {
+    /// Opaque, library-owned. Pass it back; never parse or build one.
+    pub id: u64,
+    pub declared_number: u32,
+    /// `"data"` or `"container"`.
+    pub role: String,
+    pub declared_type: u8,
+    pub declared_type_reading: String,
+    pub claimed: bool,
+    pub start_bytes: u64,
+    pub length_bytes: u64,
+    pub issue_category: Option<String>,
+    pub issue: Option<String>,
+}
+
+/// One volume actually composed (P17). Filesystem recognition neither
+/// creates a volume nor erases one: a volume whose filesystem is
+/// unrecognized stays here, with the refusal at the filesystem seam.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct VolumeInfo {
+    /// Opaque, library-owned. Pass it back; never parse or build one.
+    pub id: u64,
+    /// `"whole-device"` or `"regions"`.
+    pub origin: String,
+    /// The identities of the regions composed, empty for a whole-device
+    /// volume.
+    pub origin_regions: Vec<u64>,
+    pub start_bytes: u64,
+    pub length_bytes: u64,
+    pub evidence: Vec<String>,
+    pub issues: Vec<String>,
+}
+
+/// What filesystem recognition found on one volume (P18). A record exists
+/// wherever recognition was attempted, so a refusal has a home at the seam
+/// that owns it: a refused attempt carries `kind = None` and says why in
+/// `issues`, and the volume stands either way.
+///
+/// The geometry here is what the filesystem's own structures declare; it
+/// manufactures no physical drive.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct FilesystemInfo {
+    /// Opaque, library-owned. Pass it back; never parse or build one.
+    pub id: u64,
+    /// The identity of the volume this recognition was attempted on.
+    pub volume: u64,
+    pub kind: Option<String>,
+    pub label: Option<String>,
+    pub cluster_bytes: Option<u64>,
+    pub cluster_count: Option<u64>,
+    pub sectors_per_track: Option<u16>,
+    pub heads: Option<u16>,
+    pub cylinders: Option<u64>,
+    pub evidence: Vec<String>,
+    pub issues: Vec<String>,
+}
+
+/// The complete layered inspection of one disk.
+///
+/// `content` is a stated outcome — `"blank"`, `"schema"`,
+/// `"direct-volume"`, or `"unknown-nonblank"` — rather than something to
+/// reconstruct from which lists came back empty. List order is for stable
+/// presentation and never supplies identity: every relationship is
+/// traversed by the opaque identity the report issued.
+#[pyclass(frozen, get_all, module = "remanence")]
+pub struct DiskReport {
+    pub device: DeviceInfo,
+    pub content: String,
+    /// Why no adapter claimed the content, for `"unknown-nonblank"` only.
+    pub content_evidence: Option<String>,
+    pub partition_schema: Option<PartitionSchemaInfo>,
+    pub regions: Vec<RegionInfo>,
     pub volumes: Vec<VolumeInfo>,
+    pub filesystems: Vec<FilesystemInfo>,
+}
+
+#[pymethods]
+impl DiskReport {
+    /// The region this identity names, or `None`.
+    fn region(&self, id: u64) -> Option<RegionInfo> {
+        self.regions.iter().find(|r| r.id == id).cloned()
+    }
+
+    /// The volume this identity names, or `None`.
+    fn volume(&self, id: u64) -> Option<VolumeInfo> {
+        self.volumes.iter().find(|v| v.id == id).cloned()
+    }
+
+    /// The filesystem recognized on `volume`, or `None` where none was.
+    /// Absence is an answer: the volume still exists.
+    fn filesystem_on(&self, volume: u64) -> Option<FilesystemInfo> {
+        self.filesystems
+            .iter()
+            .find(|f| f.volume == volume)
+            .cloned()
+    }
+
+    /// How many volumes were composed, whatever was recognized on them.
+    fn composed_volume_count(&self) -> usize {
+        self.volumes.len()
+    }
+
+    /// How many volumes carry a filesystem the host actually read.
+    /// Deliberately distinct from `composed_volume_count`: an unrecognized
+    /// volume stays in the report rather than vanishing to keep one number
+    /// correct.
+    fn readable_filesystem_volume_count(&self) -> usize {
+        self.filesystems
+            .iter()
+            .filter(|f| f.kind.is_some() && f.issues.is_empty())
+            .count()
+    }
 }
 
 /// One FAT directory entry; `kind` is `"file"` or `"directory"`.
@@ -598,7 +745,7 @@ impl Disk {
             volumes: geometry
                 .volumes
                 .iter()
-                .map(|volume| VolumeInfo {
+                .map(|volume| GeometryVolume {
                     id: volume.id.clone(),
                     partition_number: volume.partition_number,
                     kind: volume.kind.name().to_owned(),
@@ -610,6 +757,100 @@ impl Disk {
                     sectors_per_track: volume.sectors_per_track,
                     heads: volume.heads,
                     cylinders: volume.cylinders,
+                })
+                .collect(),
+        })
+    }
+
+    /// The layered inspection of this disk: the block-active device, what
+    /// its leading structure turned out to be, any recognized partition
+    /// schema, every declared region, every volume actually composed, and
+    /// every filesystem recognition attempted on one.
+    ///
+    /// Each fact stays at the seam that owns it, and a failure at one seam
+    /// neither erases a record another seam owns nor renumbers what
+    /// follows. Content no adapter claims is an outcome here rather than a
+    /// refusal; an image that cannot be *read* still raises.
+    fn inspect(&mut self) -> PyResult<DiskReport> {
+        let report = self.get()?.inspect().map_err(to_py_err)?;
+        let issues = |issues: &[remanence::Error]| -> Vec<String> {
+            issues.iter().map(|issue| issue.to_string()).collect()
+        };
+        Ok(DiskReport {
+            device: DeviceInfo {
+                id: report.device.id,
+                image_format: report.device.image_format.clone(),
+                length_bytes: report.device.length_bytes,
+                authoritative_layer: report.device.authoritative_layer.clone(),
+                active_layer: report.device.active_layer.clone(),
+            },
+            content: report.content.name().to_owned(),
+            content_evidence: match &report.content {
+                remanence::DiskContent::UnknownNonblank { evidence } => Some(evidence.clone()),
+                _ => None,
+            },
+            partition_schema: report.partition_schema.as_ref().map(|schema| {
+                PartitionSchemaInfo {
+                    kind: schema.kind.clone(),
+                    evidence: schema.evidence.clone(),
+                    issues: issues(&schema.issues),
+                }
+            }),
+            regions: report
+                .regions
+                .iter()
+                .map(|region| RegionInfo {
+                    id: region.id.value(),
+                    declared_number: region.declared_number,
+                    role: region.role.name().to_owned(),
+                    declared_type: region.declared_type,
+                    declared_type_reading: region.declared_type_reading.clone(),
+                    claimed: region.claimed,
+                    start_bytes: region.start_bytes,
+                    length_bytes: region.length_bytes,
+                    issue_category: region
+                        .issue
+                        .as_ref()
+                        .map(|issue| issue.category().as_str().to_owned()),
+                    issue: region.issue.as_ref().map(|issue| issue.to_string()),
+                })
+                .collect(),
+            volumes: report
+                .volumes
+                .iter()
+                .map(|volume| VolumeInfo {
+                    id: volume.id.value(),
+                    origin: match &volume.origin {
+                        remanence::VolumeOrigin::WholeDevice => "whole-device".to_owned(),
+                        remanence::VolumeOrigin::Regions(_) => "regions".to_owned(),
+                    },
+                    origin_regions: match &volume.origin {
+                        remanence::VolumeOrigin::WholeDevice => Vec::new(),
+                        remanence::VolumeOrigin::Regions(regions) => {
+                            regions.iter().map(|region| region.value()).collect()
+                        }
+                    },
+                    start_bytes: volume.start_bytes,
+                    length_bytes: volume.length_bytes,
+                    evidence: volume.evidence.clone(),
+                    issues: issues(&volume.issues),
+                })
+                .collect(),
+            filesystems: report
+                .filesystems
+                .iter()
+                .map(|filesystem| FilesystemInfo {
+                    id: filesystem.id.value(),
+                    volume: filesystem.volume.value(),
+                    kind: filesystem.kind.clone(),
+                    label: filesystem.label.clone(),
+                    cluster_bytes: filesystem.cluster_bytes,
+                    cluster_count: filesystem.cluster_count,
+                    sectors_per_track: filesystem.declared_geometry.sectors_per_track,
+                    heads: filesystem.declared_geometry.heads,
+                    cylinders: filesystem.declared_geometry.cylinders,
+                    evidence: filesystem.evidence.clone(),
+                    issues: issues(&filesystem.issues),
                 })
                 .collect(),
         })
@@ -2063,7 +2304,13 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Disk>()?;
     m.add_class::<DiskGeometry>()?;
     m.add_class::<PartitionInfo>()?;
+    m.add_class::<GeometryVolume>()?;
+    m.add_class::<DiskReport>()?;
+    m.add_class::<DeviceInfo>()?;
+    m.add_class::<PartitionSchemaInfo>()?;
+    m.add_class::<RegionInfo>()?;
     m.add_class::<VolumeInfo>()?;
+    m.add_class::<FilesystemInfo>()?;
     m.add_class::<FatEntry>()?;
     m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
     m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;

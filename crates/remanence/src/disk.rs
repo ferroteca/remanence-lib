@@ -19,9 +19,13 @@ use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, 
 use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Device, FileDevice};
 use crate::error::{Error, Result};
-use crate::fat::{FatEntry, FatVolume, VolumeInfo};
+use crate::fat::{FatEntry, FatVolume, GeometryVolume};
 use crate::journal;
 use crate::mbr::{self, Discovery, PartitionInfo, PartitionKind};
+use crate::report::{
+    DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
+    PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
+};
 
 #[cfg(test)]
 fn crash_test_process_at(boundary: &str) {
@@ -48,7 +52,7 @@ pub struct DiskGeometry {
     /// not an error.
     pub blank: bool,
     pub partitions: Vec<PartitionInfo>,
-    pub volumes: Vec<VolumeInfo>,
+    pub volumes: Vec<GeometryVolume>,
 }
 
 /// A composed view: the session cache over the virtual disk (P27).
@@ -248,6 +252,10 @@ impl Disk {
         let device_identity = self.device_identity;
         let mut composed = self.composed();
         match crate::partition::discover(&mut composed)? {
+            // This surface has always refused content no adapter claims,
+            // and keeps refusing it. The layered report states it as an
+            // outcome instead.
+            Discovery::UnknownNonblank { evidence } => Err(mbr::unknown_nonblank(&evidence)),
             Discovery::Blank => Ok(DiskGeometry {
                 blank: true,
                 partitions: Vec::new(),
@@ -300,6 +308,175 @@ impl Disk {
                 })
             }
         }
+    }
+
+    /// The layered inspection of this disk: the block-active device, what
+    /// its leading structure turned out to be, any recognized partition
+    /// schema, every region that schema declares, every volume actually
+    /// composed, and every filesystem recognition attempted on one.
+    ///
+    /// Each fact stays at the seam that owns it. A region whose type this
+    /// release declines to read is still reported, with a reading of what
+    /// the type declares and the refusal beside it; a volume whose
+    /// filesystem could not be recognized is still a volume, with the
+    /// refusal at the filesystem seam; and neither renumbers what follows.
+    ///
+    /// Content no adapter claims is an outcome here rather than a
+    /// refusal — a disk in no format this release knows is a fact about
+    /// the disk. An image that cannot be *read* still fails.
+    pub fn inspect(&mut self) -> Result<DiskReport> {
+        self.require_usable()?;
+        let device_identity = self.device_identity;
+        let device = DeviceInfo {
+            id: device_identity.value(),
+            image_format: self.descriptor.id.to_owned(),
+            length_bytes: 0,
+            authoritative_layer: self.descriptor.authoritative_layer.name().to_owned(),
+            active_layer: self.active_layer.name().to_owned(),
+        };
+        let mut composed = self.composed();
+        let device = DeviceInfo {
+            length_bytes: composed.len(),
+            ..device
+        };
+
+        let mut report = DiskReport {
+            device,
+            content: DiskContent::Blank,
+            partition_schema: None,
+            regions: Vec::new(),
+            volumes: Vec::new(),
+            filesystems: Vec::new(),
+        };
+
+        match crate::partition::discover(&mut composed)? {
+            Discovery::Blank => {}
+            Discovery::UnknownNonblank { evidence } => {
+                report.content = DiskContent::UnknownNonblank { evidence };
+            }
+            Discovery::BareVolume => {
+                report.content = DiskContent::DirectVolume;
+                let direct = crate::volume::direct(crate::volume::AddressedRegion {
+                    device: device_identity,
+                    offset: 0,
+                    length: report.device.length_bytes,
+                });
+                report.volumes.push(VolumeInfo {
+                    id: VolumeId::whole_device(),
+                    origin: VolumeOrigin::WholeDevice,
+                    start_bytes: direct.offset,
+                    length_bytes: direct.length,
+                    evidence: vec![
+                        "sector 0 is a filesystem boot record, so the whole \
+                         device composes as one volume"
+                            .to_owned(),
+                    ],
+                    issues: Vec::new(),
+                });
+            }
+            Discovery::Partitioned(partitions) => {
+                report.content = DiskContent::Schema;
+                report.partition_schema = Some(PartitionSchemaInfo {
+                    kind: "mbr".to_owned(),
+                    evidence: vec![
+                        "sector 0 carries the boot signature and parses as an \
+                         MBR partition table"
+                            .to_owned(),
+                    ],
+                    issues: Vec::new(),
+                });
+                for partition in &partitions {
+                    let id = RegionId::declared(partition.number);
+                    let role = if mbr::is_extended(partition.type_byte) {
+                        RegionRole::Container
+                    } else {
+                        RegionRole::Data
+                    };
+                    let claimed = partition.type_name.is_some();
+                    report.regions.push(RegionInfo {
+                        id,
+                        declared_number: partition.number,
+                        role,
+                        declared_type: partition.type_byte,
+                        declared_type_reading: mbr::declared_type_reading(partition.type_byte)
+                            .to_owned(),
+                        claimed,
+                        start_bytes: partition.start_bytes,
+                        length_bytes: partition.length_bytes,
+                        issue: partition.issue.clone(),
+                    });
+                    // A structural container is reported and is not thereby
+                    // a volume; a region this release will not read composes
+                    // nothing, and both keep their place in the report.
+                    if role == RegionRole::Container || !claimed || partition.issue.is_some() {
+                        continue;
+                    }
+                    let composed_volume = crate::volume::direct(crate::volume::AddressedRegion {
+                        device: device_identity,
+                        offset: partition.start_bytes,
+                        length: partition.length_bytes,
+                    });
+                    report.volumes.push(VolumeInfo {
+                        id: VolumeId::on_region(id),
+                        origin: VolumeOrigin::Regions(vec![id]),
+                        start_bytes: composed_volume.offset,
+                        length_bytes: composed_volume.length,
+                        evidence: vec![format!(
+                            "direct composition of one data region declared at \
+                             partition {}",
+                            partition.number
+                        )],
+                        issues: Vec::new(),
+                    });
+                }
+            }
+        }
+
+        // Filesystem recognition is its own seam: it runs over volumes that
+        // already exist, and neither creates one nor removes one.
+        let volumes: Vec<(VolumeId, u64)> = report
+            .volumes
+            .iter()
+            .map(|volume| (volume.id, volume.start_bytes))
+            .collect();
+        for (volume, offset) in volumes {
+            let recognition =
+                FatVolume::open(&mut composed, offset).and_then(|fat| fat.recognized(&mut composed));
+            report.filesystems.push(match recognition {
+                Ok(facts) => FilesystemInfo {
+                    id: FilesystemId::on_volume(volume),
+                    volume,
+                    kind: Some(facts.kind.name().to_owned()),
+                    label: facts.label,
+                    cluster_bytes: Some(facts.cluster_bytes),
+                    cluster_count: Some(facts.cluster_count),
+                    declared_geometry: DeclaredGeometry {
+                        sectors_per_track: facts.sectors_per_track,
+                        heads: facts.heads,
+                        cylinders: facts.cylinders,
+                    },
+                    evidence: vec![
+                        "a FAT boot record recognized at the volume's first \
+                         sector"
+                            .to_owned(),
+                    ],
+                    issues: Vec::new(),
+                },
+                Err(issue) => FilesystemInfo {
+                    id: FilesystemId::on_volume(volume),
+                    volume,
+                    kind: None,
+                    label: None,
+                    cluster_bytes: None,
+                    cluster_count: None,
+                    declared_geometry: DeclaredGeometry::default(),
+                    evidence: Vec::new(),
+                    issues: vec![issue],
+                },
+            });
+        }
+
+        Ok(report)
     }
 
     /// Lists a directory in the volume identified by `volume_id`

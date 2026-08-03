@@ -567,6 +567,12 @@ impl ImageFormatAdapter for Qcow2Adapter {
                 });
                 vec![(None, volume.offset, volume.length)]
             }
+            // Identification refuses guest content no adapter claims, as
+            // it always has. Stating it as an outcome instead is the
+            // layered report's change and belongs to that surface only.
+            mbr::Discovery::UnknownNonblank { evidence: reason } => {
+                return Err(mbr::unknown_nonblank(&reason));
+            }
             mbr::Discovery::Partitioned(partitions) => {
                 evidence.push(format!(
                     "found {} partition(s) in the virtual disk",

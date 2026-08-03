@@ -56,9 +56,9 @@ pub struct PartitionInfo {
     pub issue: Option<Error>,
 }
 
-/// What sector 0 turned out to be (U4). Blank is an answer;
-/// non-zero data that is none of these is a named refusal from
-/// [`discover`], kept distinct from blank.
+/// What sector 0 turned out to be (U4). Blank is an answer, and so is
+/// content no adapter claims — each kept distinct from the other and from
+/// an unreadable image, which is still a refusal from [`discover`].
 #[derive(Debug)]
 pub(crate) enum Discovery {
     /// An MBR partition table: the discovered rows.
@@ -67,6 +67,23 @@ pub(crate) enum Discovery {
     BareVolume,
     /// Sector 0 is all zero: a blank disk with zero volumes.
     Blank,
+    /// Sector 0 carries data that is none of the above. The layered
+    /// report states this as an outcome and carries the evidence; the
+    /// geometry surface turns it back into the refusal it has always
+    /// been, which is why the reason travels with the arm.
+    UnknownNonblank { evidence: String },
+}
+
+/// Why nothing claimed a non-zero sector 0. One sentence, stated once, so
+/// the layered report's evidence and the geometry surface's refusal say
+/// the same thing.
+pub(crate) const UNKNOWN_NONBLANK: &str =
+    "sector 0 carries data but no boot signature: neither a blank disk, a \
+     supported filesystem boot record, nor a partition table — corruption, \
+     or a format outside this release's claim";
+
+pub(crate) fn unknown_nonblank(reason: &str) -> Error {
+    invalid(reason.to_owned())
 }
 
 fn invalid(reason: impl Into<String>) -> Error {
@@ -92,6 +109,51 @@ fn pinned_type_name(type_byte: u8) -> Option<&'static str> {
 
 pub(crate) fn is_extended(type_byte: u8) -> bool {
     matches!(type_byte, 0x05 | 0x0f)
+}
+
+/// What a declared type value *declares*, as a phrase that completes
+/// "partition type 0xNN declares …" in a refusal a user reads.
+///
+/// It is present for every value, whether or not this release reads the
+/// type, because the region a caller most needs explained is the one the
+/// library declines to read: without it, every consumer keeps a second
+/// partition-type table in order to say what was refused, which is the
+/// duplication P16 puts inside the schema adapter to prevent.
+///
+/// It describes the declaration and never the content. An unread `0x07`
+/// region is not thereby asserted to hold NTFS — only to say it does.
+pub(crate) fn declared_type_reading(type_byte: u8) -> &'static str {
+    match type_byte {
+        0x00 => "an unused entry",
+        0x01 => "FAT12",
+        0x04 => "FAT16, under 32 MB",
+        0x05 => "an extended partition, CHS-addressed",
+        0x06 => "FAT16B",
+        0x07 => "NTFS or exFAT",
+        0x0b => "FAT32, CHS-addressed",
+        0x0c => "FAT32, LBA-addressed",
+        0x0e => "FAT16B, LBA-addressed",
+        0x0f => "an extended partition, LBA-addressed",
+        0x11 => "a hidden FAT12",
+        0x14 => "a hidden FAT16, under 32 MB",
+        0x16 => "a hidden FAT16B",
+        0x17 => "a hidden NTFS or exFAT",
+        0x1b => "a hidden FAT32, CHS-addressed",
+        0x1c => "a hidden FAT32, LBA-addressed",
+        0x1e => "a hidden FAT16B, LBA-addressed",
+        0x82 => "Linux swap, or a Solaris slice",
+        0x83 => "a Linux filesystem",
+        0x8e => "a Linux LVM physical volume",
+        0xa5 => "a FreeBSD slice",
+        0xa6 => "an OpenBSD slice",
+        0xa8 => "a macOS UFS volume",
+        0xaf => "an HFS or HFS+ volume",
+        0xee => "that the whole disk is GPT rather than MBR, this entry \
+                 being the protective placeholder GPT writes",
+        0xef => "an EFI system partition",
+        0xfd => "a Linux RAID autodetect member",
+        _ => "no type this release has a reading for",
+    }
 }
 
 struct RawEntry {
@@ -149,11 +211,9 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
         return Ok(Discovery::Blank);
     }
     if mbr[510..512] != BOOT_SIGNATURE {
-        return Err(invalid(
-            "sector 0 carries data but no boot signature: neither a blank \
-             disk, a supported filesystem boot record, nor a partition \
-             table — corruption, or a format outside this release's claim",
-        ));
+        return Ok(Discovery::UnknownNonblank {
+            evidence: UNKNOWN_NONBLANK.to_owned(),
+        });
     }
     if looks_like_bpb(&mbr) {
         return Ok(Discovery::BareVolume);
@@ -285,4 +345,60 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
     }
 
     Ok(Discovery::Partitioned(partitions))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The type-byte table is a machine-input surface where one byte flips
+    /// the meaning of a partition and the library acts on that meaning, so
+    /// it is pinned value by value — mapped values and unmapped
+    /// neighbours alike — and grows one row at a time.
+    #[test]
+    fn every_declared_type_reads_as_something_quotable() {
+        let pinned: &[(u8, &str)] = &[
+            (0x00, "an unused entry"),
+            (0x01, "FAT12"),
+            (0x04, "FAT16, under 32 MB"),
+            (0x05, "an extended partition, CHS-addressed"),
+            (0x06, "FAT16B"),
+            (0x07, "NTFS or exFAT"),
+            (0x0b, "FAT32, CHS-addressed"),
+            (0x0c, "FAT32, LBA-addressed"),
+            (0x0e, "FAT16B, LBA-addressed"),
+            (0x0f, "an extended partition, LBA-addressed"),
+            (0x83, "a Linux filesystem"),
+            (0xef, "an EFI system partition"),
+        ];
+        for &(byte, reading) in pinned {
+            assert_eq!(declared_type_reading(byte), reading, "type 0x{byte:02x}");
+        }
+        assert!(
+            declared_type_reading(0xee).contains("GPT rather than MBR"),
+            "0xee must say the disk is GPT, which is the sentence that \
+             turns a confusing empty result into an answer"
+        );
+    }
+
+    /// Unmapped bytes still read as something a refusal can quote: the
+    /// reading is unconditional, which is the whole point of it.
+    #[test]
+    fn an_unmapped_type_still_reads_rather_than_reading_as_nothing() {
+        for byte in [0x02u8, 0x3c, 0x77, 0xda, 0xff] {
+            let reading = declared_type_reading(byte);
+            assert!(!reading.is_empty(), "type 0x{byte:02x} reads as nothing");
+            assert_eq!(reading, "no type this release has a reading for");
+        }
+    }
+
+    /// A reading is present whether or not this release reads the type,
+    /// and the two questions stay separate.
+    #[test]
+    fn a_reading_is_not_a_claim_that_the_type_is_read() {
+        assert!(pinned_type_name(0x07).is_none(), "0x07 is outside the claim");
+        assert_eq!(declared_type_reading(0x07), "NTFS or exFAT");
+        assert!(pinned_type_name(0x06).is_some(), "0x06 is inside the claim");
+        assert_eq!(declared_type_reading(0x06), "FAT16B");
+    }
 }

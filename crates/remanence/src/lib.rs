@@ -33,6 +33,7 @@ mod mbr;
 mod p64;
 mod partition;
 mod qcow2;
+mod report;
 mod session;
 mod sevenzip;
 mod source;
@@ -50,13 +51,17 @@ pub use disk::{Disk, DiskFormat, DiskGeometry};
 pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim};
 pub use error::{Error, ErrorCategory, Result};
 pub use evidence::DeclaredLoss;
-pub use fat::{FatEntry, FatEntryKind, FatKind, VolumeInfo};
+pub use fat::{FatEntry, FatEntryKind, FatKind, GeometryVolume};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,
 };
 pub use mbr::{PartitionInfo, PartitionKind};
+pub use report::{
+    DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
+    PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
+};
 pub use p64::{P64HalfTrack, P64Image, P64Report};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout, FilesystemLayout,

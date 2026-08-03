@@ -125,3 +125,41 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     drop(disk);
     std::fs::remove_file(&path).ok();
 }
+
+/// The layered report over a real qcow2: the device is block-active, the
+/// schema and its regions are reported, and every volume the geometry
+/// surface counts is composed here too.
+#[test]
+fn inspection_reports_the_qcow2_device_schema_and_volumes() {
+    let path = private_artifact("inspect");
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
+
+    let report = disk.inspect().expect("inspection reads");
+
+    assert_eq!(report.device.image_format, "qcow2");
+    assert_eq!(report.device.active_layer, "block");
+    assert!(report.device.length_bytes > 0, "the device is addressed");
+
+    assert_eq!(report.content, remanence::DiskContent::Schema);
+    assert_eq!(
+        report.partition_schema.as_ref().map(|s| s.kind.as_str()),
+        Some("mbr")
+    );
+    assert!(
+        report.regions.iter().all(|region| region.issue.is_none()),
+        "every declared region reads cleanly"
+    );
+    assert!(
+        report
+            .regions
+            .iter()
+            .all(|region| !region.declared_type_reading.is_empty()),
+        "every region explains what its type declares"
+    );
+
+    // The same volumes the geometry surface reports, composed here.
+    let geometry = disk.geometry().expect("geometry reads");
+    assert_eq!(report.readable_filesystem_volume_count(), geometry.volumes.len());
+
+    std::fs::remove_file(&path).ok();
+}

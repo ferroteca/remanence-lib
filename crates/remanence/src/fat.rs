@@ -188,7 +188,7 @@ impl Bpb {
 
 /// A recognized FAT volume: facts for the reporting lane (U4).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VolumeInfo {
+pub struct GeometryVolume {
     /// Opaque stable identifier used by every file verb.
     pub id: String,
     /// 1-based partition number this volume sits in; `None` for a
@@ -207,6 +207,20 @@ pub struct VolumeInfo {
     /// track geometry divides the total sector count with no remainder.
     /// Omitted otherwise — never invented (U4).
     pub cylinders: Option<u64>,
+}
+
+/// What recognizing FAT on one volume established (P18). These are the
+/// filesystem's own declarations: the geometry here is what the boot
+/// record states, and it manufactures no physical drive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FatRecognition {
+    pub(crate) kind: FatKind,
+    pub(crate) label: Option<String>,
+    pub(crate) cluster_bytes: u64,
+    pub(crate) cluster_count: u64,
+    pub(crate) sectors_per_track: Option<u16>,
+    pub(crate) heads: Option<u16>,
+    pub(crate) cylinders: Option<u64>,
 }
 
 /// A FAT volume over a byte range of a device.
@@ -247,26 +261,42 @@ impl FatVolume {
         Ok(Self { offset, bpb, kind })
     }
 
-    pub fn info(
-        &self,
-        device: &mut dyn Device,
-        id: String,
-        partition_number: Option<u32>,
-        length_bytes: u64,
-    ) -> Result<VolumeInfo> {
-        Ok(VolumeInfo {
-            id,
-            partition_number,
+    /// The facts recognition established, in the filesystem seam's own
+    /// vocabulary — no volume identity, no partition number, no bounds
+    /// belonging to the volume this was recognized on.
+    pub(crate) fn recognized(&self, device: &mut dyn Device) -> Result<FatRecognition> {
+        Ok(FatRecognition {
             kind: self.kind,
             label: self.volume_label(device)?,
-            offset_bytes: self.offset,
-            length_bytes,
             cluster_bytes: self.bpb.cluster_bytes(),
             cluster_count: self.bpb.cluster_count(),
             sectors_per_track: (self.bpb.sectors_per_track != 0)
                 .then_some(self.bpb.sectors_per_track),
             heads: (self.bpb.heads != 0).then_some(self.bpb.heads),
             cylinders: self.bpb.cylinders(),
+        })
+    }
+
+    pub fn info(
+        &self,
+        device: &mut dyn Device,
+        id: String,
+        partition_number: Option<u32>,
+        length_bytes: u64,
+    ) -> Result<GeometryVolume> {
+        let facts = self.recognized(device)?;
+        Ok(GeometryVolume {
+            id,
+            partition_number,
+            kind: facts.kind,
+            label: facts.label,
+            offset_bytes: self.offset,
+            length_bytes,
+            cluster_bytes: facts.cluster_bytes,
+            cluster_count: facts.cluster_count,
+            sectors_per_track: facts.sectors_per_track,
+            heads: facts.heads,
+            cylinders: facts.cylinders,
         })
     }
 
