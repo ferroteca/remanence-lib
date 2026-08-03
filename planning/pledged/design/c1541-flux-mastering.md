@@ -42,4 +42,4 @@ The plan computes the whole transformation before anything is written: the mediu
 
 ## What it does not own
 
-The destination container's grammar, version claim, encoding, and refusals belong to the image-format adapter (F34, P12). The profile states how evidence is reduced; the adapter states what can be carried. Neither infers the other's answer, and neither is permitted to normalize what the other refused.
+The destination container's grammar, version claim, encoding, and refusals belong to the image-format adapter (P12), which for P64 is delivered. The profile states how evidence is reduced; the adapter states what can be carried. Neither infers the other's answer, and neither is permitted to normalize what the other refused.
