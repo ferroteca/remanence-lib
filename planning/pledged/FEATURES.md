@@ -13,7 +13,7 @@ Reduce an opened capture set's `FluxCapture` to one circular, half-track-address
 
 Mastering resolves in two stages: a plan which computes everything and writes nothing, and an execution which writes. A reduction that no policy input names is a named refusal, not a default. The same sources, policy, and seed produce the same mastered state.
 
-Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: the flux-capture foundation, its KryoFlux capture-set adapter and the flux-medium foundation, all delivered; F36 for the declarations it consumes.
+Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: the flux-capture foundation, its KryoFlux capture-set adapter, the flux-medium foundation and the drive-profile catalog, all delivered.
 
 Companion design: [design/c1541-flux-mastering.md](design/c1541-flux-mastering.md).
 
@@ -26,15 +26,3 @@ P64's authoritative layer is a flux medium, so conformance is a same-layer round
 Touches: S1, S2, S3. Supports: U7, U23; P1, P3, P4, P6, P8, P9, P12, P13, P22, P29. Needs: the flux-medium foundation, which is delivered.
 
 Companion design: [design/p64-image-adapter.md](design/p64-image-adapter.md).
-
-## F36 — Drive-profile catalog and flux recognition
-
-Establish the P30 seam and its catalog: the profile descriptor, the probe over an opened `FluxCapture`, bounded and comparable confidence carrying the observations that produced it, ranked verdicts where more than one profile claims a capture, caller pinning and override, and a named refusal when nothing claims it. C1541 is the first and only enrolled profile — two drive steps per track, 300 RPM against a 16 MHz reference, the four-zone density map with its sector counts and track boundaries, and GCR synchronization recognized as a run of shortest intervals.
-
-The probe reads flux interval lengths and the patterns they form, and nothing else: it resolves no bit, assembles no byte, names no sector, and validates no checksum. What leaves it is a count, a density, an angle, an absence, and its evidence.
-
-Conformance is the prepared capture set: probing the data surface recovers all four speed zones at their documented track boundaries with their documented sector counts, and refuses the half-step positions on cross-pass reproducibility rather than on a tuned threshold. A capture the catalog cannot claim names the refusal.
-
-Touches: S1, S2, S3. Supports: U23; P3, P4, P12, P22, P23, P27, P29, P30. Needs: the flux-capture foundation, which is delivered; P30 pledged.
-
-Companion design: [design/drive-profile-recognition.md](design/drive-profile-recognition.md).

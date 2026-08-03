@@ -5,11 +5,30 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # Drive-profile catalog and flux recognition
 
-> **Status:** pledged, not delivered. This design serves F36 and authorizes no implementation outside that feature.
+> **Status:** delivered; the feature that carried it has been struck and its
+> handle retired. This remains the written statement of the seam —
+> implemented in `crates/remanence/src/drive_profile.rs`, reached through
+> `CaptureSet::recognize` on all three application surfaces. It specifies the
+> model and the recognition rather than the surface, and no normative
+> specification of S1–S3 has shipped — the defining code is still the norm —
+> so it stays here rather than moving out (D11).
+>
+> Two things it describes are narrower or wider in the code than the prose
+> above, and neither is owed by the delivered feature. The **materialization
+> half** is declared and read by nothing yet: the reduction that consumes it
+> is F33's, and it is laid out beside the recognition half for the reason
+> given below. And the **spacing between record starts is counted in bits,
+> not measured in time** — summing the classified multiples between two
+> record starts rather than dividing elapsed ticks by a cell. That is what
+> makes it repeat exactly: a bit count is a property of what was recorded and
+> is immune to the instrument's own speed within one revolution, where a
+> timed distance carries every wobble of the spindle into the comparison.
+> Measured that way the median deviation is zero on every recorded track of
+> the prepared set, which is the claim this design makes.
 
 ## Purpose
 
-F36 establishes the P30 seam: the place a drive family's recording
+This design establishes the P30 seam: the place a drive family's recording
 conventions are declared, and the place a capture is recognized as belonging
 to that family. It exists because P22 and P23 both rest on a "media profile"
 and a "hardware profile" without naming an owner for either, and because the
