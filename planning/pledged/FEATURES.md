@@ -7,6 +7,44 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** pledged, not delivered. Every feature here is owed by the project, but no entry promises an order, date, or implementation approval.
 
+## F24 — The FAT label answer, whole, at the filesystem seam
+
+Make a recognized FAT volume's label one complete answer: the label, or the
+fact that the volume has none. `NO NAME` is the format's own spelling of
+unlabeled, so it is absence — decided where the format is known rather than by
+a string comparison in every consumer that displays a drive.
+
+FAT records a label in two places, the boot record's field and the root
+directory's volume-ID entry, and a volume may carry either, both, or
+disagreeing values. Choosing between them is a policy about FAT, so the
+filesystem adapter holds it and states it: the root-directory entry is the
+label DOS itself displays and answers wherever it exists; the boot-record
+field answers where it does not; `NO NAME` at either source is absence. Both
+readings stay beside the answer as evidence (P4), so a caller which needs the
+literal bytes has them without opening a sector, and no caller has to know
+which of the two it should have looked at.
+
+The boot-record field is only a field where the format says it is. It belongs
+to the extended boot record and exists only under that structure's own
+signature; where the signature is absent the volume has no such field, which
+is a third state distinct from the field being present and blank. Reading the
+offset regardless would manufacture a label out of whatever bytes happen to
+sit there, which is the invention this library refuses everywhere else — the
+same rule that keeps a derived cylinder count absent unless it divides
+exactly.
+
+Nothing else may become a label. A directory name, a filesystem kind, a file
+inside the volume, and the image's own filename are not evidence of one, and
+an unlabeled volume is reported unlabeled rather than given a placeholder.
+
+The label sits today on the volume record the disk report returns and, once
+F38 has landed, on the filesystem record where that seam owns it. F24 lands on
+whichever presentation is current when it is picked up; it neither waits for
+F38 nor blocks it, and the answer it defines is the same either way.
+
+Touches: S1, S2, S3. Supports: U2, U4, U22; P3, P4, P5, P18. Needs: nothing
+pledged first.
+
 ## F38 — The layered disk inspection report
 
 Add one evidence-bearing disk inspection operation whose result keeps the
