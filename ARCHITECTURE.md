@@ -21,7 +21,12 @@ One core, two bindings:
   commit-point session cache that keeps every write bufferable and
   revocable until committed — reads stream through a bounded working
   set, and altered extents hold in memory or spill to private session
-  storage, never the image.
+  storage, never the image. The magnetic family sits beside that stack
+  and never crosses into it: the flux-capture model and its KryoFlux
+  capture-set adapter, the flux-medium model above it, the drive-profile
+  seam that recognizes a capture as a family's, the C1541 mastering
+  profile that reduces one to a medium under a declared policy, and the
+  P64 adapter that reads and writes that medium as a container.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
   accessor functions, borrowed strings owned by their handle. The header
   `include/remanence.h` is generated from the Rust signatures by cbindgen
@@ -408,6 +413,104 @@ be inferred. This principle adds neither multi-device opening nor
 multi-device volume composition; those capabilities require their own
 proposal.
 
+### P22 — Magnetic recording can descend to timed flux transitions
+
+For a magnetic-media family that claims a physical recording path,
+Remanence can represent recorded state at the granularity of individual
+timed flux-transition events. Each event carries its timing and any
+detection-strength semantics claimed by the authoritative image or derived
+model. This is the lowest modeled magnetic-data layer: analog head voltages,
+amplifier waveforms, magnetic field shapes, and transistor-level behavior
+remain outside the model.
+
+When a low-level composition claims that physical recording path, the flux
+layer is its durable mutable media state for the session, not a
+transient stream generated separately for every read. Track-relative flux
+and marker state survives controller interactions and receives modeled
+writes. The timing mechanism projects that circular state into ephemeral
+absolute-time read-channel events as rotation advances; it does not store a
+second event history. A higher-level image synthesized down to this floor
+retains synthetic provenance, and commit back to that source is possible
+only when its format can represent the resulting media change.
+
+P64 is the concrete lower-bound test for this capability. A P64 path
+preserves stored pulse position and strength into the flux medium, and a
+read-channel simulation consumes that state with its weak-event semantics
+intact. Flattening the image to one deterministic bitcell or byte stream
+does not provide P64 fidelity and does not satisfy this principle for that
+format.
+
+Flux is one channel, not the whole medium. Index and hard-sector holes and
+other mechanical or sensor observations are separate timed state or event
+channels; they are not folded into the flux-transition stream. Every adapter
+states which timing, markers, revolutions, and weak-event semantics it
+preserves, normalizes, synthesizes, or cannot represent.
+
+#### The family holds two models, capture and medium
+
+A capture adapter may preserve several revolutions and their marker timing,
+while a normalized media model defines one circular revolution. Those are
+two models, and each has its own name so that one word stops doing two jobs.
+
+**Flux capture** is timed transition evidence as an instrument recorded it:
+several capture runs and observations of one source location, the
+instrument's own timebase, the source's own location identity, parallel
+marker channels, and whatever else the capture container expressed. It
+asserts nothing about which revolution the disk *was*, and this principle's
+refusal to average, deduplicate, or select inside it stands unchanged.
+
+**Flux medium** is one circular pulse stream per location the family
+addresses, expressed in a declared rotational frame against a declared
+reference clock, with each pulse carrying the family's strength semantics,
+beside the medium-level facts that are not per-pulse. It asserts exactly
+what a drive would read.
+
+**The boundary is one sentence: disagreement across observations is a
+capture fact, and strength is a medium fact.** A capture records that three
+passes differed. A medium records that a pulse is weak. Turning the first
+into the second is a reduction governed by P29 and performed by neither
+model on its own initiative.
+
+What the medium adds is precisely what the flux does not contain — the
+rotational frame, the family's addressing, the reference clock, the strength
+vocabulary, and which surface is the disk. Every one of those is declared by
+a P30 drive profile. That is why this is a second model and not a tidier
+first one: the medium is where declared family knowledge and recorded
+evidence combine, and a representation holding only one of the two cannot
+stand in for it.
+
+What the medium must **not** hold keeps it below the layer above: no
+bitcell, no recovered clock, no synchronization, no symbol, no byte. Those
+are hardware bitstream and above, and a medium that reached them would erase
+the distinction between what a medium is and what a drive makes of it.
+
+P64 is a flux medium. SCP, A2R and KryoFlux streams are flux captures. G64
+is a hardware bitstream. Naming them locates them; it changes no support
+claim, each of which remains enumerated under P3 and delivered by its own
+adapter.
+
+P13 governs movement away from the authoritative layer. Captured flux may
+be decoded into derived sector, filesystem, and file presentations while
+retaining ambiguity and evidence; that interpretation never creates a
+block-active device. CHS sectors, encoded tracks, or another representation
+inside a declared legacy magnetic family may be synthesized downward to
+flux only when the image format, media profile, hardware profile, and
+mastering rules claim a deterministic mapping; the result remains synthetic
+rather than evidence of an original recording. Logical blocks never enter
+that path, and flux never converts into logical blocks.
+
+The flux floor is an internal modeling capability, not a universal public
+interface. P15 still determines the programmed seam visible to a drive
+emulator, and P3 and P12 still require each named image format to enter and
+leave through the representation seam it actually supports.
+
+#### Knock-on requirements
+
+In-force P12 and P13 recognize timed flux as an authoritative layer and physical media profiles as the owners of index and
+sector-hole topology. It makes the separate flux-data and marker/sensor
+channels explicit. U23 supplies the concrete P64 journey; P22 does not by
+itself claim a standalone P64 image adapter or a public flux interface.
+
 ### P23 — One durable layer is active
 
 Every independently mutable open state instance has exactly one **active
@@ -612,3 +715,140 @@ never as the only route. This principle constrains resources, not
 semantics: behavior is identical at every source size, and peak memory
 bounded independently of source size is the testable claim this entry
 makes.
+
+### P29 — Mastering is declared, reproducible, and states its loss
+
+**Mastering** is deriving a new artifact from evidence Remanence already
+holds: solving several capture runs into one circular medium, choosing among
+channels and observations, projecting one timebase onto another, and encoding
+the result into a format that cannot carry everything the evidence holds. P13
+already permits the act — choosing another authoritative layer is an explicit
+conversion which creates a new image and names its loss. This principle says
+what the act must carry, because a conversion that reduces evidence silently
+is indistinguishable from one that preserves it.
+
+**Mastering is requested, never incidental.** It is not a side effect of
+opening, attaching, presenting, or saving. The sources are read and nothing
+else: their authoritative layers, active layers, and provenance are unchanged
+by the operation, and the result is a separate artifact with its own
+authoritative layer.
+
+**Every reduction is a named policy input.** Which channel supplies evidence;
+which observation of a location is used and how several are reconciled; how
+source location identity maps onto the destination's addressing; how the
+source timebase projects onto the destination's; and how weakness, absence,
+disagreement, and contradiction are expressed in the destination's vocabulary
+— each is supplied by the caller or declared by the profile, and each travels
+into the result as provenance. **A reduction that no policy names is a
+refusal, not a default.** The flux capture already refuses to average timings,
+deduplicate pulses, or select a cleanest pass inside itself; this forbids
+performing those on the way out.
+
+**Two owners, and neither infers the other's answer.** The family mastering
+profile owns the physical reduction; the destination image-format adapter owns
+its grammar, its version claim, its encoding, and its named refusals (P8, P12).
+A profile does not decide what a container can hold, and an adapter does not
+decide which revolution the disk was.
+
+**The loss is declared before the write.** A mastering operation resolves in
+two stages: a plan which computes the whole transformation and writes nothing,
+and an execution which writes. The plan enumerates, in the source's own terms,
+everything the destination will not carry — unselected channels and
+observations, evidence outside the destination's addressable extent, marker
+channels, foreign records, capture metadata, and timing resolution beyond the
+destination's timebase. A count is not an account; loss reported after the
+fact does not satisfy this; and a reduction the plan did not declare is a
+defect, not a detail.
+
+**The result is derived and says so.** Mastered content carries
+selected-and-projected or synthetic provenance under P13, never
+recovered-evidence provenance. Nothing in a mastered artifact is presented as
+an observation of an original recording that was not one.
+
+**Mastering is reproducible.** The same sources, policy, and declared seed
+produce the same mastered state; where the destination encoding is itself
+deterministic, the same bytes. A transformation which cannot state what makes
+it vary is refused rather than shipped as approximately repeatable.
+
+P2, P6, and P9 apply unchanged: the sources are never mutated, nothing is
+written until every check has passed, and an interruption leaves a complete
+destination artifact or none.
+
+#### Knock-on requirements
+
+This principle governs the direction *out* of the library's evidence into a
+new artifact; P13 continues to govern write availability *back* to a source,
+and P23 continues to govern which layer is active within a session. It pledges
+no destination format by itself — each is a named claim under P3 delivered by
+its own adapter — and it creates no public evidence iterator: the mastering
+plan and its declared-loss account are the surface, and the evidence stays
+behind them.
+
+### P30 — Drive profiles are an independent seam
+
+P22 and P23 both rest on a **media profile** and a **hardware profile**: the
+authority that says whether a drive observes a selected revolution or a
+seeded variation, and the authority that, with the image metadata and the
+mastering rules, makes a downward synthesis honest rather than invented.
+Neither principle names an owner for that knowledge, so today it is assumed
+by two principles and held by none. This states the seam that holds it.
+
+A **drive profile** consumes flux evidence and declared context and exposes
+one family's recording conventions together with a recognition verdict over
+that evidence. It owns how the family's source positions map onto its own
+addressing and how many steps a location takes; its rotation rate and
+reference clock; its density or zone map and what each zone claims; the
+timing shape of its encoding landmarks; which surfaces it records; and the
+selection or variation rule by which several observed revolutions become one
+served medium. Each is a declared fact of the family, carried with its
+provenance — never arithmetic a capture is assumed to justify.
+
+**Recognition is a probe that carries its evidence.** A profile is offered
+the evidence and answers with a bounded, comparable confidence and the
+observations that produced it (P4), so a verdict is auditable rather than
+asserted. Several profiles may claim one capture and the verdict is ranked;
+a capture no profile claims is a named refusal (P3), never a guess, a
+default, or the single enrolled entry winning by being alone. **Discovery
+proposes and never silently decides**: a caller may pin or override a
+profile, and what the library chose travels into the result as provenance.
+
+#### The recognition boundary
+
+**A profile recognizes structure, never content.** It may read flux interval
+lengths and the patterns they form — a run of shortest intervals is a
+synchronization landmark whether or not anything ever decodes it — and it
+may report a count, a density, an angle, a location, and an absence. It may
+not resolve a bit value, assemble a byte, name a sector, or validate a
+checksum.
+
+The boundary is not fastidiousness. Those acts are the hardware bitstream
+and the layers above it, and a probe that reached them to recognize a family
+would make every recognition depend on a clock-recovery model, collapsing
+the distinction between what a medium *is* and what a drive *makes of it*.
+The test is what leaves the probe: **an angle, never a byte.** A protection
+whose evidence is a deliberately wrong checksum is therefore invisible here
+by design, and is carried faithfully by a layer that never interprets it.
+
+#### What a profile is not
+
+It is not P15 hardware emulation, which generates timed causality from state
+a profile helped materialize, and it is not a P12 image-format adapter,
+which owns a container's grammar and recognizes an encoding. A profile owns
+what a family does to media. One composition may need all three and none
+substitutes for another.
+
+The profile catalog is wiring, as P12's is: every entry pairs a descriptor
+with behavior, and adding a family changes its module, its tests, and one
+mechanical enrollment. Central orchestration neither branches on a profile
+identifier nor interprets string-named family rules.
+
+#### Knock-on requirements
+
+P29 is unchanged and is the reason this seam is safe. A policy input is
+"supplied by the caller or declared by the profile", so recognition supplies
+declarations with provenance rather than converting an unnamed reduction
+into a silent one: a profile that cannot state a reduction still refuses.
+This principle pledges no family — each is a named claim under P3 delivered
+by its own feature — and it creates no public flux, pulse, or capture-run
+iterator. The verdict and its evidence are the surface, and the evidence
+stays behind them.
