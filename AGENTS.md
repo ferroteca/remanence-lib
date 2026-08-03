@@ -249,15 +249,16 @@ compiled into the wheel.
   right), extracts only the one disk image the tests read beside it
   plus a generated single-image zip; downloads the sha256-pinned
   Pinball Construction Set KryoFlux source archive into
-  `testing-prep/downloads/` and packages disk one's two captured sides
-  into local 7z fixtures, splitting on the `.0.raw` / `.1.raw` suffix —
-  which is the KryoFlux head designator, so these are the disk's two
-  sides and not two passes over one surface. Members keep that suffix:
-  a KryoFlux stream records no track or side in its own out-of-band
-  data, so the member name is the only place a capture's position
-  exists, and stripping it would admit a grammar no real capture has.
-  The fixture file names still say
-  "Capture 0" and "Capture 1"; and it builds the FreeDOS qcow2
+  `testing-prep/downloads/` and packages disk one's whole capture —
+  all 84 step positions from both heads — into one local 7z fixture,
+  which is the artifact a real capture produces when a single-sided
+  disk is read in a two-head drive. Members keep the `.0.raw` /
+  `.1.raw` head designator: a KryoFlux stream records no track or side
+  in its own out-of-band data, so the member name is the only place a
+  capture's position exists, and stripping it would admit a grammar no
+  real capture has. Head 0 carries the disk and head 1 is the
+  unrecorded back, which reads as noise — telling them apart is the
+  library's job, not the fixture's. And it builds the FreeDOS qcow2
   rig artifact there. The FreeDOS LiveCD downloads through
   reliquary's own media mechanism into
   `testing-prep/test-rigs/cache/media`; downloads that are not

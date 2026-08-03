@@ -72,11 +72,11 @@ PINBALL_ARCHIVE_NAME = "Bill Budge Pinball Construction Set [Commodore 64].7z"
 PINBALL_ARCHIVE_SHA256 = \
     "3cf001b21f76d4c932bbd1a385f13f551fdb01735ce8d12a26c69f3ab9367889"
 PINBALL_DISK_ONE_PREFIX = "Bill Budge Pinball Construction Set[Commodore 64](1of2)"
-PINBALL_DISK_ONE_CAPTURE_ZERO_NAME = \
-    "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 0.7z"
-PINBALL_DISK_ONE_CAPTURE_ONE_NAME = \
-    "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 1.7z"
-PINBALL_DISK_ONE_CAPTURE_COUNT = 84
+PINBALL_DISK_ONE_NAME = \
+    "Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z"
+# 84 drive-step positions, each captured by both heads.
+PINBALL_DISK_ONE_STEP_COUNT = 84
+PINBALL_DISK_ONE_MEMBER_COUNT = PINBALL_DISK_ONE_STEP_COUNT * 2
 
 RIG_BLUEPRINT = "remanence-parttest"
 FREEDOS_QCOW2_NAME = "freedos-parttest.qcow2"
@@ -151,26 +151,26 @@ def prepare_hdos_fixtures() -> None:
 
 
 def prepare_pinball_fixture() -> None:
-    """Package disk one's two captured sides as 7z fixtures.
+    """Package disk one's whole capture -- both heads -- as one 7z fixture.
 
-    The `.0.raw` / `.1.raw` suffix is the KryoFlux head designator, so these
-    are the disk's two sides and not two passes over one surface.  Members
-    keep that suffix rather than having it stripped: the stream itself
-    records no track or side anywhere, so the name is the only place a
-    capture's position exists, and it is the convention the capture tool
-    writes and the rest of the toolchain reads.  A fixture renamed out of
-    that convention would admit a grammar no real capture has.  The
-    fixture file names still say "Capture 0" and "Capture 1".
+    This is the artifact a real capture produces: a single-sided 1541 disk
+    read in a two-head drive, so the tool captures every step position from
+    both heads and the operator archives the lot.  Head 0 carries the disk;
+    head 1 is the unrecorded back, and reads as noise.  Telling them apart
+    is the library's job, not the fixture's, so both are kept and neither is
+    labelled here.
+
+    Members keep the `.0.raw` / `.1.raw` head designator rather than having
+    it stripped: the stream itself records no track or side anywhere, so the
+    name is the only place a capture's position exists, and it is the
+    convention the capture tool writes and the rest of the toolchain reads.
+    A fixture renamed out of that convention would admit a grammar no real
+    capture has.
     """
-    print("==> Preparing Pinball Construction Set KryoFlux fixtures...")
-    targets = (
-        ("0", FIXTURES_DIR / PINBALL_DISK_ONE_CAPTURE_ZERO_NAME),
-        ("1", FIXTURES_DIR / PINBALL_DISK_ONE_CAPTURE_ONE_NAME),
-    )
-    missing_targets = [(side, target) for side, target in targets
-                       if not target.exists()]
-    if not missing_targets:
-        print("Pinball Construction Set fixtures already present")
+    print("==> Preparing Pinball Construction Set KryoFlux fixture...")
+    target = FIXTURES_DIR / PINBALL_DISK_ONE_NAME
+    if target.exists():
+        print("Pinball Construction Set fixture already present")
         return
 
     seven_zip = shutil.which("7z") or shutil.which("7z.exe")
@@ -193,42 +193,41 @@ def prepare_pinball_fixture() -> None:
         if result.returncode != 0:
             sys.exit(
                 "7-Zip could not extract the Pinball Construction Set disk "
-                f"one captured sides (exit code {result.returncode})."
+                f"one capture (exit code {result.returncode})."
             )
 
-        for side, target in missing_targets:
-            captures = sorted(
-                path for path in extract_dir.iterdir()
-                if path.is_file()
-                and path.name.startswith(PINBALL_DISK_ONE_PREFIX)
-                and path.name.endswith(f".{side}.raw")
+        captures = sorted(
+            path for path in extract_dir.iterdir()
+            if path.is_file()
+            and path.name.startswith(PINBALL_DISK_ONE_PREFIX)
+            and (path.name.endswith(".0.raw") or path.name.endswith(".1.raw"))
+        )
+        if len(captures) != PINBALL_DISK_ONE_MEMBER_COUNT:
+            sys.exit(
+                "Pinball Construction Set archive yielded "
+                f"{len(captures)} disk-one streams; expected "
+                f"{PINBALL_DISK_ONE_MEMBER_COUNT} "
+                f"({PINBALL_DISK_ONE_STEP_COUNT} step positions, two heads)."
             )
-            if len(captures) != PINBALL_DISK_ONE_CAPTURE_COUNT:
-                sys.exit(
-                    "Pinball Construction Set archive yielded "
-                    f"{len(captures)} disk-one side-{side} files; "
-                    f"expected {PINBALL_DISK_ONE_CAPTURE_COUNT}."
-                )
 
-            print(f"Packaging {len(captures)} disk-one side-{side} files "
-                  f"into {target.name}...")
-            result = subprocess.run(
-                [seven_zip, "a", "-t7z", "-mx=9", str(target),
-                 f"*.{side}.raw"],
-                cwd=extract_dir,
-                check=False,
+        print(f"Packaging {len(captures)} disk-one streams "
+              f"into {target.name}...")
+        result = subprocess.run(
+            [seven_zip, "a", "-t7z", "-mx=9", str(target), "*.raw"],
+            cwd=extract_dir,
+            check=False,
+        )
+        if result.returncode != 0:
+            sys.exit(
+                f"7-Zip could not package {target.name} "
+                f"(exit code {result.returncode})."
             )
-            if result.returncode != 0:
-                sys.exit(
-                    f"7-Zip could not package {target.name} "
-                    f"(exit code {result.returncode})."
-                )
-            result = subprocess.run([seven_zip, "t", str(target)], check=False)
-            if result.returncode != 0:
-                sys.exit(
-                    f"7-Zip could not verify {target.name} "
-                    f"(exit code {result.returncode})."
-                )
+        result = subprocess.run([seven_zip, "t", str(target)], check=False)
+        if result.returncode != 0:
+            sys.exit(
+                f"7-Zip could not verify {target.name} "
+                f"(exit code {result.returncode})."
+            )
 
 
 

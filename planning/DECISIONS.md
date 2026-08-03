@@ -132,19 +132,25 @@ F31, F33, F34, F36 and the new F37 in
 `file-container-presentation.md`; proposed F32 and its design; the annotation
 on D8.
 
-### D13 — The capture set's two archives are the disk's sides, not two capture channels
+### D13 — The capture's two head designators are the disk's sides, not two capture channels
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** U23, P29, P30.
 
 A factual correction to pledged text, and a scope call that follows from it.
 
-**The fixture was misread.** `testing-prep/prep_fixtures.py` splits the
-Pinball Construction Set capture on the `.0.raw` / `.1.raw` suffix, which is
-the KryoFlux head designator: the two archives are the disk's two **sides**,
-not two passes over one surface. Side 1 is the unrecorded back of a
-single-sided disk, measured as noise on every position sampled — roughly
-49,000 transitions per revolution with the count varying by hundreds between
-passes, against side 0's tracks reproducing transition for transition.
+**The fixture was misread.** The `.0.raw` / `.1.raw` suffix on a Pinball
+Construction Set stream is the KryoFlux head designator: the two are the
+disk's two **sides**, not two passes over one surface. Side 1 is the
+unrecorded back of a single-sided disk, measured as noise on every position
+sampled — roughly 49,000 transitions per revolution with the count varying by
+hundreds between passes, against side 0's tracks reproducing transition for
+transition.
+
+**Confirmed from the flip.** The source archive holds a second capture of the
+same disk turned over, and it inverts exactly: there, head 1 reproduces
+transition for transition and head 0 is the noise. The recorded surface
+follows the flip to whichever head faces it, so the disk carries exactly one
+recorded surface, established from both orientations. It is not a flippy.
 
 **"Capture-channel identity" was never a second concept.** F31 already owned
 "track and side identity", so the clause is struck rather than renamed.
@@ -160,13 +166,15 @@ and the reductions that actually carry risk are the timebase projection,
 half-track admission, and the partial revolution outside the destination's
 one rotation.
 
-**The fixture keeps the capture tool's spelling.** Members carry the
-`.0.raw` / `.1.raw` designator rather than having it stripped: a stream
-declares no track or side in its own out-of-band data, so a member's name is
-the only place its position exists, and a fixture renamed out of the
-convention would admit a grammar no real capture has. The archive files still
-say "Capture 0" and "Capture 1"; renaming those is separate work and is not
-owed by this entry.
+**The fixture is one capture, both heads.** It holds all 84 step positions
+from each head in a single archive, named for the disk, which is the artifact
+a real capture produces: a single-sided disk read in a two-head drive yields
+both heads, and the operator archives the lot. Splitting the heads into two
+archives would have pre-answered the question the library exists to answer.
+Members carry the `.0.raw` / `.1.raw` designator rather than having it
+stripped: a stream declares no track or side in its own out-of-band data, so
+a member's name is the only place its position exists, and a fixture renamed
+out of the convention would admit a grammar no real capture has.
 
 **Weighed and declined:** leaving the vocabulary and adding a note (the
 misreading had already been weighed into a pledged policy input, which is
@@ -181,7 +189,8 @@ F33 in [pledged/FEATURES.md](pledged/FEATURES.md);
 [pledged/design/c1541-flux-mastering.md](pledged/design/c1541-flux-mastering.md);
 [AGENTS.md](../AGENTS.md); `testing-prep/prep_fixtures.py`;
 `testing-prep/test-rigs/README.md`;
-`crates/remanence/tests/sevenzip_catalog.rs`.
+`crates/remanence/tests/sevenzip_catalog.rs`;
+`crates/remanence/Cargo.toml` and the fixtures directory's `.gitignore`.
 
 ### D12 — Drive profiles own the knowledge a capture does not contain, and recognize structure without reading content
 

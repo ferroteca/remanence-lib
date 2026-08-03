@@ -13,12 +13,12 @@ use remanence::{Archive, ContainerKind, ErrorCategory, Session};
 
 mod common;
 
-const CAPTURE_ZERO: &str =
-    "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 0.7z";
-const CAPTURE_ONE: &str =
-    "Bill Budge Pinball Construction Set [Commodore 64] (1of2) - Capture 1.7z";
-const ARCHIVE_BYTES: u64 = 11_014_196;
-const MEMBER_COUNT: usize = 84;
+const ARCHIVE: &str = "Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z";
+const ARCHIVE_BYTES: u64 = 30_152_909;
+/// 84 drive-step positions, each captured by both heads — the whole of
+/// one capture, as the operator archived it.
+const STEP_COUNT: usize = 84;
+const MEMBER_COUNT: usize = STEP_COUNT * 2;
 /// Members keep the capture tool's `.0.raw` / `.1.raw` head designator.
 /// A KryoFlux stream records no track or side in its own out-of-band
 /// data, so the member name is the only place a capture's position
@@ -26,14 +26,12 @@ const MEMBER_COUNT: usize = 84;
 /// than a spelling the prep script invented.
 const FIRST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)00.0.raw";
 const FIRST_MEMBER_BYTES: u64 = 184_534;
-const SECOND_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)01.0.raw";
-const SECOND_MEMBER_BYTES: u64 = 210_257;
-const LAST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)83.0.raw";
-/// The same position on the disk's second side, whose folder decodes
-/// to more than its declared dictionary.
-const SIDE_ONE_LAST_MEMBER: &str =
-    "Bill Budge Pinball Construction Set[Commodore 64](1of2)83.1.raw";
-const SIDE_ONE_LAST_BYTES: u64 = 270_987;
+/// The same step position on the other head, which is where the archive
+/// goes next: heads interleave, they are not grouped.
+const SECOND_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)00.1.raw";
+const SECOND_MEMBER_BYTES: u64 = 264_965;
+const LAST_MEMBER: &str = "Bill Budge Pinball Construction Set[Commodore 64](1of2)83.1.raw";
+const LAST_MEMBER_BYTES: u64 = 270_987;
 
 /// Every KryoFlux stream opens with the same out-of-band record.
 const STREAM_PREFIX: [u8; 16] = [
@@ -42,17 +40,13 @@ const STREAM_PREFIX: [u8; 16] = [
 
 /// The session holds the P7 deny-write claim for its lifetime, so tests
 /// opening a fixture concurrently take private copies.
-fn private_copy_of(fixture: &str, tag: &str) -> PathBuf {
+fn private_copy(tag: &str) -> PathBuf {
     let target = std::env::temp_dir().join(format!(
         "remanence-7z-{tag}-{}.7z",
         std::process::id()
     ));
-    std::fs::copy(common::ensure_fixture(fixture), &target).expect("fixture copies");
+    std::fs::copy(common::ensure_fixture(ARCHIVE), &target).expect("fixture copies");
     target
-}
-
-fn private_copy(tag: &str) -> PathBuf {
-    private_copy_of(CAPTURE_ZERO, tag)
 }
 
 fn entry_path(archive: &Path, member: &str) -> PathBuf {
@@ -81,9 +75,11 @@ fn the_catalog_lists_every_member_in_archive_order() {
     assert_eq!(entries[MEMBER_COUNT - 1].name, LAST_MEMBER);
 
     // Archive order, not sorted order: the members read back in the
-    // capture's own track sequence.
+    // capture's own sequence — each step position in turn, both heads
+    // of it together before the next position.
     for (index, entry) in entries.iter().enumerate() {
-        assert_eq!(entry.name, format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){index:02}.0.raw"));
+        let (step, head) = (index / 2, index % 2);
+        assert_eq!(entry.name, format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){step:02}.{head}.raw"));
         assert!(!entry.is_dir);
     }
 
@@ -121,15 +117,15 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
 
 #[test]
 fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
-    // The second side decodes to more than the 16 MiB
-    // dictionary it declares, so the LZ window flushes mid-stream and
-    // back-references reach across the flush. The last member still
-    // arrives whole — and the archive's own per-member CRC, which the
-    // catalog checks as it spools, is what says so.
-    let path = private_copy_of(CAPTURE_ONE, "long");
+    // The folder decodes to 38 MiB, far past the 16 MiB dictionary it
+    // declares, so the LZ window flushes mid-stream and back-references
+    // reach across the flush. The last member still arrives whole — and
+    // the archive's own per-member CRC, which the catalog checks as it
+    // spools, is what says so.
+    let path = private_copy("long");
     let session =
-        Session::open(entry_path(&path, SIDE_ONE_LAST_MEMBER)).expect("the last member opens");
-    assert_eq!(session.size_bytes(), SIDE_ONE_LAST_BYTES);
+        Session::open(entry_path(&path, LAST_MEMBER)).expect("the last member opens");
+    assert_eq!(session.size_bytes(), LAST_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
     session.read_at(0, &mut front).expect("the front reads");
@@ -137,7 +133,7 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
 
     let mut tail = [0u8; 16];
     session
-        .read_at(SIDE_ONE_LAST_BYTES - 16, &mut tail)
+        .read_at(LAST_MEMBER_BYTES - 16, &mut tail)
         .expect("the tail reads");
     assert_eq!(
         tail,
@@ -181,7 +177,7 @@ fn a_corrupted_solid_folder_fails_closed() {
 #[test]
 fn an_archive_holding_many_members_names_the_ambiguity() {
     let path = private_copy("ambiguous");
-    let error = Session::open(&path).expect_err("84 members is ambiguous");
+    let error = Session::open(&path).expect_err("168 members is ambiguous");
     assert!(
         error.to_string().contains("contains multiple files"),
         "{error}"
