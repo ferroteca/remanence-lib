@@ -147,10 +147,13 @@ DestinationAddressing
 AdmissionRule
   # what the medium holds where the family records but the capture does not
   unrecorded: Absent | CarriedAsWeak
+  # what it holds where a location's content duplicates an adjacent one
+  duplicate: Absent | CarriedAsObserved | Refuse
   # what a location must satisfy before it is claimed as recorded
   claim_requires: landmark agreement with the location's zone,
                   landmark spacing regularity,
-                  and agreement across the location's observations,
+                  agreement across the location's observations,
+                  and distinctness from its adjacent locations,
                   each reported as evidence rather than as a verdict
 
 OriginRule
@@ -199,9 +202,45 @@ The probe, per source position:
    is the location's seam, and `OriginRule::LongestGap` consumes it.
 7. **Compare the location's observations** with one another, and report the
    agreement.
+8. **Compare the location with its neighbours**, and report whether its
+   content is distinct from theirs.
 
 Confidence is composed from those observations and every one of them is
 reported beside it (P4).
+
+### Why the last two steps are separate observations
+
+Steps 5 and 6 alone do not decide whether a location holds a recorded track,
+and the prepared capture set shows both ways this fails.
+
+**Spacing regularity separates cleanly and is worth having.** Taking the
+distance between record starts around the circle, every location that reads
+a recorded track has a relative median deviation of exactly zero — the
+spacing repeats to the bit, twenty-one or nineteen or eighteen or seventeen
+times around, with one departure which is the seam. Every location that
+reads a straddled step position or an unrecorded surface is non-zero, and
+mostly an order of magnitude so.
+
+**Landmark counting alone does not.** An adaptive cell derivation will
+converge on noise and yield a plausible landmark count from it, so a count
+that matches a zone's claim is corroboration and never a verdict.
+
+**And a clean location may be reading its neighbour.** In the prepared set,
+three consecutive step positions carry the same content: two of them match
+transition for transition, the third to within three transitions of
+twenty-five thousand. The middle one is a step position the family's
+addressing would not expect to hold a track at all, and it passes every
+other test, because it is reading a real track — just not its own.
+
+Two consequences. Parity is not evidence: how many steps make a location is
+a statement about family addressing, never a statement about which source
+positions hold distinct content, and a profile that inferred the second from
+the first would have admitted that position as a track. And a duplicate is
+genuinely ambiguous from flux alone — it may mean the family's head reads a
+neighbouring track at that location, which is a real thing a drive does, or
+it may mean the capture instrument did not move. Nothing in the evidence
+distinguishes them, so `AdmissionRule::duplicate` defaults to `Refuse` for
+C1541 and the caller declares which it is (P29).
 
 **A declared fact guards the arithmetic.** Deriving a cell self-consistently
 admits a spurious solution at half the true cell, where the shortest
@@ -227,6 +266,7 @@ The first and only enrolled profile, and the layout's concrete values:
 | `encoding.landmark` | multiple 1, min run 9, 2 per record |
 | `density` | the four documented speed zones, with their track boundaries, rates and sector counts |
 | `origin.default` | `LongestGap` — the drive never observes index |
+| `admission.duplicate` | `Refuse` — flux cannot tell a neighbouring read from an unmoved head |
 
 The zone table is the family's strongest recognition evidence and the
 reason discovery is worth having: sector count and projected rate agreeing
