@@ -58,6 +58,67 @@ removes it is the record either way.
 
 ## Decisions
 
+### D12 — Drive profiles own the knowledge a capture does not contain, and recognize structure without reading content
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** P4, P12, P22, P23, P29,
+P30.
+
+Rulings made while pledging P30 and F36.
+
+**The seam earns a principle.** P22 and P23 both rest on a "media profile"
+and a "hardware profile" — the authority that says whether a drive observes
+a selected revolution or a seeded variation, and the authority that makes a
+downward synthesis honest — and neither names an owner. Knowledge assumed by
+two principles and held by none is exactly the gap D8 found in P13 and
+closed with P29, and the same reason applies here: a rule that binds every
+future drive family does not belong in the design document of one mastering
+profile. P30 states it.
+
+**Recognition stops at structure.** A profile may read flux interval lengths
+and the patterns they form; it may not resolve a bit value, assemble a byte,
+name a sector, or validate a checksum. The test is what leaves the probe:
+**an angle, never a byte.** This admits the landmark that makes recognition
+work — a GCR sync is ten or more consecutive `1` bits, so in the interval
+domain it is a run of minimum-length intervals, locatable without a clock,
+without the encoding table, and without knowing what it introduces — while
+refusing the ascent that would make every recognition depend on a
+clock-recovery model.
+
+**Discovery proposes; it never decides silently.** Verdicts are ranked,
+carry P4 evidence, and may be pinned or overridden; a capture no profile
+claims is a named refusal, and a lone enrolled profile never wins by being
+alone. This does not weaken P29, whose policy inputs were always "supplied
+by the caller **or declared by the profile**": recognition supplies
+declarations with provenance, and a profile that cannot state a reduction
+still refuses.
+
+**The ruling was made against measurement.** Probing the prepared capture
+set recovered all four 1541 speed zones at their documented track boundaries
+with their documented sector counts, from interval statistics alone, with no
+decoding — which is what established that the boundary above is a real place
+to stand rather than a hopeful one. The same run also showed the cost of the
+weaker alternative: a confidence figure without evidence hid a defect in the
+probe's own cell estimate for one track, and only the evidence beside it
+made the defect visible rather than reportable as a finding about the disk.
+
+**Weighed and declined:** folding recognition into F33's design document
+(D8's precedent — a design authorizes one feature, and this binds every
+family); requiring the caller to declare the family in every case (the
+evidence discriminates decisively, and a forced declaration puts an
+unevidenced assertion into the plan's provenance); letting the probe ascend
+to the hardware bitstream and recognize a family by decoding its sectors
+(collapses the boundary between what a medium is and what a drive makes of
+it, contradicts D8, and would make recognition depend on F32, which is only
+proposed); a bare confidence scalar without the observations behind it
+(P4 forbids it, and the measurement above showed why); and treating a
+profile as a P12 image-format adapter (it owns no container grammar and
+recognizes recorded state rather than an encoding).
+
+**Folded into:** P30 in [pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md);
+pledged F36 and
+[pledged/design/drive-profile-recognition.md](pledged/design/drive-profile-recognition.md);
+the annotation on D8.
+
 ### D11 — A design outlives the feature that carried it
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** (none) — a records
@@ -217,6 +278,12 @@ endpoints are flux-shaped, so the intervening layers would be built only to
 be discarded. Proposed F32 is therefore *not* a dependency of U23 and stays
 in `proposed/`, which also keeps U23's pledge from resting on something only
 proposed.
+
+> **Annotated by D12**, which narrows nothing. Locating a synchronization
+> landmark as a run of minimum-length flux intervals is not "a GCR codec
+> running": no clock is recovered, no symbol is resolved, and what leaves
+> the probe is an angle rather than a byte. The clause stands as written,
+> and D12 states the boundary that keeps it checkable.
 
 **And it earns a principle.** P13 already licenses the act — choosing another
 authoritative layer is an explicit conversion creating a new image and naming

@@ -6,7 +6,7 @@ SPDX-License-Identifier: GPL-3.0-only
 # ARCHITECTURE (pledged)
 
 > **Status:** pledged at the owner's direction. P14, P15, P22, P25, P29,
-> and the P23 and P19 amendments remain
+> P30, and the P23 and P19 amendments remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
@@ -788,3 +788,72 @@ view is likewise regenerated rather than migrated when the floor moves — a
 sector image whose composition later descends to flux is presented by a new
 view in flux addressing. Several views may coexist over one floor, since
 none of them is mutable and none is the truth.
+
+## P30 — Drive profiles are an independent seam
+
+P22 and P23 both rest on a **media profile** and a **hardware profile**: the
+authority that says whether a drive observes a selected revolution or a
+seeded variation, and the authority that, with the image metadata and the
+mastering rules, makes a downward synthesis honest rather than invented.
+Neither principle names an owner for that knowledge, so today it is assumed
+by two principles and held by none. This states the seam that holds it.
+
+A **drive profile** consumes flux evidence and declared context and exposes
+one family's recording conventions together with a recognition verdict over
+that evidence. It owns how the family's source positions map onto its own
+addressing and how many steps a location takes; its rotation rate and
+reference clock; its density or zone map and what each zone claims; the
+timing shape of its encoding landmarks; which surfaces it records; and the
+selection or variation rule by which several observed revolutions become one
+served medium. Each is a declared fact of the family, carried with its
+provenance — never arithmetic a capture is assumed to justify.
+
+**Recognition is a probe that carries its evidence.** A profile is offered
+the evidence and answers with a bounded, comparable confidence and the
+observations that produced it (P4), so a verdict is auditable rather than
+asserted. Several profiles may claim one capture and the verdict is ranked;
+a capture no profile claims is a named refusal (P3), never a guess, a
+default, or the single enrolled entry winning by being alone. **Discovery
+proposes and never silently decides**: a caller may pin or override a
+profile, and what the library chose travels into the result as provenance.
+
+### The recognition boundary
+
+**A profile recognizes structure, never content.** It may read flux interval
+lengths and the patterns they form — a run of shortest intervals is a
+synchronization landmark whether or not anything ever decodes it — and it
+may report a count, a density, an angle, a location, and an absence. It may
+not resolve a bit value, assemble a byte, name a sector, or validate a
+checksum.
+
+The boundary is not fastidiousness. Those acts are the hardware bitstream
+and the layers above it, and a probe that reached them to recognize a family
+would make every recognition depend on a clock-recovery model, collapsing
+the distinction between what a medium *is* and what a drive *makes of it*.
+The test is what leaves the probe: **an angle, never a byte.** A protection
+whose evidence is a deliberately wrong checksum is therefore invisible here
+by design, and is carried faithfully by a layer that never interprets it.
+
+### What a profile is not
+
+It is not P15 hardware emulation, which generates timed causality from state
+a profile helped materialize, and it is not a P12 image-format adapter,
+which owns a container's grammar and recognizes an encoding. A profile owns
+what a family does to media. One composition may need all three and none
+substitutes for another.
+
+The profile catalog is wiring, as P12's is: every entry pairs a descriptor
+with behavior, and adding a family changes its module, its tests, and one
+mechanical enrollment. Central orchestration neither branches on a profile
+identifier nor interprets string-named family rules.
+
+### Knock-on requirements
+
+P29 is unchanged and is the reason this seam is safe. A policy input is
+"supplied by the caller or declared by the profile", so recognition supplies
+declarations with provenance rather than converting an unnamed reduction
+into a silent one: a profile that cannot state a reduction still refuses.
+This principle pledges no family — each is a named claim under P3 delivered
+by its own feature — and it creates no public flux, pulse, or capture-run
+iterator. The verdict and its evidence are the surface, and the evidence
+stays behind them.
