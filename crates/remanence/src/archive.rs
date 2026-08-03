@@ -1,309 +1,192 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Resolves a user-supplied path — a raw image, or `archive.zip[/entry]` — to
-//! a streamed image source plus any archive layers that were unwrapped along
-//! the way. The source file is opened under the P7 claim, and nothing is
-//! loaded whole (P27): a plain image and a stored archive entry are
-//! source-backed — reads stream from the claimed file through the session
-//! cache — while a compressed entry is session-backed, decoded once by the
-//! streaming inflater into private session storage and served from there
-//! through the same cache.
+//! The archive-catalog seam. Each archive grammar sits behind its own
+//! catalog adapter — [`crate::zip::ZipCatalog`] owns ZIP,
+//! [`crate::sevenzip::SevenZipCatalog`] owns 7z — and a catalog does
+//! exactly two things: it reports the archive's entries in the
+//! archive's own order, and it produces one entry's bytes as a bounded
+//! source. It does not identify disk images, interpret media, or know
+//! what any entry is for; that reading happens above it (P19).
+//!
+//! The catalog list is wiring. An adapter is reached by enrollment
+//! alone — its descriptor names the extensions it answers to — so
+//! adding a grammar changes its own module, its tests, and one entry in
+//! [`BUILT_IN_ARCHIVE_ADAPTERS`], and nothing here branches on a format
+//! identifier.
+//!
+//! Nothing is read whole (P27). The archive is claimed under P7 for the
+//! catalog's lifetime and read by positioned reads: an entry stored
+//! uncompressed resolves to a span of the archive file, read in place,
+//! while a coded entry is decoded once through its decompressor's
+//! window into private session storage.
 
+use std::ffi::OsStr;
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::sync::Arc;
 
-use crate::cache::{EXTENT, SessionCache, session_storage_file};
-use crate::device::{AccessMode, Device, FileRangeDevice, open_locked, read_exact_at};
+use crate::device::{AccessMode, open_locked};
 use crate::error::{Error, Result};
-use crate::inflate::inflate_file_to_spool;
-use crate::zip::{EntryData, ZipArchive};
+use crate::sevenzip::SEVENZIP_ADAPTER;
+use crate::zip::ZIP_ADAPTER;
 
-/// How far the predictive reader runs ahead of a sequential access
-/// pattern, in extents — part of the session's stated read-ahead (P27).
-const PREFETCH_DEPTH: u64 = 8;
+/// What an archive grammar is called, and what it answers to.
+pub(crate) struct ArchiveFormatDescriptor {
+    pub(crate) id: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) extensions: &'static [&'static str],
+}
 
-/// One archive wrapper that was unwrapped while resolving an image.
+impl ArchiveFormatDescriptor {
+    fn claims_extension(&self, extension: &OsStr) -> bool {
+        self.extensions
+            .iter()
+            .any(|claimed| extension.eq_ignore_ascii_case(claimed))
+    }
+}
+
+/// One entry an archive holds, as its catalog reports it.
+///
+/// Sizes are the archive's own claims about the entry, not measurements
+/// of what was read. `compressed_size` is absent where the grammar
+/// attributes none to a single entry — a member of a solid 7z folder is
+/// compressed together with its neighbours, so no share of the packed
+/// bytes is its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ArchiveLayer {
-    pub id: String,
+pub struct ArchiveEntry {
+    /// The entry's path inside the archive, `/`-separated.
     pub name: String,
-    pub path: PathBuf,
-    pub entry_name: String,
-    pub archive_size: Option<u64>,
+    pub is_dir: bool,
     pub compressed_size: Option<u64>,
-    pub uncompressed_size: Option<u64>,
+    pub uncompressed_size: u64,
 }
 
-/// What the session reads image bytes from.
-#[derive(Debug)]
-enum Backing {
-    /// The claimed source file itself, from `offset`: a plain image, or
-    /// a stored archive entry read in place. Source-backed (P27) —
-    /// reads stream from the claim through the session cache.
-    Claim { offset: u64 },
-    /// Private session storage holding a decoded archive entry.
-    /// Session-backed (P27) — served through the same cache.
-    Spool(Arc<File>),
+/// Where one entry's bytes come from, bounded (P27).
+pub(crate) enum EntrySource {
+    /// The entry's bytes are a span of the claimed archive file and are
+    /// read in place — source-backed, nothing copied.
+    InPlace { offset: u64, length: u64 },
+    /// The entry had to be decoded, and was produced once into private
+    /// session storage — session-backed.
+    Spooled { spool: Arc<File>, length: u64 },
 }
 
-/// The predictive reader (P27): a worker that follows a sequential
-/// access pattern and loads extents from the backing before they are
-/// asked for. Speculation is silent and clean-only — a failed read
-/// caches nothing and reports nothing, results are identical with the
-/// worker absent — and the P7 claim makes the concurrent file reads
-/// sound.
-struct Prefetcher {
-    demand: Sender<u64>,
-    handle: Option<JoinHandle<()>>,
+/// One archive grammar's reader over a claimed file.
+pub(crate) trait ArchiveCatalog: Send + Sync {
+    fn descriptor(&self) -> &'static ArchiveFormatDescriptor;
+    /// The archive file's own size in bytes.
+    fn archive_size(&self) -> u64;
+    /// Every entry, in the archive's own order.
+    fn entries(&self) -> &[ArchiveEntry];
+    /// The bytes of the entry at `index`, bounded.
+    fn entry_source(&self, index: usize) -> Result<EntrySource>;
 }
 
-impl std::fmt::Debug for Prefetcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Prefetcher")
+/// One enrolled archive grammar.
+pub(crate) trait ArchiveFormatAdapter: Sync {
+    fn descriptor(&self) -> &'static ArchiveFormatDescriptor;
+    fn open(&self, file: Arc<File>, len: u64) -> Result<Box<dyn ArchiveCatalog>>;
+}
+
+static BUILT_IN_ARCHIVE_ADAPTERS: [&dyn ArchiveFormatAdapter; 2] =
+    [&ZIP_ADAPTER, &SEVENZIP_ADAPTER];
+
+/// The enrolled archive grammars, in the order they are consulted.
+pub(crate) struct ArchiveCatalogRegistry<'a> {
+    adapters: &'a [&'a dyn ArchiveFormatAdapter],
+}
+
+impl<'a> ArchiveCatalogRegistry<'a> {
+    /// The adapter claiming `path`'s extension, if any.
+    fn adapter_for(&self, path: &Path) -> Option<&'a dyn ArchiveFormatAdapter> {
+        let extension = path.extension()?;
+        self.adapters
+            .iter()
+            .copied()
+            .find(|adapter| adapter.descriptor().claims_extension(extension))
     }
-}
 
-impl Prefetcher {
-    fn spawn(cache: Arc<Mutex<SessionCache>>, file: Arc<File>, base: u64, len: u64) -> Self {
-        let (demand, demands) = channel::<u64>();
-        let handle = std::thread::spawn(move || {
-            prefetch_loop(&demands, &cache, &file, base, len);
-        });
-        Self {
-            demand,
-            handle: Some(handle),
-        }
-    }
-}
+    /// Splits `path` at the first component an enrolled grammar claims,
+    /// into `(archive_path, entry_path)`.
+    fn split(&self, path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+        let mut archive_path = PathBuf::new();
+        let mut entry_path = PathBuf::new();
+        let mut found = false;
 
-impl Drop for Prefetcher {
-    fn drop(&mut self) {
-        let (orphan, _) = channel();
-        drop(std::mem::replace(&mut self.demand, orphan));
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-fn prefetch_loop(
-    demands: &Receiver<u64>,
-    cache: &Mutex<SessionCache>,
-    file: &File,
-    base: u64,
-    len: u64,
-) {
-    let mut previous: Option<u64> = None;
-    while let Ok(received) = demands.recv() {
-        // Coalesce to the latest demand; the pattern, not the queue,
-        // drives prediction.
-        let mut extent = received;
-        while let Ok(next) = demands.try_recv() {
-            extent = next;
-        }
-        let sequential = previous == Some(extent.saturating_sub(EXTENT)) && extent != 0;
-        previous = Some(extent);
-        if !sequential {
-            continue;
-        }
-        for ahead in 1..=PREFETCH_DEPTH {
-            let target = extent + ahead * EXTENT;
-            if target >= len {
-                break;
-            }
-            {
-                let guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if guard.is_resident(target) {
+        for component in path.components() {
+            if found {
+                if matches!(component, Component::CurDir) {
                     continue;
                 }
-            }
-            let take = (len - target).min(EXTENT) as usize;
-            let mut data = vec![0u8; EXTENT as usize];
-            if read_exact_at(file, base + target, &mut data[..take]).is_err() {
-                // Silent: the caller's own access owns any diagnostic.
-                break;
-            }
-            cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert_prefetched(target, data);
-        }
-    }
-}
-
-/// The session's image source: the P7 claim on the source file, held for
-/// the session's lifetime, and the backing reads are served from.
-#[derive(Debug)]
-pub(crate) struct ImageSource {
-    /// The claimed handle — writes denied to every other process from
-    /// open until the session drops. For a plain image it is also the
-    /// read backing.
-    claim: Arc<File>,
-    mode: AccessMode,
-    backing: Backing,
-    len: u64,
-    cache: Arc<Mutex<SessionCache>>,
-    prefetcher: Option<Prefetcher>,
-}
-
-impl ImageSource {
-    fn new(claim: File, mode: AccessMode, backing: Backing, len: u64, cache_bytes: u64) -> Self {
-        let claim = Arc::new(claim);
-        let cache = Arc::new(Mutex::new(SessionCache::with_bytes(cache_bytes)));
-        let (file, base) = match &backing {
-            Backing::Claim { offset } => (Arc::clone(&claim), *offset),
-            Backing::Spool(spool) => (Arc::clone(spool), 0),
-        };
-        let prefetcher = (len > 0).then(|| Prefetcher::spawn(Arc::clone(&cache), file, base, len));
-        Self {
-            claim,
-            mode,
-            backing,
-            len,
-            cache,
-            prefetcher,
-        }
-    }
-
-    pub fn len(&self) -> u64 {
-        self.len
-    }
-
-    pub fn mode(&self) -> AccessMode {
-        self.mode
-    }
-
-    /// Reads `buf` at `offset`, streaming from the backing — the
-    /// claimed file, or the session spool — through the session cache.
-    /// Each read also feeds the predictive reader, which follows a
-    /// sequential pattern ahead of demand.
-    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        if offset + buf.len() as u64 > self.len {
-            return Err(Error::io(format!(
-                "read past end of image (offset {offset}, length {})",
-                buf.len()
-            )));
-        }
-        let mut device = match &self.backing {
-            Backing::Claim { offset: base } => FileRangeDevice::new(&self.claim, *base, self.len),
-            Backing::Spool(spool) => FileRangeDevice::new(spool, 0, self.len),
-        };
-        self.cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .read_at(&mut device, offset, buf)?;
-        if let (Some(prefetcher), false) = (&self.prefetcher, buf.is_empty()) {
-            let last_extent = (offset + buf.len() as u64 - 1) / EXTENT * EXTENT;
-            let _ = prefetcher.demand.send(last_extent);
-        }
-        Ok(())
-    }
-
-    /// The image's leading bytes (up to `limit`), for bounded probes.
-    pub fn prefix(&self, limit: usize) -> Result<Vec<u8>> {
-        let take = (self.len).min(limit as u64) as usize;
-        let mut bytes = vec![0u8; take];
-        self.read_at(0, &mut bytes)?;
-        Ok(bytes)
-    }
-
-    /// Materializes the whole image only when its length is within
-    /// `cap` — the P27 rule that a whole layer may be held only when its
-    /// format bounds it beneath the working set. Anything larger is
-    /// refused, never loaded.
-    pub fn bytes_bounded(&self, cap: u64, what: &str) -> Result<Vec<u8>> {
-        if self.len > cap {
-            return Err(Error::invalid_image(
-                what,
-                format!(
-                    "image is {} bytes; {what} images are bounded at {cap} bytes",
-                    self.len
-                ),
-            ));
-        }
-        let mut bytes = vec![0u8; self.len as usize];
-        self.read_at(0, &mut bytes)?;
-        Ok(bytes)
-    }
-}
-
-/// A read-only [`Device`] over an [`ImageSource`], for drivers that walk
-/// the image (the session's qcow2 layer walk).
-pub(crate) struct SourceDevice<'a>(pub &'a ImageSource);
-
-impl Device for SourceDevice<'_> {
-    fn len(&self) -> u64 {
-        self.0.len()
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        self.0.read_at(offset, buf)
-    }
-
-    fn write_at(&mut self, _offset: u64, _data: &[u8]) -> Result<()> {
-        Err(Error::read_only(
-            "an identification session never writes".to_owned(),
-        ))
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
-
-/// The fully-resolved image source and provenance.
-#[derive(Debug)]
-pub(crate) struct ResolvedImage {
-    pub source_path: PathBuf,
-    pub image_path: PathBuf,
-    pub source: ImageSource,
-    pub archive_layers: Vec<ArchiveLayer>,
-}
-
-fn has_zip_extension(component: &Path) -> bool {
-    component
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
-}
-
-/// Splits a path at the first `.zip` component into
-/// `(archive_path, optional entry_path)`.
-fn split_zip_path(path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
-    let mut archive_path = PathBuf::new();
-    let mut entry_path = PathBuf::new();
-    let mut found_archive = false;
-
-    for component in path.components() {
-        if found_archive {
-            if matches!(component, Component::CurDir) {
+                entry_path.push(component.as_os_str());
                 continue;
             }
-            entry_path.push(component.as_os_str());
-            continue;
+            archive_path.push(component.as_os_str());
+            if self
+                .adapter_for(Path::new(component.as_os_str()))
+                .is_some()
+            {
+                found = true;
+            }
         }
 
-        archive_path.push(component.as_os_str());
-        if has_zip_extension(Path::new(component.as_os_str())) {
-            found_archive = true;
+        if !found {
+            return None;
         }
+        let entry = (!entry_path.as_os_str().is_empty()).then_some(entry_path);
+        Some((archive_path, entry))
     }
 
-    if !found_archive {
-        return None;
+    /// Claims `path` (P7) and opens the catalog its grammar declares.
+    fn open(&self, path: &Path) -> Result<ClaimedArchive> {
+        let adapter = self.adapter_for(path).ok_or_else(|| {
+            Error::unsupported(format!(
+                "'{}' names no archive format this library reads",
+                path.display()
+            ))
+        })?;
+        let (file, mode) = open_locked(path)?;
+        let len = file
+            .metadata()
+            .map_err(|error| Error::io(format!("failed to stat '{}': {error}", path.display())))?
+            .len();
+        let file = Arc::new(file);
+        let catalog = adapter.open(Arc::clone(&file), len)?;
+        Ok(ClaimedArchive {
+            file,
+            mode,
+            catalog,
+        })
     }
+}
 
-    let entry = (!entry_path.as_os_str().is_empty()).then_some(entry_path);
-    Some((archive_path, entry))
+pub(crate) fn archive_catalogs() -> ArchiveCatalogRegistry<'static> {
+    ArchiveCatalogRegistry {
+        adapters: &BUILT_IN_ARCHIVE_ADAPTERS,
+    }
+}
+
+/// An opened catalog together with the claim it reads through.
+pub(crate) struct ClaimedArchive {
+    pub file: Arc<File>,
+    pub mode: AccessMode,
+    pub catalog: Box<dyn ArchiveCatalog>,
+}
+
+/// Splits a path at the first archive component into
+/// `(archive_path, optional entry_path)`.
+pub(crate) fn split_archive_path(path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    archive_catalogs().split(path)
+}
+
+/// Claims and opens the archive at `path`.
+pub(crate) fn open_archive(path: &Path) -> Result<ClaimedArchive> {
+    archive_catalogs().open(path)
 }
 
 /// Joins the normal components of an entry path with `/`.
-fn normalize_entry_name(path: &Path) -> String {
+pub(crate) fn normalize_entry_name(path: &Path) -> String {
     let mut result = String::new();
     for component in path.components() {
         let Component::Normal(component) = component else {
@@ -317,210 +200,145 @@ fn normalize_entry_name(path: &Path) -> String {
     result
 }
 
-/// Returns the name of the archive's only file entry, or an error when the
-/// archive is empty or ambiguous.
-fn only_file_entry_name(archive: &ZipArchive, archive_path: &Path) -> Result<String> {
-    let mut file_entry_name: Option<&str> = None;
-    for entry in archive.entries() {
-        if entry.is_dir {
-            continue;
-        }
-        if file_entry_name.is_some() {
-            return Err(Error::archive(
-                "zip",
-                format!(
-                    "'{}' contains multiple files; specify an entry with archive.zip/path",
-                    archive_path.display()
-                ),
-            ));
-        }
-        file_entry_name = Some(&entry.name);
-    }
-
-    file_entry_name
-        .map(str::to_owned)
-        .ok_or_else(|| Error::archive("zip", "archive contains no files"))
+/// An archive's entries, read through the claim this listing holds.
+///
+/// Opening claims the archive file (P7) — writes denied to every other
+/// process — and holds that claim until the listing is dropped. Only
+/// the archive's own index is read: entry data is never touched, so
+/// listing a hundred-gigabyte archive costs its directory and nothing
+/// more (P27).
+pub struct Archive {
+    path: PathBuf,
+    claimed: ClaimedArchive,
 }
 
-trait SerializedContainerAdapter: Sync {
-    fn split_path(&self, path: &Path) -> Option<(PathBuf, Option<PathBuf>)>;
-    fn resolve(
-        &self,
-        archive_path: PathBuf,
-        entry_path: Option<PathBuf>,
-        cache_bytes: u64,
-    ) -> Result<ResolvedImage>;
-}
-
-struct ZipAdapter;
-
-impl SerializedContainerAdapter for ZipAdapter {
-    fn split_path(&self, path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
-        split_zip_path(path)
-    }
-
-    fn resolve(
-        &self,
-        archive_path: PathBuf,
-        entry_path: Option<PathBuf>,
-        cache_bytes: u64,
-    ) -> Result<ResolvedImage> {
-        resolve_zip(archive_path, entry_path, cache_bytes)
+impl std::fmt::Debug for Archive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Archive")
+            .field("path", &self.path)
+            .field("format", &self.format_id())
+            .field("entries", &self.entries().len())
+            .finish()
     }
 }
 
-struct SerializedContainerCatalog<'a> {
-    adapters: &'a [&'a dyn SerializedContainerAdapter],
-}
-
-impl SerializedContainerCatalog<'_> {
-    fn resolve(&self, path: &Path, cache_bytes: u64) -> Result<Option<ResolvedImage>> {
-        for adapter in self.adapters {
-            if let Some((container, entry)) = adapter.split_path(path) {
-                return adapter.resolve(container, entry, cache_bytes).map(Some);
-            }
-        }
-        Ok(None)
-    }
-}
-
-static ZIP_ADAPTER: ZipAdapter = ZipAdapter;
-static SERIALIZED_CONTAINERS: [&dyn SerializedContainerAdapter; 1] = [&ZIP_ADAPTER];
-
-fn resolve_zip(
-    archive_path: PathBuf,
-    entry_path: Option<PathBuf>,
-    cache_bytes: u64,
-) -> Result<ResolvedImage> {
-    let (file, mode) = open_locked(&archive_path)?;
-    let archive_len = file
-        .metadata()
-        .map_err(|error| {
-            Error::io(format!(
-                "failed to stat '{}': {error}",
-                archive_path.display()
-            ))
-        })?
-        .len();
-    let archive = ZipArchive::open(&file, archive_len)?;
-
-    let entry_name = match &entry_path {
-        Some(entry_path) => normalize_entry_name(entry_path),
-        None => only_file_entry_name(&archive, &archive_path)?,
-    };
-
-    let entry = archive
-        .entries()
-        .iter()
-        .find(|entry| entry.name == entry_name)
-        .ok_or_else(|| {
-            Error::categorized_archive(
-                crate::ErrorCategory::NotFound,
-                "zip",
-                format!("entry '{entry_name}' not found"),
-            )
-        })?;
-
-    let compressed_size = entry.compressed_size;
-    let uncompressed_size = entry.uncompressed_size;
-    let backing = match archive.entry_data(&file, entry)? {
-        EntryData::Stored { offset, .. } => Backing::Claim { offset },
-        EntryData::Deflated {
-            offset,
-            compressed_length,
-        } => {
-            let spool = Arc::new(session_storage_file()?);
-            let total =
-                inflate_file_to_spool(&file, offset, compressed_length, uncompressed_size, &spool)?
-                    .ok_or_else(|| {
-                        Error::archive("zip", format!("failed to inflate '{entry_name}'"))
-                    })?;
-            if total != uncompressed_size {
-                return Err(Error::archive(
-                    "zip",
-                    format!(
-                        "'{entry_name}' decoded to {total} bytes, expected {uncompressed_size}"
-                    ),
-                ));
-            }
-            Backing::Spool(spool)
-        }
-    };
-
-    let layer = ArchiveLayer {
-        id: "zip".to_owned(),
-        name: "ZIP archive".to_owned(),
-        path: archive_path.clone(),
-        entry_name: entry_name.clone(),
-        archive_size: Some(archive_len),
-        compressed_size: Some(compressed_size),
-        uncompressed_size: Some(uncompressed_size),
-    };
-
-    Ok(ResolvedImage {
-        source_path: archive_path,
-        image_path: PathBuf::from(entry_name),
-        source: ImageSource::new(file, mode, backing, uncompressed_size, cache_bytes),
-        archive_layers: vec![layer],
-    })
-}
-
-/// Resolves `path` to a streamed image source under the session's
-/// declared cache bound, using the serialized-container catalog first.
-pub(crate) fn resolve_image(path: &Path, cache_bytes: u64) -> Result<ResolvedImage> {
-    if let Some(resolved) = (SerializedContainerCatalog {
-        adapters: &SERIALIZED_CONTAINERS,
-    })
-    .resolve(path, cache_bytes)?
-    {
-        return Ok(resolved);
+impl Archive {
+    /// Opens the archive at `path`. A path naming no archive format
+    /// this library reads is refused by name, never guessed at.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        Ok(Self {
+            path: path.to_path_buf(),
+            claimed: open_archive(path)?,
+        })
     }
 
-    let (file, mode) = open_locked(path)?;
-    let len = file
-        .metadata()
-        .map_err(|error| Error::io(format!("failed to stat '{}': {error}", path.display())))?
-        .len();
-    Ok(ResolvedImage {
-        source_path: path.to_path_buf(),
-        image_path: path.to_path_buf(),
-        source: ImageSource::new(file, mode, Backing::Claim { offset: 0 }, len, cache_bytes),
-        archive_layers: Vec::new(),
-    })
+    /// The path the archive was opened from.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The archive format's stable identifier, e.g. `"zip"` or `"7z"`.
+    pub fn format_id(&self) -> &'static str {
+        self.claimed.catalog.descriptor().id
+    }
+
+    /// The archive format's human-readable name.
+    pub fn format_name(&self) -> &'static str {
+        self.claimed.catalog.descriptor().name
+    }
+
+    /// Which P7 mode the open obtained on the archive file.
+    pub fn access_mode(&self) -> AccessMode {
+        self.claimed.mode
+    }
+
+    /// The archive file's own size in bytes.
+    pub fn size_bytes(&self) -> u64 {
+        self.claimed.catalog.archive_size()
+    }
+
+    /// Every entry the archive holds, in the archive's own order.
+    pub fn entries(&self) -> &[ArchiveEntry] {
+        self.claimed.catalog.entries()
+    }
 }
 
 #[cfg(test)]
-mod adapter_tests {
+mod tests {
     use super::*;
+    use crate::error::ErrorCategory;
+
+    static TEST_DESCRIPTOR: ArchiveFormatDescriptor = ArchiveFormatDescriptor {
+        id: "test",
+        name: "Test archive",
+        extensions: &["test"],
+    };
 
     struct TestAdapter;
-    impl SerializedContainerAdapter for TestAdapter {
-        fn split_path(&self, path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
-            (path
-                .extension()
-                .is_some_and(|extension| extension == "test"))
-            .then(|| (path.to_path_buf(), None))
+
+    impl ArchiveFormatAdapter for TestAdapter {
+        fn descriptor(&self) -> &'static ArchiveFormatDescriptor {
+            &TEST_DESCRIPTOR
         }
 
-        fn resolve(
-            &self,
-            _archive_path: PathBuf,
-            _entry_path: Option<PathBuf>,
-            _cache_bytes: u64,
-        ) -> Result<ResolvedImage> {
+        fn open(&self, _file: Arc<File>, _len: u64) -> Result<Box<dyn ArchiveCatalog>> {
             Err(Error::archive("test", "test adapter was selected"))
         }
     }
 
-    #[test]
-    fn a_test_serialized_container_is_reached_by_enrollment_alone() {
-        let adapter = TestAdapter;
-        let adapters: [&dyn SerializedContainerAdapter; 1] = [&adapter];
-        let error = SerializedContainerCatalog {
-            adapters: &adapters,
+    static TEST_ADAPTER: TestAdapter = TestAdapter;
+
+    fn test_registry() -> ArchiveCatalogRegistry<'static> {
+        static ADAPTERS: [&dyn ArchiveFormatAdapter; 1] = [&TEST_ADAPTER];
+        ArchiveCatalogRegistry {
+            adapters: &ADAPTERS,
         }
-        .resolve(Path::new("sample.test"), 1)
-        .expect_err("test adapter refusal");
-        assert!(error.to_string().contains("test adapter was selected"));
+    }
+
+    #[test]
+    fn an_archive_grammar_is_reached_by_enrollment_alone() {
+        let (archive, entry) = test_registry()
+            .split(Path::new("sample.test/inner/disk.img"))
+            .expect("the enrolled extension splits the path");
+        assert_eq!(archive, Path::new("sample.test"));
+        assert_eq!(entry.as_deref(), Some(Path::new("inner/disk.img")));
+    }
+
+    #[test]
+    fn a_path_no_grammar_claims_does_not_split() {
+        assert!(test_registry().split(Path::new("disk.img")).is_none());
+        assert!(split_archive_path(Path::new("disk.img")).is_none());
+    }
+
+    #[test]
+    fn the_built_in_grammars_claim_their_extensions() {
+        let (archive, entry) = split_archive_path(Path::new("captures.7z/track00.raw"))
+            .expect("7z splits the path");
+        assert_eq!(archive, Path::new("captures.7z"));
+        assert_eq!(entry.as_deref(), Some(Path::new("track00.raw")));
+
+        let (archive, entry) =
+            split_archive_path(Path::new("Disks.ZIP")).expect("the match ignores case");
+        assert_eq!(archive, Path::new("Disks.ZIP"));
+        assert_eq!(entry, None);
+    }
+
+    #[test]
+    fn an_unclaimed_extension_is_refused_by_name() {
+        let error = Archive::open("nowhere.rar").expect_err("rar is outside the claim");
+        assert_eq!(error.category(), ErrorCategory::Unsupported);
+        assert!(
+            error.to_string().contains("names no archive format"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn entry_names_normalize_to_forward_slashes() {
+        assert_eq!(
+            normalize_entry_name(Path::new("inner/./deeper/disk.img")),
+            "inner/deeper/disk.img"
+        );
     }
 }

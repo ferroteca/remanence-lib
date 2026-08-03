@@ -405,6 +405,87 @@ pub(crate) fn write_all_at(file: &File, offset: u64, data: &[u8]) -> std::io::Re
     file.write_all_at(data, offset)
 }
 
+/// Where a decompressor pulls its coded bytes from, one at a time — the
+/// mechanism both the DEFLATE and the LZMA decoders read through, so
+/// neither owns a file-reading path of its own.
+pub(crate) trait ByteSource {
+    /// The next coded byte, or `None` at end of input (or on a source
+    /// failure the concrete source reports separately).
+    fn next_byte(&mut self) -> Option<u8>;
+}
+
+/// Coded bytes pulled from a byte range of a file through a bounded
+/// chunk (P27): the compressed stream is never resident whole.
+pub(crate) struct FileByteSource<'a> {
+    file: &'a File,
+    next: u64,
+    end: u64,
+    buf: Vec<u8>,
+    buf_pos: usize,
+    failed: bool,
+}
+
+impl<'a> FileByteSource<'a> {
+    pub fn new(file: &'a File, offset: u64, length: u64) -> Self {
+        Self {
+            file,
+            next: offset,
+            end: offset + length,
+            buf: Vec::new(),
+            buf_pos: 0,
+            failed: false,
+        }
+    }
+
+    /// Whether a read of the underlying file failed — distinguishing an
+    /// I/O failure from a stream that merely ran out.
+    pub fn failed(&self) -> bool {
+        self.failed
+    }
+}
+
+impl ByteSource for FileByteSource<'_> {
+    fn next_byte(&mut self) -> Option<u8> {
+        if self.buf_pos == self.buf.len() {
+            if self.failed || self.next == self.end {
+                return None;
+            }
+            let take = (self.end - self.next).min(4096) as usize;
+            self.buf.resize(take, 0);
+            self.buf_pos = 0;
+            if read_exact_at(self.file, self.next, &mut self.buf).is_err() {
+                self.failed = true;
+                self.buf.clear();
+                return None;
+            }
+            self.next += take as u64;
+        }
+        let byte = self.buf[self.buf_pos];
+        self.buf_pos += 1;
+        Some(byte)
+    }
+}
+
+/// Coded bytes pulled from memory, for streams a format already bounds.
+pub(crate) struct SliceByteSource<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> SliceByteSource<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+}
+
+impl ByteSource for SliceByteSource<'_> {
+    fn next_byte(&mut self) -> Option<u8> {
+        let byte = *self.data.get(self.pos)?;
+        self.pos += 1;
+        Some(byte)
+    }
+}
+
 impl Device for FileDevice {
     fn len(&self) -> u64 {
         self.capture.as_ref().map_or(self.len, |capture| capture.len)

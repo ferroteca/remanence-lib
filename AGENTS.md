@@ -22,11 +22,17 @@ ABI, or Python module.
   reached through `Session::identify`); `session.rs` the session model,
   the layered identification result, and the P7 claim held for the
   session's lifetime; `hdos.rs` the HDOS directory lister and file
-  extractor; `archive.rs` `.zip[/entry]` path resolution under the claim;
-  `zip.rs` + `inflate.rs` the self-contained ZIP reader and streaming
-  DEFLATE decompressor — archives are read in place by positioned
-  reads, and a compressed entry decodes through the 32 KiB LZ77
-  window into private session storage, never resident whole;
+  extractor; `archive.rs` the archive-catalog seam — the
+  `ArchiveCatalog` trait, the public `Archive` listing, and the
+  enrollment each grammar is reached by — with `source.rs` resolving
+  `archive[/entry]` paths through it under the claim;
+  `zip.rs` + `inflate.rs` the self-contained ZIP catalog and streaming
+  DEFLATE decompressor, and `sevenzip.rs` + `lzma.rs` the 7z catalog
+  and streaming LZMA/LZMA2 decompressors — archives are read in place by
+  positioned reads, and a coded entry decodes through its decompressor's
+  LZ window into private session storage, never resident whole; the 7z
+  claim is a single-coder folder using Copy, LZMA, or LZMA2, and
+  everything outside it refuses by name;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable
@@ -117,7 +123,8 @@ change.
 ### The core stays dependency-free at runtime
 
 `crates/remanence` has no runtime dependencies, deliberately — its ZIP
-reader and DEFLATE decompressor are its own. That is a property the
+and 7z readers and its DEFLATE and LZMA/LZMA2 decompressors are its own.
+That is a property the
 licensing tiers below make load-bearing, not just tidiness. Discuss before
 adding any dependency anywhere in the workspace; for the core the answer
 is expected to stay no.
@@ -227,6 +234,14 @@ compiled into the wheel.
   implementation of RFC 1951 following that published structure, written
   from the project's own C++ lineage, not from puff.c. Keep the
   attribution comment in the file.
+- `crates/remanence/src/lzma.rs` is an original Rust implementation of
+  the LZMA and LZMA2 decoders, written from the format description Igor
+  Pavlov published with the LZMA SDK (which he placed in the public
+  domain — tier 1). The probability model, range coder, and chunk
+  grammar are what the published description specifies; no SDK source
+  was copied or ported. `crates/remanence/src/sevenzip.rs` reads the 7z
+  container from the same published description. Keep the attribution
+  comments in both files.
 - `crates/remanence/tests/fixtures/` holds the test fixtures.
   `testing-prep/prep_fixtures.py` (run with `uv run --group
   testing-prep`; testing-prep/test-rigs/README.md) prepares them: it downloads the

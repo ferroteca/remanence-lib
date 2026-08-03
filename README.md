@@ -3,7 +3,8 @@
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
 A self-contained disk image analysis library in Rust. A `Session` opens a
-disk image — raw, or inside a `.zip` archive — and identifies its container
+disk image — raw, or an entry inside a `.zip` or `.7z` archive — and
+identifies its container
 layers: the archive wrapper, image format, physical media geometry, and
 probable filesystem, each with comparable confidence and human-readable
 evidence. Executable, role-specific adapters recognize and validate formats;
@@ -11,9 +12,16 @@ ambiguous strongest matches remain unknown rather than being resolved by
 catalog order. An HDOS directory lister reads the file catalog out of
 Heathkit `.h8d` images.
 
+An `Archive` lists what a supported archive holds, reading its index and
+never its entry data. Each grammar sits behind its own catalog adapter,
+and a member is produced bounded: an entry stored uncompressed is read in
+place from the archive, and a coded entry decodes once into private
+session storage — one member of a solid 7z folder without materializing
+the rest.
+
 The library is dependency-free at runtime, including its own ZIP
-central-directory reader, RFC 1951 (DEFLATE) decompressor, and native
-qcow2 v2/v3 driver.
+central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
+LZMA/LZMA2 decompressors, and native qcow2 v2/v3 driver.
 
 Beyond identification, the `Disk` surface opens a raw or qcow2
 disk image with a declared intent: a read session denies writes to
@@ -81,15 +89,25 @@ for container in &identification.containers {
     println!("{:?} {} ({}%)", container.kind, container.id, container.confidence);
 }
 let files = session.list_hdos_files()?;
+
+let archive = remanence::Archive::open("captures.7z")?;
+for entry in archive.entries() {
+    println!("{} ({} bytes)", entry.name, entry.uncompressed_size);
+}
+let member = remanence::Session::open("captures.7z/track00.raw")?;
 ```
 
 ```python
 import remanence
-session = remanence.Session("HDOS_1-0.zip")
+session = remanence.Session("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d")
 for c in session.identify().containers:
     print(c.kind, c.id, c.confidence)
 for f in session.list_hdos_files():
     print(f.display_name, f.size_sectors, f.modified_date_string)
+
+with remanence.Archive("captures.7z") as archive:
+    for entry in archive.entries:
+        print(entry.name, entry.uncompressed_size)
 ```
 
 ## Changes

@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use crate::archive::{ImageSource, SourceDevice};
+use crate::source::{ImageSource, SourceDevice};
 use crate::device::{Device, FileDevice};
 use crate::disk::DiskFormat;
 use crate::error::{Error, ErrorCategory, Result};

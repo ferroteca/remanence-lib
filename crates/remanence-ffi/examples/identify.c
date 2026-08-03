@@ -43,9 +43,48 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
     printf("\n");
 }
 
+/* Lists what an archive holds, without reading any entry's data. */
+static int list_archive(const char *path) {
+    RemanenceErrorCategory error_category;
+    char *error = NULL;
+    RemanenceArchive *archive = remanence_archive_open(path, &error_category, &error);
+    if (archive == NULL) {
+        fprintf(stderr, "error (category %d): %s\n",
+                (int)error_category, error != NULL ? error : "unknown");
+        remanence_string_free(error);
+        return EXIT_FAILURE;
+    }
+
+    printf("Archive: %s\n", remanence_archive_path(archive));
+    printf("Format:  %s (%s)\n", remanence_archive_format_name(archive),
+           remanence_archive_format_id(archive));
+    printf("Size:    %" PRIu64 " bytes\n\n", remanence_archive_size_bytes(archive));
+
+    size_t entry_count = remanence_archive_entry_count(archive);
+    printf("Entries (%zu):\n", entry_count);
+    for (size_t i = 0; i < entry_count; ++i) {
+        uint64_t compressed = 0;
+        printf("  %s%s\t%" PRIu64 " bytes",
+               remanence_archive_entry_name(archive, i),
+               remanence_archive_entry_is_dir(archive, i) ? "/" : "",
+               remanence_archive_entry_uncompressed_size(archive, i));
+        if (remanence_archive_entry_compressed_size(archive, i, &compressed)) {
+            printf("\t(%" PRIu64 " packed)", compressed);
+        }
+        printf("\n");
+    }
+
+    remanence_archive_free(archive);
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "--list") == 0) {
+        return list_archive(argv[2]);
+    }
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <path-to-image>\n", argv[0]);
+        fprintf(stderr, "       %s --list <path-to-archive>\n", argv[0]);
         return EXIT_FAILURE;
     }
 

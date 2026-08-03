@@ -78,6 +78,9 @@ typedef enum {
   REMANENCE_FAT_ENTRY_KIND_DIRECTORY,
 } RemanenceFatEntryKind;
 
+// An open archive listing, holding the claim on its file.
+typedef struct RemanenceArchive RemanenceArchive;
+
 // An open disk image.
 typedef struct RemanenceDisk RemanenceDisk;
 
@@ -114,9 +117,10 @@ uint64_t remanence_default_cache_bytes(void);
 // Frees a string returned through an `error_out` parameter.
 void remanence_string_free(char *string);
 
-// Opens `path` (UTF-8) — a raw disk image, or `archive.zip[/entry]` — with
-// the built-in format adapters. Returns null on failure and stores a message
-// in `error_out` (free with `remanence_string_free`).
+// Opens `path` (UTF-8) — a raw disk image, or `archive[/entry]` naming an
+// entry inside a supported archive (`.zip`, `.7z`) — with the built-in
+// format adapters. Returns null on failure and stores a message in
+// `error_out` (free with `remanence_string_free`).
 RemanenceSession *remanence_session_open(const char *path,
                                          RemanenceErrorCategory *error_category_out,
                                          char **error_out);
@@ -132,10 +136,10 @@ RemanenceSession *remanence_session_open_with_cache(const char *path,
 // Frees a session handle.
 void remanence_session_free(RemanenceSession *session);
 
-// The path the session was opened from (the archive path for ZIP inputs).
+// The path the session was opened from (the archive path for archive inputs).
 const char *remanence_session_path(const RemanenceSession *session);
 
-// The resolved image path (the entry name for ZIP inputs).
+// The resolved image path (the entry name for archive inputs).
 const char *remanence_session_image_path(const RemanenceSession *session);
 
 // The resolved image's size in bytes.
@@ -629,6 +633,53 @@ RemanenceFileData *remanence_session_read_hdos_file(const RemanenceSession *sess
                                                     const char *name,
                                                     RemanenceErrorCategory *error_category_out,
                                                     char **error_out);
+
+// Opens the archive at `path` (UTF-8) and reads its entry list. A path
+// naming no archive format this library reads is refused by name.
+// Returns null on failure and stores a message in `error_out` (free with
+// `remanence_string_free`).
+RemanenceArchive *remanence_archive_open(const char *path,
+                                         RemanenceErrorCategory *error_category_out,
+                                         char **error_out);
+
+// Frees an archive handle, releasing its claim on the file.
+void remanence_archive_free(RemanenceArchive *archive);
+
+// The path the archive was opened from.
+const char *remanence_archive_path(const RemanenceArchive *archive);
+
+// The archive format's stable identifier, e.g. "zip" or "7z".
+const char *remanence_archive_format_id(const RemanenceArchive *archive);
+
+// The archive format's human-readable name.
+const char *remanence_archive_format_name(const RemanenceArchive *archive);
+
+// Which P7 mode the open obtained on the archive file.
+RemanenceAccessMode remanence_archive_access_mode(const RemanenceArchive *archive);
+
+// The archive file's own size in bytes.
+uint64_t remanence_archive_size_bytes(const RemanenceArchive *archive);
+
+// Number of entries the archive holds.
+size_t remanence_archive_entry_count(const RemanenceArchive *archive);
+
+// One entry's `/`-separated path inside the archive, or null when out
+// of range.
+const char *remanence_archive_entry_name(const RemanenceArchive *archive, size_t index);
+
+// Whether the entry is a directory.
+bool remanence_archive_entry_is_dir(const RemanenceArchive *archive, size_t index);
+
+// The entry's size once decoded, as the archive declares it; 0 when out
+// of range.
+uint64_t remanence_archive_entry_uncompressed_size(const RemanenceArchive *archive, size_t index);
+
+// The entry's packed size; returns false when the grammar attributes
+// none to a single entry — a member of a solid 7z folder — or when the
+// index is out of range.
+bool remanence_archive_entry_compressed_size(const RemanenceArchive *archive,
+                                             size_t index,
+                                             uint64_t *out);
 
 #ifdef __cplusplus
 }  // extern "C"

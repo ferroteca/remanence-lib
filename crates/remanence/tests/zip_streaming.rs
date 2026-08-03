@@ -7,7 +7,7 @@
 //! reads without the entry resident whole. These tests build their zip
 //! by hand, so they run without fixtures.
 
-use remanence::{ContainerKind, Session};
+use remanence::{Archive, ContainerKind, Session};
 
 const IMAGE_LEN: usize = 102_400; // h8d-sized, so identification bites
 
@@ -129,6 +129,28 @@ fn a_deflated_entry_decodes_into_session_storage_and_streams() {
     let path = temp_zip("deflated", &zip);
 
     assert_streamed_session(&path, &expected);
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn the_zip_catalog_lists_its_entries_without_touching_their_data() {
+    let expected = payload();
+    let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
+    let path = temp_zip("listing", &zip);
+
+    let archive = Archive::open(&path).expect("the archive opens");
+    assert_eq!(archive.format_id(), "zip");
+    assert_eq!(archive.format_name(), "ZIP archive");
+    assert_eq!(archive.size_bytes(), zip.len() as u64);
+
+    let entries = archive.entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "disk.h8d");
+    assert!(!entries[0].is_dir);
+    assert_eq!(entries[0].uncompressed_size, IMAGE_LEN as u64);
+    assert_eq!(entries[0].compressed_size, Some(IMAGE_LEN as u64));
+
+    drop(archive);
     std::fs::remove_file(&path).ok();
 }
 

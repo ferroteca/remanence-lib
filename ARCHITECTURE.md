@@ -42,6 +42,7 @@ never reused.
 
 - **S1 — The Rust crate API.** The public surface of `crates/remanence`:
   `Disk`, `Session`, `Identification` and the container/layout types,
+  `Archive` and `ArchiveEntry`,
   `list_hdos_files` and `HdosFile`, `Error`/`ErrorCategory`/`Result`, and
   the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo
   doc` output is a representation of it.

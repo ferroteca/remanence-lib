@@ -20,6 +20,21 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **7z archives are read, and archives are listable, on all three
+  surfaces.** `Archive` opens an archive under the deny-write claim and
+  reports its entries in the archive's own order, reading the archive's
+  index and never its entry data; `Session::open` accepts
+  `archive.7z[/entry]` beside `archive.zip[/entry]`. Reflected as
+  `remanence_archive_open` and its accessors, and as the Python `Archive`
+  class with `ArchiveEntry`. The 7z reader is the library's own — signature
+  and header grammar, coded headers, solid folders, per-member CRCs — with
+  self-contained LZMA and LZMA2 decompressors beside the existing DEFLATE
+  one, so no external program is behind any claim. What it reads is an
+  enumerated claim: a single-coder folder using Copy, LZMA, or LZMA2.
+  A filter chain, an unimplemented coder, encryption, an external header,
+  or an anti-file is refused by name, never delegated or approximated.
+  A member of a solid folder decodes only as far as that member's last
+  byte, into private session storage, never the folder whole.
 - **A declared session cache bound, on all three surfaces.** One bound per
   session governs reads, uncommitted writes, and each commit's capture,
   rounded up to whole 64 KiB extents with one extent as the floor —
@@ -44,6 +59,13 @@ rather than bridged. Read every entry below in that light.
   `write_file` remain as the conveniences.
 
 ### Changed
+
+- **Archive grammars sit behind a common catalog seam.** The ZIP reader
+  became the ZIP catalog adapter beside the new 7z one, both reached by
+  enrollment on the extensions they claim. An archive path with no entry
+  still resolves when the archive holds exactly one file, in any grammar,
+  and the refusal when it holds several now names the archive rather than
+  a `.zip` suffix.
 
 - **Image formats are executable modules behind role-specific built-in
   catalogs.** H8D and qcow2 image adapters, ZIP serialized-container

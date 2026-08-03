@@ -11,7 +11,7 @@
 
 use std::fs::File;
 
-use crate::device::{read_exact_at, write_all_at};
+use crate::device::{ByteSource, FileByteSource, SliceByteSource, write_all_at};
 use crate::error::{Error, Result};
 
 const MAX_BITS: usize = 15;
@@ -26,72 +26,6 @@ const WINDOW_KEEP: usize = 32 * 1024;
 /// The sink's resident buffer flushes down to [`WINDOW_KEEP`] whenever
 /// it reaches this size.
 const WINDOW_FULL: usize = 64 * 1024;
-
-/// Where compressed bytes come from, one byte at a time.
-trait ByteSource {
-    /// The next compressed byte, or `None` at end of input (or on a
-    /// source failure the wrapper reports separately).
-    fn next_byte(&mut self) -> Option<u8>;
-}
-
-/// Compressed bytes pulled from a byte range of a file through a
-/// bounded chunk.
-struct FileSource<'a> {
-    file: &'a File,
-    next: u64,
-    end: u64,
-    buf: Vec<u8>,
-    buf_pos: usize,
-    failed: bool,
-}
-
-impl<'a> FileSource<'a> {
-    fn new(file: &'a File, offset: u64, length: u64) -> Self {
-        Self {
-            file,
-            next: offset,
-            end: offset + length,
-            buf: Vec::new(),
-            buf_pos: 0,
-            failed: false,
-        }
-    }
-}
-
-impl ByteSource for FileSource<'_> {
-    fn next_byte(&mut self) -> Option<u8> {
-        if self.buf_pos == self.buf.len() {
-            if self.failed || self.next == self.end {
-                return None;
-            }
-            let take = (self.end - self.next).min(4096) as usize;
-            self.buf.resize(take, 0);
-            self.buf_pos = 0;
-            if read_exact_at(self.file, self.next, &mut self.buf).is_err() {
-                self.failed = true;
-                self.buf.clear();
-                return None;
-            }
-            self.next += take as u64;
-        }
-        let byte = self.buf[self.buf_pos];
-        self.buf_pos += 1;
-        Some(byte)
-    }
-}
-
-struct SliceSource<'a> {
-    data: &'a [u8],
-    pos: usize,
-}
-
-impl ByteSource for SliceSource<'_> {
-    fn next_byte(&mut self) -> Option<u8> {
-        let byte = *self.data.get(self.pos)?;
-        self.pos += 1;
-        Some(byte)
-    }
-}
 
 /// Where decompressed bytes go. `push` and `copy_back` return false
 /// when the output would exceed the expected size, a back-reference is
@@ -501,7 +435,7 @@ fn inflate_into(source: &mut dyn ByteSource, sink: &mut dyn InflateSink) -> bool
 /// `None` when the stream is malformed or the output would exceed
 /// `expected_size`.
 pub(crate) fn inflate(data: &[u8], expected_size: usize) -> Option<Vec<u8>> {
-    let mut source = SliceSource { data, pos: 0 };
+    let mut source = SliceByteSource::new(data);
     let mut sink = VecSink { out: Vec::with_capacity(expected_size), cap: expected_size };
     inflate_into(&mut source, &mut sink).then_some(sink.out)
 }
@@ -519,10 +453,10 @@ pub(crate) fn inflate_file_to_spool(
     expected_size: u64,
     spool: &File,
 ) -> Result<Option<u64>> {
-    let mut source = FileSource::new(file, offset, length);
+    let mut source = FileByteSource::new(file, offset, length);
     let mut sink = SpoolSink::new(spool, expected_size);
     let ok = inflate_into(&mut source, &mut sink);
-    if source.failed {
+    if source.failed() {
         return Err(Error::io("reading the compressed stream failed".to_owned()));
     }
     if sink.failed {
@@ -540,6 +474,7 @@ pub(crate) fn inflate_file_to_spool(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::read_exact_at;
 
     /// A DEFLATE stream of stored blocks wrapping `payload` — legal
     /// RFC 1951, hand-craftable without a compressor.

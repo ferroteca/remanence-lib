@@ -44,7 +44,7 @@ impl fmt::Display for ErrorCategory {
 /// display message and its stable machine-readable category.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// A container archive (e.g. ZIP) could not be read.
+    /// A container archive (e.g. ZIP, 7z) could not be read.
     Archive {
         category: ErrorCategory,
         archive: String,
@@ -94,6 +94,12 @@ impl Error {
 
     pub(crate) fn not_found(reason: impl Into<String>) -> Self {
         Self::categorized_io(ErrorCategory::NotFound, reason)
+    }
+
+    /// A refusal that names something outside the library's claim, where
+    /// no format has been recognized yet to attribute it to.
+    pub(crate) fn unsupported(reason: impl Into<String>) -> Self {
+        Self::categorized_io(ErrorCategory::Unsupported, reason)
     }
 
     fn categorized_io(category: ErrorCategory, reason: impl Into<String>) -> Self {

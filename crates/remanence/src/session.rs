@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{
     self, DeviceIdentity, ImageFormatDescriptor, ImageIdentification, ProbeInput,
 };
-use crate::archive::{self, ArchiveLayer, ImageSource};
+use crate::source::{self, ArchiveLayer, ImageSource};
 use crate::device::AccessMode;
 use crate::error::Result;
 use crate::hdos::HdosFile;
@@ -258,9 +258,12 @@ pub struct Session {
 }
 
 impl Session {
-    /// Opens `path` — a raw disk image, or `archive.zip[/entry]` — with the
+    /// Opens `path` — a raw disk image, or `archive[/entry]` naming an
+    /// entry inside a supported archive (`.zip`, `.7z`) — with the
     /// built-in image-format catalog and the stated default cache bound
-    /// ([`crate::DEFAULT_CACHE_BYTES`]).
+    /// ([`crate::DEFAULT_CACHE_BYTES`]). Omitting the entry works only
+    /// when the archive holds exactly one file; use [`crate::Archive`]
+    /// to see what an archive holds.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with_cache(path, crate::DEFAULT_CACHE_BYTES)
     }
@@ -275,7 +278,7 @@ impl Session {
     }
 
     fn open_full(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
-        let resolved = archive::resolve_image(path.as_ref(), cache_bytes)?;
+        let resolved = source::resolve_image(path.as_ref(), cache_bytes)?;
 
         let containers = resolved
             .archive_layers

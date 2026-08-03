@@ -4,8 +4,8 @@
 //! C ABI for the Remanence disk image analysis library.
 //!
 //! Conventions:
-//! - Handles (`RemanenceSession`, `RemanenceIdentification`, `RemanenceHdosFileList`) are opaque
-//!   and freed with their matching `*_free` function.
+//! - Handles (`RemanenceSession`, `RemanenceIdentification`, `RemanenceHdosFileList`,
+//!   `RemanenceArchive`) are opaque and freed with their matching `*_free` function.
 //! - `const char*` return values are UTF-8, owned by the handle they were read
 //!   from, and valid until that handle is freed. Do not free them.
 //! - Fallible calls take optional category and message outputs; on failure they
@@ -367,9 +367,10 @@ pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
     }
 }
 
-/// Opens `path` (UTF-8) — a raw disk image, or `archive.zip[/entry]` — with
-/// the built-in format adapters. Returns null on failure and stores a message
-/// in `error_out` (free with `remanence_string_free`).
+/// Opens `path` (UTF-8) — a raw disk image, or `archive[/entry]` naming an
+/// entry inside a supported archive (`.zip`, `.7z`) — with the built-in
+/// format adapters. Returns null on failure and stores a message in
+/// `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_open(
     path: *const c_char,
@@ -444,7 +445,7 @@ pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) 
     }
 }
 
-/// The path the session was opened from (the archive path for ZIP inputs).
+/// The path the session was opened from (the archive path for archive inputs).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_path(session: *const RemanenceSession) -> *const c_char {
     match unsafe { session.as_ref() } {
@@ -453,7 +454,7 @@ pub unsafe extern "C" fn remanence_session_path(session: *const RemanenceSession
     }
 }
 
-/// The resolved image path (the entry name for ZIP inputs).
+/// The resolved image path (the entry name for archive inputs).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_image_path(session: *const RemanenceSession) -> *const c_char {
     match unsafe { session.as_ref() } {
@@ -2110,6 +2111,185 @@ pub unsafe extern "C" fn remanence_session_read_hdos_file(
             ptr::null_mut()
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The archive catalog: list what a supported archive holds — ZIP and 7z —
+// under the P7 claim the listing holds, reading the archive's index and
+// never its entry data.
+
+use remanence::{Archive, ArchiveEntry};
+
+struct ArchiveEntryView {
+    name: CString,
+    is_dir: bool,
+    compressed_size: Option<u64>,
+    uncompressed_size: u64,
+}
+
+impl ArchiveEntryView {
+    fn new(entry: &ArchiveEntry) -> Self {
+        Self {
+            name: to_cstring(&entry.name),
+            is_dir: entry.is_dir,
+            compressed_size: entry.compressed_size,
+            uncompressed_size: entry.uncompressed_size,
+        }
+    }
+}
+
+/// An open archive listing, holding the claim on its file.
+pub struct RemanenceArchive {
+    archive: Archive,
+    path: CString,
+    format_id: CString,
+    format_name: CString,
+    entries: Vec<ArchiveEntryView>,
+}
+
+unsafe fn archive_entry_view<'a>(
+    archive: *const RemanenceArchive,
+    index: usize,
+) -> Option<&'a ArchiveEntryView> {
+    let archive = unsafe { archive.as_ref() }?;
+    archive.entries.get(index)
+}
+
+/// Opens the archive at `path` (UTF-8) and reads its entry list. A path
+/// naming no archive format this library reads is refused by name.
+/// Returns null on failure and stores a message in `error_out` (free with
+/// `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_open(
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceArchive {
+    unsafe { clear_error(error_out) };
+    if path.is_null() {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    }
+
+    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
+    match Archive::open(path.as_ref()) {
+        Ok(archive) => {
+            let entries = archive.entries().iter().map(ArchiveEntryView::new).collect();
+            let path = to_cstring(&archive.path().display().to_string());
+            let format_id = to_cstring(archive.format_id());
+            let format_name = to_cstring(archive.format_name());
+            Box::into_raw(Box::new(RemanenceArchive {
+                archive,
+                path,
+                format_id,
+                format_name,
+                entries,
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees an archive handle, releasing its claim on the file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_free(archive: *mut RemanenceArchive) {
+    if !archive.is_null() {
+        drop(unsafe { Box::from_raw(archive) });
+    }
+}
+
+/// The path the archive was opened from.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_path(
+    archive: *const RemanenceArchive,
+) -> *const c_char {
+    unsafe { archive.as_ref() }.map_or(ptr::null(), |archive| archive.path.as_ptr())
+}
+
+/// The archive format's stable identifier, e.g. "zip" or "7z".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_format_id(
+    archive: *const RemanenceArchive,
+) -> *const c_char {
+    unsafe { archive.as_ref() }.map_or(ptr::null(), |archive| archive.format_id.as_ptr())
+}
+
+/// The archive format's human-readable name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_format_name(
+    archive: *const RemanenceArchive,
+) -> *const c_char {
+    unsafe { archive.as_ref() }.map_or(ptr::null(), |archive| archive.format_name.as_ptr())
+}
+
+/// Which P7 mode the open obtained on the archive file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_access_mode(
+    archive: *const RemanenceArchive,
+) -> RemanenceAccessMode {
+    unsafe { archive.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |archive| {
+        access_mode(archive.archive.access_mode())
+    })
+}
+
+/// The archive file's own size in bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_size_bytes(archive: *const RemanenceArchive) -> u64 {
+    unsafe { archive.as_ref() }.map_or(0, |archive| archive.archive.size_bytes())
+}
+
+/// Number of entries the archive holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_entry_count(archive: *const RemanenceArchive) -> usize {
+    unsafe { archive.as_ref() }.map_or(0, |archive| archive.entries.len())
+}
+
+/// One entry's `/`-separated path inside the archive, or null when out
+/// of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_entry_name(
+    archive: *const RemanenceArchive,
+    index: usize,
+) -> *const c_char {
+    unsafe { archive_entry_view(archive, index) }.map_or(ptr::null(), |entry| entry.name.as_ptr())
+}
+
+/// Whether the entry is a directory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_entry_is_dir(
+    archive: *const RemanenceArchive,
+    index: usize,
+) -> bool {
+    unsafe { archive_entry_view(archive, index) }.is_some_and(|entry| entry.is_dir)
+}
+
+/// The entry's size once decoded, as the archive declares it; 0 when out
+/// of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_entry_uncompressed_size(
+    archive: *const RemanenceArchive,
+    index: usize,
+) -> u64 {
+    unsafe { archive_entry_view(archive, index) }.map_or(0, |entry| entry.uncompressed_size)
+}
+
+/// The entry's packed size; returns false when the grammar attributes
+/// none to a single entry — a member of a solid 7z folder — or when the
+/// index is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_archive_entry_compressed_size(
+    archive: *const RemanenceArchive,
+    index: usize,
+    out: *mut u64,
+) -> bool {
+    let Some(entry) = (unsafe { archive_entry_view(archive, index) }) else {
+        return false;
+    };
+    unsafe { write_opt_u64(entry.compressed_size, out) }
 }
 
 #[cfg(test)]

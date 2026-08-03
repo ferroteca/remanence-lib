@@ -3,9 +3,11 @@
 
 //! Self-contained disk image analysis library.
 //!
-//! A [`Session`] opens a disk image — optionally inside a `.zip` archive — and
-//! [`Session::identify`] reports the container layers (archive, image,
-//! physical media, filesystem) recognized by built-in executable adapters.
+//! An [`Archive`] lists what a supported archive holds — ZIP and 7z —
+//! and a [`Session`] opens a disk image, optionally naming an entry
+//! inside one of those archives. [`Session::identify`] reports the
+//! container layers (archive, image, physical media, filesystem)
+//! recognized by built-in executable adapters.
 
 mod adapters;
 mod archive;
@@ -18,13 +20,17 @@ mod filesystem;
 mod hdos;
 mod inflate;
 mod journal;
+mod lzma;
 mod mbr;
 mod partition;
 mod qcow2;
 mod session;
+mod sevenzip;
+mod source;
 mod volume;
 mod zip;
 
+pub use archive::{Archive, ArchiveEntry};
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat, DiskGeometry};

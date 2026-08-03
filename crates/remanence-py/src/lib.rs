@@ -3,10 +3,12 @@
 
 //! Python bindings for the Remanence disk image analysis library.
 //!
-//! The module mirrors the Rust crate's public surface: `Session` opens a disk
-//! image (optionally inside a `.zip`), `Session.identify()` reports the
-//! detected container layers, and `list_hdos_files` parses HDOS directories.
-//! Failures raise `RemanenceError`.
+//! The module mirrors the Rust crate's public surface: `Archive` lists
+//! what a supported archive holds (`.zip`, `.7z`), `Session` opens a disk
+//! image (optionally an entry inside one of those archives),
+//! `Session.identify()` reports the detected container layers, and
+//! `list_hdos_files` parses HDOS directories. Failures raise
+//! `RemanenceError`.
 
 use std::path::PathBuf;
 
@@ -315,11 +317,13 @@ pub struct Session {
 
 #[pymethods]
 impl Session {
-    /// Opens `path` — a raw disk image, or `archive.zip[/entry]` — with the
-    /// built-in format catalogs. `cache_bytes` declares the session
-    /// cache bound (rounded up to whole 64 KiB extents, one extent at
-    /// minimum); omitted, the stated default `DEFAULT_CACHE_BYTES`
-    /// governs.
+    /// Opens `path` — a raw disk image, or `archive[/entry]` naming an
+    /// entry inside a supported archive (`.zip`, `.7z`) — with the
+    /// built-in format catalogs. Omitting the entry works only when the
+    /// archive holds exactly one file; `Archive` shows what one holds.
+    /// `cache_bytes` declares the session cache bound (rounded up to
+    /// whole 64 KiB extents, one extent at minimum); omitted, the
+    /// stated default `DEFAULT_CACHE_BYTES` governs.
     #[new]
     #[pyo3(signature = (path, *, cache_bytes = None))]
     fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
@@ -331,13 +335,13 @@ impl Session {
         .map_err(to_py_err)
     }
 
-    /// The path the session was opened from (the archive path for ZIP inputs).
+    /// The path the session was opened from (the archive path for archive inputs).
     #[getter]
     fn path(&self) -> String {
         self.inner.path().display().to_string()
     }
 
-    /// The resolved image path (the entry name for ZIP inputs).
+    /// The resolved image path (the entry name for archive inputs).
     #[getter]
     fn image_path(&self) -> String {
         self.inner.image_path().display().to_string()
@@ -744,6 +748,129 @@ impl Disk {
     }
 }
 
+/// One entry an archive holds.
+///
+/// `compressed_size` is `None` where the grammar attributes no packed
+/// size to a single entry — a member of a solid 7z folder is compressed
+/// together with its neighbours, so no share of the packed bytes is its
+/// own.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ArchiveEntry {
+    /// The entry's path inside the archive, `/`-separated.
+    pub name: String,
+    pub is_dir: bool,
+    pub compressed_size: Option<u64>,
+    pub uncompressed_size: u64,
+}
+
+#[pymethods]
+impl ArchiveEntry {
+    fn __repr__(&self) -> String {
+        format!(
+            "ArchiveEntry(name={:?}, is_dir={}, uncompressed_size={})",
+            self.name, self.is_dir, self.uncompressed_size
+        )
+    }
+}
+
+impl ArchiveEntry {
+    fn new(entry: &remanence::ArchiveEntry) -> Self {
+        Self {
+            name: entry.name.clone(),
+            is_dir: entry.is_dir,
+            compressed_size: entry.compressed_size,
+            uncompressed_size: entry.uncompressed_size,
+        }
+    }
+}
+
+/// An archive's entries, read under the claim this listing holds.
+///
+/// Opening claims the archive file — writes denied to every other
+/// process — until the object is closed or dropped. Only the archive's
+/// own index is read; entry data is never touched.
+#[pyclass(module = "remanence")]
+pub struct Archive {
+    inner: Option<remanence::Archive>,
+}
+
+impl Archive {
+    fn get(&self) -> PyResult<&remanence::Archive> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "archive is closed"))
+    }
+}
+
+#[pymethods]
+impl Archive {
+    /// Opens the archive at `path`. A path naming no archive format this
+    /// library reads is refused by name, never guessed at.
+    #[new]
+    fn new(path: PathBuf) -> PyResult<Self> {
+        remanence::Archive::open(path)
+            .map(|inner| Self { inner: Some(inner) })
+            .map_err(to_py_err)
+    }
+
+    /// The path the archive was opened from.
+    #[getter]
+    fn path(&self) -> PyResult<String> {
+        Ok(self.get()?.path().display().to_string())
+    }
+
+    /// The archive format's stable identifier: `"zip"` or `"7z"`.
+    #[getter]
+    fn format_id(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_id())
+    }
+
+    /// The archive format's human-readable name.
+    #[getter]
+    fn format_name(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_name())
+    }
+
+    /// `"read-write"` or `"read-only"`: which mode the deny-write claim
+    /// on the archive file was obtained in.
+    #[getter]
+    fn access_mode(&self) -> PyResult<&'static str> {
+        Ok(mode_str(self.get()?.access_mode()))
+    }
+
+    /// The archive file's own size in bytes.
+    #[getter]
+    fn size_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.size_bytes())
+    }
+
+    /// Every entry the archive holds, in the archive's own order.
+    #[getter]
+    fn entries(&self) -> PyResult<Vec<ArchiveEntry>> {
+        Ok(self.get()?.entries().iter().map(ArchiveEntry::new).collect())
+    }
+
+    /// Releases the claim on the archive file.
+    fn close(&mut self) {
+        self.inner = None;
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exception_type: Bound<'_, PyAny>,
+        _exception: Bound<'_, PyAny>,
+        _traceback: Bound<'_, PyAny>,
+    ) -> bool {
+        self.inner = None;
+        false
+    }
+}
+
 /// Parses the HDOS directory from raw image bytes.
 #[pyfunction]
 fn list_hdos_files(image: Vec<u8>) -> PyResult<Vec<HdosFile>> {
@@ -776,6 +903,8 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", version)?;
     m.add("DEFAULT_CACHE_BYTES", remanence::DEFAULT_CACHE_BYTES)?;
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
+    m.add_class::<Archive>()?;
+    m.add_class::<ArchiveEntry>()?;
     m.add_class::<Session>()?;
     m.add_class::<Identification>()?;
     m.add_class::<Container>()?;

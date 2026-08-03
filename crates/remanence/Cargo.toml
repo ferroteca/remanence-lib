@@ -16,4 +16,5 @@ exclude = [
 
 [dependencies]
 # Intentionally none: the library is dependency-free, including its own
-# ZIP central-directory reader and RFC 1951 (DEFLATE) decompressor.
+# ZIP central-directory and 7z header readers and its RFC 1951 (DEFLATE)
+# and LZMA/LZMA2 decompressors.
