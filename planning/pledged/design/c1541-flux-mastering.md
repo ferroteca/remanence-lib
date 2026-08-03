@@ -5,9 +5,25 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # C1541 flux mastering profile
 
-> **Status:** pledged, not delivered. This design serves F33 and authorizes no implementation outside that feature.
+> **Status:** delivered; the feature that carried it has been struck and its
+> handle retired. This remains the written statement of the reduction —
+> implemented in `crates/remanence/src/c1541_mastering.rs`, reached through
+> `CaptureSet::plan_c1541_mastering` on all three application surfaces. It
+> specifies the reduction rather than the surface, and no normative
+> specification of S1–S3 has shipped, so it stays here rather than moving
+> out (D11).
+>
+> Two things the prose leaves open, which the code had to settle. **The
+> unselected side is loss whether or not the probe claimed it**: the side
+> was captured, none of its evidence enters the medium, and counting only
+> the claimed positions would understate the account. And **pulse strength
+> admits two declared rules** — one strength declared for every pulse, with
+> the unselected observations' agreement recorded as loss rather than
+> expressed, or strength from agreement within a caller-declared angular
+> window. Both are policy inputs; neither is a default, and the window is
+> declared rather than chosen by the profile.
 
-F33 consumes the `FluxCapture` produced by the delivered flux-capture layer and its KryoFlux capture-set adapter, and produces one circular, half-track-addressed 1541 `FluxMedium` — the delivered flux-medium layer — plus the declared-loss account P29 requires. It owns the reduction and nothing else: it does not read a container, does not encode one, and does not ascend to hardware bitstream, GCR, sectors, or files. It may recognize a family landmark in the interval domain to place the medium's origin (P30, D12) - interval lengths, never bit values; an angle, never a byte.
+This design's reduction consumes the `FluxCapture` produced by the delivered flux-capture layer and its KryoFlux capture-set adapter, and produces one circular, half-track-addressed 1541 `FluxMedium` — the delivered flux-medium layer — plus the declared-loss account P29 requires. It owns the reduction and nothing else: it does not read a container, does not encode one, and does not ascend to hardware bitstream, GCR, sectors, or files. It may recognize a family landmark in the interval domain to place the medium's origin (P30, D12) - interval lengths, never bit values; an angle, never a byte.
 
 ## The policy inputs
 

@@ -140,7 +140,7 @@ strictly increasing positions, exact-rational frame arithmetic, the sparse
 map's two absences, strength round-tripping through the backing, seam and
 duplicate facts, and bounded reload of one location. No capture, profile,
 drive, or container appears in them: this feature is the model, and the
-paths into and out of it are F33's, F34's and F32's.
+paths into and out of it are the delivered mastering profile's, F34's and F32's.
 
 ## Outside the feature
 

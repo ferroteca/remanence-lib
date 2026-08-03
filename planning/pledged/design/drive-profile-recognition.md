@@ -16,7 +16,7 @@ SPDX-License-Identifier: GPL-3.0-only
 > Two things it describes are narrower or wider in the code than the prose
 > above, and neither is owed by the delivered feature. The **materialization
 > half** is declared and read by nothing yet: the reduction that consumes it
-> is F33's, and it is laid out beside the recognition half for the reason
+> belongs to the delivered mastering profile, and it is laid out beside the recognition half for the reason
 > given below. And the **spacing between record starts is counted in bits,
 > not measured in time** — summing the classified multiples between two
 > record starts rather than dividing elapsed ticks by a cell. That is what
@@ -307,7 +307,7 @@ identical however many threads served it.
 
 ## Outside the feature
 
-Any second drive family. The flux-to-medium reduction itself, which is F33's
+Any second drive family. The flux-to-medium reduction itself, which is the mastering profile's
 under P29 — this feature supplies declarations to that plan and performs no
 reduction. Hardware bitstream, GCR decoding, sectors, filesystems and files.
 Hardware emulation and mechanism state, which are P15's. A public flux,
