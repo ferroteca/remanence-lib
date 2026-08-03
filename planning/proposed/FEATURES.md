@@ -321,6 +321,6 @@ Companion design: [design/degraded-evidence-bounded-image-access.md](design/degr
 
 Materialize a C1541-family hardware bitstream from a `FluxMedium` under declared mechanics and read-channel rules, then materialize the family's encoded GCR bytestream without assigning synchronization, headers, sectors, or files. The P30 drive profile owns this detailed knowledge; neither a capture adapter nor either flux model decides what a drive observes.
 
-Touches: S1, S2, S3. Supports: U7; P3–P5, P13, P15, P22, P23, P27. Needs: F37 pledged and delivered. It does not promise sector recovery, a generic bitstream API, or every drive family.
+Touches: S1, S2, S3. Supports: U7; P3–P5, P13, P15, P22, P23, P27. Needs: the flux-medium foundation, which is delivered. It does not promise sector recovery, a generic bitstream API, or every drive family.
 
 Companion design: [design/flux-capture-and-hardware-bitstream.md](design/flux-capture-and-hardware-bitstream.md).

@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** pledged, not delivered. This design serves F33 and authorizes no implementation outside that feature.
 
-F33 consumes the `FluxCapture` produced by the delivered flux-capture layer and its KryoFlux capture-set adapter, and produces one circular, half-track-addressed 1541 `FluxMedium` (F37) plus the declared-loss account P29 requires. It owns the reduction and nothing else: it does not read a container, does not encode one, and does not ascend to hardware bitstream, GCR, sectors, or files. It may recognize a family landmark in the interval domain to place the medium's origin (P30, D12) - interval lengths, never bit values; an angle, never a byte.
+F33 consumes the `FluxCapture` produced by the delivered flux-capture layer and its KryoFlux capture-set adapter, and produces one circular, half-track-addressed 1541 `FluxMedium` — the delivered flux-medium layer — plus the declared-loss account P29 requires. It owns the reduction and nothing else: it does not read a container, does not encode one, and does not ascend to hardware bitstream, GCR, sectors, or files. It may recognize a family landmark in the interval domain to place the medium's origin (P30, D12) - interval lengths, never bit values; an angle, never a byte.
 
 ## The policy inputs
 

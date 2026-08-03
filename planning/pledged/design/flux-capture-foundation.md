@@ -23,7 +23,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 This design establishes the private flux-capture model: the lower of the flux family's two models (P22), holding raw magnetic capture evidence without deciding what a medium, drive, codec, sector decoder, or filesystem makes of it.
 
-A capture is never an active layer (P23): it is authoritative image state, read by inspection and by mastering, and it never carries a session's mutable truth. A reduction under P29 turns it into a `FluxMedium` (F37), which is the layer a drive is served from.
+A capture is never an active layer (P23): it is authoritative image state, read by inspection and by mastering, and it never carries a session's mutable truth. A reduction under P29 turns it into a `FluxMedium` — the delivered flux-medium layer — which is the layer a drive is served from.
 
 ## Capture state
 

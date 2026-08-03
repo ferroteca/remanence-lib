@@ -13,7 +13,7 @@ Reduce an opened capture set's `FluxCapture` to one circular, half-track-address
 
 Mastering resolves in two stages: a plan which computes everything and writes nothing, and an execution which writes. A reduction that no policy input names is a named refusal, not a default. The same sources, policy, and seed produce the same mastered state.
 
-Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: the flux-capture foundation and the KryoFlux capture-set adapter, both delivered; F37 pledged and delivered; F36 for the declarations it consumes.
+Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: the flux-capture foundation, its KryoFlux capture-set adapter and the flux-medium foundation, all delivered; F36 for the declarations it consumes.
 
 Companion design: [design/c1541-flux-mastering.md](design/c1541-flux-mastering.md).
 
@@ -23,7 +23,7 @@ The P64 adapter at its representation seam: recognition and evidence, explicit v
 
 P64's authoritative layer is a flux medium, so conformance is a same-layer round trip: a mastered fixture encodes, reopens through the adapter's own decode, and presents the same half-tracks, pulse positions, and strengths. An existing destination path is refused rather than overwritten, and an interrupted write leaves a complete artifact or none.
 
-Touches: S1, S2, S3. Supports: U7, U23; P1, P3, P4, P6, P8, P9, P12, P13, P22, P29. Needs: F37 pledged and delivered.
+Touches: S1, S2, S3. Supports: U7, U23; P1, P3, P4, P6, P8, P9, P12, P13, P22, P29. Needs: the flux-medium foundation, which is delivered.
 
 Companion design: [design/p64-image-adapter.md](design/p64-image-adapter.md).
 
@@ -38,15 +38,3 @@ Conformance is the prepared capture set: probing the data surface recovers all f
 Touches: S1, S2, S3. Supports: U23; P3, P4, P12, P22, P23, P27, P29, P30. Needs: the flux-capture foundation, which is delivered; P30 pledged.
 
 Companion design: [design/drive-profile-recognition.md](design/drive-profile-recognition.md).
-
-## F37 — Flux medium v1 foundation
-
-Establish the private durable flux-medium model beneath any drive interpretation and above flux capture: one circular pulse stream per family-addressed location, an exact rotational frame against a declared reference clock, per-pulse strength in the profile's declared vocabulary, the medium-level facts that are not per-pulse, and derived provenance on every part of it. It reuses the delivered flux-capture layer's bounded section-addressable backing rather than inventing a second one.
-
-It is what a P64 decodes into, what a mastering reduction produces, and what a read channel projects from. It is not a public flux, pulse, or medium iterator, not an interchange format, and not a place any decoding happens: it holds no bitcell, recovered clock, synchronization, symbol, or byte.
-
-Nothing in it carries recovered-evidence provenance. Every pulse is selected-and-projected or synthetic under P13 and P29, and a medium cannot be constructed except by a reduction that declared its policy. Unit tests build small synthetic media and verify circular bounds, exact-rational frame arithmetic, strength round-tripping, sparse locations, and bounded reload, with no capture, profile, or drive present.
-
-Touches: none. Supports: P3, P4, P13, P22, P23, P27, P29, P30. Needs: the flux-capture foundation, which is delivered; the P22 and P23 amendments pledged.
-
-Companion design: [design/flux-medium-foundation.md](design/flux-medium-foundation.md).

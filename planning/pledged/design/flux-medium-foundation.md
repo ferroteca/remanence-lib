@@ -5,11 +5,22 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # FluxMedium v1 foundation
 
-> **Status:** pledged, not delivered. This design serves F37 and authorizes no implementation outside that feature.
+> **Status:** delivered; the feature that carried it has been struck and its
+> handle retired. This remains the written statement of the model —
+> implemented in `crates/remanence/src/flux_medium.rs`, and what a mastering
+> reduction and a medium-bearing adapter are written against. It describes no
+> application surface, so it stays here rather than moving out (D11).
+>
+> One thing it specifies is deliberately narrower in the code, and it is not
+> owed by the delivered feature. `OriginRule` admits exactly the three rules
+> named below — an index datum, a seam, a declaration — because those are the
+> three this design argued; a rule a profile declares outside them is a
+> refusal until a revision admits it, under the same additive discipline the
+> capture layer applies to a fact with no named home.
 
 ## Purpose
 
-F37 establishes the second of the flux family's two models. `FluxCapture`
+This design establishes the second of the flux family's two models. `FluxCapture`
 (the delivered flux-capture layer, renamed by the P22 amendment) holds
 what an instrument recorded.
 `FluxMedium` holds what a drive would read: one circular pulse stream per
