@@ -5,8 +5,8 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, P22, the P23
-> amendment, and P29 remain
+> **Status:** pledged at the owner's direction. P14, P15, P22, P29, and
+> the P23 and P19 amendments remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
@@ -650,3 +650,44 @@ no destination format by itself — each is a named claim under P3 delivered by
 its own adapter — and it creates no public evidence iterator: the mastering
 plan and its declared-loss account are the surface, and the evidence stays
 behind them.
+
+## P19 amendment — a file-bearing interpretation states the scope of its claim
+
+In-force P19 refuses in both directions at the edge of an interpretation: it
+neither calls valid non-file data empty nor manufactures pseudo-files to
+force it through the seam. This amendment adds the positive obligation those
+refusals imply: what a file-bearing view says about the parts of its backing
+it does not interpret.
+
+A file-bearing view derived over a materialized durable layer can account
+for the backing extent it was derived from. In that account, every
+addressable unit of the backing falls in exactly one class:
+
+- the **data footprint** of an item the namespace names;
+- the **namespace's own structures** — directory records, allocation
+  metadata, boot and reserved structures the interpretation claims;
+- space the allocation metadata **claims free** — recorded as that
+  metadata's claim, never as a verdict that the extent is empty, disposable,
+  or safe to reuse; or
+- an **opaque region** — an extent the interpretation does not claim.
+
+A valid namespace does not assert that every extent of its backing layer
+belongs to it. The opaque remainder is itemized without a name: it stands
+beside the namespace with its footprint stated in the backing layer's own
+addressing, readable under P2 as evidence, its meaning left to whatever
+lower seam claims it. It is never listed as a namespace entry — the
+pseudo-file rule stands — never reported as free space, and never silently
+dropped from the view. Footprints, including an opaque region's, are stated
+in the backing layer's addressing vocabulary because that is the only
+vocabulary in which the account can be checked for totality.
+
+The account is a report the view can produce, not work the open performs:
+when it is computed is a resource question under P27, and computing it
+mutates nothing (P2). Its classes are claims carrying P4 evidence, and a
+backing extent the interpretation cannot classify is opaque rather than
+guessed into a class.
+
+Where the file container is itself the active layer — a serialized container
+such as ZIP — there is no materialized layer beneath it, no footprints, and
+no coverage account. Source bytes the adapter's grammar does not account for
+are that adapter's evidence under P3 and P4, not opaque regions.

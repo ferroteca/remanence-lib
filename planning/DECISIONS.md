@@ -58,6 +58,54 @@ removes it is the record either way.
 
 ## Decisions
 
+### D9 — The file-container model's scope calls
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** P19, P23.
+
+Rulings made while pledging the file-container model foundation (F35) and
+the P19 scope amendment.
+
+**The unclaimed remainder is an "opaque region."** Opaque *to this
+interpretation* — no implication that it is garbage, free, or unclaimed by
+every layer; in the protection case it is load-bearing content, and over
+flux it is angular track regions rather than bytes. The proposed U8 already
+uses the phrase.
+
+**An opaque region is an item, never an entry.** In-force P19's refusal to
+manufacture pseudo-files stands untouched: the namespace lists only what the
+source names, and the opaque remainder is itemized without a name,
+reachable through the coverage account rather than by path.
+
+**The scope clause is principle-level; the metadata contract is
+design-level.** The coverage obligation amends P19, while the superset
+metadata contract stays in the companion design — the same split the flux
+foundation made between the P22/P23 amendments and its design document.
+
+**Coverage exists only over a materialized sub-layer.** A serialized
+container's unaccounted source bytes (a self-extractor stub, padding) are
+the adapter's evidence, not opaque regions; there is no layer beneath the
+active file container for a footprint to address.
+
+**Deleted-but-present entries are accounted, not itemized.** A scratched
+CBM entry or FAT `0xE5` slot is part of the namespace structures' footprint;
+itemizing it would be a recovery claim nothing pledges.
+
+**v1 claims one content stream per file item.** Alternate data streams and
+forks enter by the superset contract's additive named-home route or are
+refused by name.
+
+**Weighed and declined:** "blob" and other byte-shaped terms (wrong over
+flux, and they imply extractability the view may not claim); "unclaimed
+extent" (reads as nobody's when the truth is not-this-view's); "remnant"
+(suggests leftover-from-deletion; protection tracks are deliberate); a
+kitchen-sink union record with every metadata field optional (rejected once
+already at the flux layer; the two-outcome rule is reused instead);
+itemizing deleted entries (a recovery claim in disguise).
+
+**Folded into:** the pledged P19 amendment in
+[pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); pledged F35 and
+[pledged/design/file-container-layer-foundation.md](pledged/design/file-container-layer-foundation.md).
+
 ### D8 — Mastering a capture to P64 stops at flux, and gets its own principle
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** U23, P29.

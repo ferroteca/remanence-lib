@@ -54,3 +54,13 @@ Conformance is round trip: a mastered fixture encodes, reopens through the adapt
 Touches: S1, S2, S3. Supports: U7, U23; P1, P3, P4, P6, P8, P9, P12, P13, P22, P29. Needs: F30 pledged and delivered.
 
 Companion design: [design/p64-image-adapter.md](design/p64-image-adapter.md).
+
+## F35 — Private FileContainerLayer v1 foundation
+
+Establish the private, common file-container model behind the P19 seam and its bounded session backing: items distinct from the names that reach them, optionally hierarchical namespaces over one item pool, the metadata superset contract with source spelling and order preserved, per-item footprints in a materialized backing layer, and the coverage account whose remainder is the opaque regions. It is the common target of file-bearing providers — serialized-container catalogs, filesystem adapters, and namespace composers — not a public iterator, an interchange format, or a new archive grammar.
+
+Every source fact maps to a named model fact, an adapter-namespaced declared fact, or a named refusal. The namespace lists only what the source names; an opaque region is itemized without a name, never manufactured into a pseudo-file. Unit tests build small synthetic layers and verify name/item separation, source-order and spelling retention, footprint accounting, coverage totality, and bounded reload without any filesystem or archive grammar.
+
+Touches: none. Supports: P2, P3, P4, P13, P19, P23, P27. Needs: the P19 scope amendment pledged.
+
+Companion design: [design/file-container-layer-foundation.md](design/file-container-layer-foundation.md).
