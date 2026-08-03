@@ -26,8 +26,12 @@ use crate::evidence::{Issue, Provenance};
 /// unit, and never converted to floating point.
 pub(crate) type Tick = u64;
 
-/// The capture's declared timing basis: an exact positive rational
-/// count of ticks per second.
+/// A declared timing basis: an exact positive rational count of ticks
+/// per second.
+///
+/// Both of the flux family's models declare one — a capture the
+/// instrument's, a medium its profile's reference clock — and neither
+/// rate is exactly representable any other way.
 ///
 /// It is retained as the source declared it. v1 never converts capture
 /// timing to floating point or to a library-chosen sample rate, because
@@ -464,7 +468,7 @@ const MAX_VARINT_BYTES: usize = 10;
 
 /// Appends one unsigned value, seven bits per byte, low group first,
 /// with the high bit set on every byte but the last.
-fn write_varint(out: &mut Vec<u8>, mut value: u64) {
+pub(crate) fn write_varint(out: &mut Vec<u8>, mut value: u64) {
     while value >= 0x80 {
         out.push((value as u8) | 0x80);
         value >>= 7;
@@ -477,7 +481,7 @@ fn write_varint(out: &mut Vec<u8>, mut value: u64) {
 /// Refuses a value running off the end of the record and one encoded in
 /// more groups than a `u64` holds, either of which would otherwise be
 /// read as a plausible tick.
-fn read_varint(source: &str, bytes: &[u8], at: usize) -> Result<(u64, usize)> {
+pub(crate) fn read_varint(source: &str, bytes: &[u8], at: usize) -> Result<(u64, usize)> {
     let mut value: u64 = 0;
     let mut used = 0;
     loop {
@@ -658,7 +662,7 @@ fn encode_markers(markers: &[Marker]) -> Vec<u8> {
 }
 
 /// Writes one length-prefixed UTF-8 string.
-fn write_text(out: &mut Vec<u8>, text: &str) {
+pub(crate) fn write_text(out: &mut Vec<u8>, text: &str) {
     write_varint(out, text.len() as u64);
     out.extend_from_slice(text.as_bytes());
 }
@@ -753,7 +757,7 @@ fn decode_markers(source: &str, bytes: &[u8], known: &[&'static str]) -> Result<
 }
 
 /// Reads one length-prefixed UTF-8 string, and the bytes it used.
-fn read_text(source: &str, bytes: &[u8], at: usize) -> Result<(String, usize)> {
+pub(crate) fn read_text(source: &str, bytes: &[u8], at: usize) -> Result<(String, usize)> {
     let (length, used) = read_varint(source, bytes, at)?;
     let length = usize::try_from(length).map_err(|_| {
         Error::invalid_image(source, "record states text longer than this host can address")
@@ -925,6 +929,52 @@ impl CaptureRunSlice {
 
     pub(crate) fn end(&self) -> Tick {
         self.end
+    }
+}
+
+/// What a backing may be keyed by.
+///
+/// The backing is one mechanism serving both of the flux family's
+/// models (P22), and they do not address alike: a capture is addressed
+/// by the location its *source* named, a medium by the location its
+/// *profile* declares. Sharing the record stream and the ordered index
+/// while keeping the two addressings apart is the whole of why this is
+/// a seam rather than one concrete key.
+pub(crate) trait SectionAddress: Clone + Ord {
+    /// The namespace a refusal about this section reads under (P4).
+    fn namespace(&self) -> &'static str;
+
+    /// Appends this address, self-delimiting so an index node can hold
+    /// a run of them without a separate length table.
+    fn write(&self, out: &mut Vec<u8>);
+
+    /// Reads one address back, returning it and the bytes it used.
+    ///
+    /// `known` is the set of namespaces this reader can place. The
+    /// backing is private session state, so a namespace outside that
+    /// set means the index is not the one this layer wrote, and the
+    /// layer refuses rather than resolving it to something plausible
+    /// and addressing the wrong sections from then on.
+    fn read(source: &str, bytes: &[u8], at: usize, known: &[&'static str])
+    -> Result<(Self, usize)>;
+}
+
+impl SectionAddress for SectionKey {
+    fn namespace(&self) -> &'static str {
+        self.track.namespace
+    }
+
+    fn write(&self, out: &mut Vec<u8>) {
+        write_section_key(out, self);
+    }
+
+    fn read(
+        source: &str,
+        bytes: &[u8],
+        at: usize,
+        known: &[&'static str],
+    ) -> Result<(Self, usize)> {
+        read_section_key(source, bytes, at, known)
     }
 }
 
@@ -1114,7 +1164,7 @@ impl SectionLocation {
 /// Tests build backings with a tiny capacity to force several leaves
 /// out of a handful of sections, the way the cache tests use a tiny
 /// bound to force eviction.
-const LEAF_ENTRIES: usize = 64;
+pub(crate) const LEAF_ENTRIES: usize = 64;
 
 /// Marks the end of a backing, and says which shape it is.
 const FOOTER_MAGIC: u32 = 0x464c_5831;
@@ -1156,24 +1206,24 @@ impl ByteSink for Vec<u8> {
 /// complete, which is what makes a half-written backing detectable
 /// rather than a layer with holes in it.
 #[derive(Debug)]
-pub(crate) struct SectionWriter<S: ByteSink = Vec<u8>> {
+pub(crate) struct SectionWriter<K: SectionAddress, S: ByteSink = Vec<u8>> {
     sink: S,
     /// How many bytes have gone into the sink, which is where the next
     /// section will sit. The sink itself is not asked: it may be a file
     /// this writer is not the only holder of.
     written: u64,
-    entries: Vec<(SectionKey, SectionLocation)>,
-    last: Option<SectionKey>,
+    entries: Vec<(K, SectionLocation)>,
+    last: Option<K>,
     leaf_entries: usize,
 }
 
-impl Default for SectionWriter<Vec<u8>> {
+impl<K: SectionAddress> Default for SectionWriter<K, Vec<u8>> {
     fn default() -> Self {
         Self::with_leaf_capacity(LEAF_ENTRIES)
     }
 }
 
-impl SectionWriter<Vec<u8>> {
+impl<K: SectionAddress> SectionWriter<K, Vec<u8>> {
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -1190,7 +1240,7 @@ impl SectionWriter<Vec<u8>> {
     }
 }
 
-impl<S: ByteSink> SectionWriter<S> {
+impl<K: SectionAddress, S: ByteSink> SectionWriter<K, S> {
     /// A writer emitting into `sink`, whose index leaves hold at most
     /// `leaf_entries` sections.
     pub(crate) fn to_sink(sink: S, leaf_entries: usize) -> Self {
@@ -1205,17 +1255,14 @@ impl<S: ByteSink> SectionWriter<S> {
 
     /// Appends one section, which must sort after every section already
     /// appended.
-    pub(crate) fn append(&mut self, key: SectionKey, payload: Vec<u8>) -> Result<()> {
+    pub(crate) fn append(&mut self, key: K, payload: Vec<u8>) -> Result<()> {
         if let Some(last) = &self.last
             && &key <= last
         {
             return Err(Error::invalid_image(
-                key.track.namespace,
-                format!(
-                    "section {:?} does not sort after the preceding {:?}, so the \
-                     backing is not being emitted in key order",
-                    key.kind, last.kind
-                ),
+                key.namespace(),
+                "a section does not sort after the one appended before it, so the \
+                 backing is not being emitted in key order",
             ));
         }
         let location = SectionLocation {
@@ -1238,12 +1285,12 @@ impl<S: ByteSink> SectionWriter<S> {
     /// complete, so a backing cut short has no footer and is refused
     /// rather than exposed as a layer with holes in it.
     pub(crate) fn seal(mut self) -> Result<(S, u64)> {
-        let mut leaves: Vec<(SectionKey, u64, u64)> = Vec::new();
+        let mut leaves: Vec<(K, u64, u64)> = Vec::new();
         for run in self.entries.chunks(self.leaf_entries) {
             let mut leaf = Vec::new();
             write_varint(&mut leaf, run.len() as u64);
             for (key, location) in run {
-                write_section_key(&mut leaf, key);
+                key.write(&mut leaf);
                 write_varint(&mut leaf, location.offset);
                 write_varint(&mut leaf, location.length);
                 write_varint(&mut leaf, u64::from(location.checksum));
@@ -1257,7 +1304,7 @@ impl<S: ByteSink> SectionWriter<S> {
         let mut root = Vec::new();
         write_varint(&mut root, leaves.len() as u64);
         for (first, offset, length) in &leaves {
-            write_section_key(&mut root, first);
+            first.write(&mut root);
             write_varint(&mut root, *offset);
             write_varint(&mut root, *length);
         }
@@ -1282,13 +1329,13 @@ impl<S: ByteSink> SectionWriter<S> {
 /// the root, and the one leaf whose range covers the key. The index is
 /// never resident whole, which is what lets a capture of any size open
 /// under a bound that knew nothing of that size.
-pub(crate) fn locate_section(
+pub(crate) fn locate_section<K: SectionAddress>(
     source: &dyn ByteSource,
     total_bytes: u64,
-    key: &SectionKey,
+    key: &K,
     known: &[&'static str],
 ) -> Result<Option<SectionLocation>> {
-    let namespace = key.track.namespace;
+    let namespace = key.namespace();
     if total_bytes < FOOTER_BYTES as u64 {
         return Err(Error::invalid_image(
             namespace,
@@ -1324,7 +1371,7 @@ pub(crate) fn locate_section(
     at += used;
     let mut chosen: Option<(u64, u64)> = None;
     for _ in 0..count {
-        let (first, used) = read_section_key(namespace, &root, at, known)?;
+        let (first, used) = K::read(namespace, &root, at, known)?;
         at += used;
         let (offset, used) = read_varint(namespace, &root, at)?;
         at += used;
@@ -1345,7 +1392,7 @@ pub(crate) fn locate_section(
     let (count, used) = read_varint(namespace, &leaf, at)?;
     at += used;
     for _ in 0..count {
-        let (held, used) = read_section_key(namespace, &leaf, at, known)?;
+        let (held, used) = K::read(namespace, &leaf, at, known)?;
         at += used;
         let (offset, used) = read_varint(namespace, &leaf, at)?;
         at += used;
@@ -1405,28 +1452,28 @@ fn read_span(
 /// which are verified before the bytes are believed — a record that
 /// changed under the index is refused rather than handed back as flux
 /// that never existed.
-pub(crate) fn read_section(
+pub(crate) fn read_section<K: SectionAddress>(
     source: &dyn ByteSource,
     total_bytes: u64,
-    key: &SectionKey,
+    key: &K,
     known: &[&'static str],
 ) -> Result<Vec<u8>> {
     let location = locate_section(source, total_bytes, key, known)?.ok_or_else(|| {
         Error::invalid_image(
-            key.track.namespace,
-            format!("backing holds no section for {:?} of this location", key.kind),
+            key.namespace(),
+            "backing holds no section under the address asked for",
         )
     })?;
     let payload = read_span(
         source,
-        key.track.namespace,
+        key.namespace(),
         total_bytes,
         location.offset,
         location.length,
     )?;
     if crc32(&payload) != location.checksum {
         return Err(Error::invalid_image(
-            key.track.namespace,
+            key.namespace(),
             format!(
                 "section at byte {} does not check to what the index states, so \
                  its bytes are not the ones that were written",
@@ -1451,8 +1498,8 @@ pub(crate) fn read_section(
 /// from the capture, which reuses this backing and brings that half of
 /// the policy with it.
 #[derive(Debug)]
-pub(crate) struct SectionCache {
-    resident: BTreeMap<SectionKey, CachedSection>,
+pub(crate) struct SectionCache<K: SectionAddress> {
+    resident: BTreeMap<K, CachedSection>,
     bytes_resident: u64,
     bound: u64,
     clock: u64,
@@ -1465,7 +1512,7 @@ struct CachedSection {
     used: u64,
 }
 
-impl SectionCache {
+impl<K: SectionAddress> SectionCache<K> {
     /// A cache bounded at `bytes` of resident section payloads.
     ///
     /// A bound smaller than one section narrows the working set rather
@@ -1485,7 +1532,7 @@ impl SectionCache {
     }
 
     /// Whether this section is currently in the working set.
-    pub(crate) fn holds(&self, key: &SectionKey) -> bool {
+    pub(crate) fn holds(&self, key: &K) -> bool {
         self.resident.contains_key(key)
     }
 
@@ -1498,7 +1545,7 @@ impl SectionCache {
         &mut self,
         source: &dyn ByteSource,
         total_bytes: u64,
-        key: &SectionKey,
+        key: &K,
         known: &[&'static str],
     ) -> Result<&[u8]> {
         self.clock += 1;
@@ -1850,7 +1897,7 @@ impl PartialOrd for SourcePosition {
     }
 }
 
-fn greatest_common_divisor(a: u64, b: u64) -> u64 {
+pub(crate) fn greatest_common_divisor(a: u64, b: u64) -> u64 {
     let (mut a, mut b) = (a, b);
     while b != 0 {
         (a, b) = (b, a % b);
@@ -2081,7 +2128,7 @@ impl Track {
 struct CaptureBacking {
     bytes: Box<dyn ByteSource + Send + Sync>,
     total_bytes: u64,
-    cache: Mutex<SectionCache>,
+    cache: Mutex<SectionCache<SectionKey>>,
     /// The namespaces this reader can place. An index naming another
     /// one is not the index this layer wrote.
     known: Vec<&'static str>,
@@ -2325,7 +2372,7 @@ pub(crate) const CHUNK_RECORDS: usize = 4096;
 /// section index requires and what makes a half-written backing
 /// detectable rather than a layer with holes in it.
 pub(crate) struct CaptureBuilder<S: ByteSink> {
-    writer: SectionWriter<S>,
+    writer: SectionWriter<SectionKey, S>,
     capture: FluxCapture,
     chunk_records: usize,
 }
@@ -2521,7 +2568,7 @@ impl FluxCapture {
 /// unknown one refuses that section rather than being read as this one.
 const METADATA_VERSION: u64 = 1;
 
-fn encode_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
+pub(crate) fn encode_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
     write_text(out, provenance.source);
     write_varint(out, provenance.notes.len() as u64);
     for note in &provenance.notes {
@@ -2529,7 +2576,7 @@ fn encode_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
     }
 }
 
-fn decode_provenance(
+pub(crate) fn decode_provenance(
     source: &str,
     bytes: &[u8],
     at: usize,

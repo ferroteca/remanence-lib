@@ -39,7 +39,13 @@ ABI, or Python module.
   `kryoflux.rs` the KryoFlux capture-set adapter above it: the member
   grammar and its completeness, the stream grammar, and the public
   `CaptureSet` that reads one disk out of a catalog subtree of a stream
-  per head per drive-step position;
+  per head per drive-step position; `flux_medium.rs` the flux family's
+  second model, what a drive would read rather than what an instrument
+  recorded — one circular pulse stream per family-addressed location, an
+  exact rotational frame, per-pulse strength, and the medium-level facts
+  beside them — always derived and never constructible without the
+  policy that produced it, over the same backing keyed by the family's
+  own addressing;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable

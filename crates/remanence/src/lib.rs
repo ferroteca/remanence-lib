@@ -21,6 +21,7 @@ mod fat;
 mod file_container;
 mod filesystem;
 mod flux_capture;
+mod flux_medium;
 mod hdos;
 mod inflate;
 mod journal;
