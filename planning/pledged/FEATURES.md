@@ -7,23 +7,13 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** pledged, not delivered. Every feature here is owed by the project, but no entry promises an order, date, or implementation approval.
 
-## F31 — KryoFlux capture-set catalog adapter
-
-Recognize a declared KryoFlux capture set assembled from a catalog subtree and materialize its members collectively into `FluxCapture`. The adapter owns the capture-set grammar, member identity, track and side identity, stream ordering, index and control/OOB records, transfer results, and source provenance. An archive member is never silently treated as a disk when the logical capture requires the complete set.
-
-The initial conformance fixture is the prepared two-sided capture set. Tests open it through `SevenZipCatalog`, verify that all selected members form one capture set, and assert preservation of runs, markers, pre/post-index data, and separate sides. An incomplete, duplicate, or contradictory set is a named refusal. The adapter neither merges sides into an ideal disk nor materializes a medium, bitstream, sector, or filesystem.
-
-Touches: S1, S2, S3. Supports: U7; P3, P4, P12, P13, P15, P22, P23, P27. Needs: the flux-capture foundation and the archive-catalog seam, both delivered.
-
-Companion design: [design/kryoflux-capture-set.md](design/kryoflux-capture-set.md).
-
 ## F33 — C1541 flux mastering profile
 
 Reduce an opened capture set's `FluxCapture` to one circular, half-track-addressed 1541 `FluxMedium` under a declared mastering policy, and account for the reduction. The profile owns side selection, per-location observation selection and reconciliation, the source-position to 1541 half-track map, projection of each observation's exact `TimeBase` onto the drive's rotation-relative timebase, and the expression of disagreement, weakness, and absence as pulse strength. It produces a `FluxMedium` and a complete declared-loss account; it writes no artifact and encodes no container.
 
 Mastering resolves in two stages: a plan which computes everything and writes nothing, and an execution which writes. A reduction that no policy input names is a named refusal, not a default. The same sources, policy, and seed produce the same mastered state.
 
-Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: the flux-capture foundation, which is delivered; F31 and F37 pledged and delivered; F36 for the declarations it consumes.
+Touches: S1, S2, S3. Supports: U23; P2, P3, P4, P6, P13, P14, P22, P23, P27, P29. Needs: the flux-capture foundation and the KryoFlux capture-set adapter, both delivered; F37 pledged and delivered; F36 for the declarations it consumes.
 
 Companion design: [design/c1541-flux-mastering.md](design/c1541-flux-mastering.md).
 

@@ -282,7 +282,8 @@ let outcome = plan.write_new_artifact(destination_p64)?;
 
 `CaptureSet::open` takes the P7 claim on every member artifact of the set for
 the operation's lifetime and reads nothing else. `inspect` reports the set as
-F31 recognized it — members and their catalog identities, sides, source
+the capture-set adapter recognized it — members and their catalog
+identities, sides, source
 track positions, capture runs, observations, markers, transfer results, and
 issues — so the recipe names a side and a policy by an identity Remanence
 already reported, never by an index the caller invented. The C1541 profile
@@ -346,7 +347,8 @@ refused rather than shipped as approximately repeatable.
 
 The conformance journey is the prepared Pinball Construction Set disk-one
 capture set: both sides, 84 stream members each, opened through
-`SevenZipCatalog` and recognized as one capture set by F31. The caller
+`SevenZipCatalog` and recognized as one capture set by the delivered
+KryoFlux capture-set adapter. The caller
 inspects it, names a side and a selection policy, reads the declared-loss
 account, and writes the P64.
 
@@ -365,7 +367,8 @@ reports what it did rather than promising an outcome it cannot see.
 
 ### Refusals
 
-An incomplete, duplicate, or contradictory capture set is refused by F31
+An incomplete, duplicate, or contradictory capture set is refused by the
+capture-set adapter
 before mastering begins. Past that: a source position no declared half-track
 map covers; a position whose observations disagree in a way the selection
 policy does not resolve; a run with no two trustworthy index boundaries where
