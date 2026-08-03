@@ -43,7 +43,10 @@ this fixture to be present in `tests/fixtures/`.
 
 (The same script also prepares the HDOS fixtures: the distribution
 zip downloads sha256-pinned straight into `tests/fixtures/`, and only
-the one disk image the tests read extracts beside it.)
+the one disk image the tests read extracts beside it. It also downloads
+the Pinball Construction Set KryoFlux source archive into
+`testing-prep/downloads/`, then packages only disk one's paired captures
+into `tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).zip`.)
 
 ## Prerequisites — the tests fail naming the gap, they do not skip
 

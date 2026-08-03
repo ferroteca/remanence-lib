@@ -25,7 +25,9 @@ dependency group; run the script through uv from the repo root:
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -47,6 +49,7 @@ if reliquary is None:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "crates" / "remanence" / "tests" / "fixtures"
+DOWNLOADS_DIR = REPO_ROOT / "testing-prep" / "downloads"
 RIG_DIR = REPO_ROOT / "testing-prep" / "test-rigs"
 
 HDOS_URL = "https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip"
@@ -57,6 +60,21 @@ HDOS_ZIP_SHA256 = \
     "84c3217491ed9330eec3134c4809134e68c6e6048a857587750a6571aa81ffe2"
 HDOS_IMAGE_NAME = "HDOS_1-0_Issue_#50-00-00_890-1.h8d"
 HDOS_ZIP_NAME = "HDOS_1-0_Issue_#50-00-00_890-1.zip"
+
+PINBALL_URL = (
+    "https://archive.org/download/BillBudgePinballConstructionSetCommodore64.7z/"
+    "Disk%20Dump/Bill%20Budge%20Pinball%20Construction%20Set%5BCommodore%20"
+    "64%5D.7z"
+)
+PINBALL_ARCHIVE_NAME = "Bill Budge Pinball Construction Set [Commodore 64].7z"
+# Archive.org publishes no hash; this pin records the archive as first fetched
+# (2026-08-02), so a changed upstream is caught, not silently adopted.
+PINBALL_ARCHIVE_SHA256 = \
+    "3cf001b21f76d4c932bbd1a385f13f551fdb01735ce8d12a26c69f3ab9367889"
+PINBALL_DISK_ONE_PREFIX = "Bill Budge Pinball Construction Set[Commodore 64](1of2)"
+PINBALL_DISK_ONE_ZIP_NAME = \
+    "Bill Budge Pinball Construction Set [Commodore 64] (1of2).zip"
+PINBALL_DISK_ONE_CAPTURE_COUNT = 168
 
 RIG_BLUEPRINT = "remanence-parttest"
 FREEDOS_QCOW2_NAME = "freedos-parttest.qcow2"
@@ -102,8 +120,11 @@ def _download_archive(target: Path, url: str, sha256: str) -> None:
 def download_archives() -> None:
     print("==> Downloading external archives...")
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+    DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     _download_archive(FIXTURES_DIR / "HDOS_1-0.zip", HDOS_URL,
                       HDOS_ZIP_SHA256)
+    _download_archive(DOWNLOADS_DIR / PINBALL_ARCHIVE_NAME, PINBALL_URL,
+                      PINBALL_ARCHIVE_SHA256)
 
 
 def prepare_hdos_fixtures() -> None:
@@ -125,6 +146,57 @@ def prepare_hdos_fixtures() -> None:
         print(f"Packaging single image ZIP fixture ({hdos_zip_target.name})...")
         with zipfile.ZipFile(hdos_zip_target, "w", zipfile.ZIP_STORED) as zip_out:
             zip_out.write(hdos_8d_target, arcname=hdos_8d_target.name)
+
+
+def prepare_pinball_fixture() -> None:
+    """Package only disk one's paired KryoFlux captures into a ZIP fixture."""
+    print("==> Preparing Pinball Construction Set KryoFlux fixture...")
+    target = FIXTURES_DIR / PINBALL_DISK_ONE_ZIP_NAME
+    if target.exists():
+        print(f"Pinball Construction Set fixture already present at {target}")
+        return
+
+    seven_zip = shutil.which("7z") or shutil.which("7z.exe")
+    if seven_zip is None:
+        sys.exit(
+            "7-Zip is required to extract the Pinball Construction Set "
+            "source archive; install 7-Zip and rerun this script."
+        )
+
+    archive = DOWNLOADS_DIR / PINBALL_ARCHIVE_NAME
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract_dir = Path(temp_dir)
+        capture_pattern = f"{PINBALL_DISK_ONE_PREFIX}*.raw"
+        result = subprocess.run(
+            [seven_zip, "x", "-y", f"-o{extract_dir}", str(archive),
+             capture_pattern],
+            check=False,
+        )
+        if result.returncode != 0:
+            sys.exit(
+                "7-Zip could not extract the Pinball Construction Set disk "
+                f"one captures (exit code {result.returncode})."
+            )
+
+        captures = sorted(
+            path for path in extract_dir.iterdir()
+            if path.is_file()
+            and path.name.startswith(PINBALL_DISK_ONE_PREFIX)
+            and path.name.endswith(".raw")
+        )
+        if len(captures) != PINBALL_DISK_ONE_CAPTURE_COUNT:
+            sys.exit(
+                "Pinball Construction Set archive yielded "
+                f"{len(captures)} disk-one captures; expected "
+                f"{PINBALL_DISK_ONE_CAPTURE_COUNT}."
+            )
+
+        print(f"Packaging {len(captures)} disk-one captures into {target.name}...")
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zip_out:
+            for capture in captures:
+                zip_out.write(capture, arcname=capture.name)
+
+
 
 
 def rig_context():
@@ -256,6 +328,7 @@ def clean_rig_media(context) -> None:
 def main() -> None:
     download_archives()
     prepare_hdos_fixtures()
+    prepare_pinball_fixture()
 
     # Every rig machine builds, harvests and retires in turn; the
     # media cache is emptied only once the last of them is done.

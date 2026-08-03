@@ -233,7 +233,10 @@ compiled into the wheel.
   sha256-pinned HDOS 1.0 distribution zip straight into
   `tests/fixtures/` (a multi-image zip, test material in its own
   right), extracts only the one disk image the tests read beside it
-  plus a generated single-image zip, and builds the FreeDOS qcow2
+  plus a generated single-image zip; downloads the sha256-pinned
+  Pinball Construction Set KryoFlux source archive into
+  `testing-prep/downloads/` and packages only disk one's paired
+  captures into a local ZIP fixture; and builds the FreeDOS qcow2
   rig artifact there. The FreeDOS LiveCD downloads through
   reliquary's own media mechanism into
   `testing-prep/test-rigs/cache/media`; downloads that are not

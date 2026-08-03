@@ -10,6 +10,7 @@ repository.workspace = true
 exclude = [
     "tests/fixtures/HDOS_*",
     "tests/fixtures/freedos-parttest.qcow2",
+    "tests/fixtures/Bill Budge Pinball Construction Set \\[Commodore 64\\] (1of2).zip",
 ]
 
 [dependencies]
