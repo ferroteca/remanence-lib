@@ -3,17 +3,13 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::archive::{self, ArchiveLayer, ImageSource, SourceDevice};
-use crate::container;
+use crate::adapters::{
+    self, DeviceIdentity, ImageFormatDescriptor, ImageIdentification, ProbeInput,
+};
+use crate::archive::{self, ArchiveLayer, ImageSource};
 use crate::device::AccessMode;
 use crate::error::Result;
-use crate::fat::FatVolume;
-use crate::filesystem;
 use crate::hdos::HdosFile;
-use crate::image::DiskImage;
-use crate::mbr;
-use crate::qcow2::Qcow2;
-use crate::registry::{ContainerFormat, FormatRegistry};
 
 /// The largest image the HDOS reader will materialize (P27): HDOS lives
 /// on small vintage disks, so anything larger is refused by size before
@@ -74,35 +70,31 @@ pub struct DiskLayout {
     pub total_sectors: Option<u64>,
 }
 
-fn to_u32(value: Option<usize>) -> Option<u32> {
-    value.and_then(|value| u32::try_from(value).ok())
-}
-
 impl DiskLayout {
-    pub fn from_container(container: &ContainerFormat) -> Self {
-        let sector_size = container.sector_size.map(|value| value as u64);
-        let cylinders = to_u32(container.cylinders_or_tracks());
-        let sides = to_u32(Some(container.sides_value().unwrap_or(1)));
-
-        let sectors = match to_u32(container.sectors_per_track) {
-            Some(sectors_per_track) => SectorLayout::Fixed { sectors_per_track },
-            None => SectorLayout::Unknown,
+    fn from_descriptor(descriptor: &ImageFormatDescriptor) -> Self {
+        let Some(disk) = descriptor.disk else {
+            return Self {
+                media_kind: descriptor.media_kind.map(str::to_owned),
+                sector_size: None,
+                cylinders: None,
+                sides: None,
+                sectors: SectorLayout::Unknown,
+                total_sectors: None,
+            };
         };
-
-        let total_sectors = match (&sectors, cylinders, sides) {
-            (SectorLayout::Fixed { sectors_per_track }, Some(cylinders), Some(sides)) => {
-                Some(u64::from(*sectors_per_track) * u64::from(cylinders) * u64::from(sides))
-            }
-            _ => None,
-        };
-
         Self {
-            media_kind: container.media_kind.clone(),
-            sector_size,
-            cylinders,
-            sides,
-            sectors,
-            total_sectors,
+            media_kind: Some(disk.media_kind.to_owned()),
+            sector_size: Some(disk.sector_size),
+            cylinders: Some(disk.cylinders),
+            sides: Some(disk.sides),
+            sectors: SectorLayout::Fixed {
+                sectors_per_track: disk.sectors_per_track,
+            },
+            total_sectors: Some(
+                u64::from(disk.cylinders)
+                    * u64::from(disk.sides)
+                    * u64::from(disk.sectors_per_track),
+            ),
         }
     }
 }
@@ -200,26 +192,20 @@ fn unknown_filesystem() -> Container {
     }
 }
 
-fn physical_media_from_container(
-    container: &ContainerFormat,
-    layout: DiskLayout,
+fn physical_media_from_descriptor(
+    descriptor: &ImageFormatDescriptor,
     current_bytes: u64,
-) -> Container {
-    let media_kind = container
-        .media_kind
-        .clone()
-        .unwrap_or_else(|| "unknown".to_owned());
-    let name = match media_kind.as_str() {
+) -> Option<Container> {
+    let media_kind = descriptor.media_kind?;
+    let name = match media_kind {
         "floppy" => "Floppy disk",
         "hard_disk" => "Hard disk",
         _ => "Unknown physical media",
     };
-
-    let expected_bytes = container.expected_size().map(|expected| expected as u64);
-
-    Container {
+    let expected_bytes = descriptor.disk.map(|disk| disk.expected_size());
+    Some(Container {
         kind: ContainerKind::PhysicalMedia,
-        id: media_kind,
+        id: media_kind.to_owned(),
         name: name.to_owned(),
         confidence: 100,
         known: true,
@@ -227,8 +213,10 @@ fn physical_media_from_container(
             current_bytes: Some(current_bytes),
             expected_bytes,
         },
-        layout: ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(layout)),
-    }
+        layout: ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(
+            DiskLayout::from_descriptor(descriptor),
+        )),
+    })
 }
 
 fn container_from_layer(layer: ArchiveLayer) -> Container {
@@ -264,14 +252,14 @@ pub struct Session {
     path: PathBuf,
     image_path: PathBuf,
     source: ImageSource,
-    registry: FormatRegistry,
+    device_identity: DeviceIdentity,
     containers: Vec<Container>,
     modified: bool,
 }
 
 impl Session {
     /// Opens `path` — a raw disk image, or `archive.zip[/entry]` — with the
-    /// default format registry and the stated default cache bound
+    /// built-in image-format catalog and the stated default cache bound
     /// ([`crate::DEFAULT_CACHE_BYTES`]).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with_cache(path, crate::DEFAULT_CACHE_BYTES)
@@ -283,18 +271,10 @@ impl Session {
     /// the floor. The bound narrows the working set; it never refuses
     /// service.
     pub fn open_with_cache(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
-        Self::open_full(path, crate::default_format_registry()?, cache_bytes)
+        Self::open_full(path, cache_bytes)
     }
 
-    pub fn open_with_registry(path: impl AsRef<Path>, registry: FormatRegistry) -> Result<Self> {
-        Self::open_full(path, registry, crate::DEFAULT_CACHE_BYTES)
-    }
-
-    fn open_full(
-        path: impl AsRef<Path>,
-        registry: FormatRegistry,
-        cache_bytes: u64,
-    ) -> Result<Self> {
+    fn open_full(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
         let resolved = archive::resolve_image(path.as_ref(), cache_bytes)?;
 
         let containers = resolved
@@ -307,7 +287,7 @@ impl Session {
             path: resolved.source_path,
             image_path: resolved.image_path,
             source: resolved.source,
-            registry,
+            device_identity: DeviceIdentity::first(),
             containers,
             modified: false,
         })
@@ -357,10 +337,6 @@ impl Session {
         crate::hdos::read_hdos_file(&bytes, name)
     }
 
-    pub fn registry(&self) -> &FormatRegistry {
-        &self.registry
-    }
-
     pub fn is_modified(&self) -> bool {
         self.modified
     }
@@ -380,78 +356,106 @@ impl Session {
     }
 
     /// Identifies the image's container layers and probable filesystem.
-    /// Probes read bounded evidence — a leading prefix, the length, the
+    /// Probes read bounded evidence — a leading prefix, the length, and the
     /// name — never the whole image (P27).
     pub fn identify(&self) -> Identification {
         let prefix = self.source.prefix(512).unwrap_or_default();
-        let container = container::detect(
-            self.source.len(),
-            &prefix,
-            Some(&self.image_path),
-            &self.registry,
-        );
-        let mut evidence = container.evidence;
+        let input = ProbeInput {
+            len: self.source.len(),
+            prefix: &prefix,
+            path: Some(&self.image_path),
+        };
+        let result = adapters::image_catalog().identify(&input);
+        let current_bytes = self.source.len();
 
+        let mut archive_evidence = Vec::new();
         for existing in &self.containers {
             if let ContainerLayout::Archive(layout) = &existing.layout {
-                evidence.insert(
-                    0,
-                    format!(
-                        "loaded '{}' from {} archive '{}'",
-                        layout.entry_name,
-                        existing.id,
-                        layout.path.display()
-                    ),
-                );
+                archive_evidence.push(format!(
+                    "loaded '{}' from {} archive '{}'",
+                    layout.entry_name,
+                    existing.id,
+                    layout.path.display()
+                ));
             }
         }
 
-        let current_bytes = self.source.len();
-
-        let Some(container_id) = container.container_id else {
-            let image_container = unknown_image(SizeInformation {
-                current_bytes: Some(current_bytes),
-                expected_bytes: None,
-            });
-            return Identification {
-                containers: self.containers_with(vec![image_container, unknown_filesystem()]),
-                modified: self.modified,
+        let (found, confidence, mut evidence) = match result {
+            ImageIdentification::Unknown { evidence } => {
+                archive_evidence.extend(evidence);
+                return Identification {
+                    containers: self.containers_with(vec![
+                        unknown_image(SizeInformation {
+                            current_bytes: Some(current_bytes),
+                            expected_bytes: None,
+                        }),
+                        unknown_filesystem(),
+                    ]),
+                    modified: self.modified,
+                    evidence: archive_evidence,
+                };
+            }
+            ImageIdentification::Match(found) => (found.adapter, found.confidence, found.evidence),
+            ImageIdentification::Invalid {
+                descriptor,
+                confidence,
                 evidence,
-            };
+                category: _,
+                reason,
+            } => {
+                let mut all = evidence;
+                all.push(format!(
+                    "recognized '{}' but refused it: {reason}",
+                    descriptor.id
+                ));
+                archive_evidence.extend(all);
+                let expected = descriptor.disk.map(|disk| disk.expected_size());
+                let image = Container {
+                    kind: ContainerKind::Image,
+                    id: descriptor.id.to_owned(),
+                    name: descriptor.name.to_owned(),
+                    confidence,
+                    known: true,
+                    size: SizeInformation {
+                        current_bytes: Some(current_bytes),
+                        expected_bytes: expected,
+                    },
+                    layout: ContainerLayout::Image(ImageLayout {
+                        payload_offset_bytes: Some(0),
+                        payload_length_bytes: Some(current_bytes),
+                    }),
+                };
+                let mut extra = vec![image];
+                if let Some(media) = physical_media_from_descriptor(descriptor, current_bytes) {
+                    extra.push(media);
+                }
+                extra.push(unknown_filesystem());
+                return Identification {
+                    containers: self.containers_with(extra),
+                    modified: self.modified,
+                    evidence: archive_evidence,
+                };
+            }
         };
+        let descriptor = found.descriptor();
+        archive_evidence.append(&mut evidence);
+        archive_evidence.push(format!(
+            "image format '{}' declares authoritative {} layer",
+            descriptor.id,
+            descriptor.authoritative_layer.name()
+        ));
+        archive_evidence.push(format!(
+            "device {} has active {} layer",
+            self.device_identity.value(),
+            descriptor.initial_active_layer.name()
+        ));
 
-        let Some(format) = self.registry.container(&container_id) else {
-            evidence.push(format!("unknown container '{container_id}'"));
-            let image_container = Container {
-                kind: ContainerKind::Image,
-                id: container_id,
-                name: container
-                    .container_name
-                    .unwrap_or_else(|| "Unknown container format".to_owned()),
-                confidence: container.confidence,
-                known: true,
-                size: SizeInformation {
-                    current_bytes: Some(current_bytes),
-                    expected_bytes: None,
-                },
-                layout: ContainerLayout::Unknown,
-            };
-            return Identification {
-                containers: self.containers_with(vec![image_container, unknown_filesystem()]),
-                modified: self.modified,
-                evidence,
-            };
-        };
-
-        let expected_bytes = format.expected_size().map(|expected| expected as u64);
-
-        let image_container = Container {
+        let expected_bytes = descriptor.disk.map(|disk| disk.expected_size());
+        let image = Container {
             kind: ContainerKind::Image,
-            id: container_id.clone(),
-            name: container
-                .container_name
-                .unwrap_or_else(|| format.name.clone()),
-            confidence: container.confidence,
+            id: descriptor.id.to_owned(),
+            name: descriptor.name.to_owned(),
+            confidence,
             known: true,
             size: SizeInformation {
                 current_bytes: Some(current_bytes),
@@ -463,177 +467,48 @@ impl Session {
             }),
         };
 
-        let physical_media = physical_media_from_container(
-            format,
-            DiskLayout::from_container(format),
-            current_bytes,
-        );
-
-        // A size mismatch against a bounded format is an invalid
-        // container, refused before a byte of the payload is read.
-        if expected_bytes.is_some_and(|expected| expected != current_bytes) {
-            evidence.push(format!("invalid container '{container_id}'"));
-            return Identification {
-                containers: self.containers_with(vec![
-                    image_container,
-                    physical_media,
-                    unknown_filesystem(),
-                ]),
-                modified: self.modified,
-                evidence,
-            };
+        let mut extra = vec![image];
+        if let Some(media) = physical_media_from_descriptor(descriptor, current_bytes) {
+            extra.push(media);
         }
-
-        // Filesystem heuristics scan image bytes, so they run only over
-        // formats whose declared size bounds the image (P27); an
-        // unbounded container is walked by its own driver instead.
-        let filesystem_container = match expected_bytes {
-            Some(_) => match self
-                .source
-                .bytes_bounded(current_bytes, &container_id)
-                .and_then(|bytes| DiskImage::from_bytes(format, bytes))
-            {
-                Ok(image) => {
-                    let filesystem = filesystem::detect(&image, &self.registry);
-                    evidence.extend(filesystem.evidence);
-                    match (filesystem.filesystem_id, filesystem.filesystem_name) {
-                        (Some(id), Some(name)) => Container {
-                            kind: ContainerKind::Filesystem,
-                            id,
-                            name,
-                            confidence: filesystem.confidence,
-                            known: true,
-                            size: SizeInformation {
-                                current_bytes: Some(current_bytes),
-                                expected_bytes,
-                            },
-                            layout: ContainerLayout::Filesystem(FilesystemLayout {
-                                offset_bytes: Some(0),
-                                length_bytes: Some(current_bytes),
-                            }),
+        match found.identify_filesystems(&self.source, &mut archive_evidence) {
+            Ok(filesystems) if !filesystems.is_empty() => {
+                for filesystem in filesystems {
+                    archive_evidence.extend(filesystem.evidence);
+                    archive_evidence.push(format!(
+                        "filesystem '{}' is a decoded view of device {}",
+                        filesystem.id,
+                        self.device_identity.value()
+                    ));
+                    extra.push(Container {
+                        kind: ContainerKind::Filesystem,
+                        id: filesystem.id,
+                        name: filesystem.name,
+                        confidence: filesystem.confidence,
+                        known: true,
+                        size: SizeInformation {
+                            current_bytes: Some(filesystem.length),
+                            expected_bytes: expected_bytes.filter(|_| filesystem.offset == 0),
                         },
-                        _ => unknown_filesystem(),
-                    }
+                        layout: ContainerLayout::Filesystem(FilesystemLayout {
+                            offset_bytes: Some(filesystem.offset),
+                            length_bytes: Some(filesystem.length),
+                        }),
+                    });
                 }
-                Err(_) => {
-                    evidence.push(format!("invalid container '{container_id}'"));
-                    return Identification {
-                        containers: self.containers_with(vec![
-                            image_container,
-                            physical_media,
-                            unknown_filesystem(),
-                        ]),
-                        modified: self.modified,
-                        evidence,
-                    };
-                }
-            },
-            None => {
-                evidence.push("no filesystem signatures found".to_owned());
-                unknown_filesystem()
             }
-        };
-
-        // A qcow2 container gets its virtual-disk layers reported too
-        // (pledged U5): the partitions inside the virtual disk and the
-        // FAT volumes inside those, through the same evidence model.
-        let mut extra = vec![image_container, physical_media];
-        if container_id == "qcow2" {
-            match self.qcow2_layers(&mut evidence) {
-                Ok(mut volumes) => extra.append(&mut volumes),
-                Err(error) => evidence.push(format!("qcow2 virtual disk not walked: {error}")),
+            Ok(_) => extra.push(unknown_filesystem()),
+            Err(error) => {
+                archive_evidence.push(format!("{} contents not walked: {error}", descriptor.id));
+                extra.push(unknown_filesystem());
             }
         }
-        extra.push(filesystem_container);
 
         Identification {
             containers: self.containers_with(extra),
             modified: self.modified,
-            evidence,
+            evidence: archive_evidence,
         }
-    }
-
-    /// Walks a qcow2 session's virtual disk — header, partitions, FAT
-    /// volumes — and returns one Filesystem container per volume read.
-    /// The walk streams from the claimed file through the session cache
-    /// (P27); the container is never resident whole.
-    fn qcow2_layers(&self, evidence: &mut Vec<String>) -> Result<Vec<Container>> {
-        let mut qcow2 = Qcow2::open(SourceDevice(&self.source))?;
-        let header = qcow2.header().clone();
-        evidence.push(format!(
-            "qcow2 version {}, virtual size {} bytes",
-            header.version, header.virtual_size
-        ));
-
-        let mut containers = Vec::new();
-        let spans: Vec<(Option<u32>, u64, u64)> = match mbr::discover(&mut qcow2)? {
-            mbr::Discovery::Blank => {
-                evidence.push("virtual disk is blank (sector 0 all zero)".to_owned());
-                Vec::new()
-            }
-            mbr::Discovery::BareVolume => vec![(None, 0, header.virtual_size)],
-            mbr::Discovery::Partitioned(partitions) => {
-                if !partitions.is_empty() {
-                    evidence.push(format!(
-                        "found {} partition(s) in the virtual disk",
-                        partitions.len()
-                    ));
-                }
-                partitions
-                    .iter()
-                    .filter(|partition| !mbr::is_extended(partition.type_byte))
-                    .map(|partition| {
-                        (
-                            Some(partition.number),
-                            partition.start_bytes,
-                            partition.length_bytes,
-                        )
-                    })
-                    .collect()
-            }
-        };
-
-        for (partition, offset, length) in spans {
-            let Ok(volume) = FatVolume::open(&mut qcow2, offset) else {
-                continue;
-            };
-            let id = partition.map_or_else(
-                || "superfloppy:0".to_owned(),
-                |number| format!("partition:{number}"),
-            );
-            let info = volume.info(&mut qcow2, id, partition, length)?;
-            let kind_name = info.kind.name();
-            evidence.push(match (&info.label, partition) {
-                (Some(label), Some(number)) => {
-                    format!("{kind_name} volume '{label}' in partition {number}")
-                }
-                (Some(label), None) => format!("{kind_name} volume '{label}'"),
-                (None, Some(number)) => {
-                    format!("{kind_name} volume in partition {number}")
-                }
-                (None, None) => format!("{kind_name} volume"),
-            });
-            containers.push(Container {
-                kind: ContainerKind::Filesystem,
-                id: kind_name.to_ascii_lowercase(),
-                name: match &info.label {
-                    Some(label) => format!("{kind_name} volume '{label}'"),
-                    None => format!("{kind_name} volume"),
-                },
-                confidence: 100,
-                known: true,
-                size: SizeInformation {
-                    current_bytes: Some(info.length_bytes),
-                    expected_bytes: None,
-                },
-                layout: ContainerLayout::Filesystem(FilesystemLayout {
-                    offset_bytes: Some(info.offset_bytes),
-                    length_bytes: Some(info.length_bytes),
-                }),
-            });
-        }
-
-        Ok(containers)
     }
 }
 

@@ -68,7 +68,7 @@ than renumbered. All of it from the image alone, booting nothing.
 Opening a qcow2 in the workbench identifies it like anything else:
 the qcow2 container layer with its version and virtual size, the
 partitions inside the virtual disk, the volumes inside those — the
-same session, the same evidence model, the same registry-driven
+same session, the same evidence model, the same adapter-driven
 detection that identifies an h8d today.
 
 ## U6 — Differencing images are first-class disks

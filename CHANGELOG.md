@@ -45,6 +45,15 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **Image formats are executable modules behind role-specific built-in
+  catalogs.** H8D and qcow2 image adapters, ZIP serialized-container
+  handling, MBR partition-layout discovery, and HDOS/CP/M filesystem
+  adapters own their recognition, evidence, validation, and behavior.
+  Catalogs select only a unique strongest match; ties remain unknown with
+  competing evidence, and recognized-invalid inputs keep their refusal.
+  Each loaded disk carries its authoritative layer, active durable layer,
+  derivation provenance, and a composition-scoped device identity.
+
 - **Sessions stream, and memory holds a bounded working set** (P27, armed
   with this release). No representation is loaded whole as a design
   assumption: identification probes read the evidence their claims name;
@@ -69,6 +78,13 @@ rather than bridged. Read every entry below in that light.
   fixture prep.
 
 ### Removed
+
+- **The caller-authored format registry and definition language.**
+  `FormatRegistry`, `ContainerFormat`, `FilesystemFormat`,
+  `DiskImage`, the default definition constants and parser helpers,
+  `Session::open_with_registry` / `Session::registry`, their Python
+  reflections, and the built-in definition files are gone. Formats are
+  implemented modules; there is no compatibility parser or deprecated shim.
 
 - `Session::bytes()`, `remanence_session_bytes`, and the Python `bytes`
   property, which required the whole image to be resident. Use the bounded

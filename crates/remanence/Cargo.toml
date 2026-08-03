@@ -1,6 +1,6 @@
 [package]
 name = "remanence"
-description = "Core disk image analysis library for Remanence Workbench"
+description = "Self-contained disk image analysis library"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

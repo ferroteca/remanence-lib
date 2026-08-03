@@ -61,14 +61,6 @@ pub enum Error {
         container: String,
         reason: String,
     },
-    /// The format registry definition text could not be parsed.
-    Registry {
-        category: ErrorCategory,
-        line: usize,
-        reason: String,
-    },
-    /// A container id was not present in the registry.
-    UnknownContainer { category: ErrorCategory, id: String },
 }
 
 impl Error {
@@ -127,29 +119,12 @@ impl Error {
         }
     }
 
-    pub fn registry(line: usize, reason: impl Into<String>) -> Self {
-        Self::Registry {
-            category: ErrorCategory::InvalidImage,
-            line,
-            reason: reason.into(),
-        }
-    }
-
-    pub fn unknown_container(id: impl Into<String>) -> Self {
-        Self::UnknownContainer {
-            category: ErrorCategory::Unsupported,
-            id: id.into(),
-        }
-    }
-
     /// The stable category callers should use to branch on this error.
     pub const fn category(&self) -> ErrorCategory {
         match self {
             Self::Archive { category, .. }
             | Self::Io { category, .. }
-            | Self::InvalidImage { category, .. }
-            | Self::Registry { category, .. }
-            | Self::UnknownContainer { category, .. } => *category,
+            | Self::InvalidImage { category, .. } => *category,
         }
     }
 }
@@ -167,12 +142,6 @@ impl fmt::Display for Error {
                 container, reason, ..
             } => {
                 write!(f, "invalid {container} disk image: {reason}")
-            }
-            Self::Registry { line, reason, .. } => {
-                write!(f, "format registry parse error on line {line}: {reason}")
-            }
-            Self::UnknownContainer { id, .. } => {
-                write!(f, "unknown container format '{id}'")
             }
         }
     }
@@ -220,14 +189,6 @@ mod tests {
         assert_eq!(
             Error::invalid_image("fat", "malformed").category(),
             ErrorCategory::InvalidImage
-        );
-        assert_eq!(
-            Error::registry(1, "malformed").category(),
-            ErrorCategory::InvalidImage
-        );
-        assert_eq!(
-            Error::unknown_container("future").category(),
-            ErrorCategory::Unsupported
         );
         assert_eq!(Error::io("failed").category(), ErrorCategory::Io);
     }

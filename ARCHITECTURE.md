@@ -10,9 +10,9 @@ exists today**; vision that has not arrived yet lives under
 One core, two bindings:
 
 - **`crates/remanence`** — the analysis library, pure Rust, zero runtime
-  dependencies. Everything the project knows lives here: the
-  format-definition parser and registry, container/filesystem detection,
-  the session and identification model, the HDOS directory lister and
+  dependencies. Everything the project knows lives here: executable image-format,
+  serialized-container, partition-layout, and filesystem adapters with
+  built-in role-specific catalogs; the session and identification model, the HDOS directory lister and
   file extractor, the self-contained ZIP/DEFLATE reader that lets
   `Session::open` reach inside archives, and the disk stack —
   the declared-intent deny-write claim, the native qcow2 v2/v3 driver
@@ -31,8 +31,7 @@ One core, two bindings:
   deliberate mirror of the Rust public surface in Python idiom.
 
 The bindings contain no analysis logic; a behavior lives in the core or it
-does not exist. The C++ Remanence Workbench front-ends consume the C ABI
-from their own repository.
+does not exist.
 
 ## The application surfaces
 
@@ -42,10 +41,9 @@ application surface?" by lookup, not judgement. Numbers are permanent and
 never reused.
 
 - **S1 — The Rust crate API.** The public surface of `crates/remanence`:
-  `Session`, `Identification` and the container/layout types,
-  `FormatRegistry` and the format types, `DiskImage`, `list_hdos_files`
-  and `HdosFile`, `Error`/`ErrorCategory`/`Result`, and the embedded
-  default format definitions. Defined by the crate's `pub` items; `cargo
+  `Disk`, `Session`, `Identification` and the container/layout types,
+  `list_hdos_files` and `HdosFile`, `Error`/`ErrorCategory`/`Result`, and
+  the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo
   doc` output is a representation of it.
 - **S2 — The C ABI.** Every `remanence_*` symbol exported by
   `crates/remanence-ffi`, with the generated `include/remanence.h` as its
@@ -55,12 +53,6 @@ never reused.
 - **S3 — The Python module.** The `remanence` module registered by
   `crates/remanence-py`: its classes, properties, functions, exception
   type and category attribute, and module constants.
-- **S4 — The format-definition text format.** The `[section]` /
-  `key = value` dialect parsed by `FormatRegistry` — section kinds,
-  known keys and their types, list syntax, comment and attribute
-  handling — including the built-in starter definitions under
-  `crates/remanence/formats/`. Users author files in this dialect, so its
-  grammar and semantics are a world-facing contract.
 
 **Norms today are the code.** No prose specification has been written for
 any surface yet; the defining code (and for S2, the generated header) is
@@ -229,6 +221,332 @@ support claim names the host tuple it covers rather than letting an
 operating-system name imply every architecture that operating system can
 run.
 
+### P12 — Image formats are implementations at representation seams
+
+Every supported image format is an adapter at the seam matching the
+representation it persistently encodes. The adapter owns its identity,
+recognition and evidence, validation and refusals, variants,
+interpretation, capabilities, decoding, and encoding where writing is
+claimed. Raw sectors, logical-block containers, encoded tracks, flux
+recordings, and filesystem-level images illustrate distinct image-format
+families; they do not collapse into one universal interface.
+
+There is no universal image-format language. Shared modules own mechanisms
+demonstrated by multiple implementations, while the choices and parameters
+that give those mechanisms meaning stay with the applicable image-format
+module. The image-format catalog is wiring: every entry pairs a descriptor
+with behavior, and adding an ordinary image format changes its module,
+tests, and one mechanical enrollment. Central orchestration neither
+interprets string-named format rules nor branches on an image-format
+identifier.
+
+This deepens P1 and makes P3 and P4 local obligations: the module making a
+claim is the module that knows what it supports and why it refuses the
+rest. P13 governs which representation the image makes authoritative.
+
+### P13 — One image layer is authoritative
+
+Every loaded image has exactly one authoritative image layer, declared by
+the image-format adapter that recognizes it. It may be a file tree or
+filesystem structure, addressed sectors or logical blocks, encoded tracks,
+flux transitions, or another representation claimed by that image-format
+family.
+Persistent container bytes are its encoding, not automatically its image
+layer. Every other representation is derived from the authoritative one:
+decoding toward logical meaning, or deterministic synthesis toward a
+lower-level mechanism. A decoded view carries its evidence; synthesized
+detail is identified as synthetic and is never presented as recovered
+evidence.
+
+An authoritative layer does not imply that every other layer exists.
+Derivation stops at the seam claimed for the image and integration contract. A
+virtual hard-disk image presented through LBA never gains inferred
+platters, heads, tracks, flux, or other hardware state. A sector-addressed
+legacy image may infer a hardware-level representation when its image format,
+media profile, integration contract, and synthesis rules together claim the
+mapping. That
+representation is synthesized from the sectors; it is not evidence of the
+original medium's physical recording.
+
+Block and flux are disjoint representation families. No adapter or
+composition converts a geometry-opaque logical-block device into flux, or
+flux into a logical-block device. This is a prohibition, not merely the
+absence of a current derivation. A flux-active medium may still expose
+derived sector, filesystem, and file presentations, and a block-active
+device may expose derived volume, filesystem, and file presentations;
+neither interpretation changes the durable active layer into the other
+family.
+
+The authoritative layer does not change during an open image's lifetime.
+A writable composition is offered only when every derivation on the path
+can project its changes back to that layer and its image format without
+unclaimed loss. Otherwise that composition is read-only or refused before
+use. Choosing another authoritative layer is an explicit conversion that
+creates a new image and names any loss; it is never a side effect of
+loading, attaching, or saving the original.
+
+### P16 — Partition layouts are an independent seam
+
+A partition-layout adapter consumes one addressed device or region and
+exposes its child regions with the layout metadata and identities it
+claims. Layouts may nest, so a child region can be offered to the same seam
+again. MBR, GPT, and BSD disklabels or slices illustrate variation at this
+seam; naming them does not promise their implementation.
+
+The adapter owns recognition, evidence, validation, refusals, and the
+meaning of its regions. It does not open filesystems or decide whether a
+region is a volume. An image container such as VHDX or qcow2 ends at its
+addressed virtual device and does not absorb partition-layout semantics.
+
+The partition-schema catalog enumerates layout adapters such as MBR, GPT,
+and BSD disklabel. It does not enumerate individual MBR partition-type
+bytes, GPT partition-type GUIDs, or comparable entry classifications. Those
+values belong to, and are interpreted by, the adapter for their containing
+schema.
+
+### P17 — Volume composition is an independent seam
+
+A volume-composition adapter consumes addressed storage regions and exposes
+logical volumes through one volume interface. A whole unpartitioned medium,
+a direct one-partition volume, and a volume assembled across regions
+illustrate different compositions.
+A partition and a volume may overlap one-to-one, but they are never
+synonyms and neither implies the other.
+
+The adapter owns membership, mapping, identity, validation, and refusals.
+A filesystem receives a volume and does not know whether it came from one
+region or nested layouts. A raw volume is not itself a file container;
+after P18 gives it filesystem semantics, that view may be a whole P19 file
+container or one mounted part of a larger one. A future composition needing
+several devices must argue and design that capability when it is proposed;
+this seam neither forbids nor prepares for it.
+
+An addressed medium with no partition layout can form one direct volume.
+This is the ordinary legacy-floppy case, not a missing partition scheme or
+a special public path. The direct composition preserves the separate P17
+interface while requiring no partition choice from the caller.
+
+### P18 — Filesystems are an independent seam
+
+A filesystem adapter consumes one volume and exposes a P19 file-container
+view of the namespace, metadata, and data operations it claims. FAT, HDOS,
+CP/M, NTFS, ext, and other filesystems illustrate variation at this seam;
+their mention is not a support claim. The adapter owns recognition and
+evidence, structural validation, version and feature ceilings, refusals,
+and all filesystem semantics it implements.
+
+A filesystem does not parse an image container, discover the partition
+layout around its volume, or know how that volume was composed. The
+filesystem catalog and interface remain independent of those adjacent seams.
+
+### P19 — File containers are the common file-access seam
+
+A file container exposes a rooted namespace of named files and containers,
+with their metadata and data operations, independently of what backs that
+view. A serialized container such as ZIP, tar, or 7z; one filesystem on one
+volume; and a Windows or Unix namespace composed from many mounted
+filesystems illustrate different providers at the same seam. The examples
+are not support promises.
+
+This is the high-level convergence point for file access. A caller opens an
+artifact to reach the files it contains; supported composition may pass
+through serialized containers, image formats, partition layouts, volume
+composition, filesystems, or namespace mappings, but every file-bearing
+result presents the P19 interface. The result retains the layers,
+identities, and evidence that produced it. Multiple roots or ambiguous
+paths are exposed or refused explicitly rather than flattened or guessed.
+
+When every applicable seam has one supported result, composition is
+transparent. A simple legacy floppy image with one direct volume and one
+recognized filesystem opens as that filesystem's file container without
+asking the caller to select or configure the intervening layers. Drive and
+mechanism emulation are not constructed merely to reach files; P14 and P15
+enter only when the requested operation needs them.
+
+P19 is the usual high-level destination, not a universal content model. A
+partition or volume may validly contain boot data, swap, database or object
+storage, volume-manager metadata, or another claimed structure with no file
+namespace. That result remains visible at its applicable seam and may gain
+a separate adapter when its semantics warrant one. Remanence neither calls
+valid non-file data empty nor manufactures pseudo-files to force it through
+P19. Opening specifically for file access returns a named absence or
+refusal when no file-bearing interpretation is claimed.
+
+Serialized-file-container adapters consume byte streams. P18 filesystem
+adapters consume volumes. Namespace-composition adapters consume file
+containers plus explicit drive, mount, folder, or volume mappings and
+expose another file container. Composition preserves the identity and
+provenance of its sources rather than flattening or copying them. A file
+container may therefore be backed by a whole volume, by part of a storage
+graph, by no volume at all, or by several mounted filesystem containers.
+
+The common file-container view is not a disk representation and declares
+no image layer, media, geometry, partition layout, or volume semantics.
+Raw partitions and volumes do not satisfy it. Selecting a file yields a
+byte stream; only independent P12 recognition can make that file an image
+and declare its authoritative layer under P13.
+
+### P21 — Device identity is assigned, scoped, and unobtrusive
+
+Every addressed virtual device receives an opaque identity when Remanence
+composes it. The library assigns that identity; an ordinary single-image
+open never asks the caller to provide or choose one. The identity is unique
+within its containing open or composition. It implies no globally stable or
+user-meaningful identity unless a later interface explicitly claims one.
+
+Device identity qualifies provenance and otherwise-local identifiers only
+where more than one device makes that distinction necessary. An interface
+already scoped to one disk may continue to accept `partition:1` or another
+disk-local identifier without exposing the device identity. A presentation
+may report the assigned identity, but never makes callers echo a value that
+does not affect the requested operation.
+
+An attachment identity such as `hdd0` is distinct from device identity. A
+caller supplies placement only when placement changes semantics and cannot
+be inferred. This principle adds neither multi-device opening nor
+multi-device volume composition; those capabilities require their own
+proposal.
+
+### P23 — One durable layer is active
+
+Every independently mutable open state instance has exactly one **active
+layer**: the durable representation against which all of its
+current presentations read and, when permitted, write. The active layer is
+runtime artifact or media state, not an image-format choice, not a derived
+cache, and not the hardware emulation layer. Several presentations
+over one instance share it; they never maintain independently mutable file,
+sector, track, and flux copies of the same state.
+
+The durable active-layer vocabulary is exactly:
+
+| Active layer | Durable session state | Claim |
+|---|---|---|
+| **file container** | a rooted namespace of named entries and nested containers, entry bytes, and claimed metadata | container structure, not disk allocation or recording |
+| **flux** | circular track-relative flux transitions and strength semantics, with marker/sensor channels and provenance | a modeled magnetic recording surface |
+| **CHS** | records addressed by cylinder, head, and sector under a declared geometry | geometry and records, but not their physical encoding |
+| **block** | geometry-opaque logical blocks addressed by number | no cylinder, head, track, recording, or mechanism claim |
+
+These are four family-owned representations, not variants of one universal
+schema. Flux includes its parallel marker channels; they are not another
+active layer. CHS and block both carry record bytes, but CHS's declared
+geometry is observable and load-bearing while block deliberately hides it.
+File container is semantic named-entry state and makes no disk claim.
+
+Here **durable** means that the representation survives runtime
+interactions as the state instance's continuing mutable truth and is the
+source offered to P2 commit. It does not mean that the representation is
+already serialized, crash-durable, or necessarily encodable by the source
+image format. Persistence is a later capability check against P13 and the
+chosen image adapter. Nor does durable fix residence: under P27 the state
+may be resident in memory or spilled to private session storage, a resource
+policy that never changes what the layer means.
+
+Block and flux are mutually non-convertible active-layer families. No active
+layer transition crosses between them in either direction. Derived
+filesystem or file access over either family is a presentation over the
+existing active state, not an intermediate block-or-flux conversion.
+
+Encoded tracks, bitcells, nibbles, and filesystem structures can be
+authoritative image layers or derived representations, but they are not
+additional durable active layers. A disk composition materializes them
+into the applicable flux, CHS, or block state before service begins. A
+serialized archive or filesystem-level artifact may instead materialize a
+file-container active layer without creating disk media at all.
+
+P19's file-container interface does not by itself make file container the
+active layer. Over a filesystem on flux, CHS, or block media it is a derived
+presentation whose mutations project into that media's active state. Over
+a serialized container such as ZIP, the named-entry state itself is active.
+
+Nested artifacts have one active layer per independently mutable instance,
+not one layer for the whole object graph. Opening `archive.zip/disk.d64`
+can leave the outer ZIP active as a file container while the selected entry
+is recognized as a child disk image with its own CHS-active media instance.
+If that child later becomes flux-active, commit first encodes the child's
+representable result into its entry bytes and then commits the outer
+container. Neither instance acquires two active layers.
+
+P13's authoritative image layer and the active layer answer different
+questions. The authoritative layer states what the loaded artifact actually
+records and what its original format can persist. The active layer states
+which representation currently carries the session's mutable truth. They may
+coincide—a P64 physical-drive composition can be authoritative and active
+at flux—or differ—a raw sector image can remain authoritative at sectors
+while a synthesized flux layer becomes active for low-level drive service.
+Changing the active layer does not promote synthetic state into recovered
+evidence and does not change the authoritative image layer.
+
+For a disk, the initial active layer is the least physically expressive
+durable media layer which faithfully serves every presentation requested
+when the composition is formed. A Commodore DOS/IEC device over a standard
+sector image can use addressed CHS sectors as its active layer; no track,
+flux, head, or rotation state is generated. File and sector views above it
+derive from and mutate that one state according to their own seams. An LBA
+device uses block and cannot be lowered merely because another family knows
+CHS or flux.
+
+If a caller later requests a service below the active layer, Remanence must
+materialize a new active layer before offering that service. For a
+programmed-hardware floppy seam below CHS, this is an explicit
+**generate-flux** transition. The applicable image metadata, authoritative
+state, media profile, hardware profile, encoding and mastering rules are used
+to produce the most honest flux and marker state the evidence permits:
+
+- every known timing, ordering, defect, weak-event semantic, and marker is
+  preserved at its known fidelity;
+- only detail required by the lower model and absent from the source is
+  synthesized, with its provenance retained;
+- ambiguity remains ambiguity unless an explicit deterministic policy is
+  part of the composition; and
+- a missing or contradictory rule refuses the lower service rather than
+  manufacturing unjustified precision.
+
+There is no universal linear ladder across all four layers. A declared
+legacy floppy family may lower CHS to flux. Block is terminal and never
+lowers to flux; flux never rises into block. File container participates
+only through a declared container-to-child or filesystem-materialization
+path. Encoded-track and bitstream image representations enter flux through
+their family derivations rather than becoming extra rungs.
+
+The transition is atomic for the media instance. Once the lower state is
+validated, it replaces the old active layer as the single durable mutable
+session state. Existing higher presentations are rebound as derived views
+of it and their caches are invalidated. They may decode sectors and files
+upward, but they cannot continue mutating the former CHS copy. The active
+layer does not rise again during that open media lifetime merely because a
+lower presentation closes; doing so could discard state the higher layer
+cannot express. Returning to a higher active representation requires
+closing the composition or a family-permitted explicit conversion which
+names the loss. No such conversion exists between block and flux.
+
+Generate-flux materializes circular, track-relative media state; it does
+not materialize runtime pulse occurrences. P15's hardware emulation layer
+combines that active state with ephemeral mechanism state—head position,
+motor speed, rotational phase, settling and read-channel history—to
+generate causal observations as time advances. Mechanism state never
+becomes part of the active media layer.
+
+Writes always land in the active layer. Commit remains governed by P2 and
+P13: the original image may be updated only when every change can project
+back to its authoritative layer and encoding without unclaimed loss. A
+sector-authoritative image whose active flux acquired an unrepresentable
+low-level change is not silently flattened; that writable composition is
+refused in advance, or the user explicitly converts to a new image whose
+format can make the lower state authoritative.
+
+#### The layer caches are tied
+
+In-force P27 gives every modeled durable layer its own cache under one
+declared session budget. Across this principle's layers the tie is exact: a
+derived layer's cache is a clean-only accelerator regenerated from the layer
+below — a derived write completes downward into the active layer's cache in
+the same act or alters nothing, and a write landing in a lower layer
+invalidates the overlapping derived extents above it, so a stale decode is
+never served. A P64 source pins flux active, with sector access deriving a
+CHS cache above it; a sector-format source is CHS-active with one cache
+until generate-flux rebinds it as derived over session-backed flux, both
+layers caching from then on. Threads may derive upper-layer extents ahead of
+demand under P27's speculation rules.
 
 ### P27 — Sessions stream; memory holds a bounded working set
 

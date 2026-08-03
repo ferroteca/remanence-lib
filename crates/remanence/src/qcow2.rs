@@ -23,7 +23,7 @@ use crate::inflate::inflate;
 pub(crate) const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
 
 /// The highest qcow2 version this release explicitly supports (P8).
-const SUPPORTED_VERSION_CEILING: u32 = 3;
+pub(crate) const SUPPORTED_VERSION_CEILING: u32 = 3;
 
 /// The longest backing chain this release claims, counted in files with
 /// the top image included. A deeper chain is refused by name (P3), never

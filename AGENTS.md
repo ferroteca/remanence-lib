@@ -7,19 +7,18 @@ maintenance context.
 
 ## Project state and layout
 
-remanence-lib is the core disk image analysis library for Remanence
-Workbench, ported to Rust from the workbench's C++ `lib/` (itself a port of
-an earlier Rust prototype). The C++ front-ends (CLI, GTK4 GUI) remain in
-the separate `remanence` project and will consume this library through the
-C ABI. The Rust code here is now the authoritative implementation.
+remanence-lib is a reusable disk image analysis library, ported to Rust
+from an earlier implementation lineage. The Rust code here is the
+authoritative implementation; callers consume it through the Rust API, C
+ABI, or Python module.
 
 - `crates/remanence/` — the core library. `error.rs` owns the error
-  taxonomy (`Error`, five diagnostic variants, and the stable
+  taxonomy (`Error`, three diagnostic variants, and the stable
   `ErrorCategory` set; display messages remain human diagnostics);
-  `registry.rs` the format-definition parser and
-  `FormatRegistry` (BTreeMap-keyed, so detection iterates in stable id
-  order); `image.rs` size validation against a container format;
-  `container.rs` / `filesystem.rs` the detection heuristics (crate-private,
+  `adapters.rs` the executable image-format adapters, probe aggregation,
+  authoritative/active layer vocabulary, device identity, and built-in
+  image catalog; `partition.rs` the partition-layout catalog;
+  `filesystem.rs` the streamed filesystem adapters and catalog (crate-private,
   reached through `Session::identify`); `session.rs` the session model,
   the layered identification result, and the P7 claim held for the
   session's lifetime; `hdos.rs` the HDOS directory lister and file
@@ -44,9 +43,7 @@ C ABI. The Rust code here is now the authoritative implementation.
   partition discovery with
   pinned types; `fat.rs` FAT12/16 volume read/write; `disk.rs` the
   public `Disk` API (open/geometry/entries/stat/read/write/mkdir/
-  commit/rollback). `formats/` holds the starter container/filesystem
-  definitions, embedded with `include_str!`. Unit tests live in their
-  modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
+  commit/rollback). Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
   images built in-test, plus the fixture-driven HDOS tests.
 - `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`
@@ -102,12 +99,12 @@ earlier than 1.0.
 
 ### Surface changes are vetted
 
-The Rust crate API, the C ABI, the Python module, and the format-definition
-text format are the application surfaces (S1–S4, root
-[ARCHITECTURE.md](ARCHITECTURE.md)). Any decision that changes one follows
-[planning/SURFACES.md](planning/SURFACES.md). With no use-case or principle
-lists in force yet, the triage there cannot be run to completion — flag
-surface-changing proposals to the owner instead of self-approving them.
+The Rust crate API, the C ABI, and the Python module are the application
+surfaces (S1–S3, root [ARCHITECTURE.md](ARCHITECTURE.md)). Any decision
+that changes one follows
+[planning/SURFACES.md](planning/SURFACES.md). The in-force use cases and
+principles supply the authority that its triage requires; surface-changing
+proposals still follow that process rather than being self-approved.
 
 ### The bindings track the core in the same change
 
@@ -277,7 +274,7 @@ analog — is rejected by the index outright.
 ### The changelog
 
 [CHANGELOG.md](CHANGELOG.md) records **release-facing** changes — what a
-consumer of S1–S4 meets, plus a principle arming, which is a claim about
+consumer of S1–S3 meets, plus a principle arming, which is a claim about
 the code. Version headings are the workspace SemVer, matching the tags.
 Planning moves are not release-facing: proposing, pledging, and drafting
 leave their record in the commit that made them.

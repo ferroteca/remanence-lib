@@ -59,7 +59,7 @@ let entries = disk.entries(selected.id(), root_path)?;
 ```
 
 Callers do not enumerate catalogs or invoke MBR, direct-volume, or FAT
-adapters themselves. `inspect()` runs the applicable F19 composition once
+adapters themselves. `inspect()` runs the applicable in-force composition once
 and snapshots its results. File operations consume an identity issued by
 that report and resolve it inside the same open disk. No separate discovery
 path is introduced for the convenience API.
@@ -162,7 +162,8 @@ no exception for inspection.
 
 F20 adds no format recognition. Its orchestration consumes the adapters,
 evidence, authoritative layer, active layer, and provenance established by
-F19. The current direct one-region composition is sufficient; a catalog or
+the in-force adapter architecture. The current direct one-region composition
+is sufficient; a catalog or
 implementation for complex volume managers remains absent.
 
 ## A declared type is reported twice: as recorded, and as read
@@ -241,8 +242,6 @@ F20 is one pre-1.0 surface replacement:
 - **S3 — Python:** expose the same immutable report graph and identity
   semantics with Python value objects. `Disk.inspect()` and volume-scoped
   file operations mirror S1; old geometry classes and methods are removed.
-- **S4:** unaffected. F19 removes the format-definition surface before this
-  dependent feature lands.
 
 The three presentations expose the same distinctions, relationships,
 optional facts, and issues. A binding may use handles where Rust uses
@@ -257,7 +256,8 @@ Once pledged, F20 lands as one coherent replacement in this internal order:
 
 1. Introduce the core report records, identity rules, and typed
    relationships.
-2. Route raw/qcow2, MBR, direct-volume, and FAT results from F19's adapters
+2. Route raw/qcow2, MBR, direct-volume, and FAT results from the built-in
+   adapters
    into the report without duplicating recognition.
 3. Move existing Rust file operations to opaque volume selection and delete
    the flattened geometry model.

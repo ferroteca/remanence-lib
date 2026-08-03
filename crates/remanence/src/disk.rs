@@ -15,13 +15,13 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, OpenedImage};
 use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Device, FileDevice};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeInfo};
 use crate::journal;
 use crate::mbr::{self, Discovery, PartitionInfo, PartitionKind};
-use crate::qcow2::{self, QCOW2_MAGIC, Qcow2};
 
 #[cfg(test)]
 fn crash_test_process_at(boundary: &str) {
@@ -49,44 +49,6 @@ pub struct DiskGeometry {
     pub blank: bool,
     pub partitions: Vec<PartitionInfo>,
     pub volumes: Vec<VolumeInfo>,
-}
-
-#[derive(Debug)]
-enum Virtual {
-    Raw(FileDevice),
-    Qcow2(Qcow2<FileDevice>),
-}
-
-impl Virtual {
-    fn device(&mut self) -> &mut dyn Device {
-        match self {
-            Self::Raw(device) => device,
-            Self::Qcow2(device) => device,
-        }
-    }
-
-    /// The host file commits land in: the image itself, or a chain's
-    /// top image — the only member writes ever reach (U6).
-    fn host(&mut self) -> &mut FileDevice {
-        match self {
-            Self::Raw(device) => device,
-            Self::Qcow2(device) => device.host_mut(),
-        }
-    }
-
-    /// Driver cache state a staged-but-unlanded commit must put back.
-    fn cache_snapshot(&self) -> Option<Vec<u64>> {
-        match self {
-            Self::Raw(_) => None,
-            Self::Qcow2(device) => Some(device.l1_snapshot()),
-        }
-    }
-
-    fn restore_cache(&mut self, snapshot: Option<Vec<u64>>) {
-        if let (Self::Qcow2(device), Some(l1)) = (self, snapshot) {
-            device.restore_l1(l1);
-        }
-    }
 }
 
 /// A composed view: the session cache over the virtual disk (P27).
@@ -119,12 +81,15 @@ impl Device for Composed<'_> {
 /// An open disk image.
 #[derive(Debug)]
 pub struct Disk {
-    virtual_disk: Virtual,
+    virtual_disk: Box<dyn OpenedImage>,
     cache: SessionCache,
     /// The declared session cache bound (P27), governing the session
     /// cache and each commit's capture alike.
     cache_bytes: u64,
     format: DiskFormat,
+    descriptor: &'static ImageFormatDescriptor,
+    device_identity: DeviceIdentity,
+    active_layer: ActiveLayer,
     mode: AccessMode,
     path: String,
     /// The recovery sidecar's derived path (P9) — private transient
@@ -187,32 +152,17 @@ impl Disk {
         }
         let mode = file.mode();
 
-        let mut magic = [0u8; 4];
-        let format = if file.len() >= 4 {
-            file.read_at(0, &mut magic)?;
-            if magic == QCOW2_MAGIC {
-                None
-            } else {
-                Some(DiskFormat::Raw)
-            }
-        } else {
-            Some(DiskFormat::Raw)
-        };
-
-        let (virtual_disk, format) = match format {
-            Some(raw) => (Virtual::Raw(file), raw),
-            None => {
-                let qcow2 = qcow2::open_chain(file, path)?;
-                let version = qcow2.header().version;
-                (Virtual::Qcow2(qcow2), DiskFormat::Qcow2 { version })
-            }
-        };
+        let (virtual_disk, descriptor) = adapters::image_catalog().open_disk(file, path)?;
+        let format = virtual_disk.format();
 
         Ok(Self {
             virtual_disk,
             cache: SessionCache::with_bytes_offloading(cache_bytes),
             cache_bytes,
             format,
+            descriptor,
+            device_identity: DeviceIdentity::first(),
+            active_layer: descriptor.initial_active_layer,
             mode,
             path: path.display().to_string(),
             journal_path: recovery,
@@ -226,15 +176,15 @@ impl Disk {
     }
 
     pub fn format(&self) -> DiskFormat {
+        debug_assert_eq!(self.active_layer, self.descriptor.initial_active_layer);
+        let _composition_identity = self.device_identity.value();
+        let _authoritative_layer = self.descriptor.authoritative_layer;
         self.format
     }
 
     /// The virtual disk size (the guest-visible size for qcow2).
     pub fn size(&self) -> u64 {
-        match &self.virtual_disk {
-            Virtual::Raw(device) => device.len(),
-            Virtual::Qcow2(device) => device.header().virtual_size,
-        }
+        self.virtual_disk.presented_size()
     }
 
     pub fn path(&self) -> &str {
@@ -248,7 +198,7 @@ impl Disk {
 
     fn composed(&mut self) -> Composed<'_> {
         Composed {
-            base: self.virtual_disk.device(),
+            base: self.virtual_disk.device_mut(),
             cache: &mut self.cache,
         }
     }
@@ -295,17 +245,28 @@ impl Disk {
     /// it never renumber.
     pub fn geometry(&mut self) -> Result<DiskGeometry> {
         self.require_usable()?;
+        let device_identity = self.device_identity;
         let mut composed = self.composed();
-        match mbr::discover(&mut composed)? {
+        match crate::partition::discover(&mut composed)? {
             Discovery::Blank => Ok(DiskGeometry {
                 blank: true,
                 partitions: Vec::new(),
                 volumes: Vec::new(),
             }),
             Discovery::BareVolume => {
-                let volume = FatVolume::open(&mut composed, 0)?;
-                let length = composed.len();
-                let info = volume.info(&mut composed, "superfloppy:0".to_owned(), None, length)?;
+                let direct = crate::volume::direct(crate::volume::AddressedRegion {
+                    device: device_identity,
+                    offset: 0,
+                    length: composed.len(),
+                });
+                debug_assert_eq!(direct.device, device_identity);
+                let volume = FatVolume::open(&mut composed, direct.offset)?;
+                let info = volume.info(
+                    &mut composed,
+                    "superfloppy:0".to_owned(),
+                    None,
+                    direct.length,
+                )?;
                 Ok(DiskGeometry {
                     blank: false,
                     partitions: Vec::new(),
@@ -487,7 +448,7 @@ impl Disk {
         self.require_usable()?;
         self.require_writable()?;
         if !self.cache.modified() {
-            return self.virtual_disk.device().flush();
+            return self.virtual_disk.device_mut().flush();
         }
 
         // Stage: the write-through runs against a capture of the host
@@ -500,23 +461,23 @@ impl Disk {
         let cache_bytes = self.cache_bytes;
         // Consuming the altered set joins the offloads in flight first.
         self.cache.join_offloads();
-        self.virtual_disk.host().begin_capture(cache_bytes);
-        let staged = self.cache.write_through(self.virtual_disk.device());
-        let capture = self.virtual_disk.host().take_capture();
+        self.virtual_disk.host_mut().begin_capture(cache_bytes);
+        let staged = self.cache.write_through(self.virtual_disk.device_mut());
+        let capture = self.virtual_disk.host_mut().take_capture();
         if let Err(error) = staged {
             self.virtual_disk.restore_cache(cache_snapshot);
             return Err(error);
         }
         if capture.is_clean() {
             self.cache.mark_committed();
-            return self.virtual_disk.device().flush();
+            return self.virtual_disk.device_mut().flush();
         }
 
         // The durability boundary (P9): the bytes the apply will
         // overwrite are durable in the recovery journal — streamed
         // there, never held whole — before the first of them changes.
         if let Err(error) =
-            journal::record(&self.journal_path, self.virtual_disk.host(), &capture)
+            journal::record(&self.journal_path, self.virtual_disk.host_mut(), &capture)
         {
             let _ = journal::retire(&self.journal_path);
             self.virtual_disk.restore_cache(cache_snapshot);
@@ -531,7 +492,7 @@ impl Disk {
         // fail, the journal remains for the next open to reconcile.
         let applied = self
             .virtual_disk
-            .host()
+            .host_mut()
             .apply(&capture)
             .and_then(|()| {
                 #[cfg(test)]
@@ -551,7 +512,7 @@ impl Disk {
             let image_path = PathBuf::from(&self.path);
             match journal::reconcile(
                 &self.journal_path,
-                self.virtual_disk.host(),
+                self.virtual_disk.host_mut(),
                 &image_path,
             ) {
                 Ok(()) => {
@@ -657,7 +618,8 @@ mod tests {
             Some(b"through the mapping".len() as u64)
         );
         assert_eq!(
-            disk.stat("superfloppy:0", "GUEST/ABSENT.BIN").expect("stat"),
+            disk.stat("superfloppy:0", "GUEST/ABSENT.BIN")
+                .expect("stat"),
             None
         );
         disk.commit().expect("commit");
@@ -843,12 +805,12 @@ mod tests {
     fn stage_and_arm(disk: &mut Disk) -> (Vec<(u64, Vec<u8>)>, u64) {
         let cache_bytes = disk.cache_bytes;
         disk.cache.join_offloads();
-        disk.virtual_disk.host().begin_capture(cache_bytes);
+        disk.virtual_disk.host_mut().begin_capture(cache_bytes);
         disk.cache
-            .write_through(disk.virtual_disk.device())
+            .write_through(disk.virtual_disk.device_mut())
             .expect("stages");
-        let capture = disk.virtual_disk.host().take_capture();
-        crate::journal::record(&disk.journal_path, disk.virtual_disk.host(), &capture)
+        let capture = disk.virtual_disk.host_mut().take_capture();
+        crate::journal::record(&disk.journal_path, disk.virtual_disk.host_mut(), &capture)
             .expect("journals");
         let mut blocks = Vec::new();
         capture
@@ -875,7 +837,8 @@ mod tests {
                 .expect("writes a chunk");
         }
         assert_eq!(
-            disk.read_file("superfloppy:0", "BIG.BIN").expect("whole read"),
+            disk.read_file("superfloppy:0", "BIG.BIN")
+                .expect("whole read"),
             contents,
             "the streamed write equals a whole-file write"
         );
@@ -895,8 +858,10 @@ mod tests {
         assert_eq!(ranged, contents);
 
         // Shrink keeps the prefix; growth reads as zeros, never stale bytes.
-        disk.resize_file("superfloppy:0", "BIG.BIN", 100).expect("shrinks");
-        disk.resize_file("superfloppy:0", "BIG.BIN", 20_000).expect("regrows");
+        disk.resize_file("superfloppy:0", "BIG.BIN", 100)
+            .expect("shrinks");
+        disk.resize_file("superfloppy:0", "BIG.BIN", 20_000)
+            .expect("regrows");
         let back = disk.read_file("superfloppy:0", "BIG.BIN").expect("reads");
         assert_eq!(&back[..100], &contents[..100], "the kept prefix survives");
         assert!(back[100..].iter().all(|&byte| byte == 0), "growth is zeros");
@@ -918,7 +883,9 @@ mod tests {
         disk.commit().expect("commits");
         drop(disk);
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
-        let back = reopened.read_file("superfloppy:0", "BIG.BIN").expect("reads");
+        let back = reopened
+            .read_file("superfloppy:0", "BIG.BIN")
+            .expect("reads");
         assert_eq!(back.len(), 20_000);
         assert_eq!(&back[..100], &contents[..100]);
         drop(reopened);
@@ -933,8 +900,7 @@ mod tests {
         // A one-extent working set: reads, uncommitted writes, and the
         // commit's capture all evict and spill constantly (P27), and
         // the result is byte-identical to an unbounded run.
-        let mut disk =
-            Disk::open_with_cache(&path, AccessIntent::Write, 1).expect("opens");
+        let mut disk = Disk::open_with_cache(&path, AccessIntent::Write, 1).expect("opens");
         disk.write_file("superfloppy:0", "OLD.BIN", &new_content())
             .expect("overwrites");
         assert!(disk.is_modified());
@@ -943,7 +909,9 @@ mod tests {
 
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
-            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            reopened
+                .read_file("superfloppy:0", "OLD.BIN")
+                .expect("reads"),
             new_content()
         );
         drop(reopened);
@@ -967,7 +935,9 @@ mod tests {
 
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
-            reopened.read_file("superfloppy:0", "NEW.BIN").expect("reads"),
+            reopened
+                .read_file("superfloppy:0", "NEW.BIN")
+                .expect("reads"),
             new_content()
         );
         drop(reopened);
@@ -989,7 +959,9 @@ mod tests {
         let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!sidecar.exists(), "the torn sidecar is discarded");
         assert_eq!(
-            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            reopened
+                .read_file("superfloppy:0", "OLD.BIN")
+                .expect("reads"),
             old_content()
         );
         drop(reopened);
@@ -1012,7 +984,7 @@ mod tests {
         for &(offset, ref block) in blocks.iter().take(blocks.len() / 2) {
             let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
             disk.virtual_disk
-                .host()
+                .host_mut()
                 .write_at(offset, &block[..take])
                 .expect("applies");
         }
@@ -1021,7 +993,9 @@ mod tests {
         let mut reopened = Disk::open(&path, AccessIntent::Write).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
         assert_eq!(
-            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            reopened
+                .read_file("superfloppy:0", "OLD.BIN")
+                .expect("reads"),
             old_content(),
             "the image reconciles to wholly the old state"
         );
@@ -1035,7 +1009,9 @@ mod tests {
         drop(reopened);
         let mut committed = Disk::open(&path, AccessIntent::Read).expect("opens");
         assert_eq!(
-            committed.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            committed
+                .read_file("superfloppy:0", "OLD.BIN")
+                .expect("reads"),
             new_content()
         );
         drop(committed);
@@ -1058,7 +1034,7 @@ mod tests {
         for &(offset, ref block) in &blocks {
             let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
             disk.virtual_disk
-                .host()
+                .host_mut()
                 .write_at(offset, &block[..take])
                 .expect("applies");
         }
@@ -1072,7 +1048,9 @@ mod tests {
             "the interrupted commit's file never existed"
         );
         assert_eq!(
-            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            reopened
+                .read_file("superfloppy:0", "OLD.BIN")
+                .expect("reads"),
             old_content()
         );
         drop(reopened);
@@ -1105,7 +1083,7 @@ mod tests {
         for &(offset, ref block) in blocks.iter().take(blocks.len() / 2) {
             let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
             disk.virtual_disk
-                .host()
+                .host_mut()
                 .write_at(offset, &block[..take])
                 .expect("applies");
         }
@@ -1122,7 +1100,9 @@ mod tests {
             None
         );
         assert_eq!(
-            reopened.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            reopened
+                .read_file("superfloppy:0", "OLD.BIN")
+                .expect("reads"),
             old_content()
         );
         drop(reopened);
@@ -1155,7 +1135,7 @@ mod tests {
         for &(offset, ref block) in blocks.iter().take(blocks.len() / 2) {
             let take = (new_len.saturating_sub(offset)).min(block.len() as u64) as usize;
             disk.virtual_disk
-                .host()
+                .host_mut()
                 .write_at(offset, &block[..take])
                 .expect("applies");
         }
@@ -1174,7 +1154,9 @@ mod tests {
         let mut chained = Disk::open(&top, AccessIntent::Read).expect("reconciles and composes");
         assert!(!crate::journal::sidecar_path(&base).exists());
         assert_eq!(
-            chained.read_file("superfloppy:0", "OLD.BIN").expect("reads"),
+            chained
+                .read_file("superfloppy:0", "OLD.BIN")
+                .expect("reads"),
             old_content()
         );
         drop(chained);

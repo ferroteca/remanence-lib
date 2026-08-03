@@ -2,8 +2,7 @@
 
 Thank you for helping improve remanence-lib. Bug reports, documentation
 fixes, tests, and code changes are welcome when they preserve the project's
-GPL licensing and its role as the core disk image analysis library for
-Remanence Workbench.
+GPL licensing and its role as a reusable disk image analysis library.
 
 Code contributions carry a licensing requirement that is stricter than most
 projects': every accepted contribution is assigned to the project owner.

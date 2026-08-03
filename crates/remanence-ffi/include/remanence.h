@@ -115,7 +115,7 @@ uint64_t remanence_default_cache_bytes(void);
 void remanence_string_free(char *string);
 
 // Opens `path` (UTF-8) — a raw disk image, or `archive.zip[/entry]` — with
-// the default format registry. Returns null on failure and stores a message
+// the built-in format adapters. Returns null on failure and stores a message
 // in `error_out` (free with `remanence_string_free`).
 RemanenceSession *remanence_session_open(const char *path,
                                          RemanenceErrorCategory *error_category_out,

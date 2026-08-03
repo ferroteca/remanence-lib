@@ -8,7 +8,6 @@
 //! detected container layers, and `list_hdos_files` parses HDOS directories.
 //! Failures raise `RemanenceError`.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use pyo3::create_exception;
@@ -45,136 +44,6 @@ fn kind_str(kind: remanence::ContainerKind) -> &'static str {
         remanence::ContainerKind::PhysicalMedia => "physical-media",
         remanence::ContainerKind::Filesystem => "filesystem",
         remanence::ContainerKind::Unknown => "unknown",
-    }
-}
-
-/// A container format definition from the registry.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ContainerFormat {
-    pub id: String,
-    pub name: String,
-    pub extensions: Vec<String>,
-    pub media_kind: Option<String>,
-    pub sector_size: Option<usize>,
-    pub cylinders: Option<usize>,
-    pub sides: Option<usize>,
-    pub tracks: Option<usize>,
-    pub sectors_per_track: Option<usize>,
-    pub filesystem_candidates: Vec<String>,
-    pub attributes: BTreeMap<String, String>,
-    pub expected_size: Option<usize>,
-}
-
-impl ContainerFormat {
-    fn new(format: &remanence::ContainerFormat) -> Self {
-        Self {
-            id: format.id.clone(),
-            name: format.name.clone(),
-            extensions: format.extensions.clone(),
-            media_kind: format.media_kind.clone(),
-            sector_size: format.sector_size,
-            cylinders: format.cylinders,
-            sides: format.sides,
-            tracks: format.tracks,
-            sectors_per_track: format.sectors_per_track,
-            filesystem_candidates: format.filesystem_candidates.clone(),
-            attributes: format.attributes.clone(),
-            expected_size: format.expected_size(),
-        }
-    }
-}
-
-/// A filesystem format definition from the registry.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct FilesystemFormat {
-    pub id: String,
-    pub name: String,
-    pub aliases: Vec<String>,
-    pub container_candidates: Vec<String>,
-    pub heuristics: Vec<String>,
-    pub markers: Vec<String>,
-    pub attributes: BTreeMap<String, String>,
-}
-
-impl FilesystemFormat {
-    fn new(format: &remanence::FilesystemFormat) -> Self {
-        Self {
-            id: format.id.clone(),
-            name: format.name.clone(),
-            aliases: format.aliases.clone(),
-            container_candidates: format.container_candidates.clone(),
-            heuristics: format.heuristics.clone(),
-            markers: format.markers.clone(),
-            attributes: format.attributes.clone(),
-        }
-    }
-}
-
-/// Parsed container and filesystem format definitions.
-#[pyclass(frozen, module = "remanence")]
-pub struct FormatRegistry {
-    inner: remanence::FormatRegistry,
-}
-
-#[pymethods]
-impl FormatRegistry {
-    /// Parses definition text into a registry.
-    #[new]
-    fn new(container_formats: &str, filesystem_formats: &str) -> PyResult<Self> {
-        remanence::FormatRegistry::parse(container_formats, filesystem_formats)
-            .map(|inner| Self { inner })
-            .map_err(to_py_err)
-    }
-
-    /// The built-in starter registry.
-    #[staticmethod]
-    fn default() -> PyResult<Self> {
-        remanence::default_format_registry()
-            .map(|inner| Self { inner })
-            .map_err(to_py_err)
-    }
-
-    /// Parses definition files into a registry.
-    #[staticmethod]
-    fn from_files(
-        container_formats_path: PathBuf,
-        filesystem_formats_path: PathBuf,
-    ) -> PyResult<Self> {
-        remanence::FormatRegistry::from_files(&container_formats_path, &filesystem_formats_path)
-            .map(|inner| Self { inner })
-            .map_err(to_py_err)
-    }
-
-    /// Looks up one container format by id.
-    fn container(&self, id: &str) -> Option<ContainerFormat> {
-        self.inner.container(id).map(ContainerFormat::new)
-    }
-
-    /// Looks up one filesystem format by id.
-    fn filesystem(&self, id: &str) -> Option<FilesystemFormat> {
-        self.inner.filesystem(id).map(FilesystemFormat::new)
-    }
-
-    /// All container formats, keyed by id.
-    #[getter]
-    fn containers(&self) -> BTreeMap<String, ContainerFormat> {
-        self.inner
-            .containers()
-            .iter()
-            .map(|(id, format)| (id.clone(), ContainerFormat::new(format)))
-            .collect()
-    }
-
-    /// All filesystem formats, keyed by id.
-    #[getter]
-    fn filesystems(&self) -> BTreeMap<String, FilesystemFormat> {
-        self.inner
-            .filesystems()
-            .iter()
-            .map(|(id, format)| (id.clone(), FilesystemFormat::new(format)))
-            .collect()
     }
 }
 
@@ -447,7 +316,7 @@ pub struct Session {
 #[pymethods]
 impl Session {
     /// Opens `path` — a raw disk image, or `archive.zip[/entry]` — with the
-    /// default format registry. `cache_bytes` declares the session
+    /// built-in format catalogs. `cache_bytes` declares the session
     /// cache bound (rounded up to whole 64 KiB extents, one extent at
     /// minimum); omitted, the stated default `DEFAULT_CACHE_BYTES`
     /// governs.
@@ -460,14 +329,6 @@ impl Session {
         }
         .map(|inner| Self { inner })
         .map_err(to_py_err)
-    }
-
-    /// Opens `path` with a caller-supplied format registry.
-    #[staticmethod]
-    fn with_registry(path: PathBuf, registry: &FormatRegistry) -> PyResult<Self> {
-        remanence::Session::open_with_registry(path, registry.inner.clone())
-            .map(|inner| Self { inner })
-            .map_err(to_py_err)
     }
 
     /// The path the session was opened from (the archive path for ZIP inputs).
@@ -902,12 +763,6 @@ fn read_hdos_file<'py>(
     Ok(PyBytes::new(py, &bytes))
 }
 
-/// Parses the built-in starter format definitions.
-#[pyfunction]
-fn default_format_registry() -> PyResult<FormatRegistry> {
-    FormatRegistry::default()
-}
-
 #[pymodule(name = "remanence")]
 fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The distribution version (pyproject.toml) governs; the crate version is
@@ -919,14 +774,6 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .and_then(|version| version.extract::<String>())
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
     m.add("__version__", version)?;
-    m.add(
-        "DEFAULT_CONTAINER_FORMATS",
-        remanence::DEFAULT_CONTAINER_FORMATS,
-    )?;
-    m.add(
-        "DEFAULT_FILESYSTEM_FORMATS",
-        remanence::DEFAULT_FILESYSTEM_FORMATS,
-    )?;
     m.add("DEFAULT_CACHE_BYTES", remanence::DEFAULT_CACHE_BYTES)?;
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
     m.add_class::<Session>()?;
@@ -938,9 +785,6 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DiskLayout>()?;
     m.add_class::<TrackSectorLayout>()?;
     m.add_class::<FilesystemLayout>()?;
-    m.add_class::<FormatRegistry>()?;
-    m.add_class::<ContainerFormat>()?;
-    m.add_class::<FilesystemFormat>()?;
     m.add_class::<HdosFile>()?;
     m.add_class::<Disk>()?;
     m.add_class::<DiskGeometry>()?;
@@ -949,6 +793,5 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FatEntry>()?;
     m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
     m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;
-    m.add_function(wrap_pyfunction!(default_format_registry, m)?)?;
     Ok(())
 }

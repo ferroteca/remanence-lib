@@ -368,7 +368,7 @@ pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
 }
 
 /// Opens `path` (UTF-8) — a raw disk image, or `archive.zip[/entry]` — with
-/// the default format registry. Returns null on failure and stores a message
+/// the built-in format adapters. Returns null on failure and stores a message
 /// in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_open(
@@ -2118,16 +2118,16 @@ mod tests {
 
     #[test]
     fn error_output_carries_category_beside_unchanged_message() {
-        let error = remanence::Error::unknown_container("future");
+        let error = remanence::Error::invalid_image("qcow2", "malformed");
         let mut category = RemanenceErrorCategory::Io;
         let mut message = ptr::null_mut();
 
         unsafe { set_error(&mut category, &mut message, &error) };
 
-        assert_eq!(category, RemanenceErrorCategory::Unsupported);
+        assert_eq!(category, RemanenceErrorCategory::InvalidImage);
         assert_eq!(
             unsafe { CStr::from_ptr(message) }.to_str().expect("UTF-8"),
-            "unknown container format 'future'"
+            "invalid qcow2 disk image: malformed"
         );
         unsafe { remanence_string_free(message) };
     }

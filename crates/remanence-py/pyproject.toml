@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "remanence"
-description = "Disk image analysis library for Remanence Workbench"
+description = "Self-contained disk image analysis library"
 requires-python = ">=3.10"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]

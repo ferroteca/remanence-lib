@@ -85,7 +85,7 @@ The in-force artifacts live at the **repository root**, not here,
 because they are claims about the code as it exists today:
 [USE-CASES.md](../USE-CASES.md) (U1–U6, every entry met by the
 code) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the whole-system
-view, the application surface inventory S1–S4, and the
+view, the application surface inventory S1–S3, and the
 architectural principles, every principle honored by
 the code). Together with the norms — currently the defining code, as
 root ARCHITECTURE.md states — they are the project's **vision**.

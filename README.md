@@ -2,14 +2,14 @@
 
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-Core disk image analysis library for **Remanence Workbench**, in Rust. A
-`Session` opens a disk image — raw, or inside a `.zip` archive — and
-identifies its container layers: the archive wrapper, the image format, the
-physical media geometry, and the probable filesystem, each with a confidence
-and the evidence behind it. Detection is driven by plain-text container and
-filesystem format definitions, so new formats can be described without code.
-An HDOS directory lister reads the file catalog out of Heathkit `.h8d`
-images.
+A self-contained disk image analysis library in Rust. A `Session` opens a
+disk image — raw, or inside a `.zip` archive — and identifies its container
+layers: the archive wrapper, image format, physical media geometry, and
+probable filesystem, each with comparable confidence and human-readable
+evidence. Executable, role-specific adapters recognize and validate formats;
+ambiguous strongest matches remain unknown rather than being resolved by
+catalog order. An HDOS directory lister reads the file catalog out of
+Heathkit `.h8d` images.
 
 The library is dependency-free at runtime, including its own ZIP
 central-directory reader, RFC 1951 (DEFLATE) decompressor, and native
@@ -44,9 +44,6 @@ crates/
   remanence-ffi/    # C ABI: staticlib + cdylib, cbindgen header for C and C++
   remanence-py/     # Python module (PyO3), built with maturin
 ```
-
-The C++ front-ends (CLI and GTK4 GUI) live in the separate Remanence
-Workbench project and consume this library through the C ABI.
 
 ## Building
 
@@ -83,7 +80,7 @@ let identification = session.identify();
 for container in &identification.containers {
     println!("{:?} {} ({}%)", container.kind, container.id, container.confidence);
 }
-let files = remanence::list_hdos_files(session.bytes())?;
+let files = session.list_hdos_files()?;
 ```
 
 ```python

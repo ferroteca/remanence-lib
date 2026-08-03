@@ -58,9 +58,11 @@ identity semantics, optional facts, and structured issues. The pre-1.0
 flattened compatibility view. Existing file verbs move to the new opaque
 volume identity without changing U3's file behavior.
 
-F20 depends on pledged F19 for the adapter catalogs, authoritative and active
+F20 depends on the in-force adapter architecture for the adapter catalogs,
+authoritative and active
 layer model, provenance, and library-assigned device identity. It composes
-the MBR, direct-volume, and FAT adapters already required by F19; it neither
+the MBR, direct-volume, and FAT adapters already provided by the built-in
+catalogs; it neither
 duplicates their recognition rules nor adds another orchestration path.
 
 The feature is deliberately limited to the formats and compositions already
@@ -70,9 +72,8 @@ filesystems. GPT, NTFS, multi-device opening, manual volume recipes, complex
 volume managers, Windows namespace reconstruction, partition editing, and
 new disk formats remain outside it.
 
-Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U3, U4; P3–P5, P13, P16–P19, P21, P23,
-P27. Needs: F19 pledged and delivered.
+Touches: S1, S2, S3. Supports: U3, U4; P3–P5, P13, P16–P19, P21, P23,
+P27.
 
 Companion design:
 [design/layered-partition-volume-inspection.md](design/layered-partition-volume-inspection.md).
@@ -113,9 +114,8 @@ eventually serving these compositions to distinguish optical tracks from
 P16 partitions and to preserve the relationship from an eligible data track
 to its derived block extent and volume.
 
-Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U18; P3–P5, P12–P15, P19, P21, P23, P24,
-P27. Needs: F19 pledged and delivered. F20 is not a prerequisite; any shared
+Touches: S1, S2, S3. Supports: U18; P3–P5, P12–P15, P19, P21, P23, P24,
+P27. F20 is not a prerequisite; any shared
 report vocabulary must converge before either surface lands.
 
 Companion design:
@@ -151,9 +151,8 @@ firmware, or physical pits and lands, or promise one universal command set for
 every LaserDisc player. It may support named player profiles behind P15's
 common lifecycle without moving their policy into the image adapters.
 
-Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U19; P3–P5, P12–P15, P19, P21, P23, P24,
-P27. Needs: F19 pledged and delivered. F21 is not a prerequisite; both
+Touches: S1, S2, S3. Supports: U19; P3–P5, P12–P15, P19, P21, P23, P24,
+P27. F21 is not a prerequisite; both
 features share P24 and must converge on its optical identities and report
 vocabulary.
 
@@ -190,9 +189,8 @@ F23 adds `tape` to P23's exact vocabulary when pledged, using P26's
 signal-or-recorded-object wording. Repeated reads and redundant KERNAL copies
 remain evidence, not independent media snapshots.
 
-Touches: S1, S2, S3. S4 is unaffected and is removed by F19 before this
-dependent feature lands. Supports: U21; P3–P5, P12–P15, P19, P21, P23, P26,
-P27. Needs: F19 pledged and delivered. F20–F22 are not prerequisites, but F20
+Touches: S1, S2, S3. Supports: U21; P3–P5, P12–P15, P19, P21, P23, P26,
+P27. F20–F22 are not prerequisites, but F20
 and F23 share the P19 seam and cannot land incompatible public interfaces.
 
 Companion design:
@@ -315,6 +313,6 @@ The initial vertical slice covers caller-selected raw FAT12/FAT16 images and dir
 
 S1 exposes outcome, structured observations, readable bounds, effective access mode, and stable degraded condition; S2 and S3 mirror them. A write-intent open that becomes degraded reports its effective read-only mode and why; P7 host-access failure remains an open failure. Every mutation path, including commit, returns the degraded condition.
 
-Touches: S1, S2, S3. S4 is unaffected. Supports: U3; P2–P7, P10, P28. Needs: P28 pledged. The initial FAT slice must fit one sprint; qcow2, archives, HDOS, and later format-specific bounded-read rules are separate features.
+Touches: S1, S2, S3. Supports: U3; P2–P7, P10, P28. Needs: P28 pledged. The initial FAT slice must fit one sprint; qcow2, archives, HDOS, and later format-specific bounded-read rules are separate features.
 
 Companion design: [design/degraded-evidence-bounded-image-access.md](design/degraded-evidence-bounded-image-access.md).
