@@ -20,6 +20,7 @@ mod evidence;
 mod fat;
 mod file_container;
 mod filesystem;
+mod flux_capture;
 mod hdos;
 mod inflate;
 mod journal;
