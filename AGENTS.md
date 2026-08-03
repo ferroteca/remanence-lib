@@ -45,7 +45,10 @@ ABI, or Python module.
   exact rotational frame, per-pulse strength, and the medium-level facts
   beside them — always derived and never constructible without the
   policy that produced it, over the same backing keyed by the family's
-  own addressing;
+  own addressing; `drive_profile.rs` the P30 seam — a family's declared
+  stepping, rotation, surfaces, encoding shape and density map, the
+  C1541 entry, and the probe that recognizes a capture from interval
+  statistics alone and reports a ranked verdict with its evidence;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the disk stack, the discovery ladder for
   identification sessions), and the host-write capture a durable

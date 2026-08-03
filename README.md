@@ -33,6 +33,17 @@ evidence that refused it. The decoded capture lives in private session
 storage and is addressed a bounded section at a time, so a forty-megabyte
 capture opens under whatever working set the caller declared.
 
+An opened capture can then be recognized: every enrolled drive profile
+is consulted and what claims the capture is ranked, never resolved by
+catalog order. A profile is where a family's recording conventions are
+declared — the knowledge a capture does not contain — and the probe
+reads only interval lengths and the patterns they form, resolving no
+bit, assembling no byte, naming no sector and validating no checksum.
+What comes back is a bounded confidence and the observations that
+produced it: which of the family's zones were recovered and what each
+location holds, the derived cell against what the zone claims, the seam
+located as an angle, and a named reason for every position not claimed.
+
 The library is dependency-free at runtime, including its own ZIP
 central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
 LZMA/LZMA2 decompressors, and native qcow2 v2/v3 driver.
@@ -140,6 +151,11 @@ with remanence.CaptureSet("captures.7z") as capture:
         run = member.runs[0]
         print(member.position.numerator, member.head, run.transitions,
               len(run.observations))
+
+    verdict = capture.recognize().verdicts[0]
+    print(verdict.profile_name, verdict.confidence)
+    for line in verdict.evidence:
+        print(" ", line)
 ```
 
 ## Changes

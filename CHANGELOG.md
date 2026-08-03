@@ -20,6 +20,33 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A capture is recognized as a drive family's, on all three surfaces.**
+  `CaptureSet::recognize` consults every enrolled drive profile and ranks
+  what claims the capture; `recognize_as` pins one whether or not it
+  would have won, and what the caller pinned travels into the result.
+  Reflected as `remanence_capture_set_recognize` with its accessors, and
+  as the Python `recognize` / `recognize_as` returning `Recognition`.
+  A capture no profile claims is a named refusal, and a lone enrolled
+  profile never wins by being the only one. The verdict carries the
+  observations that produced its confidence rather than the figure
+  alone: per zone, how many of its declared locations were recovered and
+  what each holds; per source position, the derived cell projected onto
+  the family's nominal rotation, the record count, the bit spacing
+  between records and how far it departs from repeating, the seam that
+  departure locates as an angle, how many observations agreed, and the
+  adjacent position holding the same content where one does — reported,
+  never resolved, because flux alone cannot tell a head reading its
+  neighbour from an instrument that did not move. Recognition stops at
+  structure: it reads interval lengths and the patterns they form, and
+  resolves no bit, assembles no byte, names no sector and validates no
+  checksum. The Commodore 1541 is the first and only enrolled family,
+  declared from its published conventions — two drive steps to a track,
+  300 RPM against a 16 MHz reference, and the four documented speed
+  zones with their track boundaries and sector counts. Probing the
+  prepared capture set recovers all four of those zones at their
+  documented boundaries with their documented sector counts; the
+  half-step positions, the unrecorded surface and the positions past the
+  last declared zone are each refused by the rule they broke.
 - **A KryoFlux capture set is opened as one capture, on all three
   surfaces.** `CaptureSet` reads a capture of a floppy disk — one stream
   file per head per drive-step position, archived together — out of a

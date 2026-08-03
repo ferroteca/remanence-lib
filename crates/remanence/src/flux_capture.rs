@@ -1863,6 +1863,11 @@ impl SourcePosition {
         }
     }
 
+    /// The position, as an exact reduced ratio of the source's steps.
+    pub(crate) fn parts(self) -> (u64, u64) {
+        (self.numerator, self.denominator)
+    }
+
     /// A fractional step, in the source's own terms.
     pub(crate) fn fraction(source: &str, numerator: u64, denominator: u64) -> Result<Self> {
         if denominator == 0 {

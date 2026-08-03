@@ -2882,6 +2882,437 @@ pub unsafe extern "C" fn remanence_capture_set_observation_markers(
         .map_or(0, |observation| observation.markers)
 }
 
+// ---------------------------------------------------------------------------
+// Drive-profile recognition: which family's conventions a capture was
+// recorded under, ranked, with the observations that produced the
+// verdict. A count, a density, an angle and an absence cross this
+// surface; nothing that was decoded, because nothing was.
+
+use remanence::Recognition;
+
+/// One zone as a profile declares it, and what the capture recovered of
+/// it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceZoneClaim {
+    pub first_location: u64,
+    pub last_location: u64,
+    /// What the family claims one location in this zone holds.
+    pub records_declared: u32,
+    pub locations_declared: u64,
+    pub locations_claimed: u64,
+    /// The cell this zone claims, in thousandths of a reference cycle.
+    pub nominal_cell_millicycles: u64,
+}
+
+/// What the probe found at one source position. Every `has_*` flag says
+/// whether the value beside it was established at all: an absence is a
+/// finding, not a zero.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceLocationVerdict {
+    pub position_numerator: u64,
+    pub position_denominator: u64,
+    pub has_head: bool,
+    pub head: u64,
+    /// The family location this position addresses, where the family's
+    /// addressing covers it at all.
+    pub has_family_location: bool,
+    pub family_location: u64,
+    pub has_zone: bool,
+    pub zone: u32,
+    pub records: u32,
+    /// The bit distance between record starts, where it repeats.
+    pub has_record_bits: bool,
+    pub record_bits: u64,
+    /// How far that spacing departs from its own median. Zero is a
+    /// spacing that repeats to the bit.
+    pub record_bits_deviation: u64,
+    /// The one departure from it, as an angle in reference-clock cycles.
+    pub has_seam: bool,
+    pub seam_cycles: u64,
+    /// The derived cell projected onto the family's nominal rotation,
+    /// in thousandths of a reference cycle, beside what the zone claims.
+    pub has_cell: bool,
+    pub cell_millicycles: u64,
+    pub has_nominal_cell: bool,
+    pub nominal_cell_millicycles: u64,
+    /// How much of the interval population classified, per thousand.
+    pub resolved_permille: u32,
+    pub observations: u32,
+    pub observations_agreeing: u32,
+    /// The adjacent position holding the same content, where one does.
+    pub has_duplicate: bool,
+    pub duplicate_numerator: u64,
+    pub duplicate_denominator: u64,
+    pub claimed: bool,
+}
+
+struct VerdictView {
+    profile_id: CString,
+    profile_name: CString,
+    evidence: Vec<CString>,
+    artifacts: Vec<CString>,
+    refusals: Vec<Option<CString>>,
+}
+
+/// A recognition result, ranked highest confidence first.
+pub struct RemanenceRecognition {
+    recognition: Recognition,
+    pinned: Option<CString>,
+    evidence: Vec<CString>,
+    verdicts: Vec<VerdictView>,
+}
+
+impl RemanenceRecognition {
+    fn new(recognition: Recognition) -> Self {
+        let pinned = recognition.pinned.as_deref().map(to_cstring);
+        let evidence = recognition.evidence.iter().map(|line| to_cstring(line)).collect();
+        let verdicts = recognition
+            .verdicts
+            .iter()
+            .map(|verdict| VerdictView {
+                profile_id: to_cstring(&verdict.profile_id),
+                profile_name: to_cstring(&verdict.profile_name),
+                evidence: verdict.evidence.iter().map(|line| to_cstring(line)).collect(),
+                artifacts: verdict
+                    .locations
+                    .iter()
+                    .map(|location| to_cstring(&location.artifact))
+                    .collect(),
+                refusals: verdict
+                    .locations
+                    .iter()
+                    .map(|location| location.refusal.as_deref().map(to_cstring))
+                    .collect(),
+                            })
+            .collect();
+        Self {
+            recognition,
+            pinned,
+            evidence,
+            verdicts,
+        }
+    }
+}
+
+unsafe fn recognition_verdict<'a>(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> Option<(&'a remanence::ProfileVerdict, &'a VerdictView)> {
+    let recognition = unsafe { recognition.as_ref() }?;
+    Some((
+        recognition.recognition.verdicts.get(verdict)?,
+        recognition.verdicts.get(verdict)?,
+    ))
+}
+
+/// Recognizes the drive family a capture set was recorded under. Every
+/// enrolled profile is consulted and what claims the capture is ranked;
+/// a capture no profile claims is a named refusal. Returns null on
+/// failure and stores a message in `error_out` (free with
+/// `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_recognize(
+    set: *const RemanenceCaptureSet,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceRecognition {
+    unsafe { clear_error(error_out) };
+    let Some(set) = (unsafe { set.as_ref() }) else {
+        let error = remanence::Error::io("null capture set");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match set.set.recognize() {
+        Ok(recognition) => Box::into_raw(Box::new(RemanenceRecognition::new(recognition))),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Recognizes the capture against one named profile, whether or not it
+/// would have won the ranking. A profile this build does not enroll is
+/// refused by name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_recognize_as(
+    set: *const RemanenceCaptureSet,
+    profile_id: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> *mut RemanenceRecognition {
+    unsafe { clear_error(error_out) };
+    let (Some(set), false) = (unsafe { set.as_ref() }, profile_id.is_null()) else {
+        let error = remanence::Error::io("null capture set or profile id");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    let id = String::from_utf8_lossy(unsafe { CStr::from_ptr(profile_id) }.to_bytes());
+    match set.set.recognize_as(id.as_ref()) {
+        Ok(recognition) => Box::into_raw(Box::new(RemanenceRecognition::new(recognition))),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a recognition handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_free(recognition: *mut RemanenceRecognition) {
+    if !recognition.is_null() {
+        drop(unsafe { Box::from_raw(recognition) });
+    }
+}
+
+/// The profile the caller pinned, or null when the ranking was open.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_pinned(
+    recognition: *const RemanenceRecognition,
+) -> *const c_char {
+    unsafe { recognition.as_ref() }.map_or(ptr::null(), |recognition| {
+        recognition
+            .pinned
+            .as_ref()
+            .map_or(ptr::null(), |pinned| pinned.as_ptr())
+    })
+}
+
+/// Number of evidence lines about the recognition itself.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_evidence_count(
+    recognition: *const RemanenceRecognition,
+) -> usize {
+    unsafe { recognition.as_ref() }.map_or(0, |recognition| recognition.evidence.len())
+}
+
+/// One of those lines, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_evidence(
+    recognition: *const RemanenceRecognition,
+    index: usize,
+) -> *const c_char {
+    unsafe { recognition.as_ref() }.map_or(ptr::null(), |recognition| {
+        recognition
+            .evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
+/// How many profiles claimed the capture, highest confidence first.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_verdict_count(
+    recognition: *const RemanenceRecognition,
+) -> usize {
+    unsafe { recognition.as_ref() }.map_or(0, |recognition| recognition.verdicts.len())
+}
+
+/// One verdict's profile identifier, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_profile_id(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> *const c_char {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(ptr::null(), |(_, view)| view.profile_id.as_ptr())
+}
+
+/// One verdict's human-readable family name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_profile_name(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> *const c_char {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(ptr::null(), |(_, view)| view.profile_name.as_ptr())
+}
+
+/// Detection confidence, 0-100. Never an answer on its own: read the
+/// evidence beside it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_confidence(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> u8 {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(0, |(verdict, _)| verdict.confidence)
+}
+
+/// How many of the profile's declared locations the capture claimed,
+/// and how many it declares.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_locations_claimed(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> u32 {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(0, |(verdict, _)| verdict.locations_claimed)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_locations_declared(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> u64 {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(0, |(verdict, _)| verdict.locations_declared)
+}
+
+/// Number of evidence lines behind this verdict.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_verdict_evidence_count(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> usize {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(0, |(_, view)| view.evidence.len())
+}
+
+/// One of those lines, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_verdict_evidence(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+    index: usize,
+) -> *const c_char {
+    unsafe { recognition_verdict(recognition, verdict) }.map_or(ptr::null(), |(_, view)| {
+        view.evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
+/// How many density zones the profile declares.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_zone_count(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> usize {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(0, |(verdict, _)| verdict.zones.len())
+}
+
+/// One zone, written into `out`. Returns false when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_zone(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+    zone: usize,
+    out: *mut RemanenceZoneClaim,
+) -> bool {
+    let Some((verdict, _)) = (unsafe { recognition_verdict(recognition, verdict) }) else {
+        return false;
+    };
+    let Some(claim) = verdict.zones.get(zone) else {
+        return false;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = RemanenceZoneClaim {
+                first_location: claim.first_location,
+                last_location: claim.last_location,
+                records_declared: claim.records_declared,
+                locations_declared: claim.locations_declared,
+                locations_claimed: claim.locations_claimed,
+                nominal_cell_millicycles: claim.nominal_cell_millicycles,
+            };
+        }
+    }
+    true
+}
+
+/// How many source positions the probe accounted for.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_location_count(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+) -> usize {
+    unsafe { recognition_verdict(recognition, verdict) }
+        .map_or(0, |(verdict, _)| verdict.locations.len())
+}
+
+/// One position's findings, written into `out`. Returns false when out
+/// of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_location(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+    location: usize,
+    out: *mut RemanenceLocationVerdict,
+) -> bool {
+    let Some((verdict, _)) = (unsafe { recognition_verdict(recognition, verdict) }) else {
+        return false;
+    };
+    let Some(found) = verdict.locations.get(location) else {
+        return false;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = RemanenceLocationVerdict {
+                position_numerator: found.position.numerator,
+                position_denominator: found.position.denominator,
+                has_head: found.head.is_some(),
+                head: found.head.unwrap_or(0),
+                has_family_location: found.family_location.is_some(),
+                family_location: found.family_location.unwrap_or(0),
+                has_zone: found.zone.is_some(),
+                zone: found.zone.unwrap_or(0),
+                records: found.records,
+                has_record_bits: found.record_bits.is_some(),
+                record_bits: found.record_bits.unwrap_or(0),
+                record_bits_deviation: found.record_bits_deviation,
+                has_seam: found.seam_cycles.is_some(),
+                seam_cycles: found.seam_cycles.unwrap_or(0),
+                has_cell: found.cell_millicycles.is_some(),
+                cell_millicycles: found.cell_millicycles.unwrap_or(0),
+                has_nominal_cell: found.nominal_cell_millicycles.is_some(),
+                nominal_cell_millicycles: found.nominal_cell_millicycles.unwrap_or(0),
+                resolved_permille: found.resolved_permille,
+                observations: found.observations,
+                observations_agreeing: found.observations_agreeing,
+                has_duplicate: found.duplicate_of.is_some(),
+                duplicate_numerator: found.duplicate_of.map_or(0, |of| of.numerator),
+                duplicate_denominator: found.duplicate_of.map_or(0, |of| of.denominator),
+                claimed: found.claimed,
+            };
+        }
+    }
+    true
+}
+
+/// The member one position was read from, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_location_artifact(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+    location: usize,
+) -> *const c_char {
+    unsafe { recognition_verdict(recognition, verdict) }.map_or(ptr::null(), |(_, view)| {
+        view.artifacts
+            .get(location)
+            .map_or(ptr::null(), |artifact| artifact.as_ptr())
+    })
+}
+
+/// Why a position was not claimed, in the profile's own terms; null when
+/// it was claimed or the index is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recognition_location_refusal(
+    recognition: *const RemanenceRecognition,
+    verdict: usize,
+    location: usize,
+) -> *const c_char {
+    unsafe { recognition_verdict(recognition, verdict) }.map_or(ptr::null(), |(_, view)| {
+        view.refusals
+            .get(location)
+            .and_then(Option::as_ref)
+            .map_or(ptr::null(), |refusal| refusal.as_ptr())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

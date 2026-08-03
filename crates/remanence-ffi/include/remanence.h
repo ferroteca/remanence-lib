@@ -103,8 +103,65 @@ typedef struct RemanenceHdosFileList RemanenceHdosFileList;
 // The result of identifying a session's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
 
+// A recognition result, ranked highest confidence first.
+typedef struct RemanenceRecognition RemanenceRecognition;
+
 // An open analysis session over one disk image.
 typedef struct RemanenceSession RemanenceSession;
+
+// One zone as a profile declares it, and what the capture recovered of
+// it.
+typedef struct {
+  uint64_t first_location;
+  uint64_t last_location;
+  // What the family claims one location in this zone holds.
+  uint32_t records_declared;
+  uint64_t locations_declared;
+  uint64_t locations_claimed;
+  // The cell this zone claims, in thousandths of a reference cycle.
+  uint64_t nominal_cell_millicycles;
+} RemanenceZoneClaim;
+
+// What the probe found at one source position. Every `has_*` flag says
+// whether the value beside it was established at all: an absence is a
+// finding, not a zero.
+typedef struct {
+  uint64_t position_numerator;
+  uint64_t position_denominator;
+  bool has_head;
+  uint64_t head;
+  // The family location this position addresses, where the family's
+  // addressing covers it at all.
+  bool has_family_location;
+  uint64_t family_location;
+  bool has_zone;
+  uint32_t zone;
+  uint32_t records;
+  // The bit distance between record starts, where it repeats.
+  bool has_record_bits;
+  uint64_t record_bits;
+  // How far that spacing departs from its own median. Zero is a
+  // spacing that repeats to the bit.
+  uint64_t record_bits_deviation;
+  // The one departure from it, as an angle in reference-clock cycles.
+  bool has_seam;
+  uint64_t seam_cycles;
+  // The derived cell projected onto the family's nominal rotation,
+  // in thousandths of a reference cycle, beside what the zone claims.
+  bool has_cell;
+  uint64_t cell_millicycles;
+  bool has_nominal_cell;
+  uint64_t nominal_cell_millicycles;
+  // How much of the interval population classified, per thousand.
+  uint32_t resolved_permille;
+  uint32_t observations;
+  uint32_t observations_agreeing;
+  // The adjacent position holding the same content, where one does.
+  bool has_duplicate;
+  uint64_t duplicate_numerator;
+  uint64_t duplicate_denominator;
+  bool claimed;
+} RemanenceLocationVerdict;
 
 #ifdef __cplusplus
 extern "C" {
@@ -860,6 +917,98 @@ uint64_t remanence_capture_set_observation_markers(const RemanenceCaptureSet *se
                                                    size_t member,
                                                    size_t run,
                                                    size_t observation);
+
+// Recognizes the drive family a capture set was recorded under. Every
+// enrolled profile is consulted and what claims the capture is ranked;
+// a capture no profile claims is a named refusal. Returns null on
+// failure and stores a message in `error_out` (free with
+// `remanence_string_free`).
+RemanenceRecognition *remanence_capture_set_recognize(const RemanenceCaptureSet *set,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out);
+
+// Recognizes the capture against one named profile, whether or not it
+// would have won the ranking. A profile this build does not enroll is
+// refused by name.
+RemanenceRecognition *remanence_capture_set_recognize_as(const RemanenceCaptureSet *set,
+                                                         const char *profile_id,
+                                                         RemanenceErrorCategory *error_category_out,
+                                                         char **error_out);
+
+// Frees a recognition handle.
+void remanence_recognition_free(RemanenceRecognition *recognition);
+
+// The profile the caller pinned, or null when the ranking was open.
+const char *remanence_recognition_pinned(const RemanenceRecognition *recognition);
+
+// Number of evidence lines about the recognition itself.
+size_t remanence_recognition_evidence_count(const RemanenceRecognition *recognition);
+
+// One of those lines, or null when out of range.
+const char *remanence_recognition_evidence(const RemanenceRecognition *recognition, size_t index);
+
+// How many profiles claimed the capture, highest confidence first.
+size_t remanence_recognition_verdict_count(const RemanenceRecognition *recognition);
+
+// One verdict's profile identifier, or null when out of range.
+const char *remanence_recognition_profile_id(const RemanenceRecognition *recognition,
+                                             size_t verdict);
+
+// One verdict's human-readable family name.
+const char *remanence_recognition_profile_name(const RemanenceRecognition *recognition,
+                                               size_t verdict);
+
+// Detection confidence, 0-100. Never an answer on its own: read the
+// evidence beside it.
+uint8_t remanence_recognition_confidence(const RemanenceRecognition *recognition, size_t verdict);
+
+// How many of the profile's declared locations the capture claimed,
+// and how many it declares.
+uint32_t remanence_recognition_locations_claimed(const RemanenceRecognition *recognition,
+                                                 size_t verdict);
+
+uint64_t remanence_recognition_locations_declared(const RemanenceRecognition *recognition,
+                                                  size_t verdict);
+
+// Number of evidence lines behind this verdict.
+size_t remanence_recognition_verdict_evidence_count(const RemanenceRecognition *recognition,
+                                                    size_t verdict);
+
+// One of those lines, or null when out of range.
+const char *remanence_recognition_verdict_evidence(const RemanenceRecognition *recognition,
+                                                   size_t verdict,
+                                                   size_t index);
+
+// How many density zones the profile declares.
+size_t remanence_recognition_zone_count(const RemanenceRecognition *recognition, size_t verdict);
+
+// One zone, written into `out`. Returns false when out of range.
+bool remanence_recognition_zone(const RemanenceRecognition *recognition,
+                                size_t verdict,
+                                size_t zone,
+                                RemanenceZoneClaim *out);
+
+// How many source positions the probe accounted for.
+size_t remanence_recognition_location_count(const RemanenceRecognition *recognition,
+                                            size_t verdict);
+
+// One position's findings, written into `out`. Returns false when out
+// of range.
+bool remanence_recognition_location(const RemanenceRecognition *recognition,
+                                    size_t verdict,
+                                    size_t location,
+                                    RemanenceLocationVerdict *out);
+
+// The member one position was read from, or null when out of range.
+const char *remanence_recognition_location_artifact(const RemanenceRecognition *recognition,
+                                                    size_t verdict,
+                                                    size_t location);
+
+// Why a position was not claimed, in the profile's own terms; null when
+// it was claimed or the index is out of range.
+const char *remanence_recognition_location_refusal(const RemanenceRecognition *recognition,
+                                                   size_t verdict,
+                                                   size_t location);
 
 #ifdef __cplusplus
 }  // extern "C"

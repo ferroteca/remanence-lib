@@ -1189,6 +1189,30 @@ impl CaptureSet {
         Ok(CaptureSetReport::new(self.get()?.inspect()))
     }
 
+    /// Recognizes the drive family this capture belongs to.
+    ///
+    /// Every enrolled profile is consulted and what claims the capture
+    /// is ranked, never resolved by catalog order; a capture no profile
+    /// claims is a named refusal, and a lone enrolled profile never wins
+    /// by being the only one. The verdict carries the observations that
+    /// produced its confidence, because a confidence figure on its own
+    /// is not an answer.
+    fn recognize(&self) -> PyResult<Recognition> {
+        self.get()?
+            .recognize()
+            .map(|recognition| Recognition::new(&recognition))
+            .map_err(to_py_err)
+    }
+
+    /// Recognizes the capture against one named profile, whether or not
+    /// it would have won the ranking.
+    fn recognize_as(&self, profile_id: &str) -> PyResult<Recognition> {
+        self.get()?
+            .recognize_as(profile_id)
+            .map(|recognition| Recognition::new(&recognition))
+            .map_err(to_py_err)
+    }
+
     /// Releases the claim on the archive file and discards the private
     /// session storage the capture decoded into.
     fn close(&mut self) {
@@ -1207,6 +1231,198 @@ impl CaptureSet {
     ) -> bool {
         self.inner = None;
         false
+    }
+}
+
+/// One zone as a profile declares it, and what the capture recovered of
+/// it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ZoneClaim {
+    pub first_location: u64,
+    pub last_location: u64,
+    /// What the family claims one location in this zone holds.
+    pub records_declared: u32,
+    pub locations_declared: u64,
+    pub locations_claimed: u64,
+    /// The cell this zone claims, in thousandths of a reference cycle.
+    pub nominal_cell_millicycles: u64,
+}
+
+#[pymethods]
+impl ZoneClaim {
+    fn __repr__(&self) -> String {
+        format!(
+            "ZoneClaim({}-{}, {} records, {}/{} claimed)",
+            self.first_location,
+            self.last_location,
+            self.records_declared,
+            self.locations_claimed,
+            self.locations_declared
+        )
+    }
+}
+
+/// What the probe found at one source position.
+///
+/// Every field is an observation, not a conclusion: a count, a density,
+/// an angle, an absence. Nothing here names a sector or reads a byte.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct LocationVerdict {
+    /// The member this position was read from.
+    pub artifact: String,
+    pub position: StepPosition,
+    pub head: Option<u64>,
+    /// The family location this position addresses, where the family's
+    /// addressing covers it at all.
+    pub family_location: Option<u64>,
+    pub zone: Option<u32>,
+    pub records: u32,
+    /// The bit distance between record starts, where it repeats.
+    pub record_bits: Option<u64>,
+    /// How far that spacing departs from its own median. Zero is a
+    /// spacing that repeats to the bit.
+    pub record_bits_deviation: u64,
+    /// The one departure from it, as an angle in reference-clock cycles.
+    pub seam_cycles: Option<u64>,
+    /// The derived cell projected onto the family's nominal rotation,
+    /// in thousandths of a reference cycle, beside what the zone claims.
+    pub cell_millicycles: Option<u64>,
+    pub nominal_cell_millicycles: Option<u64>,
+    /// How much of the interval population classified, per thousand.
+    pub resolved_permille: u32,
+    pub observations: u32,
+    pub observations_agreeing: u32,
+    /// The adjacent position holding the same content, where one does.
+    /// Reported, never resolved.
+    pub duplicate_of: Option<StepPosition>,
+    pub claimed: bool,
+    /// Why this position was not claimed, in the profile's own terms.
+    pub refusal: Option<String>,
+}
+
+#[pymethods]
+impl LocationVerdict {
+    fn __repr__(&self) -> String {
+        format!(
+            "LocationVerdict(position={}/{}, claimed={}, records={})",
+            self.position.numerator, self.position.denominator, self.claimed, self.records
+        )
+    }
+}
+
+/// One profile's answer, with the observations that produced it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ProfileVerdict {
+    pub profile_id: String,
+    pub profile_name: String,
+    pub profile_version: u32,
+    /// Bounded and comparable, 0 to 100. Never an answer on its own.
+    pub confidence: u8,
+    pub locations_claimed: u32,
+    pub locations_declared: u64,
+    pub zones: Vec<ZoneClaim>,
+    pub locations: Vec<LocationVerdict>,
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl ProfileVerdict {
+    fn __repr__(&self) -> String {
+        format!(
+            "ProfileVerdict(profile_id={:?}, confidence={}, {}/{} locations)",
+            self.profile_id, self.confidence, self.locations_claimed, self.locations_declared
+        )
+    }
+}
+
+/// What the enrolled profiles made of one capture, ranked.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct Recognition {
+    /// Highest confidence first. Several profiles may claim one
+    /// capture, and the ranking is reported rather than resolved.
+    pub verdicts: Vec<ProfileVerdict>,
+    /// The profile the caller pinned, where one was pinned.
+    pub pinned: Option<String>,
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl Recognition {
+    fn __repr__(&self) -> String {
+        format!(
+            "Recognition(verdicts={}, pinned={})",
+            self.verdicts.len(),
+            self.pinned
+                .as_deref()
+                .map_or_else(|| "None".to_owned(), |pinned| format!("{pinned:?}"))
+        )
+    }
+}
+
+impl Recognition {
+    fn new(recognition: &remanence::Recognition) -> Self {
+        Self {
+            verdicts: recognition
+                .verdicts
+                .iter()
+                .map(|verdict| ProfileVerdict {
+                    profile_id: verdict.profile_id.clone(),
+                    profile_name: verdict.profile_name.clone(),
+                    profile_version: verdict.profile_version,
+                    confidence: verdict.confidence,
+                    locations_claimed: verdict.locations_claimed,
+                    locations_declared: verdict.locations_declared,
+                    zones: verdict
+                        .zones
+                        .iter()
+                        .map(|zone| ZoneClaim {
+                            first_location: zone.first_location,
+                            last_location: zone.last_location,
+                            records_declared: zone.records_declared,
+                            locations_declared: zone.locations_declared,
+                            locations_claimed: zone.locations_claimed,
+                            nominal_cell_millicycles: zone.nominal_cell_millicycles,
+                        })
+                        .collect(),
+                    locations: verdict
+                        .locations
+                        .iter()
+                        .map(|location| LocationVerdict {
+                            artifact: location.artifact.clone(),
+                            position: StepPosition {
+                                numerator: location.position.numerator,
+                                denominator: location.position.denominator,
+                            },
+                            head: location.head,
+                            family_location: location.family_location,
+                            zone: location.zone,
+                            records: location.records,
+                            record_bits: location.record_bits,
+                            record_bits_deviation: location.record_bits_deviation,
+                            seam_cycles: location.seam_cycles,
+                            cell_millicycles: location.cell_millicycles,
+                            nominal_cell_millicycles: location.nominal_cell_millicycles,
+                            resolved_permille: location.resolved_permille,
+                            observations: location.observations,
+                            observations_agreeing: location.observations_agreeing,
+                            duplicate_of: location.duplicate_of.map(|of| StepPosition {
+                                numerator: of.numerator,
+                                denominator: of.denominator,
+                            }),
+                            claimed: location.claimed,
+                            refusal: location.refusal.clone(),
+                        })
+                        .collect(),
+                    evidence: verdict.evidence.clone(),
+                })
+                .collect(),
+            pinned: recognition.pinned.clone(),
+            evidence: recognition.evidence.clone(),
+        }
     }
 }
 
@@ -1252,6 +1468,10 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CaptureIssue>()?;
     m.add_class::<StepPosition>()?;
     m.add_class::<TimeBaseReport>()?;
+    m.add_class::<Recognition>()?;
+    m.add_class::<ProfileVerdict>()?;
+    m.add_class::<LocationVerdict>()?;
+    m.add_class::<ZoneClaim>()?;
     m.add_class::<Session>()?;
     m.add_class::<Identification>()?;
     m.add_class::<Container>()?;

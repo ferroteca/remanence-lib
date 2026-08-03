@@ -961,6 +961,25 @@ impl CaptureSet {
     pub fn inspect(&self) -> &CaptureSetReport {
         &self.report
     }
+
+    /// Recognizes the drive family this capture belongs to (P30).
+    ///
+    /// Every enrolled profile is consulted and what claims the capture
+    /// is ranked, never resolved by catalog order; a capture no profile
+    /// claims is a named refusal, and a lone enrolled profile never wins
+    /// by being the only one. The verdict carries the observations that
+    /// produced its confidence, because a confidence figure on its own
+    /// is not an answer (P4).
+    pub fn recognize(&self) -> Result<crate::Recognition> {
+        crate::drive_profile::recognition(&self.capture, None)
+    }
+
+    /// Recognizes the capture against one named profile, whether or not
+    /// it would have won the ranking. What the caller pinned travels
+    /// into the result.
+    pub fn recognize_as(&self, profile_id: &str) -> Result<crate::Recognition> {
+        crate::drive_profile::recognition(&self.capture, Some(profile_id))
+    }
 }
 
 fn report_member(
