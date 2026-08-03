@@ -1971,7 +1971,7 @@ contract above.
 That public replacement touches S1, S2, and S3 and must land coherently across
 Rust, C, and Python. It depends on the in-force image adapters,
 authoritative and active layer model, provenance, and assigned device identity. It is separate
-from F20: layered inspection reports the device and its relationships, while
+from F38: layered inspection reports the device and its relationships, while
 U17 supplies direct block operations over that device. Neither feature should
 grow a second orchestration path to serve the other.
 

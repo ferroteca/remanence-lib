@@ -9,75 +9,6 @@ SPDX-License-Identifier: GPL-3.0-only
 > implementation. Feature numbers record order of issue, not work order or
 > priority.
 
-## F20 — Layered partition and volume inspection
-
-Replace the current FAT-shaped `DiskGeometry` snapshot and `geometry()`
-verb with one evidence-bearing disk inspection report aligned with the
-pledged image, device, partition-schema, volume-composition, filesystem, and
-active-layer seams. Preserve every behavior U4 claims today while making the
-result capable of guiding later operations without conflating partitions,
-volumes, filesystems, physical geometry, or generic containers.
-
-One deep inspection operation returns the complete report. It names the
-opened image and block-active device, any recognized partition schema and
-every declared partition region, each volume actually composed from the
-available regions, and each filesystem actually recognized on a volume.
-Typed relationships join those results. Evidence, ambiguity, absence, and
-recognized refusals remain attached to the seam which owns them; a failed
-filesystem read does not erase its partition row or renumber later volumes.
-
-The report states what the device's leading structure turned out to be as
-one classified outcome — blank; a recognized partition schema, whether or
-not any volume composed from it; a direct unpartitioned volume; or nonblank
-content no adapter claims. That is a distinct value, not a flag beside two
-lists which may each be empty for several different reasons: a consumer
-reconstructing the state from those combinations is reimplementing a
-judgement this library has already made.
-
-Every declared region reports both its raw declaration — the type value
-exactly as the schema records it — and a reading of what that value
-declares, present whether or not the type is inside this feature's read
-claim. The reading is fit to quote in a refusal a user will read: type
-`0x07` reads as NTFS or exFAT, and `0xee` says the disk is GPT rather than
-MBR. A kind tag alone does not meet that bar. Its point is that no consumer
-keeps a second partition-type table in order to explain what this library
-declined to read — the same reason P16 puts type interpretation inside the
-schema adapter.
-
-The report supplies opaque library-owned identities suitable for selecting a
-reported region, volume, or filesystem in a later operation. Their public
-semantics preserve U4's cross-report stability for an unchanged single-disk
-layout while P21's device identity remains scoped to the open composition.
-Callers never manufacture identities from partition numbers, offsets, array
-positions, labels, or filesystem kinds.
-
-F20 replaces the public shape coherently across S1, S2, and S3. The Rust,
-C, and Python presentations expose the same report graph, relationship and
-identity semantics, optional facts, and structured issues. The pre-1.0
-`DiskGeometry`/geometry surface is deleted rather than retained as a
-flattened compatibility view. Existing file verbs move to the new opaque
-volume identity without changing U3's file behavior.
-
-F20 depends on the in-force adapter architecture for the adapter catalogs,
-authoritative and active
-layer model, provenance, and library-assigned device identity. It composes
-the MBR, direct-volume, and FAT adapters already provided by the built-in
-catalogs; it neither
-duplicates their recognition rules nor adds another orchestration path.
-
-The feature is deliberately limited to the formats and compositions already
-needed to preserve U4: raw and qcow2 block devices, MBR including extended
-and logical entries, a partitionless direct volume, and FAT12/FAT16
-filesystems. GPT, NTFS, multi-device opening, manual volume recipes, complex
-volume managers, Windows namespace reconstruction, partition editing, and
-new disk formats remain outside it.
-
-Touches: S1, S2, S3. Supports: U3, U4; P3–P5, P13, P16–P19, P21, P23,
-P27.
-
-Companion design:
-[design/layered-partition-volume-inspection.md](design/layered-partition-volume-inspection.md).
-
 ## F21 — Mixed-mode optical media and presentations
 
 Introduce the P24 optical active layer and the compositions required by U18:
@@ -115,7 +46,7 @@ P16 partitions and to preserve the relationship from an eligible data track
 to its derived block extent and volume.
 
 Touches: S1, S2, S3. Supports: U18; P3–P5, P12–P15, P19, P21, P23, P24,
-P27. F20 is not a prerequisite; any shared
+P27. F38 is not a prerequisite; any shared
 report vocabulary must converge before either surface lands.
 
 Companion design:
@@ -182,16 +113,18 @@ but it is not tape-active.
 The first pledge must fit one sprint and may therefore cover only TAP parsing,
 inspection, and standard KERNAL recovery. Any later Aaru adapter, custom-loader
 decoder, pulse generation, write path, or drive presentation is separately
-vetted and queued. F23 and F20 must converge on one P19 file-container
-interface before either duplicates enumeration, identity, or read operations.
+vetted and queued. F23 presents through the delivered P19 file-container
+contract and must not duplicate its enumeration, identity, or read
+operations; neither pledged disk feature presents a filesystem through that
+seam, so nothing there constrains this one.
 
 F23 adds `tape` to P23's exact vocabulary when pledged, using P26's
 signal-or-recorded-object wording. Repeated reads and redundant KERNAL copies
 remain evidence, not independent media snapshots.
 
 Touches: S1, S2, S3. Supports: U21; P3–P5, P12–P15, P19, P21, P23, P26,
-P27. F20–F22 are not prerequisites, but F20
-and F23 share the P19 seam and cannot land incompatible public interfaces.
+P27. F21, F22, F38 and F39 are not
+prerequisites, and none of them presents a filesystem through the P19 seam.
 
 Companion design:
 [design/computer-tape-representations.md](design/computer-tape-representations.md).
@@ -218,9 +151,9 @@ inside the volume, and the image's own filename are not evidence of one, and
 an unlabeled volume is reported unlabeled rather than given a placeholder.
 
 The label sits today on the volume record the disk report returns and, once
-F20 has landed, on the filesystem record where that seam owns it. F24 lands on
+F38 has landed, on the filesystem record where that seam owns it. F24 lands on
 whichever presentation is current when it is picked up; it neither waits for
-F20 nor blocks it, and the answer it defines is the same either way.
+F38 nor blocks it, and the answer it defines is the same either way.
 
 Touches: S1, S2, S3. Supports: U2, U4, U22; P3, P4, P5, P18. Needs: nothing
 pledged first.
@@ -298,8 +231,8 @@ consumer shows a user, and the identity is what it passes back into a file
 verb. Composing a rooted namespace over the mapping is separately admitted by
 P19 and is not this feature.
 
-Touches: S1, S2, S3. Supports: U22; P3, P4, P5, P19, P21. Needs: F20 pledged
-and delivered, for the stable volume identities and the composed-volume report
+Touches: S1, S2, S3. Supports: U22; P3, P4, P5, P19, P21. Needs: F38
+delivered, for the stable volume identities and the composed-volume report
 this maps over; and the P19 amendment
 ([ARCHITECTURE.md](ARCHITECTURE.md)) pledged, which is what admits a composer
 that derives a mapping instead of consuming one. D5's deferral is untouched:

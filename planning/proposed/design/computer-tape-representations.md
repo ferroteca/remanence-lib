@@ -188,8 +188,9 @@ impl FileContainer<'_> {
 }
 ```
 
-The precise P19 types must be settled jointly with F20. F23 must not add a
-second generic enumeration API merely because the first adapter is tape.
+The precise P19 types are the delivered file-container contract's, and F23
+is the feature that first presents through it. F23 must not add a second
+generic enumeration API merely because the first adapter is tape.
 
 The `C64Tape` name is intentionally concrete. A hypothetical `Tape::open`
 that promises one schema for TAP pulses and Aaru records would be a shallow
