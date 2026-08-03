@@ -5,7 +5,11 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # The file-container presentation
 
-> **Status:** pledged, not delivered. This design serves F35 and authorizes no implementation outside that feature.
+> **Status:** delivered; the feature that carried it has been struck and its
+> handle retired (D11). This remains the written statement of the contract —
+> implemented in `crates/remanence/src/file_container.rs`, and what a new
+> provider is written against. It describes no application surface, so it
+> stays here rather than moving out.
 
 ## There is no file-container layer
 
@@ -19,8 +23,8 @@ and a composed multi-volume namespace are real systems that already hold
 their own structure. Each of them can **present a file-container view**.
 There is no intermediate representation for them to be copied into, no
 generated tree standing above them, and no second place where a listing
-lives. What F35 delivers is the **interface they present through** and the
-**vocabulary they answer in** — not a container.
+lives. What this contract is, is the **interface they present through** and
+the **vocabulary they answer in** — not a container.
 
 This is not a small distinction:
 

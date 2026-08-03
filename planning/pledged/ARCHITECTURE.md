@@ -341,6 +341,24 @@ or some explicitly fabricated combination according to that format's
 information floor. Hardware emulation receives the resulting active media
 state as its durable dependency when a family composition is opened.
 
+**The bitstream a drive works on is materialized when it is used, not
+stored.** The floor is whatever the composition materialized — timed flux
+for a P64 or a raw capture, hardware bitstream where the source is
+bitstream-authoritative and nothing deeper is needed, as G64 is. Where flux
+is the floor, the read channel projects it into clocked bit state as
+rotation advances and that state is ephemeral: hardware emulation holds no
+durable layer of its own, and no second history of recovered bits is kept
+beside the flux that produced them. The drive consumes a bitstream either
+way and does not care which floor supplied it, which is what lets one
+hardware model serve both a flux capture and a bitstream image.
+
+This is which of the P23 amendment's two permitted paths the project takes,
+not a new claim: that amendment lets a hardware profile materialize a
+hardware-bitstream active layer, and the ordinary drive composition
+declines to, leaving the floor where the image put it. A profile that does
+perform that ascending transition is doing something explicit and separate,
+governed there.
+
 At runtime, the hardware emulation layer retains its ephemeral family state
 and generates and orders the modules' interactions. None of that
 continuation state or generated traffic becomes part of a disk image merely

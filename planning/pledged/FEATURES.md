@@ -7,14 +7,6 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** pledged, not delivered. Every feature here is owed by the project, but no entry promises an order, date, or implementation approval.
 
-## F29 — Archive catalog foundation: ZIP and 7z
-
-Establish the archive-catalog seam and isolate each archive grammar behind its own adapter. `ZipCatalog` owns ZIP parsing and entry sources; `SevenZipCatalog` owns 7z parsing, its supported compression methods, entry indexing, bounded extraction, and named refusals. A catalog reports ordered entries and produces bounded entry sources; it does not identify disk images or interpret media.
-
-The existing ZIP resolver becomes the ZIP catalog adapter. 7z support is a library capability, not test-only fixture plumbing. Unsupported 7z variants are refused by name rather than delegated to an external program or silently unpacked whole.
-
-Touches: S1, S2, S3. Supports: P3, P4, P12, P13, P19, P27. Needs: none.
-
 ## F30 — Private FluxLayer v1 foundation
 
 Establish the private, durable flux media model and its bounded session backing: physical track keys, capture runs, circular observations, exact timebases, parallel marker channels, ordered evidence, provenance, and sparse section-addressable storage. It is the common target of admitted capture adapters, not a public flux iterator, interchange format, drive profile, or sector decoder.
@@ -31,7 +23,7 @@ Recognize a declared KryoFlux capture set assembled from a catalog subtree and m
 
 The initial conformance fixture is the prepared paired-channel capture set. Tests open it through `SevenZipCatalog`, verify that all selected members form one capture set, and assert preservation of runs, markers, pre/post-index data, and separate channels. An incomplete, duplicate, or contradictory set is a named refusal. The adapter neither merges channels into an ideal disk nor materializes a bitstream, sector, or filesystem.
 
-Touches: S1, S2, S3. Supports: U7; P3, P4, P12, P13, P15, P22, P23, P27. Needs: F29 and F30 pledged and delivered.
+Touches: S1, S2, S3. Supports: U7; P3, P4, P12, P13, P15, P22, P23, P27. Needs: F30 pledged and delivered; the archive-catalog seam, which is delivered.
 
 Companion design: [design/kryoflux-capture-set.md](design/kryoflux-capture-set.md).
 
@@ -54,15 +46,3 @@ Conformance is round trip: a mastered fixture encodes, reopens through the adapt
 Touches: S1, S2, S3. Supports: U7, U23; P1, P3, P4, P6, P8, P9, P12, P13, P22, P29. Needs: F30 pledged and delivered.
 
 Companion design: [design/p64-image-adapter.md](design/p64-image-adapter.md).
-
-## F35 — The file-container presentation contract
-
-Establish the private interface every file-bearing provider presents through at the P19 seam, and the vocabulary they answer in. **No file-container layer is created**: a ZIP grammar, a FAT volume, a Commodore directory, and a composed namespace already hold their own structure and simply present a view of it, so there is no intermediate representation to copy into and nothing to invalidate. The interface is navigational — roots, one container's entries, one item's facts, its hook, its content — so a provider answers by reading what it was asked about (P27).
-
-The vocabulary is the deliverable's substance: names distinct from items, recorded name bytes beside the provider's claimed encoding and conversion, `SizeClaim` carrying what the claim is about, declared facts and foreign records under the two-outcome rule with source spelling and order preserved, and each item's hook into the floor. A presentation is never the truth (D10) and nothing is written through it. The coverage account is the one computed value, produced on request, total by construction over whatever floor the provider presents — so an archive's unaccounted bytes and a disk's unclaimed track are opaque regions in the same sense, itemized without names and never manufactured into pseudo-files.
-
-Unit tests exercise the contract through a synthetic provider: name/item separation, source-order and spelling retention, coverage totality and overlap refusal over more than one addressing vocabulary, and content reached as a bounded descriptor — without any filesystem or archive grammar.
-
-Touches: none. Supports: P2, P3, P4, P13, P19, P23, P27. Needs: the P19 scope amendment pledged.
-
-Companion design: [design/file-container-presentation.md](design/file-container-presentation.md).

@@ -58,6 +58,45 @@ removes it is the record either way.
 
 ## Decisions
 
+### D11 — A design outlives the feature that carried it
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** (none) — a records
+ruling; no numbered vision entry demands it.
+
+Two delivered features are struck from the pledged list, their handles
+retired: the archive-catalog foundation and the file-container presentation
+contract. The pledged list states that everything in it is owed, so a
+delivered entry left standing makes it overstate the project's debt.
+
+The archive-catalog entry was never struck on delivery because it was
+**pledged two minutes after the code landed** — written retrospectively into
+the owed list — so no delivery moment ever arrived at which the evaporate
+rule applied. That is a defect in the record, not a change to the rule,
+which has stood since the initial import. The lesson is the ordering, not
+the rule: an entry describing work already done does not belong in a list of
+what is owed.
+
+**A companion design does not evaporate with its feature.** README's sweep
+covers a design whose *proposal dies*, and its one-way move out of
+`planning/` covers a document describing a *delivered application surface*.
+Neither reaches a design for delivered work that touches no surface, and the
+file-container contract is exactly that: the code implements it, but the
+code is not a readable statement of what a future provider must satisfy.
+Deleting it would destroy the contract's only prose to satisfy a rule
+written for a different case. It stays, restated as delivered, and a design
+whose feature is struck is re-headed rather than swept.
+
+**Weighed and declined:** sweeping the design with its feature on the
+strict reading that a design serves one feature and dies with it (it would
+leave the conformance rules discoverable only by reading the module);
+moving it out of `planning/` under the delivered-surface rule (it describes
+no surface — the feature's own scope was `Touches: none`); and leaving both
+entries in place until a later cleanup, which is what let the first one
+persist.
+
+**Folded into:** [pledged/FEATURES.md](pledged/FEATURES.md);
+[pledged/design/file-container-presentation.md](pledged/design/file-container-presentation.md).
+
 ### D10 — The truth is the lowest materialized layer; file container is an interface, not a layer
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** P19, P23, P25.
