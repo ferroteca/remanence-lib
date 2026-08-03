@@ -141,7 +141,7 @@ the structures they occupy and are not itemized; recovery is a separate claim.
 ## The metadata vocabulary
 
 Providers answer in a shared vocabulary that is a conglomerate of what they
-can express, under the two-outcome rule `FluxLayer v1` established one seam
+can express, under the two-outcome rule `FluxCapture v1` established one seam
 down: a source fact either maps to a named field, or is retained as an
 ordered, provider-namespaced `DeclaredFact` with its source spelling and
 order preserved. A provider refusing a source feature names the feature; one

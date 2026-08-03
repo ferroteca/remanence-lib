@@ -58,6 +58,80 @@ removes it is the record either way.
 
 ## Decisions
 
+### D14 — The flux family holds two models, and only the medium is ever active
+
+**Decided** Paul Galbraith, 2026-08-03. **Supports** P13, P22, P23, P27, P29,
+P30.
+
+Rulings made while pledging the flux capture / flux medium split.
+
+**One word was doing two jobs, and P22 already said so.** It reads that a
+capture adapter may preserve several revolutions "while a normalized media
+model may define one circular revolution" — two models, one name. They are
+now **flux capture** and **flux medium**, and the boundary between them is a
+test rather than a taxonomy: **disagreement across observations is a capture
+fact, and strength is a medium fact.** A capture records that three passes
+differed; a medium records that a pulse is weak; the conversion is a P29
+reduction performed by neither model unasked.
+
+**The medium is not a tidier capture.** What it adds — the rotational frame,
+the family's addressing, the reference clock, the strength vocabulary, and
+which surface is the disk — is absent from the flux and declared by a P30
+profile. The measurement that settled it: the fixture was captured at 359.8
+RPM on a 360 RPM instrument, and nothing in the flux knows a 1541 spins at
+300. The medium is where declared knowledge and recorded evidence combine.
+
+**Flux capture takes no active-layer row, for a concrete reason.** A drive
+writing to a capture would have to choose which of several disagreeing
+observations to overwrite, and no answer to that is better than another. It
+stays authoritative image state under P13, read by inspection and by
+mastering. P23's rule is scoped to independently mutable instances, and a
+capture set opened to be inspected and mastered is not one.
+
+**Capture becomes medium by mastering, not by lowering**, with the same
+declared inputs whether the destination is a new artifact or an in-session
+active layer. That supplies the mechanism the pledged P15 clause assumes
+when it says a drive's floor may be "timed flux for a P64 or a raw capture":
+a capture becomes a floor by being mastered under declared policy, never by
+a normalization nobody named. For the same reason **generate-flux is
+generate-medium** — fabricating instrument evidence from sectors would be a
+false provenance claim in the clause most concerned with honest provenance.
+
+**F30 is renamed, not split.** Its content was already entirely the capture
+model, so nothing of it becomes the medium and its handle survives; the
+medium takes F37. README's split rule reaches a feature cut into pieces, not
+one whose subject is renamed.
+
+**The promotion was compressed with the retarget.** Renaming pledged F30 and
+retargeting pledged F33 and F34 cannot be done while the vocabulary they
+would use exists only in `proposed/`, since a pledged item resting on a
+proposed one is pledged too early. The amendments were therefore promoted in
+the same act rather than the retarget being deferred.
+
+**Weighed and declined:** one `FluxLayer` carrying both models behind a mode
+discriminant — D9 already declined a kitchen-sink union record at this exact
+layer, and this is that shape again; giving flux capture an active-layer row
+of its own (no coherent write destination, and it would license a writable
+capture-editing session nothing claims); keeping "flux" for the capture and
+naming only the medium, which was rejected because P23's row already
+*described* the medium, so renaming the row was both the smaller edit and
+the truer one; splitting F30 into two fresh handles; and treating the medium
+as a derived cache over the capture, which fails P27's own definition — a
+derived cache is a clean-only accelerator regenerable from the layer below,
+and a medium cannot be regenerated from a capture without the policy that
+produced it.
+
+**Folded into:** P22 and the P23 amendment in
+[pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); pledged F30 (renamed),
+F31, F33, F34, F36 and the new F37 in
+[pledged/FEATURES.md](pledged/FEATURES.md);
+[pledged/design/flux-capture-foundation.md](pledged/design/flux-capture-foundation.md)
+(renamed from `flux-layer-foundation.md`),
+[pledged/design/flux-medium-foundation.md](pledged/design/flux-medium-foundation.md),
+`c1541-flux-mastering.md`, `p64-image-adapter.md`, `kryoflux-capture-set.md`,
+`file-container-presentation.md`; proposed F32 and its design; the annotation
+on D8.
+
 ### D13 — The capture set's two archives are the disk's sides, not two capture channels
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** U23, P29, P30.
@@ -333,6 +407,13 @@ proposed.
 > running": no clock is recovered, no symbol is resolved, and what leaves
 > the probe is an angle rather than a byte. The clause stands as written,
 > and D12 states the boundary that keeps it checkable.
+>
+> **Annotated by D14** on the spelling only. The journey now stops at the
+> **flux medium**, one rung above where this entry could name at the time,
+> because the flux layer it spoke of has since been split in two. The
+> ruling is unaffected: both endpoints remain the same shape, no hardware
+> bitstream is materialized, no GCR codec runs, and F32 is still not a
+> dependency of U23.
 
 **And it earns a principle.** P13 already licenses the act — choosing another
 authoritative layer is an explicit conversion creating a new image and naming

@@ -11,4 +11,4 @@ The adapter consumes a catalog subtree, not a single image-like member. It enume
 
 Each raw stream decodes into a source-ordered capture run. Flux intervals, asynchronous index observations, control/OOB records, transfer result, and device information retain their separate meanings. Data before the first and after the last index remains part of the run. Channel identity remains a source fact: a capture set does not average, choose, or merge channels.
 
-The initial admitted layout is the prepared paired-channel fixture layout. Its narrow grammar is explicit: an absent, duplicate, malformed, or unrelated member refuses the set with the discovered catalog evidence. Generalizing the capture-set grammar is later adapter work, not a filename heuristic hidden in the fixture test.
+The initial admitted layout is the prepared two-sided fixture layout. Its narrow grammar is explicit: an absent, duplicate, malformed, or unrelated member refuses the set with the discovered catalog evidence. Generalizing the capture-set grammar is later adapter work, not a filename heuristic hidden in the fixture test.

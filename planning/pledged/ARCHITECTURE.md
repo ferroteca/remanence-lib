@@ -530,7 +530,7 @@ retains synthetic provenance, and commit back to that source is possible
 only when its format can represent the resulting media change.
 
 P64 is the concrete lower-bound test for this capability. A P64 path
-preserves stored pulse position and strength into the flux layer, and a
+preserves stored pulse position and strength into the flux medium, and a
 read-channel simulation consumes that state with its weak-event semantics
 intact. Flattening the image to one deterministic bitcell or byte stream
 does not provide P64 fidelity and does not satisfy this principle for that
@@ -538,11 +538,52 @@ format.
 
 Flux is one channel, not the whole medium. Index and hard-sector holes and
 other mechanical or sensor observations are separate timed state or event
-channels; they are not folded into the flux-transition stream. A capture
-adapter may preserve several revolutions and their marker timing, while a
-normalized media model may define one circular revolution. Every adapter
+channels; they are not folded into the flux-transition stream. Every adapter
 states which timing, markers, revolutions, and weak-event semantics it
 preserves, normalizes, synthesizes, or cannot represent.
+
+### The family holds two models, capture and medium
+
+A capture adapter may preserve several revolutions and their marker timing,
+while a normalized media model defines one circular revolution. Those are
+two models, and each has its own name so that one word stops doing two jobs.
+
+**Flux capture** is timed transition evidence as an instrument recorded it:
+several capture runs and observations of one source location, the
+instrument's own timebase, the source's own location identity, parallel
+marker channels, and whatever else the capture container expressed. It
+asserts nothing about which revolution the disk *was*, and this principle's
+refusal to average, deduplicate, or select inside it stands unchanged.
+
+**Flux medium** is one circular pulse stream per location the family
+addresses, expressed in a declared rotational frame against a declared
+reference clock, with each pulse carrying the family's strength semantics,
+beside the medium-level facts that are not per-pulse. It asserts exactly
+what a drive would read.
+
+**The boundary is one sentence: disagreement across observations is a
+capture fact, and strength is a medium fact.** A capture records that three
+passes differed. A medium records that a pulse is weak. Turning the first
+into the second is a reduction governed by P29 and performed by neither
+model on its own initiative.
+
+What the medium adds is precisely what the flux does not contain — the
+rotational frame, the family's addressing, the reference clock, the strength
+vocabulary, and which surface is the disk. Every one of those is declared by
+a P30 drive profile. That is why this is a second model and not a tidier
+first one: the medium is where declared family knowledge and recorded
+evidence combine, and a representation holding only one of the two cannot
+stand in for it.
+
+What the medium must **not** hold keeps it below the layer above: no
+bitcell, no recovered clock, no synchronization, no symbol, no byte. Those
+are hardware bitstream and above, and a medium that reached them would erase
+the distinction between what a medium is and what a drive makes of it.
+
+P64 is a flux medium. SCP, A2R and KryoFlux streams are flux captures. G64
+is a hardware bitstream. Naming them locates them; it changes no support
+claim, each of which remains enumerated under P3 and delivered by its own
+adapter.
 
 P13 governs movement away from the authoritative layer. Captured flux may
 be decoded into derived sector, filesystem, and file presentations while
@@ -566,10 +607,52 @@ sector-hole topology. It makes the separate flux-data and marker/sensor
 channels explicit. U7 supplies the concrete P64 journey; P22 does not by
 itself pledge a standalone P64 image adapter or a public flux interface.
 
-## P23 amendment — hardware bitstream and encoded bytestream are durable magnetic layers
+## P23 amendment — the durable magnetic layers, named from flux medium up
 
-P23's durable active-layer vocabulary gains **hardware bitstream** and
-**encoded bytestream** between flux and CHS. Hardware bitstream is circular,
+P23's durable active-layer vocabulary is corrected at its bottom and
+extended above it.
+
+### Flux medium is the active layer, and flux capture is never one
+
+The table's `flux` row already describes the medium: "circular track-relative
+flux transitions and strength semantics, with marker/sensor channels and
+provenance — a modeled magnetic recording surface". Singular, circular,
+carrying strength. That row is renamed **flux medium**, and its description
+stands as written.
+
+**Flux capture takes no row.** It is an authoritative image layer under P13,
+which is a statement about what an artifact records, and it is read by
+inspection and by mastering. It never carries a session's mutable truth.
+P23's rule is scoped to "every independently mutable open state instance",
+and a capture set opened to be inspected and mastered is not one; a writable
+capture-editing session is claimed by nothing here and would need its own
+proposal.
+
+The reason is not bookkeeping. **A capture has no coherent answer to where a
+write lands.** A drive writing to a flux capture would have to choose which
+of several disagreeing observations to overwrite, and no answer to that is
+better than another. A drive writes to a medium.
+
+**Capture becomes medium by mastering, not by lowering.** It is a P29 act
+with declared policy inputs, whether its destination is a new artifact — the
+U23 journey — or an active layer inside the session, so that a drive can be
+served over a capture. Only the destination differs; the inputs, the plan,
+and the declared-loss account are the same. This supplies the mechanism the
+P15 clause above assumes when it says a drive's floor may be "timed flux for
+a P64 or a raw capture": a raw capture becomes a floor by being mastered in
+session under declared policy, never by a normalization nobody named.
+
+**Generate-flux is generate-medium.** In-force P23's explicit transition
+below CHS synthesizes a medium and never a capture, because fabricating
+instrument evidence from sectors would be a false claim about provenance in
+the one clause most concerned with honest provenance. Every requirement in
+it — preserve what is known, synthesize only what the lower model needs,
+keep ambiguity ambiguous, refuse rather than invent — is unchanged.
+
+### Hardware bitstream and encoded bytestream sit above it
+
+The vocabulary gains **hardware bitstream** and
+**encoded bytestream** between flux medium and CHS. Hardware bitstream is circular,
 track-relative, clocked bit state, including the timing and provenance
 required by its declared drive family. G64 illustrates an image whose
 authoritative and initial active layer are hardware bitstream.
@@ -586,20 +669,26 @@ contain sectors. P18 then recognizes and presents a filesystem above CHS.
 CHS is durable active media state; filesystem remains the higher derived
 seam, not a peer mutable media copy.
 
-Flux, hardware bitstream, and encoded bytestream are distinct durable layers,
-not caches and not mutable peer copies. An authoritative flux capture begins
-flux-active; a hardware profile may explicitly materialize a hardware-
-bitstream active layer from it; a declared codec may then materialize an
-encoded-bytestream active layer. Each transition is atomic, preserves source
-state and codec/profile as provenance, and makes the destination the sole
-mutable session truth. Descending or returning to a lower layer is a separate
-explicit mastering transition. In either direction, P13 governs write
-availability: any unrepresentable projection is refused or requires explicit
-conversion.
+The magnetic ladder therefore reads: flux capture → flux medium → hardware
+bitstream → encoded bytestream → CHS → filesystem. Block stays terminal and
+disjoint from all of it, and P23's prohibition on crossing between the block
+and flux families is untouched in both directions.
+
+Flux medium, hardware bitstream, and encoded bytestream are distinct durable
+layers, not caches and not mutable peer copies. A source whose authoritative
+layer is a flux medium begins medium-active; a hardware profile may
+explicitly materialize a hardware-bitstream active layer from it; a declared
+codec may then materialize an encoded-bytestream active layer. Each
+transition is atomic, preserves source state and codec/profile as provenance,
+and makes the destination the sole mutable session truth. Descending or
+returning to a lower layer is a separate explicit mastering transition. In
+either direction, P13 governs write availability: any unrepresentable
+projection is refused or requires explicit conversion.
 
 The existing P23 clauses for active-layer replacement, cache invalidation,
 bounded backing, and the ban on independently mutable peer copies apply to
-this layer. P22 continues to govern flux and its marker channels.
+these layers. P22 continues to govern both flux models and the medium's
+marker channels.
 
 ## P29 — Mastering is declared, reproducible, and states its loss
 
@@ -625,7 +714,7 @@ source timebase projects onto the destination's; and how weakness, absence,
 disagreement, and contradiction are expressed in the destination's vocabulary
 — each is supplied by the caller or declared by the profile, and each travels
 into the result as provenance. **A reduction that no policy names is a
-refusal, not a default.** The flux layer already refuses to average timings,
+refusal, not a default.** The flux capture already refuses to average timings,
 deduplicate pulses, or select a cleanest pass inside itself; this forbids
 performing those on the way out.
 

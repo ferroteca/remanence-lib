@@ -3,19 +3,19 @@ SPDX-FileCopyrightText: 2026 Paul Galbraith
 SPDX-License-Identifier: GPL-3.0-only
 -->
 
-# FluxLayer v1 foundation
+# FluxCapture v1 foundation
 
 > **Status:** pledged, not delivered. This design serves F30 and authorizes no implementation outside that feature.
 
 ## Purpose
 
-F30 establishes the private durable flux layer beneath any drive interpretation. It preserves raw magnetic capture evidence without deciding what a drive, codec, sector decoder, or filesystem makes of that evidence.
+F30 establishes the private flux-capture model: the lower of the flux family's two models (P22), holding raw magnetic capture evidence without deciding what a medium, drive, codec, sector decoder, or filesystem makes of it.
 
-This design aligns with P22's timed flux floor and amends P23: hardware bitstream and encoded bytestream join flux as durable magnetic active layers. Each materialization becomes the session's durable mutable truth; a G64-style bitstream source may begin at the middle layer directly.
+A capture is never an active layer (P23): it is authoritative image state, read by inspection and by mastering, and it never carries a session's mutable truth. A reduction under P29 turns it into a `FluxMedium` (F37), which is the layer a drive is served from.
 
-## Durable flux state
+## Capture state
 
-An SCP, A2R, or KryoFlux adapter decodes only its container and capture semantics into flux state. It preserves, where present:
+An SCP, A2R, or KryoFlux adapter decodes only its container and capture semantics into capture state. It preserves, where present:
 
 - timed flux-transition observations, with their source resolution and declared timing basis;
 - track and side identity, capture/revolution identity, and recorded order;
@@ -25,11 +25,11 @@ An SCP, A2R, or KryoFlux adapter decodes only its container and capture semantic
 
 A capture is not an assertion that one ideal revolution existed. Several recorded revolutions are parallel evidence, not duplicates to average or a license to choose the cleanest result. A media profile and hardware profile must say whether the drive observes a selected revolution, a repeatable sequence, a seeded variation, or another specified behavior. Without such a rule, the requested presentation is refused rather than normalized silently.
 
-The flux state is circular and track-relative, as P22 requires. Index and hard-sector topology stay in their own channels. The session holds and caches this state under P27; it does not retain a whole capture merely because it was stored that way on disk.
+Observations are circular and track-relative, as P22 requires of the evidence. Index and hard-sector topology stay in their own channels. The session holds and caches this state under P27; it does not retain a whole capture merely because it was stored that way on disk.
 
-## Internal flux-layer format
+## Internal flux-capture format
 
-`FluxLayer v1` is the library's private, logical representation of that
+`FluxCapture v1` is the library's private, logical representation of that
 state. It is the common target of capture-container adapters, not a new image
 format, interchange format, or public iterator API. Its serialized backing
 is private session storage; an adapter still owns the source file's grammar
@@ -43,7 +43,7 @@ information, metadata, and extension chunks; and the equivalent facts in MFI
 or a later adapter. It is not a least-common-denominator transition list. A
 source fact has exactly one of two outcomes when an adapter opens it:
 
-1. it maps to a named `FluxLayer` field with its source identity and
+1. it maps to a named `FluxCapture` field with its source identity and
    provenance; or
 2. it is retained verbatim as an ordered `ForeignRecord` in the capture
    envelope, with namespace, type/version, source location, payload, and any
@@ -110,8 +110,9 @@ The currently admitted capture forms have named homes:
 - MAME MFI's resolved magnetic state is a `SurfaceCandidate` with ordered,
   track-relative angular regions whose states are orientation A, orientation
   B, neutral, damaged, or a source-defined state. Its splice position is a
-  `WriteSplice` marker. It is a named supplied representation, not a decoder
-  that `FluxLayer` applies to other captures.
+  `WriteSplice` marker. It is a supplied medium in all but name — a resolved single revolution —
+  retained here as a candidate rather than substituted for the raw runs, and
+  not a decoder that `FluxCapture` applies to other captures.
 
 This list is deliberately additive: when another source can record a fact not
 covered by these forms, the adapter retains it as a `ForeignRecord` first;
@@ -134,7 +135,7 @@ the session read-only or requires explicit conversion to an authoritative
 format that can.
 
 ```text
-FluxLayer
+FluxCapture
   envelope: CaptureEnvelope
   time_base: TimeBase
   tracks: ordered map<TrackKey, Track>
@@ -227,7 +228,7 @@ among observations under their declared policy.
 MAME's MFI design confirms the usefulness of explicit track records, absolute
 rotational position, and separately persisted write-splice information for
 fast drive-facing access. Its resolved magnetic-cell state is deliberately not
-`FluxLayer`'s capture representation: resolving transitions into orientation
+`FluxCapture`'s representation: resolving transitions into orientation
 cells would discard timing disagreement and make a MAME-style normalization a
 hidden decoder. When a source supplies a write splice, v1 retains it as a
 named source marker or source metadata, not as a reason to convert its flux
@@ -242,7 +243,7 @@ not preserve the container's ring-buffer padding as magnetic data.
 
 SuperCard Pro's SCP format independently validates a sparse track-offset table
 and a per-revolution descriptor carrying exact index duration and the recorded
-flux extent. `FluxLayer` retains those facts as a track key, observation span,
+flux extent. `FluxCapture` retains those facts as a track key, observation span,
 and provenance, but does not inherit SCP's fixed 0–163 track numbering,
 physical-side arithmetic, five-revolution limit, or a common disk-type hint as
 its own truth. SCP's index and splice capture modes also show why capture
@@ -250,7 +251,7 @@ boundary policy is evidence: an index-queued boundary, an inferred splice, and
 a source-supplied write splice stay distinct rather than being normalized into
 one assumed rotational origin.
 
-`FluxLayer v1` backing is section-addressable. A section key is
+`FluxCapture v1` backing is section-addressable. A section key is
 `(TrackKey, ScopeId, SectionKind, ordinal)`, where `ScopeId` is a
 `CaptureRunId` or `ObservationId` and `SectionKind` is
 track metadata, capture-run metadata, observation metadata, transition chunk,
@@ -284,21 +285,18 @@ session storage and remains the authoritative session result. The dirty map
 is keyed by the same complete section key, so loading, replacing, saving, and
 committing one section neither materializes nor invalidates unrelated ones.
 A cache miss may read one bounded record range plus the necessary index path,
-never a whole flux layer as a design assumption.
+never a whole capture as a design assumption.
 
 A capture adapter may use source-backed sections only when its own container
 can truthfully locate and decode a section by key. A sequential or
 whole-capture container streams once into the indexed private backing, then
 all later random access uses that backing. The backing is an implementation
-detail: it may be compacted or migrated internally, provided the `FluxLayer
+detail: it may be compacted or migrated internally, provided the `FluxCapture
 v1` facts, keys, and order remain unchanged. It is never written beside a
 caller's image and never treated as a format an external caller can depend on.
 
-Flux mutation uses copy-on-write at one indexed section key, preserving an
-immutable source-derived base and a bounded dirty overlay under P27.
-
-A mutation carries its derivation and may add only facts
-the active-layer operation actually creates; it cannot silently overwrite or
-discard captured evidence. Commit is available only when the authoritative
-capture adapter can encode the resulting layer without unclaimed loss, as
-P13 requires.
+A capture is not written by a session. It is read evidence, and a modelled
+write has no coherent destination in it: there is no answer to which of
+several disagreeing observations a drive would overwrite (P23). Writes land
+in the `FluxMedium` reduced from it, and commit back into a capture's own
+container is not claimed by this feature.

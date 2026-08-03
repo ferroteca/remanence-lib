@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # FluxMedium v1 foundation
 
-> **Status:** proposed, not pledged. This design serves F37 and authorizes no implementation.
+> **Status:** pledged, not delivered. This design serves F37 and authorizes no implementation outside that feature.
 
 ## Purpose
 

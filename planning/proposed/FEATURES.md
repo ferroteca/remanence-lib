@@ -319,20 +319,8 @@ Companion design: [design/degraded-evidence-bounded-image-access.md](design/degr
 
 ## F32 — C1541 drive and codec presentation
 
-Materialize a C1541-family hardware bitstream from selected flux observations under declared mechanics and read-channel rules, then materialize the family's encoded GCR bytestream without assigning synchronization, headers, sectors, or files. The drive catalog owns this detailed knowledge; neither a capture adapter nor `FluxLayer` decides what a drive observes.
+Materialize a C1541-family hardware bitstream from a `FluxMedium` under declared mechanics and read-channel rules, then materialize the family's encoded GCR bytestream without assigning synchronization, headers, sectors, or files. The P30 drive profile owns this detailed knowledge; neither a capture adapter nor either flux model decides what a drive observes.
 
-Touches: S1, S2, S3. Supports: U7; P3–P5, P13, P15, P22, P23, P27. Needs: F30 and F31 pledged and delivered. It does not promise sector recovery, a generic bitstream API, or every drive family.
+Touches: S1, S2, S3. Supports: U7; P3–P5, P13, P15, P22, P23, P27. Needs: F37 pledged and delivered. It does not promise sector recovery, a generic bitstream API, or every drive family.
 
 Companion design: [design/flux-capture-and-hardware-bitstream.md](design/flux-capture-and-hardware-bitstream.md).
-
-## F37 — Flux medium v1 foundation
-
-Establish the private durable flux-medium model beneath any drive interpretation and above flux capture: one circular pulse stream per family-addressed location, an exact rotational frame against a declared reference clock, per-pulse strength in the profile's declared vocabulary, the medium-level facts that are not per-pulse, and derived provenance on every part of it. It reuses F30's bounded section-addressable backing rather than inventing a second one.
-
-It is what a P64 decodes into, what a mastering reduction produces, and what a read channel projects from. It is not a public flux, pulse, or medium iterator, not an interchange format, and not a place any decoding happens: it holds no bitcell, recovered clock, synchronization, symbol, or byte.
-
-Nothing in it carries recovered-evidence provenance. Every pulse is selected-and-projected or synthetic under P13 and P29, and a medium cannot be constructed except by a reduction that declared its policy. Unit tests build small synthetic media and verify circular bounds, exact-rational frame arithmetic, strength round-tripping, sparse locations, and bounded reload, with no capture, profile, or drive present.
-
-Touches: none. Supports: P3, P4, P13, P22, P23, P27, P29, P30. Needs: F30 pledged and delivered; the P22 and P23 amendments above pledged.
-
-Companion design: [design/flux-medium-foundation.md](design/flux-medium-foundation.md).
