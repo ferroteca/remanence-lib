@@ -2381,3 +2381,73 @@ two ends belongs to the library.
   inside the volume.
 - Repairing a name the caller supplied: a name outside the rules is
   refused, never truncated, transliterated, or renamed to fit.
+
+## U24 — I recover a flippy's second side from one two-head capture
+
+I have a KryoFlux capture of a C64 disk whose second side was written by
+flipping it over in a single-sided 1541. I made the capture in one insertion,
+in an ordinary two-head PC drive, so the tool wrote both heads at every step
+position and I archived the lot. I never flipped the disk.
+
+Head 0 read the surface facing it. Head 1 read the disk's other surface --
+which is where the second side lives, recorded while the disk sat the other
+way up. The drive spins one direction regardless, so that surface passed head
+1 against the direction it was written in: head 1's observation is the second
+side, in reverse. Nothing in the capture says so. The stream declares no
+track, no side, and no orientation, and the file name carries a head digit
+and nothing more.
+
+I ask Remanence what the capture holds. It reports every step position and
+head as separate observations with their own evidence, and says which heads
+carry a recorded surface at all — a blank head reads as noise that does not
+reproduce between revolutions, and that is an observation about the capture,
+not a defect in it. It never presents a noise head as a side.
+
+I ask for the disk. The drive profile declares how many surfaces the family
+records and how a captured head maps onto one (P30), and for a flipped second
+side that mapping includes the reversal: the surface is reached by projecting
+the opposite head's observation in reverse rotational order. Remanence
+produces both sides as distinct addressable surfaces, each carrying
+provenance that names the head it came from and states that the reversal was
+applied. A profile that declares no such mapping refuses the request by name
+(P3); it does not reverse a stream speculatively to see whether something
+decodes, and it does not decide from content that a head "looks like" a side.
+
+The reversal is a declared projection under P29, not a repair and not a
+recovery heuristic. The raw observations are unchanged and remain readable as
+captured; the reversed surface is derived, and says so. Reversing an
+observation that the profile's mapping does not cover is refused rather than
+attempted, and a head whose evidence is absent stays absent — no side is
+synthesized to fill a mapping that expected one.
+
+The journey succeeds when one insertion yields both sides, each traceable to
+the head that recorded it, with the reversal visible as a declared step
+rather than assumed.
+
+### What this is worth
+
+A flippy captured this way is ordinarily captured twice, the operator
+flipping the disk between passes. That second pass is a second mechanical
+handling of aging media, and for a disk that will not survive many more, it
+is the expensive part of the journey. The evidence for both sides is already
+in the first capture; what is missing is the declaration that says how to
+read it.
+
+### Deliberately outside this use case
+
+- Deciding from content whether a surface is recorded; the profile declares
+  its surfaces, and recognition reports structure, not meaning (P30).
+- Assuming the two heads of a drive read the same radius at the same step
+  position; head alignment is a property of the instrument, not a given.
+- Establishing that they do from transition counts. The family's write clock
+  is per-zone, so a count is a function of the zone a position falls in as
+  much as of the radius, and the two cannot be separated by counting.
+- Repairing, averaging, or reconciling the two heads' observations against
+  each other — they are different surfaces, and a reversal does not make
+  them passes over one.
+- Reversing a capture whose profile declares no reversal mapping, or
+  inferring the mapping from the data.
+- Decoding either side to bits, sectors, or files; this journey ends at the
+  surfaces.
+- Physical acquisition, drive mechanics, or head selection; the journey
+  begins with a capture that already holds both heads.
