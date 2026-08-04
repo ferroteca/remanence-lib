@@ -58,6 +58,39 @@ removes it is the record either way.
 
 ## Decisions
 
+### D17 — A design document's purpose ends at delivery
+
+**Decided** Paul Galbraith, 2026-08-04. **Supports** (none) — a records
+ruling; no numbered vision entry demands it.
+
+D11 held that a companion design survives the feature that carried it.
+That is true of the *design* — the shape survives, embodied in the code,
+which is why a handle can evaporate without losing anything. What it
+authorized was the retention of a *document*, and that does not follow.
+Its design-retention holding is overruled; the rest of D11 stands.
+
+D11's positive argument — that the code implements the contract but is
+not a readable statement of what a future provider must satisfy — names
+a real need and puts it in the wrong place. Prose a future implementer
+must satisfy is a normative specification, or it is a principle. What
+the retention cost: nine further designs restated themselves as
+permanent residents on a reason D11 never gave, that no S1–S3
+specification has shipped, and one delivered design's caller-flow
+example went on naming an entry point a later feature had retired.
+
+**Weighed and declined:** narrowing D11 to its stated case, keeping a
+design that touches no surface and states a contract for a future
+provider (that need is a specification or a principle, and admitting
+the category at all is what the nine claimed); an archive location for
+delivered designs (a third mechanism, for content the code already
+holds authoritatively); and maintaining each delivered design against
+the code it describes (it sets prose to compete with the norm and
+schedules the drift rather than ending it).
+
+**Reopens if:** a delivered design is found to carry something that is
+neither the code, a principle, nor a decision — that would name a gap
+in those three rather than a reason to keep the document.
+
 ### D16 — NIB enters at the flux medium, with synthetic timings, to keep one ladder
 
 **Decided** Paul Galbraith, 2026-08-03. **Supports** P13, P22, P23, P29, P31.
@@ -396,6 +429,8 @@ rule applied. That is a defect in the record, not a change to the rule,
 which has stood since the initial import. The lesson is the ordering, not
 the rule: an entry describing work already done does not belong in a list of
 what is owed.
+
+[Overruled by D17: a design document's purpose ends at delivery, and it is swept with the feature whose handle evaporates.]
 
 **A companion design does not evaporate with its feature.** README's sweep
 covers a design whose *proposal dies*, and its one-way move out of

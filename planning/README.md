@@ -104,16 +104,22 @@ honors it, and a divergence becomes a bug.
 
 **Design sits with what it serves.** A design for one feature lives
 beside that feature — `proposed/design/` or `pledged/design/` — so
-the design and the demand it answers move together, and a design for
-a proposal that dies is swept with it. `design/` at this level holds
-only open design problems belonging to no single feature; the
-whole-system view itself is root
-[ARCHITECTURE.md](../ARCHITECTURE.md).
+the design and the demand it answers move together. A design is
+guidance toward work not yet done, so both its ends are the same
+end: a design whose proposal dies is swept with the proposal, and a
+design whose feature is delivered is swept with the handle that
+evaporates. Nothing carries it past delivery — what was done is the
+code, a rule binding every later change is a principle, and the
+reason a choice was made is a decision. A design left standing is a
+second statement of the norm beside the code, and being prose it
+drifts silently. `design/` at this level holds only open design
+problems belonging to no single feature; the whole-system view
+itself is root [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 **Nothing under `planning/` describes a delivered surface.** Once an
-application surface ships a normative specification, that spec is
-current truth and moves out of here. That is a one-way move: a norm
-never comes back.
+application surface ships, its normative specification is current
+truth and moves out of here. That is a one-way move: a norm never
+comes back.
 
 ## How an idea enters
 
