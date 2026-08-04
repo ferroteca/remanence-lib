@@ -10,8 +10,8 @@
 ## U1 — Identify a disk image I know nothing about
 
 I have a file that claims to be a disk image — maybe raw, maybe
-sitting inside a `.zip`. I open it and remanence tells me, layer by
-layer, what it is: the archive wrapper, the image format, the
+sitting inside a `.zip`. I attach it to a session and remanence tells
+me, layer by layer, what it is: the archive wrapper, the image format, the
 physical media it represents, the probable filesystem — each with a
 confidence and the evidence behind it, never a bare verdict. When it
 doesn't know, it says "unknown" rather than guessing.
@@ -34,10 +34,12 @@ it does not exist, distinguished from failure — copy a file out to
 the host, write a file in, create a directory. Writing a file that
 already exists replaces its contents, shorter or longer, releasing
 and reclaiming clusters; creating a directory creates missing
-parents and succeeds when the directory already exists. The library
-addresses a volume by the opaque identity its inspection report issued
-for it, and a path within it — mapping volumes to guest drive letters
-stays the caller's job, standing on U4's volume enumeration. All of
+parents and succeeds when the directory already exists. I attach each
+image to a storage device in my session and work through that device;
+the library addresses a volume by the opaque identity its inspection
+report issued for it, and a path within it — mapping volumes to guest
+drive letters stays the caller's job, standing on U4's volume
+enumeration. All of
 this without booting the guest and without any external helper
 process: the library does
 the format work itself. Reading never changes the image. Writing is
@@ -78,8 +80,11 @@ or filesystem in every file verb that it named in this report, and on
 every later open of an unchanged layout. It belongs to the library and
 I treat it as opaque — I never build one from a partition number, an
 offset, a label, or a position in a list — and if it is absent on a
-later open, that object is gone rather than renumbered. All of it from
-the image alone, booting nothing.
+later open, that object is gone rather than renumbered. These
+identities are scoped to the device holding the image, so two devices
+holding like layouts issue like identities and it is the device I
+name that tells them apart. All of it from the image alone, booting
+nothing.
 
 ## U5 — qcow2 images are first-class citizens of identification
 
@@ -109,7 +114,7 @@ partial interpretation.
 
 *(Identification (U5) is deliberately untouched: a differencing
 image identifies as the qcow2 container it is. This entry is about
-the `Disk` surface reaching through the chain — the write half is
+the attached medium reaching through the chain — the write half is
 where the consumer's stopped-machine workflow lives today and
 cannot move here without it.)*
 

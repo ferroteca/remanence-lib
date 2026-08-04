@@ -74,11 +74,12 @@ The library is dependency-free at runtime, including its own ZIP
 central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
 LZMA/LZMA2 decompressors, and native qcow2 v2/v3 driver.
 
-Beyond identification, the `Disk` surface opens a raw or qcow2
-disk image with a declared intent: a read session denies writes to
-every other process while admitting other readers; a writable session
-admits no observers at all; and an image whose claim cannot be secured —
-one held by a running VM, say — is refused outright at the open. It
+Beyond identification, attaching a raw or qcow2 disk image to a storage
+device takes a claim under a declared intent: a read session denies
+writes to every other process while admitting other readers; a writable
+session admits no observers at all; and an image whose claim cannot be
+secured — one held by a running VM, say — is refused outright at the
+attach. It
 inspects the disk as a layered report — the block-active device, what
 its leading structure turned out to be, any recognized partition
 schema, every region that schema declares, every volume composed, and

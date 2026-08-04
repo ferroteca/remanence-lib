@@ -631,6 +631,15 @@ struct Header {
 /// signature says whose file this is, the version says whether this
 /// release has any reading of it, and only then is anything else
 /// touched.
+/// Whether `prefix` opens with the eight bytes every P64 opens with.
+///
+/// The storage-device tier asks this before accepting a medium: block and
+/// flux are disjoint families (P13), so a flux container must not be
+/// admitted to a block device and silently read as raw.
+pub(crate) fn has_signature(prefix: &[u8]) -> bool {
+    prefix.len() >= SIGNATURE.len() && prefix[..SIGNATURE.len()] == SIGNATURE
+}
+
 fn read_header(file: &File, length: u64, path: &Path) -> Result<Header> {
     if length < HEADER_BYTES {
         return Err(refuse(format!(

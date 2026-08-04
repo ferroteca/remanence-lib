@@ -89,11 +89,22 @@ impl Session {
         }
 
         let medium = Disk::open_with_cache(path.as_ref(), intent, cache_bytes)?;
-        // The family a device declares and the family of the medium put
-        // in it must agree (P14). With one family claimed this cannot yet
-        // disagree; the check belongs here, where a second family will
-        // make it bite.
-        debug_assert_eq!(family, DeviceFamily::Hdd);
+
+        // A device accepts only its own family's media (P14). This is
+        // where that bites, and it is not idle even with one family
+        // claimed: the block catalog opens anything it cannot identify at
+        // the raw adapter, so without this a flux container would be
+        // admitted to a block device and read as raw — declaring the
+        // block layer authoritative when its own adapter declares flux,
+        // which in-force P13 forbids.
+        if let Some(foreign) = foreign_family(&medium) {
+            return Err(Error::unsupported(format!(
+                "'{}' is a {foreign}-family artifact and {attachment} is a {} device; \
+                 no {foreign} device family is claimed by this release",
+                path.as_ref().display(),
+                family.name()
+            )));
+        }
 
         self.devices
             .push(StorageDevice::new(attachment, Some(medium)));
@@ -175,4 +186,20 @@ impl Session {
         }
         next
     }
+}
+
+/// The family an artifact belongs to, when it is one this release
+/// recognizes and it is not the block family.
+///
+/// The library can only refuse what it can recognize. An artifact it
+/// cannot place at all still opens at the block catalog's raw fallback,
+/// which is the honest limit of this check rather than a hole in it: NIB
+/// and NBZ, for instance, have no recognizer until the principle that
+/// places them at the flux rung is delivered.
+fn foreign_family(medium: &Disk) -> Option<&'static str> {
+    let mut prefix = [0u8; 8];
+    if medium.read_at(0, &mut prefix).is_err() {
+        return None;
+    }
+    crate::p64::has_signature(&prefix).then_some("flux")
 }

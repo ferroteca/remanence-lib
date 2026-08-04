@@ -45,6 +45,19 @@ rather than bridged. Read every entry below in that light.
   family is claimed, so `hdd0` is real and `floppy0` is refused by name
   rather than guessed at.
 
+### Fixed
+
+- **A flux container no longer attaches to a block device and reads as
+  raw.** The image catalog opens anything it cannot identify at the raw
+  adapter, and a P64 is deliberately outside that catalog because block
+  and flux are disjoint families — so a P64 attached happily and was
+  read as raw, declaring the block layer authoritative when its own
+  adapter declares flux. In-force P13 forbids that, and a device now
+  refuses a medium outside its family by name. The check reaches every
+  foreign family this release can recognize; formats it has no
+  recognizer for are unidentified rather than misfiled, and still open
+  at the raw fallback as they always have.
+
 ### Removed
 
 - **`Disk::open` and `remanence_disk_open`.** A medium is reachable only

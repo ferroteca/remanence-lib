@@ -211,3 +211,41 @@ fn a_medium_is_claimed_for_as_long_as_it_is_attached() {
     drop(after);
     std::fs::remove_file(&a).ok();
 }
+
+#[test]
+fn a_flux_family_artifact_is_refused_by_a_block_device() {
+    // P14: a device accepts only its own family's media. This is not a
+    // vacuous clause even with one family claimed, because the block
+    // catalog opens anything it cannot identify at the raw adapter —
+    // so before this check a P64 attached happily as `hdd0` and read as
+    // raw, declaring the block layer authoritative when P64's own
+    // adapter declares flux. In-force P13 forbids exactly that.
+    let path = temp_path("flux-artifact");
+    let mut bytes = b"P64-1541".to_vec();
+    bytes.extend_from_slice(&[0u8; 1024]);
+    std::fs::write(&path, &bytes).expect("artifact writes");
+
+    let mut session = Session::new();
+    let error = session
+        .attach(&path, AccessIntent::Read)
+        .expect_err("a flux container is not block-family media");
+
+    let message = error.to_string();
+    assert!(message.contains("flux"), "names the family found: {message}");
+    assert!(message.contains("hdd0"), "names the device refusing: {message}");
+    assert!(
+        session.devices().is_empty(),
+        "a refused attach leaves no device behind"
+    );
+
+    // And the claim went with it: the refused medium is dropped, so the
+    // artifact is free for whatever does claim the flux family.
+    let mut second = Session::new();
+    assert!(
+        second.attach(&path, AccessIntent::Read).is_err(),
+        "still refused, and refused for the same reason rather than a lock"
+    );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
