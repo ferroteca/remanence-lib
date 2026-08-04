@@ -44,6 +44,7 @@ mod kryoflux;
 mod lzma;
 mod machine;
 mod mbr;
+mod media_profile;
 mod p64;
 mod partition;
 mod qcow2;

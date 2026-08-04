@@ -253,7 +253,11 @@ fn a_vdi_identifies_layer_by_layer_with_its_evidence() {
 
     let media = &identification.containers[1];
     assert_eq!(media.kind, ContainerKind::PhysicalMedia);
-    assert_eq!(media.id, "hard_disk");
+    // A virtual disk's medium is logical-block media (P14): the
+    // addressable unit is the whole of what a controller can be
+    // compatible with, and there is no cylinder, head or mechanism fact
+    // to state beside it.
+    assert_eq!(media.id, "logical-block-512");
 
     let filesystem = identification
         .containers

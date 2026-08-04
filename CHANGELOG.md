@@ -20,6 +20,48 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A medium now says what it is, from a catalog of media types.** Every
+  medium the library holds names one immutable entry carrying that
+  article's passive compatibility facts — a media profile — and the
+  facts are family-specific by construction rather than one schema with
+  most of its fields empty. Two families are claimed: **flexible
+  magnetic** media, whose facts are its form factor, coercivity, track
+  density, sectoring and hole topology, and which way its write-protect
+  mechanism reads; and **logical-block** media, whose only compatibility
+  fact is the addressable unit, a geometry-opaque medium having no
+  other. The enrolled types are the soft-sectored and ten-sector
+  hard-sectored 5.25-inch disks and the 512-byte logical-block medium,
+  and a media type outside the catalog is refused by name (P3).
+
+  **What the medium is, what was recorded on it, and what a drive does
+  to it are three facts with three homes.** A hard-sectored disk's ten
+  sector holes are the medium's own division of a revolution; the ten
+  records the H8D format declares to a track are the recording, and the
+  two are checked against each other rather than one being derived from
+  the other. A disk carries an index hole whatever drive it is served
+  in, and whether a drive observes one is that drive's declaration —
+  which is why a 1541 medium states the hole and the 1541 drive profile
+  states no sensor. The catalog holds no recognition, no grammar and no
+  behavior at all, which is what lets it be declarative.
+
+  A caller meets this as a named media type where a free-form word used
+  to sit. `DiskLayout.media_kind` — `"floppy"`, `"hard_disk"`, or
+  nothing at all — is now `DiskLayout.media_type`, always present and
+  always an enrolled identity, and the physical-media container layer of
+  an identification carries that identity and the catalog's own name for
+  it. The layered report's `DeviceInfo` gains `media_type` beside
+  `image_format`, so an inspection says which article is attached as well
+  as which format loaded it. In C,
+  `remanence_container_disk_media_kind` becomes
+  `remanence_container_disk_media_type` and
+  `remanence_report_device_media_type` joins it; in Python,
+  `DiskLayout.media_type` and `DeviceInfo.media_type`. "Hard disk" is
+  gone from the medium's vocabulary deliberately: that is the device
+  family a session's slot carries, not a fact about the medium in it.
+
+  **P14 is armed**: it moves from the pledged list to the in-force
+  architectural principles, where a divergence from it is a bug.
+
 - **A VDI differencing image is a first-class disk.** The top image opens
   and the whole chain composes as one (U6), exactly as a qcow2 with a
   backing file already did: a block the top image never allocated reads

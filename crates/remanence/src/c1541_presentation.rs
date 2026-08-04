@@ -1266,6 +1266,7 @@ mod tests {
 
         let mut builder = MediumBuilder::new(
             C1541.id,
+            C1541.media,
             frame(),
             Derivation::SelectedAndProjected,
             Provenance::new(C1541.id).note("selected observation 0 of each location"),
@@ -1567,6 +1568,7 @@ mod tests {
     fn a_medium_of_another_family_is_refused() {
         let mut builder = MediumBuilder::new(
             "apple2",
+            C1541.media,
             RotationalFrame::new(
                 "apple2",
                 TimeBase::new("apple2", 16_000_000, 1).expect("stated"),

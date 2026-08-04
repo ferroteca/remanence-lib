@@ -263,6 +263,7 @@ impl MasteringPlan {
         let policy = describe_policy(&self.policy);
         let mut builder = MediumBuilder::new(
             "c1541",
+            C1541.media,
             self.frame,
             Derivation::SelectedAndProjected,
             policy,

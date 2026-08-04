@@ -900,6 +900,7 @@ impl P64Image {
 
         let mut builder = MediumBuilder::new(
             C1541.id,
+            C1541.media,
             container_frame(Provenance::new(P64).note(
                 "the container places every pulse on a circle whose start it does not \
                  state, so cycle zero is the container's own datum rather than a seam \
@@ -1429,6 +1430,7 @@ mod tests {
         );
         let mut builder = MediumBuilder::new(
             C1541.id,
+            C1541.media,
             frame,
             Derivation::SelectedAndProjected,
             Provenance::new(C1541.id).note("mastered for the test"),

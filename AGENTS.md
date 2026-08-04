@@ -23,7 +23,15 @@ ABI, or Python module.
   where the reads happen;
   `adapters.rs` the executable image-format adapters, probe aggregation,
   authoritative/active layer vocabulary, device identity, and built-in
-  image catalog; `partition.rs` the partition-layout catalog;
+  image catalog; `media_profile.rs` the P14 seam — the passive
+  compatibility facts of a media type, family-specific by construction
+  (flexible magnetic and logical-block are claimed, with no fact in
+  common), and the declarative media-type catalog they are enrolled in,
+  which holds no recognition, no grammar and no behavior; every medium
+  the library holds names one entry, a `Disk` from the image-format
+  adapter that loaded its state and a flux medium from the drive
+  profile's declaration of what its family is served;
+  `partition.rs` the partition-layout catalog;
   `filesystem.rs` the streamed filesystem adapters and catalog (crate-private,
   reached through `Disk::identify`); `session.rs` the layered
   identification model, reached through the one medium surface; `hdos.rs` the HDOS directory lister and file

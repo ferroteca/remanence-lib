@@ -30,6 +30,7 @@ use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::journal;
 use crate::mbr::{self, Discovery};
+use crate::media_profile::MediaProfile;
 use crate::session::{self, Container, Identification};
 use crate::source::{self, ImageSource};
 
@@ -164,6 +165,12 @@ pub struct Disk {
     cache_bytes: u64,
     format: DiskFormat,
     descriptor: &'static ImageFormatDescriptor,
+    /// The media type this medium is (P14). The adapter named it when it
+    /// loaded the state — an image format loads and saves media state,
+    /// so it is what establishes which medium the state belongs to — and
+    /// the medium carries it from there, immutably, for as long as the
+    /// session holds it.
+    media: &'static MediaProfile,
     device_identity: DeviceIdentity,
     active_layer: ActiveLayer,
     /// The session's **effective** access (P28): the declared intent's
@@ -287,6 +294,7 @@ impl Disk {
             cache_bytes,
             format,
             descriptor,
+            media: descriptor.media,
             device_identity: DeviceIdentity::first(),
             active_layer: descriptor.initial_active_layer,
             mode,
@@ -454,6 +462,7 @@ impl Disk {
         let device = DeviceInfo {
             id: device_identity.value(),
             image_format: self.descriptor.id.to_owned(),
+            media_type: self.media.id.to_owned(),
             length_bytes: 0,
             authoritative_layer: self.descriptor.authoritative_layer.name().to_owned(),
             active_layer: self.active_layer.name().to_owned(),

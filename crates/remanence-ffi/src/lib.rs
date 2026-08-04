@@ -168,7 +168,7 @@ struct TrackView {
 }
 
 struct DiskView {
-    media_kind: Option<CString>,
+    media_type: CString,
     sector_size: Option<u64>,
     cylinders: Option<u32>,
     sides: Option<u32>,
@@ -201,7 +201,7 @@ impl DiskView {
         };
 
         Self {
-            media_kind: layout.media_kind.as_deref().map(to_cstring),
+            media_type: to_cstring(&layout.media_type),
             sector_size: layout.sector_size,
             cylinders: layout.cylinders,
             sides: layout.sides,
@@ -732,15 +732,16 @@ pub unsafe extern "C" fn remanence_container_has_disk_layout(
     unsafe { disk_view(identification, index) }.is_some()
 }
 
-/// Disk layout: media kind (e.g. "floppy"); null when unknown.
+/// Disk layout: the media type the image format names for its medium
+/// (e.g. "logical-block-512"); null when the container has no disk
+/// layout.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_media_kind(
+pub unsafe extern "C" fn remanence_container_disk_media_type(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
     unsafe { disk_view(identification, index) }
-        .and_then(|disk| disk.media_kind.as_ref())
-        .map_or(ptr::null(), |kind| kind.as_ptr())
+        .map_or(ptr::null(), |disk| disk.media_type.as_ptr())
 }
 
 /// Disk layout: sector size in bytes; returns false when unknown.
@@ -4982,6 +4983,7 @@ pub struct RemanenceDiskReport {
     device_id: u64,
     device_image_format: CString,
     device_length_bytes: u64,
+    device_media_type: CString,
     device_authoritative_layer: CString,
     device_active_layer: CString,
     content: RemanenceDiskContent,
@@ -5202,7 +5204,8 @@ pub unsafe extern "C" fn remanence_disk_inspect(
                 device_id: report.device.id,
                 device_image_format: to_cstring(&report.device.image_format),
                 device_length_bytes: report.device.length_bytes,
-                device_authoritative_layer: to_cstring(&report.device.authoritative_layer),
+                device_media_type: to_cstring(&report.device.media_type),
+            device_authoritative_layer: to_cstring(&report.device.authoritative_layer),
                 device_active_layer: to_cstring(&report.device.active_layer),
                 content,
                 content_evidence,
@@ -5270,6 +5273,15 @@ pub unsafe extern "C" fn remanence_report_device_length_bytes(
     report: *const RemanenceDiskReport,
 ) -> u64 {
     unsafe { report.as_ref() }.map_or(0, |report| report.device_length_bytes)
+}
+
+/// The media type of the medium attached to the device (P14) — what
+/// the medium is, said in the media-type catalog's own name for it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_device_media_type(
+    report: *const RemanenceDiskReport,
+) -> *const c_char {
+    unsafe { report.as_ref() }.map_or(ptr::null(), |report| report.device_media_type.as_ptr())
 }
 
 /// The layer the image is authoritative at (P13).

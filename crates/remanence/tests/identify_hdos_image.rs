@@ -54,7 +54,11 @@ fn assert_hdos_identification(identification: &Identification) {
 
     let media = &identification.containers[count - 2];
     assert_eq!(media.kind, ContainerKind::PhysicalMedia);
-    assert_eq!(media.id, "floppy");
+    // The medium is the article, named from the media-type catalog
+    // (P14): the ten-sector hard-sectored 5.25-inch disk an H17 records
+    // on. The ten records to a track below are the recording, and they
+    // follow the medium's ten sector holes without being them.
+    assert_eq!(media.id, "flexible-5.25-hard-10");
     let ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout
     else {
         panic!("expected disk layout, found {:?}", media.layout);
@@ -62,6 +66,7 @@ fn assert_hdos_identification(identification: &Identification) {
     assert_eq!(disk.cylinders, Some(40));
     assert_eq!(disk.sides, Some(1));
     assert_eq!(disk.sectors, SectorLayout::Fixed { sectors_per_track: 10 });
+    assert_eq!(disk.media_type, "flexible-5.25-hard-10");
 
     let filesystem = identification.containers.last().expect("filesystem container");
     assert_eq!(filesystem.kind, ContainerKind::Filesystem);

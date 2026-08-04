@@ -54,7 +54,11 @@ pub enum SectorLayout {
 /// Physical disk geometry derived from a container format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskLayout {
-    pub media_kind: Option<String>,
+    /// The media type the image format names for the medium it holds
+    /// state for — an entry in the media-type catalog (P14), not a
+    /// free-form word. What the recording is sits in the fields below
+    /// it; what the medium is stays with the type.
+    pub media_type: String,
     pub sector_size: Option<u64>,
     pub cylinders: Option<u32>,
     pub sides: Option<u32>,
@@ -66,7 +70,7 @@ impl DiskLayout {
     fn from_descriptor(descriptor: &ImageFormatDescriptor) -> Self {
         let Some(disk) = descriptor.disk else {
             return Self {
-                media_kind: descriptor.media_kind.map(str::to_owned),
+                media_type: descriptor.media.id.to_owned(),
                 sector_size: None,
                 cylinders: None,
                 sides: None,
@@ -75,7 +79,7 @@ impl DiskLayout {
             };
         };
         Self {
-            media_kind: Some(disk.media_kind.to_owned()),
+            media_type: descriptor.media.id.to_owned(),
             sector_size: Some(disk.sector_size),
             cylinders: Some(disk.cylinders),
             sides: Some(disk.sides),
@@ -184,21 +188,23 @@ fn unknown_filesystem() -> Container {
     }
 }
 
+/// The medium layer of an identification: the media type the recognized
+/// image format names, said in the catalog's own words.
+///
+/// Central code reads an id and a name off the profile and interprets
+/// neither. There was a `match` on a media-kind string here once, which
+/// is exactly the string-named rule P12 keeps out of orchestration and
+/// the reason P14's catalog is declarative.
 fn physical_media_from_descriptor(
     descriptor: &ImageFormatDescriptor,
     current_bytes: u64,
-) -> Option<Container> {
-    let media_kind = descriptor.media_kind?;
-    let name = match media_kind {
-        "floppy" => "Floppy disk",
-        "hard_disk" => "Hard disk",
-        _ => "Unknown physical media",
-    };
+) -> Container {
+    let media = descriptor.media;
     let expected_bytes = descriptor.disk.map(|disk| disk.expected_size());
-    Some(Container {
+    Container {
         kind: ContainerKind::PhysicalMedia,
-        id: media_kind.to_owned(),
-        name: name.to_owned(),
+        id: media.id.to_owned(),
+        name: media.name.to_owned(),
         confidence: 100,
         known: true,
         size: SizeInformation {
@@ -208,7 +214,7 @@ fn physical_media_from_descriptor(
         layout: ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(
             DiskLayout::from_descriptor(descriptor),
         )),
-    })
+    }
 }
 
 pub(crate) fn container_from_layer(layer: ArchiveLayer) -> Container {
@@ -319,11 +325,11 @@ pub(crate) fn identify_medium(
                         payload_length_bytes: Some(current_bytes),
                     }),
                 };
-                let mut extra = vec![image];
-                if let Some(media) = physical_media_from_descriptor(descriptor, current_bytes) {
-                    extra.push(media);
-                }
-                extra.push(unknown_filesystem());
+                let extra = vec![
+                    image,
+                    physical_media_from_descriptor(descriptor, current_bytes),
+                    unknown_filesystem(),
+                ];
                 return Identification {
                     containers: containers_with(containers, extra),
                     modified: modified,
@@ -361,10 +367,10 @@ pub(crate) fn identify_medium(
             }),
         };
 
-        let mut extra = vec![image];
-        if let Some(media) = physical_media_from_descriptor(descriptor, current_bytes) {
-            extra.push(media);
-        }
+        let mut extra = vec![
+            image,
+            physical_media_from_descriptor(descriptor, current_bytes),
+        ];
         match found.identify_filesystems(&source, &mut archive_evidence) {
             Ok(filesystems) if !filesystems.is_empty() => {
                 for filesystem in filesystems {

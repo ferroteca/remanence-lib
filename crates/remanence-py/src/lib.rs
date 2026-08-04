@@ -116,7 +116,7 @@ pub struct TrackSectorLayout {
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct DiskLayout {
-    pub media_kind: Option<String>,
+    pub media_type: String,
     pub sector_size: Option<u64>,
     pub cylinders: Option<u32>,
     pub sides: Option<u32>,
@@ -149,7 +149,7 @@ impl DiskLayout {
         };
 
         Self {
-            media_kind: layout.media_kind.clone(),
+            media_type: layout.media_type.clone(),
             sector_size: layout.sector_size,
             cylinders: layout.cylinders,
             sides: layout.sides,
@@ -341,6 +341,7 @@ impl HdosFile {
 pub struct DeviceInfo {
     pub id: u64,
     pub image_format: String,
+    pub media_type: String,
     pub length_bytes: u64,
     pub authoritative_layer: String,
     pub active_layer: String,
@@ -1297,6 +1298,7 @@ impl Disk {
             device: DeviceInfo {
                 id: report.device.id,
                 image_format: report.device.image_format.clone(),
+                media_type: report.device.media_type.clone(),
                 length_bytes: report.device.length_bytes,
                 authoritative_layer: report.device.authoritative_layer.clone(),
                 active_layer: report.device.active_layer.clone(),

@@ -58,6 +58,83 @@ removes it is the record either way.
 
 ## Decisions
 
+### D19 — A media profile holds what the article is, and nothing that was recorded on it
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-04. **Supports** S1, S2, S3; P3, P12, P14, P22, P30, P32.
+
+Rulings made in P14's course, which its own text settles only in
+principle.
+
+**The boundary is drawn at "recorded".** P14 says a profile holds
+"passive compatibility facts", and the contested reading is what that
+excludes. It excludes everything a recording put on the medium: density,
+encoding, track and sector counts, and the geometry an image format
+declares all stayed where they were, and what moved into the catalog is
+the article — form factor, coercivity, track density, hole topology, and
+the sense of the write-protect mechanism. The test applied was whether
+the fact is true of a blank disk in its sleeve.
+
+**How many surfaces the medium certifies is not declared at all**, and
+this is the sharpest case of that test. It is a genuine passive fact, and
+nothing the library ever holds establishes it: a capture records what one
+head saw, an image records what was written, and neither says whether the
+physical disk was sold certified for one side or two. Declaring it from
+the drive's recorded-surface count would be the drive's fact wearing the
+medium's name. So the medium is silent, and P30's `Surfaces { recorded }`
+and the image format's `sides` continue to answer the question they
+actually answer.
+
+**"Hard disk" and "floppy" leave the medium's vocabulary.** They were the
+image-format descriptor's `media_kind` string, and central identification
+code `match`ed on them to choose a display name — a string-named rule in
+orchestration, which is exactly what P12 keeps out of it. A virtual
+disk's medium is logical-block media; *hard disk* is the device family a
+session's slot carries under P32, and the P32 amendment's rule that a
+device's addressing nature never reaches the media instance is the same
+rule one step over. The public spelling follows: `media_kind` becomes
+`media_type` and carries an enrolled identity rather than a word.
+
+**A drive profile declares the medium its family is served**, which is
+not the violation it can look like. P14 forbids a *media profile* from
+containing hardware behavior; a drive declaring which article it accepts
+is a compatibility fact of the family, the same class as its rotation or
+its density map, and the catalog entry it points at knows nothing about
+the drive. It is also the only honest source for a mastered medium's
+media type: a capture does not record what disk it was, so the name comes
+from the family's declaration with provenance, as every other P29 policy
+input does.
+
+**The seam is crate-private**, as the drive-profile seam beside it is. A
+media type reaches a caller as the name a medium answers with — in an
+identification's physical-media layer and in the layered report's device
+record — and the facts stay behind that name until something outside the
+library needs one. Nothing about P14 requires a public flexible-media
+fact today, and publishing one would fix a schema on the strength of two
+enrolled entries.
+
+**Weighed and declined:** one universal media schema with per-family
+fields left empty (P14 refuses it in as many words, and the two claimed
+families share no fact — a coercivity is meaningless for a logical-block
+medium and a block size for a disk); leaving the block family's medium
+unnamed, as `media_kind: None` left a raw image (a medium that cannot say
+what it is makes P14 conditional, and block-active state *is*
+logical-block media — that much the authoritative layer establishes);
+letting the caller declare a medium's type at attach (nothing in the
+delivered stack needs it, and a caller-asserted fact would have to travel
+as provenance rather than as a declaration, which is a P29-shaped
+surface built ahead of a demand); enrolling 8-inch and 3.5-inch entries
+to prove the family generalizes (unused declarations no test measures,
+and the 8-inch write-protect sense is inverted from the 5.25-inch one,
+which is exactly the kind of fact to declare when a format needs it and
+not before); and holding the media type only on the image-format
+descriptor rather than on the medium (a medium is state *between* image
+formats and drives, so reaching through the format to ask what the
+medium is inverts the direction the principle draws).
+
+**Reopens if:** a claimed family needs a fact the delivered schema cannot
+hold, or a caller is found needing a medium's facts rather than its name.
+
 ### D18 — A VDI parent is searched for by identity, because the format records no path
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

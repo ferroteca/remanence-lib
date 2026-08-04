@@ -49,6 +49,7 @@ use crate::flux_capture::{
     SectionLocation, SectionWriter, TimeBase, decode_provenance, encode_provenance,
     greatest_common_divisor, locate_section, read_text, read_varint, write_text, write_varint,
 };
+use crate::media_profile::MediaProfile;
 
 /// One cycle of the frame's declared reference clock. An angle, not a
 /// duration: a position is a count of cycles from the frame's origin.
@@ -676,6 +677,12 @@ impl std::fmt::Debug for MediumBacking {
 #[derive(Debug)]
 pub(crate) struct FluxMedium {
     profile: &'static str,
+    /// The medium this is (P14): an immutable media type naming the
+    /// article's passive facts, named here because a medium is state
+    /// between image formats and drives and has to say what it is
+    /// independently of either. The recorded content below belongs to
+    /// this instance and to nothing in the catalog.
+    media: &'static MediaProfile,
     frame: RotationalFrame,
     derivation: Derivation,
     locations: BTreeMap<LocationKey, Location>,
@@ -688,6 +695,14 @@ impl FluxMedium {
     /// addressing and strength vocabulary.
     pub(crate) fn profile(&self) -> &'static str {
         self.profile
+    }
+
+    /// The media type this medium is. Distinct from the drive profile
+    /// above it in exactly the way P14 and P30 are distinct: that one
+    /// declares what a family does to media, and this one what the
+    /// article itself is.
+    pub(crate) fn media(&self) -> &'static MediaProfile {
+        self.media
     }
 
     pub(crate) fn frame(&self) -> &RotationalFrame {
@@ -912,6 +927,7 @@ impl<S: ByteSink> MediumBuilder<S> {
     /// says only that something happened.
     pub(crate) fn new(
         profile: &'static str,
+        media: &'static MediaProfile,
         frame: RotationalFrame,
         derivation: Derivation,
         policy: Provenance,
@@ -928,6 +944,7 @@ impl<S: ByteSink> MediumBuilder<S> {
             writer: SectionWriter::to_sink(sink, LEAF_ENTRIES),
             medium: FluxMedium {
                 profile,
+                media,
                 frame,
                 derivation,
                 locations: BTreeMap::new(),
@@ -1272,6 +1289,13 @@ mod tests {
 
     const C1541: &str = "c1541";
 
+    /// The medium that family is served (P14). Named here exactly as a
+    /// real reduction names it: from the family's declaration, never
+    /// invented beside the test.
+    fn media() -> &'static crate::media_profile::MediaProfile {
+        &crate::media_profile::FLEXIBLE_5_25_SOFT
+    }
+
     /// The 1541's reference clock: 16 MHz, exactly.
     fn drive_clock() -> TimeBase {
         TimeBase::new(C1541, 16_000_000, 1).expect("the rate is stated")
@@ -1316,6 +1340,7 @@ mod tests {
             LocationKey::fraction(C1541, 35, 2, Some(0)).expect("a half-track is an address");
         let mut builder = MediumBuilder::new(
             C1541,
+            media(),
             frame(),
             Derivation::SelectedAndProjected,
             policy(),
@@ -1377,6 +1402,7 @@ mod tests {
         // that says only that something happened.
         let error = MediumBuilder::new(
             C1541,
+            media(),
             frame(),
             Derivation::SelectedAndProjected,
             Provenance::new(C1541),
@@ -1386,6 +1412,26 @@ mod tests {
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         assert!(error.to_string().contains("no policy names"), "{error}");
+    }
+
+    #[test]
+    fn every_medium_names_the_article_it_is() {
+        // P14: a medium is state between image formats and drives, so
+        // it says what it is on its own rather than leaving a reader to
+        // ask whichever of the two is nearest. The drive profile above
+        // is a separate name for a separate fact.
+        let (medium, _, _) = mastered();
+
+        assert_eq!(medium.media().id, "flexible-5.25-soft");
+        assert_eq!(medium.profile(), "c1541");
+        assert_eq!(
+            medium
+                .media()
+                .flexible_magnetic()
+                .expect("its own family's facts")
+                .index_holes,
+            1,
+        );
     }
 
     #[test]
@@ -1478,7 +1524,7 @@ mod tests {
     #[test]
     fn a_pulse_outside_the_circle_is_refused_rather_than_wrapped() {
         let mut builder =
-            MediumBuilder::new(C1541, frame(), Derivation::Synthetic, policy(), Vec::new())
+            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
                 .expect("the policy is stated");
         let error = builder
             .add_location(
@@ -1498,7 +1544,7 @@ mod tests {
     #[test]
     fn pulses_that_do_not_advance_are_refused_rather_than_sorted() {
         let mut builder =
-            MediumBuilder::new(C1541, frame(), Derivation::Synthetic, policy(), Vec::new())
+            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
                 .expect("the policy is stated");
         let error = builder
             .add_location(
@@ -1521,7 +1567,7 @@ mod tests {
         // profile's declarations, so a location from another would be
         // an angle measured on a circle that is not its own.
         let mut builder =
-            MediumBuilder::new(C1541, frame(), Derivation::Synthetic, policy(), Vec::new())
+            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
                 .expect("the policy is stated");
         let error = builder
             .add_location(
@@ -1620,7 +1666,7 @@ mod tests {
     #[test]
     fn a_seam_outside_the_circle_is_refused_like_a_pulse() {
         let mut builder =
-            MediumBuilder::new(C1541, frame(), Derivation::Synthetic, policy(), Vec::new())
+            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
                 .expect("the policy is stated");
         let error = builder
             .add_location(
@@ -1663,7 +1709,7 @@ mod tests {
         // the one that ends it, and never reaches the third.
         let first = LocationKey::new(C1541, 0, 0);
         let mut builder =
-            MediumBuilder::new(C1541, frame(), Derivation::Synthetic, policy(), Vec::new())
+            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
                 .expect("the policy is stated")
                 .with_chunk_records(2);
         builder
@@ -1718,7 +1764,7 @@ mod tests {
     fn a_declared_bound_evicts_and_re_reads_rather_than_refusing() {
         let first = LocationKey::new(C1541, 0, 0);
         let mut builder =
-            MediumBuilder::new(C1541, frame(), Derivation::Synthetic, policy(), Vec::new())
+            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
                 .expect("the policy is stated")
                 .with_chunk_records(1);
         builder
@@ -1750,7 +1796,7 @@ mod tests {
     #[test]
     fn locations_arriving_out_of_addressing_order_are_refused() {
         let mut builder =
-            MediumBuilder::new(C1541, frame(), Derivation::Synthetic, policy(), Vec::new())
+            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
                 .expect("the policy is stated");
         builder
             .add_location(

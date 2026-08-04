@@ -568,8 +568,10 @@ bool remanence_container_image_payload_length(const RemanenceIdentification *ide
 bool remanence_container_has_disk_layout(const RemanenceIdentification *identification,
                                          size_t index);
 
-// Disk layout: media kind (e.g. "floppy"); null when unknown.
-const char *remanence_container_disk_media_kind(const RemanenceIdentification *identification,
+// Disk layout: the media type the image format names for its medium
+// (e.g. "logical-block-512"); null when the container has no disk
+// layout.
+const char *remanence_container_disk_media_type(const RemanenceIdentification *identification,
                                                 size_t index);
 
 // Disk layout: sector size in bytes; returns false when unknown.
@@ -1637,6 +1639,10 @@ const char *remanence_report_device_image_format(const RemanenceDiskReport *repo
 
 // The device's addressable length in bytes.
 uint64_t remanence_report_device_length_bytes(const RemanenceDiskReport *report);
+
+// The media type of the medium attached to the device (P14) — what
+// the medium is, said in the media-type catalog's own name for it.
+const char *remanence_report_device_media_type(const RemanenceDiskReport *report);
 
 // The layer the image is authoritative at (P13).
 const char *remanence_report_device_authoritative_layer(const RemanenceDiskReport *report);

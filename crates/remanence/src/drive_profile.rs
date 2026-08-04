@@ -43,6 +43,7 @@ use std::collections::BTreeMap;
 
 use crate::error::{Error, ErrorCategory, Result};
 use crate::flux_capture::{FluxCapture, Tick, TrackKey};
+use crate::media_profile::{FLEXIBLE_5_25_SOFT, MediaProfile};
 
 // ------------------------------------------------------- declared facts
 
@@ -292,6 +293,12 @@ pub(crate) struct DriveProfile {
     pub(crate) name: &'static str,
     pub(crate) version: u32,
     pub(crate) provenance: &'static str,
+    /// The medium this family is served (P14). A drive declaring which
+    /// article it accepts is a compatibility fact of the family, the
+    /// same class as every other declaration here; the medium's own
+    /// facts stay in the media-type catalog, which knows nothing about
+    /// this drive and holds no behavior of its own.
+    pub(crate) media: &'static MediaProfile,
     pub(crate) stepping: Stepping,
     pub(crate) rotation: Rotation,
     pub(crate) surfaces: Surfaces,
@@ -347,6 +354,10 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
                  drive steps per track, 300 RPM against a 16 MHz reference, and \
                  the four documented speed zones with their track boundaries \
                  and sector counts",
+    // Soft-sectored 5.25-inch media. The disk carries an index hole and
+    // this drive has no sensor for it, which is why the two facts are
+    // declared in two places rather than one standing in for the other.
+    media: &FLEXIBLE_5_25_SOFT,
     stepping: Stepping {
         steps_per_location: 2,
         first_location: 1,
@@ -1486,6 +1497,30 @@ mod tests {
         // honestly begin its circle at a datum the drive never sees.
         assert!(!C1541.rotation.index_observed_by_drive);
         assert_eq!(C1541.materialization.origin, OriginDefault::LongestGap);
+    }
+
+    #[test]
+    fn the_family_declares_the_medium_it_is_served_without_absorbing_it() {
+        // P14 and P30 are two declarations about one disk. The family
+        // names the article it accepts; the article's own facts stay in
+        // the media-type catalog, which knows nothing about this drive.
+        assert_eq!(C1541.media.id, "flexible-5.25-soft");
+        let medium = C1541
+            .media
+            .flexible_magnetic()
+            .expect("a 1541 is served flexible magnetic media");
+
+        // The clearest case of the two answering different questions:
+        // the disk carries an index hole, and this drive has no sensor
+        // for it. Neither fact stands in for the other, and a profile
+        // that held both would have to choose which one it meant.
+        assert_eq!(medium.index_holes, 1);
+        assert!(!C1541.rotation.index_observed_by_drive);
+
+        // Soft-sectored: the medium divides no revolution, so what a
+        // location holds is entirely the family's declaration below.
+        assert_eq!(medium.sectoring.sector_holes(), 0);
+        assert!(C1541.density.iter().all(|zone| zone.records > 0));
     }
 
     #[test]

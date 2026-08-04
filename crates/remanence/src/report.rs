@@ -169,6 +169,11 @@ pub struct DeviceInfo {
     pub id: u64,
     /// The image format the container turned out to be.
     pub image_format: String,
+    /// The media type of the medium attached here, named from the
+    /// media-type catalog (P14). It says what the medium *is* — the
+    /// article a drive would accept — and nothing about what is
+    /// recorded on it, which the records below this one answer.
+    pub media_type: String,
     /// The device's addressable length in bytes.
     pub length_bytes: u64,
     /// The layer the image is authoritative at (P13).

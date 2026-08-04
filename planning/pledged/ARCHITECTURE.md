@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, P25, P31 and
+> **Status:** pledged at the owner's direction. P15, P25, P31 and
 > P32, together with the P19 scope-of-claim and P32 addressing-nature
 > amendments, remain owed by the project and are armed only when they reach
 > root [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
@@ -20,9 +20,11 @@ SPDX-License-Identifier: GPL-3.0-only
 > was its only demand being delivered; the P23 amendment in the two
 > halves it was armed in, its correction at the bottom on the delivered
 > flux stack and its extension above the medium once the two layers it
-> named were built; and P28, the degraded,
+> named were built; P28, the degraded,
 > evidence-bounded reading of a truncated raw FAT image that was its
-> demand being delivered. What still cites them here cites
+> demand being delivered; and P14, the media-profile seam and its
+> declarative media-type catalog being built and named by every medium
+> the library holds. What still cites them here cites
 > an in-force principle.
 >
 > A principle that establishes a seam guarantees that the architecture
@@ -30,22 +32,6 @@ SPDX-License-Identifier: GPL-3.0-only
 > layers. Examples test the required generality; they do not claim or
 > pledge support for any named variation. Actual support remains a named,
 > enumerated claim under P3.
-
-## P14 — Media is independent recorded state
-
-A media instance is the independent mutable state between image formats
-and drives. It names an immutable, family-specific profile containing
-passive compatibility facts; the recorded contents belong to the instance.
-Magnetic flexible media, optical media, and logical-block media illustrate
-families whose state and compatibility facts differ too much for one
-schema. A family owns its representation and small interface.
-
-Image-format adapters load and save media state. Hardware and CHS
-presentations operate on that state through their own seams. A media profile
-contains neither image recognition nor hardware behavior and cannot
-implicitly choose how far hardware emulation descends. The media-type
-catalog may be declarative because media profiles are passive; it is not a
-language for behavior.
 
 ## P15 — Hardware emulation is one common timed-causality layer
 

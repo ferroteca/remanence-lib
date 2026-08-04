@@ -17,6 +17,7 @@ use crate::error::{Error, ErrorCategory, Result};
 use crate::fat::FatVolume;
 use crate::filesystem;
 use crate::mbr;
+use crate::media_profile::{FLEXIBLE_5_25_HARD_10, LOGICAL_BLOCK_512, MediaProfile};
 use crate::qcow2::{QCOW2_MAGIC, Qcow2, SUPPORTED_VERSION_CEILING};
 use crate::vdi::{
     SIGNATURE_AT as VDI_SIGNATURE_AT, SUPPORTED_MAJOR as VDI_SUPPORTED_MAJOR,
@@ -68,9 +69,15 @@ impl DeviceIdentity {
     }
 }
 
+/// The recording geometry an image format declares for every image it
+/// claims.
+///
+/// These are facts about the *recording*, not about the medium: what the
+/// medium is remains the media profile the descriptor names, and the
+/// two are kept apart because one disk carries different recordings
+/// (P14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DiskDescriptor {
-    pub(crate) media_kind: &'static str,
     pub(crate) sector_size: u64,
     pub(crate) cylinders: u32,
     pub(crate) sides: u32,
@@ -90,7 +97,12 @@ pub(crate) struct ImageFormatDescriptor {
     pub(crate) extensions: &'static [&'static str],
     pub(crate) authoritative_layer: ImageLayer,
     pub(crate) initial_active_layer: ActiveLayer,
-    pub(crate) media_kind: Option<&'static str>,
+    /// The media type an image of this format holds state for (P14).
+    /// An adapter loads and saves media state, so it is the adapter
+    /// that names the medium; it never restates the medium's own
+    /// passive facts inline, which is how one disk comes to be
+    /// described two ways by two formats.
+    pub(crate) media: &'static MediaProfile,
     pub(crate) disk: Option<DiskDescriptor>,
 }
 
@@ -455,9 +467,11 @@ static H8D_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     extensions: &["h8d"],
     authoritative_layer: ImageLayer::Chs,
     initial_active_layer: ActiveLayer::Chs,
-    media_kind: Some("floppy"),
+    // The H17's ten records to a track are the ten sector holes the
+    // medium itself carries; the medium says how the revolution is
+    // divided, and this format says what was recorded in each division.
+    media: &FLEXIBLE_5_25_HARD_10,
     disk: Some(DiskDescriptor {
-        media_kind: "floppy",
         sector_size: 256,
         cylinders: 40,
         sides: 1,
@@ -540,7 +554,7 @@ static QCOW2_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     extensions: &["qcow2", "qcow"],
     authoritative_layer: ImageLayer::Block,
     initial_active_layer: ActiveLayer::Block,
-    media_kind: Some("hard_disk"),
+    media: &LOGICAL_BLOCK_512,
     disk: None,
 };
 
@@ -708,7 +722,7 @@ static VDI_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     extensions: &["vdi"],
     authoritative_layer: ImageLayer::Block,
     initial_active_layer: ActiveLayer::Block,
-    media_kind: Some("hard_disk"),
+    media: &LOGICAL_BLOCK_512,
     disk: None,
 };
 
@@ -812,7 +826,7 @@ static RAW_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     extensions: &[],
     authoritative_layer: ImageLayer::Block,
     initial_active_layer: ActiveLayer::Block,
-    media_kind: None,
+    media: &LOGICAL_BLOCK_512,
     disk: None,
 };
 
@@ -866,7 +880,7 @@ mod tests {
         extensions: &[],
         authoritative_layer: ImageLayer::Block,
         initial_active_layer: ActiveLayer::Block,
-        media_kind: None,
+        media: &LOGICAL_BLOCK_512,
         disk: None,
     };
     static TEST_B_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
@@ -875,11 +889,44 @@ mod tests {
         extensions: &[],
         authoritative_layer: ImageLayer::Block,
         initial_active_layer: ActiveLayer::Block,
-        media_kind: None,
+        media: &LOGICAL_BLOCK_512,
         disk: None,
     };
     static TEST_A: SameProbe = SameProbe(&TEST_A_DESCRIPTOR);
     static TEST_B: SameProbe = SameProbe(&TEST_B_DESCRIPTOR);
+
+    #[test]
+    fn a_recording_follows_the_mediums_own_division_without_restating_it() {
+        // P14: the medium says how a revolution is divided, and this
+        // format says what was recorded in each division. The H17's ten
+        // records to a track are the medium's ten sector holes, and the
+        // two are checked against each other rather than one being
+        // derived from the other — a format free to disagree with the
+        // article it records on would be describing a different disk.
+        let holes = H8D_DESCRIPTOR
+            .media
+            .flexible_magnetic()
+            .expect("hard-sectored flexible media")
+            .sectoring
+            .sector_holes();
+        assert_eq!(holes, 10);
+        assert_eq!(
+            H8D_DESCRIPTOR.disk.expect("H8D geometry").sectors_per_track,
+            holes,
+        );
+
+        // And the block-active formats name the medium their state
+        // belongs to just as squarely: a virtual disk is logical-block
+        // media, which is where "hard disk" stopped being said — that
+        // is the device's family (P32), not the medium's.
+        for descriptor in [&QCOW2_DESCRIPTOR, &VDI_DESCRIPTOR, &RAW_DESCRIPTOR] {
+            assert_eq!(descriptor.media.id, "logical-block-512");
+            assert!(
+                descriptor.media.flexible_magnetic().is_none(),
+                "a logical-block medium answers no flexible-media question"
+            );
+        }
+    }
 
     #[test]
     fn a_test_adapter_is_enrolled_without_changing_orchestration() {

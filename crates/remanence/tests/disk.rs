@@ -227,6 +227,10 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert_eq!(disk.format(), DiskFormat::Raw);
 
     let report = disk.inspect().expect("inspection reads");
+    // The device reports the medium attached to it (P14): a raw image is
+    // logical-block media, named from the media-type catalog and stated
+    // apart from what turned out to be recorded on it.
+    assert_eq!(report.device.media_type, "logical-block-512");
     assert_eq!(report.content, DiskContent::DirectVolume);
     assert!(report.regions.is_empty());
     assert_eq!(report.volumes.len(), 1);

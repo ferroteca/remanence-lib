@@ -347,6 +347,62 @@ use. Choosing another authoritative layer is an explicit conversion that
 creates a new image and names any loss; it is never a side effect of
 loading, attaching, or saving the original.
 
+### P14 — Media is independent recorded state
+
+A media instance is the independent mutable state between image formats
+and drives. It names an immutable, family-specific profile containing
+passive compatibility facts; the recorded contents belong to the instance.
+Magnetic flexible media, optical media, and logical-block media illustrate
+families whose state and compatibility facts differ too much for one
+schema. A family owns its representation and small interface.
+
+Image-format adapters load and save media state. Hardware and CHS
+presentations operate on that state through their own seams. A media profile
+contains neither image recognition nor hardware behavior and cannot
+implicitly choose how far hardware emulation descends. The media-type
+catalog may be declarative because media profiles are passive; it is not a
+language for behavior.
+
+#### The three facts this keeps apart
+
+What the medium **is** belongs to the profile; what was **recorded** on it
+belongs to the instance; what a **drive does** to it belongs to a P30 drive
+profile. The same disk carries different recordings and is served by
+different drives, so any statement that collapses two of the three makes one
+article answer twice.
+
+The division is visible at each of them. A hard-sectored disk's ten sector
+holes are the medium's own division of a revolution and are a profile fact;
+the ten records an image format declares to a track are a recording fact,
+and follow the holes without being them. A disk carries an index hole
+whatever drive it is served in; whether a drive observes one is that
+drive's declaration, which is why a 1541 medium states the hole and the
+1541 profile states no sensor. How many surfaces are *recorded* is a drive
+and format fact and never the profile's — and how many a physical disk was
+certified for is declared nowhere at all, because nothing the library holds
+establishes it: a capture records what one head saw and an image records
+what was written, and neither says what the article was sold as.
+
+#### What is claimed today
+
+Two families are claimed (P3), each owning its own facts with nothing in
+common between them: **flexible magnetic** media — form factor, coercivity,
+track density, sectoring and hole topology, and which way the write-protect
+mechanism reads — and **logical-block** media, whose only compatibility fact
+is the addressable unit, a geometry-opaque medium having no other. The
+enrolled types are the soft-sectored and ten-sector hard-sectored 5.25-inch
+disks and the 512-byte logical-block medium; a media type outside the
+catalog is refused by name rather than approximated from a neighbouring
+entry.
+
+Every medium the library holds names one of them: the block-active or
+CHS-active medium a `Disk` presents, named by the image-format adapter that
+loaded its state, and the flux medium a reduction or a container produces,
+named from the family declaration of the drive profile it was mastered
+under. The catalog is a table of declared facts with no behavior in it, and
+central code reads an identity and a name off an entry without interpreting
+either.
+
 ### P16 — Partition layouts are an independent seam
 
 A partition-layout adapter consumes one addressed device or region and
@@ -603,7 +659,8 @@ leave through the representation seam it actually supports.
 #### Knock-on requirements
 
 In-force P12 and P13 recognize timed flux as an authoritative layer and physical media profiles as the owners of index and
-sector-hole topology. It makes the separate flux-data and marker/sensor
+sector-hole topology — the profile P14 states the seam for, and where
+that topology is declared today. It makes the separate flux-data and marker/sensor
 channels explicit. U23 supplies the concrete P64 journey; P22 does not by
 itself claim a standalone P64 image adapter or a public flux interface.
 
