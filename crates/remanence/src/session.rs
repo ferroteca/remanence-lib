@@ -6,15 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{
     self, DeviceIdentity, ImageFormatDescriptor, ImageIdentification, ProbeInput,
 };
-use crate::source::{self, ArchiveLayer, ImageSource};
-use crate::device::AccessMode;
-use crate::error::Result;
-use crate::hdos::HdosFile;
-
-/// The largest image the HDOS reader will materialize (P27): HDOS lives
-/// on small vintage disks, so anything larger is refused by size before
-/// a byte of it is loaded.
-const HDOS_IMAGE_BOUND: u64 = 8 * 1024 * 1024;
+use crate::source::{ArchiveLayer, ImageSource};
 
 /// What role a detected container plays in the image's layering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,7 +211,7 @@ fn physical_media_from_descriptor(
     })
 }
 
-fn container_from_layer(layer: ArchiveLayer) -> Container {
+pub(crate) fn container_from_layer(layer: ArchiveLayer) -> Container {
     let layout = ArchiveLayout {
         path: layer.path,
         entry_name: layer.entry_name,
@@ -240,139 +232,38 @@ fn container_from_layer(layer: ArchiveLayer) -> Container {
     }
 }
 
-/// An open analysis session over one disk image.
-///
-/// The session holds the P7 claim on its source file — writes denied to
-/// every other process — from open until it is dropped. The claim is
-/// also the read backing: image bytes are never loaded whole, they
-/// stream from the claimed file through the session cache (pledged
-/// P27), and access is by bounded reads.
-#[derive(Debug)]
-pub struct Session {
-    path: PathBuf,
-    image_path: PathBuf,
-    source: ImageSource,
-    device_identity: DeviceIdentity,
-    containers: Vec<Container>,
-    modified: bool,
+fn containers_with(containers: &[Container], extra: Vec<Container>) -> Vec<Container> {
+    let mut result = containers.to_vec();
+    result.extend(extra);
+    result
 }
 
-impl Session {
-    /// Opens `path` — a raw disk image, or `archive[/entry]` naming an
-    /// entry inside a supported archive (`.zip`, `.7z`) — with the
-    /// built-in image-format catalog and the stated default cache bound
-    /// ([`crate::DEFAULT_CACHE_BYTES`]). Omitting the entry works only
-    /// when the archive holds exactly one file; use [`crate::Archive`]
-    /// to see what an archive holds.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_cache(path, crate::DEFAULT_CACHE_BYTES)
-    }
-
-    /// Opens `path` with a caller-declared session cache bound (P27):
-    /// at most `cache_bytes` of the image stays resident, rounded up to
-    /// whole 64 KiB extents — the read-ahead unit — with one extent as
-    /// the floor. The bound narrows the working set; it never refuses
-    /// service.
-    pub fn open_with_cache(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
-        Self::open_full(path, cache_bytes)
-    }
-
-    fn open_full(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
-        let resolved = source::resolve_image(path.as_ref(), cache_bytes)?;
-
-        let containers = resolved
-            .archive_layers
-            .into_iter()
-            .map(container_from_layer)
-            .collect();
-
-        Ok(Self {
-            path: resolved.source_path,
-            image_path: resolved.image_path,
-            source: resolved.source,
-            device_identity: DeviceIdentity::first(),
-            containers,
-            modified: false,
-        })
-    }
-
-    /// Which P7 mode the open obtained on the source file: `ReadWrite`
-    /// normally, `ReadOnly` when the file or media denies us write
-    /// permission (writes are still denied to every other process).
-    pub fn access_mode(&self) -> AccessMode {
-        self.source.mode()
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn image_path(&self) -> &Path {
-        &self.image_path
-    }
-
-    /// The resolved image's size in bytes.
-    pub fn size_bytes(&self) -> u64 {
-        self.source.len()
-    }
-
-    /// Reads `buf` from the resolved image at `offset` — the bounded
-    /// access form (P27): the image streams from its backing
-    /// through the session cache, and no operation requires it resident
-    /// whole.
-    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        self.source.read_at(offset, buf)
-    }
-
-    /// Parses the HDOS directory from the session's image. HDOS images
-    /// are bounded small by their formats, so the whole volume is read
-    /// through the cache; an image past the bound is refused by size,
-    /// never loaded (P27).
-    pub fn list_hdos_files(&self) -> Result<Vec<HdosFile>> {
-        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
-        crate::hdos::list_hdos_files(&bytes)
-    }
-
-    /// Copies one HDOS file's bytes out of the session's image, under
-    /// the same size bound as [`Session::list_hdos_files`].
-    pub fn read_hdos_file(&self, name: &str) -> Result<Vec<u8>> {
-        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
-        crate::hdos::read_hdos_file(&bytes, name)
-    }
-
-    pub fn is_modified(&self) -> bool {
-        self.modified
-    }
-
-    pub fn close(self) {}
-
-    /// Test-only helper to simulate an in-session modification.
-    #[doc(hidden)]
-    pub fn mark_modified_for_test(&mut self) {
-        self.modified = true;
-    }
-
-    fn containers_with(&self, extra: Vec<Container>) -> Vec<Container> {
-        let mut result = self.containers.clone();
-        result.extend(extra);
-        result
-    }
-
-    /// Identifies the image's container layers and probable filesystem.
-    /// Probes read bounded evidence — a leading prefix, the length, and the
-    /// name — never the whole image (P27).
-    pub fn identify(&self) -> Identification {
-        let prefix = self.source.prefix(512).unwrap_or_default();
+/// Identifies a medium's container layers and probable filesystem.
+/// Probes read bounded evidence — a leading prefix, the length, and the
+/// name — never the whole image (P27).
+///
+/// This is the raw plane's verb (F43): it works over the medium's own
+/// bytes, above the same claim the presented disk is opened on, and is
+/// reached through [`crate::Disk`].
+pub(crate) fn identify_medium(
+    source: &ImageSource,
+    image_path: &Path,
+    containers: &[Container],
+    device_identity: DeviceIdentity,
+    modified: bool,
+) -> Identification {
+    {
+        let prefix = source.prefix(512).unwrap_or_default();
         let input = ProbeInput {
-            len: self.source.len(),
+            len: source.len(),
             prefix: &prefix,
-            path: Some(&self.image_path),
+            path: Some(image_path),
         };
         let result = adapters::image_catalog().identify(&input);
-        let current_bytes = self.source.len();
+        let current_bytes = source.len();
 
         let mut archive_evidence = Vec::new();
-        for existing in &self.containers {
+        for existing in containers {
             if let ContainerLayout::Archive(layout) = &existing.layout {
                 archive_evidence.push(format!(
                     "loaded '{}' from {} archive '{}'",
@@ -387,14 +278,14 @@ impl Session {
             ImageIdentification::Unknown { evidence } => {
                 archive_evidence.extend(evidence);
                 return Identification {
-                    containers: self.containers_with(vec![
+                    containers: containers_with(containers, vec![
                         unknown_image(SizeInformation {
                             current_bytes: Some(current_bytes),
                             expected_bytes: None,
                         }),
                         unknown_filesystem(),
                     ]),
-                    modified: self.modified,
+                    modified: modified,
                     evidence: archive_evidence,
                 };
             }
@@ -434,8 +325,8 @@ impl Session {
                 }
                 extra.push(unknown_filesystem());
                 return Identification {
-                    containers: self.containers_with(extra),
-                    modified: self.modified,
+                    containers: containers_with(containers, extra),
+                    modified: modified,
                     evidence: archive_evidence,
                 };
             }
@@ -449,7 +340,7 @@ impl Session {
         ));
         archive_evidence.push(format!(
             "device {} has active {} layer",
-            self.device_identity.value(),
+            device_identity.value(),
             descriptor.initial_active_layer.name()
         ));
 
@@ -474,14 +365,14 @@ impl Session {
         if let Some(media) = physical_media_from_descriptor(descriptor, current_bytes) {
             extra.push(media);
         }
-        match found.identify_filesystems(&self.source, &mut archive_evidence) {
+        match found.identify_filesystems(&source, &mut archive_evidence) {
             Ok(filesystems) if !filesystems.is_empty() => {
                 for filesystem in filesystems {
                     archive_evidence.extend(filesystem.evidence);
                     archive_evidence.push(format!(
                         "filesystem '{}' is a decoded view of device {}",
                         filesystem.id,
-                        self.device_identity.value()
+                        device_identity.value()
                     ));
                     extra.push(Container {
                         kind: ContainerKind::Filesystem,
@@ -508,8 +399,8 @@ impl Session {
         }
 
         Identification {
-            containers: self.containers_with(extra),
-            modified: self.modified,
+            containers: containers_with(containers, extra),
+            modified: modified,
             evidence: archive_evidence,
         }
     }
@@ -518,6 +409,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::AccessIntent;
 
     fn temp_image_path(name: &str, extension: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -535,14 +427,14 @@ mod tests {
         let path = temp_image_path("session-container", "h8d");
         write_file(&path, &vec![0u8; 102_400]);
 
-        let session = Session::open(&path).expect("session opens");
-        let identification = session.identify();
+        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        let identification = disk.identify();
 
-        assert!(!session.is_modified());
+        assert!(!disk.is_modified());
         assert!(!identification.modified);
-        assert_eq!(session.size_bytes(), 102_400);
+        assert_eq!(disk.image_size_bytes(), 102_400);
         let mut probe = [0u8; 16];
-        session.read_at(102_384, &mut probe).expect("bounded read");
+        disk.read_at(102_384, &mut probe).expect("bounded read");
         assert_eq!(probe, [0u8; 16]);
         assert_eq!(identification.containers.len(), 3);
 
@@ -584,8 +476,8 @@ mod tests {
         bytes[128..132].copy_from_slice(b"HDOS");
         write_file(&path, &bytes);
 
-        let session = Session::open(&path).expect("session opens");
-        let identification = session.identify();
+        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        let identification = disk.identify();
 
         let image = &identification.containers[0];
         assert_eq!(image.kind, ContainerKind::Image);
@@ -617,15 +509,15 @@ mod tests {
 
         // A one-extent working set (P27's declared bound at its floor):
         // identification still walks every layer correctly.
-        let session = Session::open_with_cache(&path, 1).expect("session opens");
-        let identification = session.identify();
+        let disk = crate::Disk::open_with_cache(&path, AccessIntent::Read, 1).expect("disk opens");
+        let identification = disk.identify();
         assert_eq!(identification.containers[0].id, "h8d");
         assert_eq!(
             identification.containers.last().expect("filesystem").id,
             "hdos"
         );
         let mut probe = [0u8; 4];
-        session.read_at(128, &mut probe).expect("reads");
+        disk.read_at(128, &mut probe).expect("reads");
         assert_eq!(&probe, b"HDOS");
 
         std::fs::remove_file(&path).ok();
@@ -640,13 +532,12 @@ mod tests {
         // A four-extent bound under a sequential scan: the predictive
         // reader races ahead while eviction churns behind, and the
         // results must be identical to an unbounded, unthreaded read.
-        let session = Session::open_with_cache(&path, 4 * 64 * 1024).expect("opens");
+        let disk = crate::Disk::open_with_cache(&path, AccessIntent::Read, 4 * 64 * 1024).expect("opens");
         let mut out = vec![0u8; bytes.len()];
         let chunk = 64 * 1024;
         for start in (0..bytes.len()).step_by(chunk) {
             let end = (start + chunk).min(bytes.len());
-            session
-                .read_at(start as u64, &mut out[start..end])
+            disk.read_at(start as u64, &mut out[start..end])
                 .expect("reads");
         }
         assert_eq!(out, bytes);
@@ -659,8 +550,8 @@ mod tests {
         let path = temp_image_path("session-unknown", "bin");
         write_file(&path, &[0u8; 10]);
 
-        let session = Session::open(&path).expect("session opens");
-        let identification = session.identify();
+        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        let identification = disk.identify();
 
         assert_eq!(identification.containers.len(), 2);
         let image = &identification.containers[0];
@@ -686,17 +577,18 @@ mod tests {
     }
 
     #[test]
-    fn session_identification_reports_internal_modification_state() {
+    fn identification_reports_the_real_modification_state() {
         let path = temp_image_path("session-modified", "h8d");
         write_file(&path, &vec![0u8; 102_400]);
 
-        let mut session = Session::open(&path).expect("session opens");
-        assert!(!session.identify().modified);
-
-        session.mark_modified_for_test();
-
-        assert!(session.is_modified());
-        assert!(session.identify().modified);
+        // Before F43 this was a `mark_modified_for_test` flag, because an
+        // identification session had no writes to report. The merged
+        // surface has real ones, so the reported state is the session
+        // cache's own and the flag is gone. The modified-after-write half
+        // lives in `tests/disk.rs`, where a volume exists to write to.
+        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        assert!(!disk.is_modified());
+        assert_eq!(disk.identify().modified, disk.is_modified());
 
         std::fs::remove_file(&path).ok();
     }

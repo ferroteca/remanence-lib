@@ -18,6 +18,49 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Changed
+
+- **One claim, one medium surface: `Session` is merged into `Disk`.** The
+  library had two unrelated top-level types over the same file — a
+  session that identified and read bytes, a disk that inspected and
+  performed file verbs — and they could never both be used on one image,
+  because each took its own P7 claim on it. Two ways in that
+  structurally exclude each other is a defect in the surface, so `Disk`
+  is now the one way in: `identify`, `read_at`, `image_size_bytes`,
+  `image_path`, `list_hdos_files` and `read_hdos_file` join it, and
+  `Session` is deleted rather than bridged. A medium's two planes — its
+  own bytes, and the disk a format adapter presents above them — are
+  different layers (P13) and both are served from the single claim.
+  Reflected as `remanence_disk_*` replacing every `remanence_session_*`
+  symbol, and as the Python `Disk` absorbing the `Session` class.
+- **An image inside an archive is now a disk, not merely something
+  identifiable.** The disk verbs could not reach into a `.zip` or `.7z`
+  because the adapter open seam took a whole claimed file; it now takes a
+  claimed *range*, so an entry stored uncompressed is opened in place at
+  its offset inside the claimed archive, and a compressed one inside the
+  spool it decodes to. `Disk::inspect` and the volume-scoped file verbs
+  work on archived images as a result.
+- **A write open on an archive entry is refused by name.** Gaining the
+  disk verbs over an archive entry does not confer writes: a write would
+  have to be encoded back into the archive's own grammar, which no
+  adapter claims (P13), so the open states that rather than degrading.
+- **Access intent is declared on every open, never laddered.** The
+  identification path used to fall back quietly to read-only when it
+  could not take write access, while the disk path refused by name. One
+  surface cannot hold both rules and in-force P7 forbids obtaining a
+  claim by silent fallback, so the refusal is what survives.
+- **`Disk::size` and `Disk::image_size_bytes` are now distinct by
+  name.** One is the presented disk's size, the other the image's own;
+  for a qcow2 they differ, and holding both planes on one type made the
+  old shared spelling a trap.
+
+### Removed
+
+- **`Session::mark_modified_for_test` and its bindings.** It existed
+  because an identification session had no real writes to report. The
+  merged surface has them, so `Identification.modified` reads the actual
+  session cache and the test-only hook is gone.
+
 ### Added
 
 - **One deep inspection of a disk, layered rather than flattened, on all

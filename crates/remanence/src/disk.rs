@@ -17,11 +17,18 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, OpenedImage};
 use crate::cache::SessionCache;
-use crate::device::{AccessIntent, AccessMode, Device, FileDevice};
+use crate::device::{AccessIntent, AccessMode, Device};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume};
 use crate::journal;
 use crate::mbr::{self, Discovery};
+use crate::session::{self, Container, Identification};
+use crate::source::{self, ImageSource};
+
+/// The largest image the HDOS reader will materialize (P27): HDOS lives
+/// on small vintage disks, so anything larger is refused by size before
+/// a byte of it is loaded.
+const HDOS_IMAGE_BOUND: u64 = 8 * 1024 * 1024;
 use crate::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
@@ -73,9 +80,26 @@ impl Device for Composed<'_> {
 }
 
 /// An open disk image.
+///
+/// One medium, one P7 claim, and the two planes that claim serves (F43):
+/// the **raw** plane — the image's own bytes, which identification and the
+/// HDOS reader work over, streamed through `source`'s cache and predictive
+/// reader — and the **presented** plane, the disk a format adapter exposes
+/// above it, which `virtual_disk` owns and the file verbs work over. They
+/// are different layers under P13, not duplicates, and before F43 they were
+/// two separate top-level types that could not both be opened on one image
+/// because each took its own claim.
 #[derive(Debug)]
 pub struct Disk {
     virtual_disk: Box<dyn OpenedImage>,
+    /// The raw plane over the shared claim: the session cache and the
+    /// predictive reader (P27).
+    source: ImageSource,
+    /// The archive wrappers unwrapped on the way in, if any.
+    containers: Vec<Container>,
+    /// The resolved image — the entry name for an archived image, else
+    /// the source path.
+    image_path: PathBuf,
     cache: SessionCache,
     /// The declared session cache bound (P27), governing the session
     /// cache and each commit's capture alike.
@@ -129,28 +153,48 @@ impl Disk {
     ) -> Result<Self> {
         let path = path.as_ref();
         let recovery = journal::sidecar_path(path);
-        let mut file = FileDevice::open(path, intent)?;
+        // An archive entry is read-only and never commits, so it has no
+        // journal to reconcile and no sidecar to find.
+        let is_entry = crate::archive::split_archive_path(path).is_some();
+
+        let mut resolved = source::resolve_image(path, intent, cache_bytes)?;
         // The sidecar check runs under our claim, so no live commit can
         // be mid-flight — a sidecar here is an interrupted one (P9).
-        if recovery.exists() {
+        if !is_entry && recovery.exists() {
             match intent {
-                AccessIntent::Write => journal::reconcile(&recovery, &mut file, path)?,
+                AccessIntent::Write => {
+                    let mut host = resolved.source.medium_device(path.display().to_string());
+                    journal::reconcile(&recovery, &mut host, path)?;
+                }
                 AccessIntent::Read => {
                     // Reconciling writes; trade the read claim for a
                     // moment of exclusive access, then take it back.
-                    drop(file);
+                    drop(resolved);
                     journal::reconcile_at(path)?;
-                    file = FileDevice::open(path, intent)?;
+                    resolved = source::resolve_image(path, intent, cache_bytes)?;
                 }
             }
         }
-        let mode = file.mode();
+        let mode = resolved.source.mode();
 
-        let (virtual_disk, descriptor) = adapters::image_catalog().open_disk(file, path)?;
+        // One claim, two planes: the adapter opens the presented disk over
+        // a medium device sharing the very claim the raw plane reads (F43).
+        let host = resolved.source.medium_device(path.display().to_string());
+        let (virtual_disk, descriptor) =
+            adapters::image_catalog().open_disk(host, &resolved.image_path)?;
         let format = virtual_disk.format();
+
+        let containers = resolved
+            .archive_layers
+            .into_iter()
+            .map(session::container_from_layer)
+            .collect();
 
         Ok(Self {
             virtual_disk,
+            source: resolved.source,
+            containers,
+            image_path: resolved.image_path,
             cache: SessionCache::with_bytes_offloading(cache_bytes),
             cache_bytes,
             format,
@@ -158,10 +202,65 @@ impl Disk {
             device_identity: DeviceIdentity::first(),
             active_layer: descriptor.initial_active_layer,
             mode,
-            path: path.display().to_string(),
+            // The artifact claimed, which for an archived image is the
+            // archive rather than the `archive/entry` path as given.
+            path: resolved.source_path.display().to_string(),
             journal_path: recovery,
             failed: None,
         })
+    }
+
+    /// The resolved image — the entry name for an image opened from
+    /// inside an archive, else the source path.
+    pub fn image_path(&self) -> &Path {
+        &self.image_path
+    }
+
+    /// The resolved image's own size in bytes — the raw plane.
+    ///
+    /// Distinct from [`Disk::size`], which is the size of the disk the
+    /// format adapter presents. For a raw image they agree; for a qcow2
+    /// they do not, and conflating them is exactly the confusion the
+    /// merge could have introduced by putting both planes on one type.
+    pub fn image_size_bytes(&self) -> u64 {
+        self.source.len()
+    }
+
+    /// Reads `buf` from the resolved image at `offset` — the medium's own
+    /// bytes, not the presented disk. This is the bounded access form
+    /// (P27): the image streams from its backing through the session
+    /// cache, and no operation requires it resident whole.
+    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.source.read_at(offset, buf)
+    }
+
+    /// Identifies the image's container layers and probable filesystem.
+    /// Probes read bounded evidence — a leading prefix, the length, and
+    /// the name — never the whole image (P27).
+    pub fn identify(&self) -> Identification {
+        session::identify_medium(
+            &self.source,
+            &self.image_path,
+            &self.containers,
+            self.device_identity,
+            self.is_modified(),
+        )
+    }
+
+    /// Parses the HDOS directory from the image. HDOS images are bounded
+    /// small by their formats, so the whole volume is read through the
+    /// cache; an image past the bound is refused by size, never loaded
+    /// (P27).
+    pub fn list_hdos_files(&self) -> Result<Vec<crate::hdos::HdosFile>> {
+        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
+        crate::hdos::list_hdos_files(&bytes)
+    }
+
+    /// Copies one HDOS file's bytes out of the image, under the same size
+    /// bound as [`Disk::list_hdos_files`].
+    pub fn read_hdos_file(&self, name: &str) -> Result<Vec<u8>> {
+        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
+        crate::hdos::read_hdos_file(&bytes, name)
     }
 
     /// The session's access mode — an echo of the declared intent.
@@ -679,7 +778,7 @@ mod tests {
 
         // Format the virtual disk: write a FAT16 volume into guest space
         // through the crate's own qcow2 writer.
-        let file = crate::device::FileDevice::open(path, AccessIntent::Write).expect("opens");
+        let file = crate::device::MediumDevice::open(path, AccessIntent::Write).expect("opens");
         let mut qcow2 = crate::qcow2::Qcow2::open(file).expect("parses");
         let volume = fat16_volume_bytes();
         assert_eq!(volume.len() as u64, virtual_size);

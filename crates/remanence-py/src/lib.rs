@@ -4,11 +4,13 @@
 //! Python bindings for the Remanence disk image analysis library.
 //!
 //! The module mirrors the Rust crate's public surface: `Archive` lists
-//! what a supported archive holds (`.zip`, `.7z`), `Session` opens a disk
-//! image (optionally an entry inside one of those archives),
-//! `Session.identify()` reports the detected container layers, and
-//! `list_hdos_files` parses HDOS directories. Failures raise
-//! `RemanenceError`.
+//! what a supported archive holds (`.zip`, `.7z`), and `Disk` opens a
+//! disk image (optionally an entry inside one of those archives) under
+//! one P7 claim that serves both of the medium's planes —
+//! `Disk.identify()` reports the detected container layers over the
+//! image's own bytes, while `Disk.inspect()` and the volume-scoped file
+//! verbs work over the disk a format adapter presents above them.
+//! Failures raise `RemanenceError`.
 
 use std::path::PathBuf;
 
@@ -310,107 +312,6 @@ impl HdosFile {
 }
 
 /// An open analysis session over one disk image.
-#[pyclass(module = "remanence")]
-pub struct Session {
-    inner: remanence::Session,
-}
-
-#[pymethods]
-impl Session {
-    /// Opens `path` — a raw disk image, or `archive[/entry]` naming an
-    /// entry inside a supported archive (`.zip`, `.7z`) — with the
-    /// built-in format catalogs. Omitting the entry works only when the
-    /// archive holds exactly one file; `Archive` shows what one holds.
-    /// `cache_bytes` declares the session cache bound (rounded up to
-    /// whole 64 KiB extents, one extent at minimum); omitted, the
-    /// stated default `DEFAULT_CACHE_BYTES` governs.
-    #[new]
-    #[pyo3(signature = (path, *, cache_bytes = None))]
-    fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
-        match cache_bytes {
-            Some(cache_bytes) => remanence::Session::open_with_cache(path, cache_bytes),
-            None => remanence::Session::open(path),
-        }
-        .map(|inner| Self { inner })
-        .map_err(to_py_err)
-    }
-
-    /// The path the session was opened from (the archive path for archive inputs).
-    #[getter]
-    fn path(&self) -> String {
-        self.inner.path().display().to_string()
-    }
-
-    /// The resolved image path (the entry name for archive inputs).
-    #[getter]
-    fn image_path(&self) -> String {
-        self.inner.image_path().display().to_string()
-    }
-
-    /// The resolved image's size in bytes.
-    #[getter]
-    fn size_bytes(&self) -> u64 {
-        self.inner.size_bytes()
-    }
-
-    /// Reads `length` bytes of the resolved image at `offset` — the
-    /// bounded access form: the image streams from its backing and is
-    /// never resident whole.
-    fn read_at<'py>(&self, py: Python<'py>, offset: u64, length: usize) -> PyResult<Bound<'py, PyBytes>> {
-        let mut buffer = vec![0u8; length];
-        self.inner.read_at(offset, &mut buffer).map_err(to_py_err)?;
-        Ok(PyBytes::new(py, &buffer))
-    }
-
-    /// Whether the session has unsaved modifications.
-    #[getter]
-    fn is_modified(&self) -> bool {
-        self.inner.is_modified()
-    }
-
-    /// `"read-write"` or `"read-only"`: which mode the deny-write claim
-    /// on the source file was obtained in.
-    #[getter]
-    fn access_mode(&self) -> &'static str {
-        mode_str(self.inner.access_mode())
-    }
-
-    /// Identifies the image's container layers and probable filesystem.
-    fn identify(&self, py: Python<'_>) -> PyResult<Identification> {
-        let identification = self.inner.identify();
-        let containers = identification
-            .containers
-            .iter()
-            .map(|container| Container::new(py, container))
-            .collect::<PyResult<Vec<_>>>()?;
-        Ok(Identification {
-            containers,
-            modified: identification.modified,
-            evidence: identification.evidence,
-        })
-    }
-
-    /// Parses the HDOS directory from the session's image.
-    fn list_hdos_files(&self) -> PyResult<Vec<HdosFile>> {
-        self.inner
-            .list_hdos_files()
-            .map(|files| files.iter().map(HdosFile::new).collect())
-            .map_err(to_py_err)
-    }
-
-    /// Reads a cataloged HDOS file's contents out of the session's image.
-    fn read_hdos_file<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self.inner.read_hdos_file(name).map_err(to_py_err)?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    #[doc(hidden)]
-    #[pyo3(name = "_mark_modified_for_test")]
-    fn mark_modified_for_test(&mut self) {
-        self.inner.mark_modified_for_test();
-    }
-}
-
 /// The one addressed device the image adapter supplied. `id` is scoped to
 /// this open (P21), unlike the layout-derived identities below.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
@@ -633,6 +534,74 @@ impl Disk {
         }
         .map(|inner| Self { inner: Some(inner) })
         .map_err(to_py_err)
+    }
+
+    /// The artifact the disk was opened from (the archive path for
+    /// archive inputs).
+    #[getter]
+    fn path(&mut self) -> PyResult<String> {
+        Ok(self.get()?.path().to_owned())
+    }
+
+    /// The resolved image path (the entry name for archive inputs).
+    #[getter]
+    fn image_path(&mut self) -> PyResult<String> {
+        Ok(self.get()?.image_path().display().to_string())
+    }
+
+    /// The resolved image's own size in bytes — the raw plane. Distinct
+    /// from `size`, which is the presented disk's size; for a qcow2 the
+    /// two differ.
+    #[getter]
+    fn image_size_bytes(&mut self) -> PyResult<u64> {
+        Ok(self.get()?.image_size_bytes())
+    }
+
+    /// Reads `length` bytes of the resolved image at `offset` — the
+    /// bounded access form: the image streams from its backing and is
+    /// never resident whole.
+    fn read_at<'py>(
+        &mut self,
+        py: Python<'py>,
+        offset: u64,
+        length: usize,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let mut buffer = vec![0u8; length];
+        self.get()?.read_at(offset, &mut buffer).map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &buffer))
+    }
+
+    /// Identifies the image's container layers and probable filesystem.
+    fn identify(&mut self, py: Python<'_>) -> PyResult<Identification> {
+        let identification = self.get()?.identify();
+        let containers = identification
+            .containers
+            .iter()
+            .map(|container| Container::new(py, container))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Identification {
+            containers,
+            modified: identification.modified,
+            evidence: identification.evidence,
+        })
+    }
+
+    /// Parses the HDOS directory from the disk's image.
+    fn list_hdos_files(&mut self) -> PyResult<Vec<HdosFile>> {
+        self.get()?
+            .list_hdos_files()
+            .map(|files| files.iter().map(HdosFile::new).collect())
+            .map_err(to_py_err)
+    }
+
+    /// Reads a cataloged HDOS file's contents out of the disk's image.
+    fn read_hdos_file<'py>(
+        &mut self,
+        py: Python<'py>,
+        name: &str,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = self.get()?.read_hdos_file(name).map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &bytes))
     }
 
     /// `"read-write"` or `"read-only"` — an echo of the declared intent.
@@ -2201,7 +2170,6 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<P64HalfTrack>()?;
     m.add_class::<MasteredLocation>()?;
     m.add_class::<DeclaredLoss>()?;
-    m.add_class::<Session>()?;
     m.add_class::<Identification>()?;
     m.add_class::<Container>()?;
     m.add_class::<SizeInformation>()?;

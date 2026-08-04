@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use crate::source::{ImageSource, SourceDevice};
-use crate::device::{Device, FileDevice};
+use crate::device::{Device, MediumDevice};
 use crate::disk::DiskFormat;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::fat::FatVolume;
@@ -130,7 +130,7 @@ impl ProbeResult {
 
 pub(crate) trait OpenedImage: Device + std::fmt::Debug + Send + Sync {
     fn device_mut(&mut self) -> &mut dyn Device;
-    fn host_mut(&mut self) -> &mut FileDevice;
+    fn host_mut(&mut self) -> &mut MediumDevice;
     fn cache_snapshot(&self) -> Option<Vec<u64>>;
     fn restore_cache(&mut self, snapshot: Option<Vec<u64>>);
     fn format(&self) -> DiskFormat;
@@ -138,7 +138,7 @@ pub(crate) trait OpenedImage: Device + std::fmt::Debug + Send + Sync {
 }
 
 #[derive(Debug)]
-struct RawImage(FileDevice);
+struct RawImage(MediumDevice);
 
 impl Device for RawImage {
     fn len(&self) -> u64 {
@@ -163,7 +163,7 @@ impl OpenedImage for RawImage {
         self
     }
 
-    fn host_mut(&mut self) -> &mut FileDevice {
+    fn host_mut(&mut self) -> &mut MediumDevice {
         &mut self.0
     }
 
@@ -183,7 +183,7 @@ impl OpenedImage for RawImage {
 }
 
 #[derive(Debug)]
-struct Qcow2Image(Qcow2<FileDevice>);
+struct Qcow2Image(Qcow2<MediumDevice>);
 
 impl Device for Qcow2Image {
     fn len(&self) -> u64 {
@@ -208,7 +208,7 @@ impl OpenedImage for Qcow2Image {
         self
     }
 
-    fn host_mut(&mut self) -> &mut FileDevice {
+    fn host_mut(&mut self) -> &mut MediumDevice {
         self.0.host_mut()
     }
 
@@ -253,7 +253,7 @@ pub(crate) trait ImageFormatAdapter: Sync {
     ) -> Result<Vec<DetectedFilesystem>> {
         Ok(Vec::new())
     }
-    fn open_disk(&self, file: FileDevice, path: &Path) -> Result<Box<dyn OpenedImage>>;
+    fn open_disk(&self, file: MediumDevice, path: &Path) -> Result<Box<dyn OpenedImage>>;
 }
 
 pub(crate) struct ImageMatch<'a> {
@@ -358,7 +358,7 @@ impl<'a> ImageCatalog<'a> {
 
     pub(crate) fn open_disk(
         &self,
-        mut file: FileDevice,
+        mut file: MediumDevice,
         path: &Path,
     ) -> Result<(Box<dyn OpenedImage>, &'static ImageFormatDescriptor)> {
         let mut prefix = vec![0u8; file.len().min(512) as usize];
@@ -469,7 +469,7 @@ impl ImageFormatAdapter for H8dAdapter {
         })
     }
 
-    fn open_disk(&self, file: FileDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
+    fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(RawImage(file)))
     }
 }
@@ -623,7 +623,7 @@ impl ImageFormatAdapter for Qcow2Adapter {
         Ok(found)
     }
 
-    fn open_disk(&self, file: FileDevice, path: &Path) -> Result<Box<dyn OpenedImage>> {
+    fn open_disk(&self, file: MediumDevice, path: &Path) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(Qcow2Image(crate::qcow2::open_chain(file, path)?)))
     }
 }
@@ -650,7 +650,7 @@ impl ImageFormatAdapter for RawAdapter {
         ProbeResult::NoMatch
     }
 
-    fn open_disk(&self, file: FileDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
+    fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(RawImage(file)))
     }
 }
@@ -679,7 +679,7 @@ mod tests {
             }
         }
 
-        fn open_disk(&self, file: FileDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
+        fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
             Ok(Box::new(RawImage(file)))
         }
     }

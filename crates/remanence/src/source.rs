@@ -21,7 +21,9 @@ use crate::archive::{
     ArchiveCatalog, EntrySource, normalize_entry_name, open_archive, split_archive_path,
 };
 use crate::cache::{EXTENT, SessionCache};
-use crate::device::{AccessMode, Device, FileRangeDevice, open_locked, read_exact_at};
+use crate::device::{
+    AccessIntent, AccessMode, Device, FileRangeDevice, MediumDevice, open_declared, read_exact_at,
+};
 use crate::error::{Error, ErrorCategory, Result};
 
 /// How far the predictive reader runs ahead of a sequential access
@@ -214,6 +216,31 @@ impl ImageSource {
         Ok(bytes)
     }
 
+    /// A [`MediumDevice`] over the same claim and the same backing this
+    /// source reads.
+    ///
+    /// This is the bridge F43 turns on. The two planes a medium has — the
+    /// raw bytes identification and the HDOS reader work over, and the
+    /// presented disk the format adapters expose — are different layers
+    /// (P13), but they are one artifact under one claim, and before this
+    /// they were reached by opening the file twice. The claim is shared
+    /// rather than reacquired, so the second plane costs no second claim
+    /// and cannot conflict with the first.
+    pub fn medium_device(&self, path: String) -> MediumDevice {
+        let (backing, base) = match &self.backing {
+            Backing::Claim { offset } => (Arc::clone(&self.claim), *offset),
+            Backing::Spool { spool, offset } => (Arc::clone(spool), *offset),
+        };
+        MediumDevice::range(
+            Arc::clone(&self.claim),
+            backing,
+            base,
+            self.len,
+            self.mode,
+            path,
+        )
+    }
+
     /// Materializes the whole image only when its length is within
     /// `cap` — the P27 rule that a whole layer may be held only when its
     /// format bounds it beneath the working set. Anything larger is
@@ -298,8 +325,17 @@ fn only_file_entry_name(catalog: &dyn ArchiveCatalog, archive_path: &Path) -> Re
 fn resolve_archive_entry(
     archive_path: PathBuf,
     entry_path: Option<PathBuf>,
+    intent: AccessIntent,
     cache_bytes: u64,
 ) -> Result<ResolvedImage> {
+    if intent == AccessIntent::Write {
+        return Err(Error::read_only(format!(
+            "'{}' names an entry inside an archive, which cannot be opened for \
+             writing: a write would have to be encoded back into the archive's \
+             own grammar, and no adapter claims that",
+            archive_path.display()
+        )));
+    }
     let claimed = open_archive(&archive_path)?;
     let catalog = claimed.catalog.as_ref();
     let descriptor = catalog.descriptor();
@@ -355,14 +391,25 @@ fn resolve_archive_entry(
     })
 }
 
-/// Resolves `path` to a streamed image source under the session's
-/// declared cache bound, consulting the archive catalog first.
-pub(crate) fn resolve_image(path: &Path, cache_bytes: u64) -> Result<ResolvedImage> {
+/// Resolves `path` to a streamed image source under the caller's
+/// declared intent (P7) and declared cache bound (P27), consulting the
+/// archive catalog first.
+///
+/// The intent is declared, never laddered. Before F43 the identification
+/// path quietly degraded a failed write open to read-only while the disk
+/// path refused by name; one surface cannot hold both rules, and in-force
+/// P7 forbids obtaining a claim by silent fallback, so the refusal is
+/// what survives.
+pub(crate) fn resolve_image(
+    path: &Path,
+    intent: AccessIntent,
+    cache_bytes: u64,
+) -> Result<ResolvedImage> {
     if let Some((archive_path, entry_path)) = split_archive_path(path) {
-        return resolve_archive_entry(archive_path, entry_path, cache_bytes);
+        return resolve_archive_entry(archive_path, entry_path, intent, cache_bytes);
     }
 
-    let (file, mode) = open_locked(path)?;
+    let file = open_declared(path, intent)?;
     let len = file
         .metadata()
         .map_err(|error| Error::io(format!("failed to stat '{}': {error}", path.display())))?
@@ -372,7 +419,7 @@ pub(crate) fn resolve_image(path: &Path, cache_bytes: u64) -> Result<ResolvedIma
         image_path: path.to_path_buf(),
         source: ImageSource::new(
             Arc::new(file),
-            mode,
+            intent.mode(),
             Backing::Claim { offset: 0 },
             len,
             cache_bytes,

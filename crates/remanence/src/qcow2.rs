@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::device::{AccessIntent, Device, FileDevice};
+use crate::device::{AccessIntent, Device, MediumDevice};
 use crate::error::{Error, Result};
 use crate::inflate::inflate;
 
@@ -574,7 +574,7 @@ impl<D: Device> Qcow2<D> {
 /// from the image that names it. A missing member, a cycle, a chain
 /// past [`MAX_CHAIN_LENGTH`] files, and a backing format beyond raw and
 /// qcow2 are refused by name (P3).
-pub(crate) fn open_chain(device: FileDevice, path: &Path) -> Result<Qcow2<FileDevice>> {
+pub(crate) fn open_chain(device: MediumDevice, path: &Path) -> Result<Qcow2<MediumDevice>> {
     let canonical_top = std::fs::canonicalize(path).map_err(|error| {
         Error::io(format!("cannot resolve '{}': {error}", path.display()))
     })?;
@@ -582,10 +582,10 @@ pub(crate) fn open_chain(device: FileDevice, path: &Path) -> Result<Qcow2<FileDe
 }
 
 fn open_member(
-    mut device: FileDevice,
+    mut device: MediumDevice,
     path: &Path,
     visited: &mut Vec<PathBuf>,
-) -> Result<Qcow2<FileDevice>> {
+) -> Result<Qcow2<MediumDevice>> {
     let header = Qcow2Header::parse(&mut device)?;
     let Some(name) = header.backing_file.clone() else {
         return Qcow2::assemble(device, header, None);
@@ -636,7 +636,7 @@ fn open_member(
 
     // The immutability claim (P7); contention is an immediate, named
     // failure inside this open.
-    let mut backing_device = FileDevice::open(&resolved, AccessIntent::Read)?;
+    let mut backing_device = MediumDevice::open(&resolved, AccessIntent::Read)?;
 
     // The parent pins its backing file's format where the image records
     // one; otherwise the magic decides, exactly as at the top.

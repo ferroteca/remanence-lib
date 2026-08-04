@@ -19,9 +19,8 @@ ABI, or Python module.
   authoritative/active layer vocabulary, device identity, and built-in
   image catalog; `partition.rs` the partition-layout catalog;
   `filesystem.rs` the streamed filesystem adapters and catalog (crate-private,
-  reached through `Session::identify`); `session.rs` the session model,
-  the layered identification result, and the P7 claim held for the
-  session's lifetime; `hdos.rs` the HDOS directory lister and file
+  reached through `Disk::identify`); `session.rs` the layered
+  identification model, reached through the one medium surface; `hdos.rs` the HDOS directory lister and file
   extractor; `archive.rs` the archive-catalog seam — the
   `ArchiveCatalog` trait, the public `Archive` listing, and the
   enrollment each grammar is reached by — with `source.rs` resolving
@@ -359,3 +358,25 @@ recompile `examples/identify.c` against it (instructions in the file
 header). When the Python surface changed, build `-p remanence-py` (needs
 Python ≥ 3.10) and smoke-test the module; for release artifacts,
 `uv build crates/remanence-py` produces the sdist and abi3 wheel.
+
+### Recompiling the C example on this host
+
+The example links against the MSVC-built DLL and compiles with MSYS2's
+ucrt64 gcc. **Put `C:\msys64\ucrt64\bin` on `PATH` first**, from
+PowerShell:
+
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+gcc crates/remanence-ffi/examples/identify.c target/debug/remanence_ffi.dll `
+    -I crates/remanence-ffi/include -o "$env:TEMP\identify.exe"
+```
+
+Then run it beside a copy of `target/debug/remanence_ffi.dll`, against
+both a plain image and one inside an archive — the archive path is a
+distinct composition, not the same code with a longer path.
+
+**Without that `PATH` entry gcc exits 1 and prints nothing at all**: it
+is gcc's own runtime DLLs failing to resolve, so the compiler never
+starts and there are no diagnostics to read. The silence looks like a
+broken example rather than a broken invocation, which is exactly how it
+wastes time.

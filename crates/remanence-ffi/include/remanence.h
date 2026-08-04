@@ -59,8 +59,7 @@ typedef enum {
   REMANENCE_ACCESS_INTENT_WRITE,
 } RemanenceAccessIntent;
 
-// A session's access mode. For a disk this echoes the declared intent;
-// for an identification session it reports what the P7 ladder obtained.
+// A disk's access mode — an echo of the declared intent (P7).
 typedef enum {
   REMANENCE_ACCESS_MODE_READ_WRITE,
   REMANENCE_ACCESS_MODE_READ_ONLY,
@@ -159,7 +158,7 @@ typedef struct RemanenceFileData RemanenceFileData;
 // A parsed HDOS directory listing.
 typedef struct RemanenceHdosFileList RemanenceHdosFileList;
 
-// The result of identifying a session's image.
+// The result of identifying a disk's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
 
 // A mastered medium, held in the session.
@@ -177,9 +176,6 @@ typedef struct RemanenceP64Report RemanenceP64Report;
 
 // A recognition result, ranked highest confidence first.
 typedef struct RemanenceRecognition RemanenceRecognition;
-
-// An open analysis session over one disk image.
-typedef struct RemanenceSession RemanenceSession;
 
 // One zone as a profile declares it, and what the capture recovered of
 // it.
@@ -298,56 +294,34 @@ uint64_t remanence_default_cache_bytes(void);
 // Frees a string returned through an `error_out` parameter.
 void remanence_string_free(char *string);
 
-// Opens `path` (UTF-8) — a raw disk image, or `archive[/entry]` naming an
-// entry inside a supported archive (`.zip`, `.7z`) — with the built-in
-// format adapters. Returns null on failure and stores a message in
-// `error_out` (free with `remanence_string_free`).
-RemanenceSession *remanence_session_open(const char *path,
-                                         RemanenceErrorCategory *error_category_out,
-                                         char **error_out);
-
-// Opens a session as `remanence_session_open` does, under a declared
-// session cache bound: at most `cache_bytes` stays resident, rounded
-// up to whole 64 KiB extents with one extent as the floor.
-RemanenceSession *remanence_session_open_with_cache(const char *path,
-                                                    uint64_t cache_bytes,
-                                                    RemanenceErrorCategory *error_category_out,
-                                                    char **error_out);
-
-// Frees a session handle.
-void remanence_session_free(RemanenceSession *session);
-
-// The path the session was opened from (the archive path for archive inputs).
-const char *remanence_session_path(const RemanenceSession *session);
+// The artifact the disk was opened from (the archive path for archive inputs).
+const char *remanence_disk_path(const RemanenceDisk *disk);
 
 // The resolved image path (the entry name for archive inputs).
-const char *remanence_session_image_path(const RemanenceSession *session);
+const char *remanence_disk_image_path(const RemanenceDisk *disk);
 
 // The resolved image's size in bytes.
-uint64_t remanence_session_size_bytes(const RemanenceSession *session);
+uint64_t remanence_disk_image_size_bytes(const RemanenceDisk *disk);
 
 // Reads `length` bytes of the resolved image at `offset` into
 // `buffer_out` — the bounded access form: the image streams from its
 // backing and is never resident whole. Returns false on failure and
 // stores a message in `error_out` (free with `remanence_string_free`).
-bool remanence_session_read_at(const RemanenceSession *session,
-                               uint64_t offset,
-                               uint8_t *buffer_out,
-                               size_t length,
-                               RemanenceErrorCategory *error_category_out,
-                               char **error_out);
-
-// Whether the session has unsaved modifications.
-bool remanence_session_is_modified(const RemanenceSession *session);
+bool remanence_disk_read_at(const RemanenceDisk *disk,
+                            uint64_t offset,
+                            uint8_t *buffer_out,
+                            size_t length,
+                            RemanenceErrorCategory *error_category_out,
+                            char **error_out);
 
 // Identifies the image's container layers and probable filesystem. Free the
 // result with `remanence_identification_free`.
-RemanenceIdentification *remanence_session_identify(const RemanenceSession *session);
+RemanenceIdentification *remanence_disk_identify(const RemanenceDisk *disk);
 
 // Frees an identification handle.
 void remanence_identification_free(RemanenceIdentification *identification);
 
-// Whether the session reported unsaved modifications at identify time.
+// Whether the disk reported unsaved modifications at identify time.
 bool remanence_identification_modified(const RemanenceIdentification *identification);
 
 // Number of detected container layers.
@@ -487,11 +461,11 @@ RemanenceHdosFileList *remanence_list_hdos_files(const uint8_t *bytes,
                                                  RemanenceErrorCategory *error_category_out,
                                                  char **error_out);
 
-// Parses the HDOS directory from a session's image. Returns null on
+// Parses the HDOS directory from the disk's image. Returns null on
 // failure and stores a message in `error_out` (free with `remanence_string_free`).
-RemanenceHdosFileList *remanence_session_list_hdos_files(const RemanenceSession *session,
-                                                         RemanenceErrorCategory *error_category_out,
-                                                         char **error_out);
+RemanenceHdosFileList *remanence_disk_list_hdos_files(const RemanenceDisk *disk,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out);
 
 // Frees an HDOS file list handle.
 void remanence_hdos_file_list_free(RemanenceHdosFileList *list);
@@ -686,9 +660,6 @@ bool remanence_disk_commit(RemanenceDisk *disk,
 // Discards everything buffered; the image is untouched.
 void remanence_disk_rollback(RemanenceDisk *disk);
 
-// Which P7 mode the session's open obtained on its source file.
-RemanenceAccessMode remanence_session_access_mode(const RemanenceSession *session);
-
 // Reads a cataloged HDOS file's contents out of raw image bytes. Free
 // with `remanence_file_data_free`.
 RemanenceFileData *remanence_read_hdos_file(const uint8_t *bytes,
@@ -697,12 +668,12 @@ RemanenceFileData *remanence_read_hdos_file(const uint8_t *bytes,
                                             RemanenceErrorCategory *error_category_out,
                                             char **error_out);
 
-// Reads a cataloged HDOS file out of a session's image. Free with
+// Reads a cataloged HDOS file out of the disk's image. Free with
 // `remanence_file_data_free`.
-RemanenceFileData *remanence_session_read_hdos_file(const RemanenceSession *session,
-                                                    const char *name,
-                                                    RemanenceErrorCategory *error_category_out,
-                                                    char **error_out);
+RemanenceFileData *remanence_disk_read_hdos_file(const RemanenceDisk *disk,
+                                                 const char *name,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out);
 
 // Opens the archive at `path` (UTF-8) and reads its entry list. A path
 // naming no archive format this library reads is refused by name.

@@ -3,13 +3,13 @@
 
 //! The 7z catalog over the prepared KryoFlux capture fixture: the
 //! archive lists its members from bounded header reads alone, and one
-//! member of the solid folder streams through a session without the
+//! member of the solid folder streams through a disk without the
 //! folder ever being resident whole (P27). The catalog reads the
 //! members; it says nothing about what a KryoFlux stream means.
 
 use std::path::{Path, PathBuf};
 
-use remanence::{Archive, ContainerKind, ErrorCategory, Session};
+use remanence::{AccessIntent, Archive, ContainerKind, Disk, ErrorCategory};
 
 mod common;
 
@@ -38,7 +38,7 @@ const STREAM_PREFIX: [u8; 16] = [
     0x0d, 0x04, 0x29, 0x00, 0x68, 0x6f, 0x73, 0x74, 0x5f, 0x64, 0x61, 0x74, 0x65, 0x3d, 0x32, 0x30,
 ];
 
-/// The session holds the P7 deny-write claim for its lifetime, so tests
+/// The disk holds the P7 deny-write claim for its lifetime, so tests
 /// opening a fixture concurrently take private copies.
 fn private_copy(tag: &str) -> PathBuf {
     let target = std::env::temp_dir().join(format!(
@@ -92,26 +92,26 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
     let path = private_copy("member");
     // The second member: reached by decoding past the first, which is
     // what a solid folder costs, and no further.
-    let session = Session::open(entry_path(&path, SECOND_MEMBER)).expect("the member opens");
-    assert_eq!(session.size_bytes(), SECOND_MEMBER_BYTES);
+    let disk = Disk::open(entry_path(&path, SECOND_MEMBER), AccessIntent::Read).expect("the member opens");
+    assert_eq!(disk.image_size_bytes(), SECOND_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
-    session.read_at(0, &mut front).expect("the front reads");
+    disk.read_at(0, &mut front).expect("the front reads");
     assert_eq!(front, STREAM_PREFIX);
 
     // A bounded read across the tail, without the member resident whole.
     let mut tail = [0u8; 32];
-    session
+    disk
         .read_at(SECOND_MEMBER_BYTES - 32, &mut tail)
         .expect("the tail reads");
 
-    let identification = session.identify();
+    let identification = disk.identify();
     let container = &identification.containers[0];
     assert_eq!(container.kind, ContainerKind::Archive);
     assert_eq!(container.id, "7z");
     assert_eq!(container.name, "7z archive");
 
-    drop(session);
+    drop(disk);
     std::fs::remove_file(&path).ok();
 }
 
@@ -123,16 +123,16 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     // the archive's own per-member CRC, which the catalog checks as it
     // spools, is what says so.
     let path = private_copy("long");
-    let session =
-        Session::open(entry_path(&path, LAST_MEMBER)).expect("the last member opens");
-    assert_eq!(session.size_bytes(), LAST_MEMBER_BYTES);
+    let disk =
+        Disk::open(entry_path(&path, LAST_MEMBER), AccessIntent::Read).expect("the last member opens");
+    assert_eq!(disk.image_size_bytes(), LAST_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
-    session.read_at(0, &mut front).expect("the front reads");
+    disk.read_at(0, &mut front).expect("the front reads");
     assert_eq!(front, STREAM_PREFIX);
 
     let mut tail = [0u8; 16];
-    session
+    disk
         .read_at(LAST_MEMBER_BYTES - 16, &mut tail)
         .expect("the tail reads");
     assert_eq!(
@@ -140,14 +140,14 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
         [0x00, 0xf4, 0x20, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d]
     );
 
-    drop(session);
+    drop(disk);
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
 fn a_member_the_archive_does_not_hold_is_refused_by_name() {
     let path = private_copy("missing");
-    let error = Session::open(entry_path(&path, "track99.raw")).expect_err("the member is absent");
+    let error = Disk::open(entry_path(&path, "track99.raw"), AccessIntent::Read).expect_err("the member is absent");
     assert_eq!(error.category(), ErrorCategory::NotFound);
     assert!(error.to_string().contains("track99.raw"), "{error}");
     std::fs::remove_file(&path).ok();
@@ -168,7 +168,7 @@ fn a_corrupted_solid_folder_fails_closed() {
     assert_eq!(archive.entries().len(), MEMBER_COUNT);
     drop(archive);
 
-    let error = Session::open(entry_path(&path, FIRST_MEMBER))
+    let error = Disk::open(entry_path(&path, FIRST_MEMBER), AccessIntent::Read)
         .expect_err("a corrupted member is refused, never delivered");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     std::fs::remove_file(&path).ok();
@@ -177,7 +177,7 @@ fn a_corrupted_solid_folder_fails_closed() {
 #[test]
 fn an_archive_holding_many_members_names_the_ambiguity() {
     let path = private_copy("ambiguous");
-    let error = Session::open(&path).expect_err("168 members is ambiguous");
+    let error = Disk::open(&path, AccessIntent::Read).expect_err("168 members is ambiguous");
     assert!(
         error.to_string().contains("contains multiple files"),
         "{error}"

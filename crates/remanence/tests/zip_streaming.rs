@@ -3,11 +3,11 @@
 
 //! The archive path streams (pledged P27): a stored entry is read in
 //! place from the claimed archive, a compressed entry decodes once into
-//! private session storage, and either way the session serves bounded
+//! private disk storage, and either way the disk serves bounded
 //! reads without the entry resident whole. These tests build their zip
 //! by hand, so they run without fixtures.
 
-use remanence::{Archive, ContainerKind, Session};
+use remanence::{AccessIntent, Archive, ContainerKind, Disk};
 
 const IMAGE_LEN: usize = 102_400; // h8d-sized, so identification bites
 
@@ -90,19 +90,19 @@ fn temp_zip(tag: &str, bytes: &[u8]) -> std::path::PathBuf {
 }
 
 fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
-    let session = Session::open(path).expect("session opens");
-    assert_eq!(session.size_bytes(), expected.len() as u64);
+    let disk = Disk::open(path, AccessIntent::Read).expect("disk opens");
+    assert_eq!(disk.image_size_bytes(), expected.len() as u64);
 
     // Bounded reads round-trip, at the front and across the tail.
     let mut front = [0u8; 64];
-    session.read_at(0, &mut front).expect("front reads");
+    disk.read_at(0, &mut front).expect("front reads");
     assert_eq!(&front[..], &expected[..64]);
     let mut tail = [0u8; 64];
-    session.read_at(expected.len() as u64 - 64, &mut tail).expect("tail reads");
+    disk.read_at(expected.len() as u64 - 64, &mut tail).expect("tail reads");
     assert_eq!(&tail[..], &expected[expected.len() - 64..]);
 
     // The layers report the archive wrapper and the h8d-sized image.
-    let identification = session.identify();
+    let identification = disk.identify();
     let archive = &identification.containers[0];
     assert_eq!(archive.kind, ContainerKind::Archive);
     assert_eq!(archive.id, "zip");
@@ -162,7 +162,56 @@ fn a_lying_uncompressed_size_is_refused_by_name() {
     let zip = build_zip("disk.h8d", 8, &compressed, IMAGE_LEN as u32 + 1);
     let path = temp_zip("lying", &zip);
 
-    let error = Session::open(&path).expect_err("the size lie is refused");
+    let error = Disk::open(&path, AccessIntent::Read).expect_err("the size lie is refused");
     assert!(error.to_string().contains("expected"), "names the mismatch: {error}");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
+    // F43's proof. Before the merge these two facts could not coexist:
+    // identification reached inside an archive and the disk verbs did
+    // not, because each surface took its own P7 claim on the file and
+    // only one of them knew what an archive was. One claim now serves
+    // both planes, so the same handle answers for layers *and* for the
+    // presented disk.
+    let expected = payload();
+    let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
+    let path = temp_zip("inspects", &zip);
+
+    let mut disk = Disk::open(&path, AccessIntent::Read).expect("the archived image opens");
+
+    // The raw plane: the archive wrapper is still reported.
+    let identification = disk.identify();
+    assert_eq!(identification.containers[0].kind, ContainerKind::Archive);
+    assert_eq!(identification.containers[0].id, "zip");
+
+    // The presented plane, over the very same claim — the new capability.
+    let report = disk.inspect().expect("an archived image inspects");
+    assert_eq!(report.device.length_bytes, IMAGE_LEN as u64);
+
+    // And both planes agree about the medium's size.
+    assert_eq!(disk.image_size_bytes(), IMAGE_LEN as u64);
+
+    drop(disk);
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn an_archive_entry_refuses_a_write_open_naming_the_reason() {
+    // The honest half of the merge: gaining the disk verbs over an
+    // archive entry must not imply gaining writes to one. A write would
+    // have to be encoded back into the archive's own grammar, and no
+    // adapter claims that (P13), so the refusal names it rather than
+    // degrading to read-only.
+    let expected = payload();
+    let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
+    let path = temp_zip("nowrite", &zip);
+
+    let error = Disk::open(&path, AccessIntent::Write).expect_err("a write open is refused");
+    let message = error.to_string();
+    assert!(message.contains("archive"), "names the archive: {message}");
+    assert!(message.contains("writing"), "names the refusal: {message}");
+
     std::fs::remove_file(&path).ok();
 }

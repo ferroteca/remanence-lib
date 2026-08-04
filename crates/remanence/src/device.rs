@@ -11,6 +11,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::cache::SessionCache;
 use crate::error::{Error, Result};
@@ -254,11 +255,29 @@ fn open_exact(path: &Path, intent: AccessIntent) -> std::io::Result<File> {
     Ok(file)
 }
 
-/// A raw image file opened where it lies, claimed per the caller's
-/// declared intent (P7).
+/// One medium's bytes, claimed per the caller's declared intent (P7),
+/// addressed as a range so the medium need not be a whole file.
+///
+/// A plain image is the whole of its claimed file: `backing` and `claim`
+/// are the same handle and `base` is zero. An image stored inside an
+/// archive is a range instead — read in place at an offset within the
+/// claimed archive when it is stored uncompressed, or within the spool it
+/// was decoded into when it is not (P27) — and then `claim` is the
+/// archive, held for the medium's whole life, while `backing` is wherever
+/// the bytes actually are. That distinction is the whole reason this is a
+/// range device: the image adapters open through it, and before F43 they
+/// took a whole claimed file, which is why an archived image could be
+/// identified but never inspected.
 #[derive(Debug)]
-pub(crate) struct FileDevice {
-    file: File,
+pub(crate) struct MediumDevice {
+    /// The P7 claim held for the medium's life. Kept even when it is not
+    /// the read backing, because dropping it would release the claim.
+    _claim: Arc<File>,
+    /// Where the bytes are, which is the claim itself unless the medium
+    /// was decoded into private session storage.
+    backing: Arc<File>,
+    /// Where the medium starts inside `backing`.
+    base: u64,
     len: u64,
     mode: AccessMode,
     path: String,
@@ -298,7 +317,8 @@ impl Capture {
     }
 }
 
-impl FileDevice {
+impl MediumDevice {
+    /// Claims `path` whole, per the caller's declared intent (P7).
     pub fn open(path: &Path, intent: AccessIntent) -> Result<Self> {
         let file = open_declared(path, intent)?;
         let len = file
@@ -307,8 +327,11 @@ impl FileDevice {
                 Error::io(format!("failed to stat '{}': {error}", path.display()))
             })?
             .len();
+        let claim = Arc::new(file);
         Ok(Self {
-            file,
+            _claim: Arc::clone(&claim),
+            backing: claim,
+            base: 0,
             len,
             mode: intent.mode(),
             path: path.display().to_string(),
@@ -316,12 +339,39 @@ impl FileDevice {
         })
     }
 
-    pub fn mode(&self) -> AccessMode {
-        self.mode
+    /// A medium occupying `len` bytes at `base` inside `backing`, under a
+    /// claim already held on `claim`.
+    ///
+    /// The claim is not reacquired: the caller already holds it, and this
+    /// shares it, which is the whole point — one medium is one claim (P7),
+    /// however many planes read it.
+    pub fn range(
+        claim: Arc<File>,
+        backing: Arc<File>,
+        base: u64,
+        len: u64,
+        mode: AccessMode,
+        path: String,
+    ) -> Self {
+        Self {
+            _claim: claim,
+            backing,
+            base,
+            len,
+            mode,
+            path,
+            capture: None,
+        }
+    }
+
+    /// Whether this medium is the whole of its claimed file, and so can
+    /// be grown or truncated in place.
+    fn is_whole_file(&self) -> bool {
+        self.base == 0 && Arc::ptr_eq(&self._claim, &self.backing)
     }
 
     /// Starts capturing under the session's declared cache bound:
-    /// until [`FileDevice::take_capture`], writes buffer in the
+    /// until [`MediumDevice::take_capture`], writes buffer in the
     /// capture's cache — spilling to private session storage past the
     /// bound — reads compose over them, and the file is not touched.
     pub fn begin_capture(&mut self, cache_bytes: u64) {
@@ -360,10 +410,11 @@ impl FileDevice {
     pub fn truncate_and_sync(&mut self, len: u64) -> Result<()> {
         debug_assert!(self.capture.is_none(), "cannot truncate during a capture");
         debug_assert!(self.mode == AccessMode::ReadWrite, "truncation needs write access");
-        self.file
+        debug_assert!(self.is_whole_file(), "only a whole-file medium is truncated");
+        self.backing
             .set_len(len)
             .map_err(|error| self.io_error("truncate", error))?;
-        self.file
+        self.backing
             .sync_all()
             .map_err(|error| self.io_error("flush", error))?;
         self.len = len;
@@ -381,9 +432,11 @@ impl FileDevice {
 /// yet.
 struct RawFile<'a> {
     file: &'a File,
+    /// Where the medium starts inside the file.
+    base: u64,
     /// The captured (possibly grown) device length.
     reported: u64,
-    /// The file's true length, bounding what can actually be read.
+    /// The medium's true length, bounding what can actually be read.
     real: u64,
     path: &'a str,
 }
@@ -400,7 +453,7 @@ impl Device for RawFile<'_> {
             ((self.real - offset) as usize).min(buf.len())
         };
         if take > 0 {
-            read_exact_at(self.file, offset, &mut buf[..take]).map_err(|error| {
+            read_exact_at(self.file, self.base + offset, &mut buf[..take]).map_err(|error| {
                 Error::io(format!("read from '{}' failed: {error}", self.path))
             })?;
         }
@@ -540,7 +593,7 @@ impl ByteSource for SliceByteSource<'_> {
     }
 }
 
-impl Device for FileDevice {
+impl Device for MediumDevice {
     fn len(&self) -> u64 {
         self.capture.as_ref().map_or(self.len, |capture| capture.len)
     }
@@ -555,14 +608,15 @@ impl Device for FileDevice {
         }
         if let Some(capture) = &mut self.capture {
             let mut raw = RawFile {
-                file: &self.file,
+                file: &self.backing,
+                base: self.base,
                 reported: capture.len,
                 real: self.len,
                 path: &self.path,
             };
             return capture.cache.read_at(&mut raw, offset, buf);
         }
-        read_exact_at(&self.file, offset, buf)
+        read_exact_at(&self.backing, self.base + offset, buf)
             .map_err(|error| self.io_error("read from", error))
     }
 
@@ -575,7 +629,8 @@ impl Device for FileDevice {
         }
         if let Some(capture) = &mut self.capture {
             let mut raw = RawFile {
-                file: &self.file,
+                file: &self.backing,
+                base: self.base,
                 reported: capture.len,
                 real: self.len,
                 path: &self.path,
@@ -584,7 +639,7 @@ impl Device for FileDevice {
             capture.len = capture.len.max(offset + data.len() as u64);
             return Ok(());
         }
-        write_all_at(&self.file, offset, data)
+        write_all_at(&self.backing, self.base + offset, data)
             .map_err(|error| self.io_error("write to", error))?;
         self.len = self.len.max(offset + data.len() as u64);
         Ok(())
@@ -595,7 +650,7 @@ impl Device for FileDevice {
             // Nothing has reached the file; there is nothing to flush.
             return Ok(());
         }
-        self.file.sync_data().map_err(|error| self.io_error("flush", error))
+        self.backing.sync_data().map_err(|error| self.io_error("flush", error))
     }
 }
 
@@ -653,7 +708,7 @@ mod tests {
         ));
         std::fs::write(&path, vec![0xAAu8; 8192]).expect("image writes");
 
-        let mut device = FileDevice::open(&path, AccessIntent::Write).expect("opens");
+        let mut device = MediumDevice::open(&path, AccessIntent::Write).expect("opens");
         device.begin_capture(crate::cache::DEFAULT_CACHE_BYTES);
         device.write_at(4090, &[1, 2, 3, 4, 5, 6, 7, 8]).expect("buffers");
         device.write_at(8192, &[9; 100]).expect("buffers growth");

@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    ArchiveLayout, ContainerKind, ContainerLayout, Identification, ImageLayout,
-    PhysicalMediaLayout, SectorLayout, Session,
+    AccessIntent, ArchiveLayout, ContainerKind, ContainerLayout, Disk, Identification, ImageLayout,
+    PhysicalMediaLayout, SectorLayout,
 };
 
 mod common;
@@ -19,7 +19,7 @@ fn fixture_path(name: &str) -> PathBuf {
     common::ensure_fixture(name)
 }
 
-/// The session holds the P7 deny-write claim on its source for its whole
+/// The disk holds the P7 deny-write claim on its source for its whole
 /// lifetime, so tests that open the same fixture concurrently would
 /// collide by design — each takes a private copy instead.
 fn private_copy(name: &str, tag: &str) -> PathBuf {
@@ -71,8 +71,8 @@ fn archive_layout(identification: &Identification) -> &ArchiveLayout {
 fn identifies_hdos_fixture_image() {
     let image_path = fixture_path(IMAGE_NAME);
 
-    let session = Session::open(&image_path).expect("session opens");
-    let identification = session.identify();
+    let disk = Disk::open(&image_path, AccessIntent::Read).expect("disk opens");
+    let identification = disk.identify();
 
     assert_eq!(identification.containers.len(), 3);
     assert_hdos_identification(&identification);
@@ -82,8 +82,8 @@ fn identifies_hdos_fixture_image() {
 fn identifies_single_image_inside_zip_fixture() {
     let zip_path = private_copy(ZIP_NAME, "single");
 
-    let session = Session::open(&zip_path).expect("session opens");
-    let identification = session.identify();
+    let disk = Disk::open(&zip_path, AccessIntent::Read).expect("disk opens");
+    let identification = disk.identify();
 
     let archive = &identification.containers[0];
     assert_eq!(archive.name, "ZIP archive");
@@ -91,11 +91,11 @@ fn identifies_single_image_inside_zip_fixture() {
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(layout.uncompressed_size, Some(102_400));
     assert_eq!(identification.containers.len(), 4);
-    assert_eq!(session.path(), zip_path);
-    assert_eq!(session.image_path(), PathBuf::from(IMAGE_NAME));
+    assert_eq!(disk.path(), zip_path.display().to_string());
+    assert_eq!(disk.image_path(), PathBuf::from(IMAGE_NAME));
     assert_hdos_identification(&identification);
 
-    drop(session);
+    drop(disk);
     std::fs::remove_file(&zip_path).ok();
 }
 
@@ -104,14 +104,14 @@ fn identifies_explicit_image_inside_zip_fixture() {
     let zip_path = private_copy(ZIP_NAME, "explicit");
     let image_path = zip_path.join(IMAGE_NAME);
 
-    let session = Session::open(&image_path).expect("session opens");
-    let identification = session.identify();
+    let disk = Disk::open(&image_path, AccessIntent::Read).expect("disk opens");
+    let identification = disk.identify();
 
     let layout = archive_layout(&identification);
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(identification.containers.len(), 4);
     assert_hdos_identification(&identification);
 
-    drop(session);
+    drop(disk);
     std::fs::remove_file(&zip_path).ok();
 }

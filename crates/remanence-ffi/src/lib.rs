@@ -4,7 +4,7 @@
 //! C ABI for the Remanence disk image analysis library.
 //!
 //! Conventions:
-//! - Handles (`RemanenceSession`, `RemanenceIdentification`, `RemanenceHdosFileList`,
+//! - Handles (`RemanenceIdentification`, `RemanenceHdosFileList`,
 //!   `RemanenceArchive`) are opaque and freed with their matching `*_free` function.
 //! - `const char*` return values are UTF-8, owned by the handle they were read
 //!   from, and valid until that handle is freed. Do not free them.
@@ -19,7 +19,7 @@ use std::ptr;
 
 use remanence::{
     Container, ContainerKind, ContainerLayout, DiskLayout, ErrorCategory, HdosFile, Identification,
-    PhysicalMediaLayout, SectorLayout, Session, list_hdos_files,
+    PhysicalMediaLayout, SectorLayout, list_hdos_files,
 };
 
 /// Stable, machine-readable classification of a library refusal. A fallible
@@ -266,14 +266,7 @@ impl ContainerView {
     }
 }
 
-/// An open analysis session over one disk image.
-pub struct RemanenceSession {
-    session: Session,
-    path: CString,
-    image_path: CString,
-}
-
-/// The result of identifying a session's image.
+/// The result of identifying a disk's image.
 pub struct RemanenceIdentification {
     modified: bool,
     containers: Vec<ContainerView>,
@@ -367,107 +360,32 @@ pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
     }
 }
 
-/// Opens `path` (UTF-8) — a raw disk image, or `archive[/entry]` naming an
-/// entry inside a supported archive (`.zip`, `.7z`) — with the built-in
-/// format adapters. Returns null on failure and stores a message in
-/// `error_out` (free with `remanence_string_free`).
+
+
+
+/// The artifact the disk was opened from (the archive path for archive inputs).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_open(
-    path: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-) -> *mut RemanenceSession {
-    unsafe { clear_error(error_out) };
-    if path.is_null() {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
-        return ptr::null_mut();
-    }
-
-    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
-    match Session::open(path.as_ref()) {
-        Ok(session) => {
-            let path = to_cstring(&session.path().display().to_string());
-            let image_path = to_cstring(&session.image_path().display().to_string());
-            Box::into_raw(Box::new(RemanenceSession {
-                session,
-                path,
-                image_path,
-            }))
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Opens a session as `remanence_session_open` does, under a declared
-/// session cache bound: at most `cache_bytes` stays resident, rounded
-/// up to whole 64 KiB extents with one extent as the floor.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_open_with_cache(
-    path: *const c_char,
-    cache_bytes: u64,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-) -> *mut RemanenceSession {
-    unsafe { clear_error(error_out) };
-    if path.is_null() {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
-        return ptr::null_mut();
-    }
-
-    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
-    match Session::open_with_cache(path.as_ref(), cache_bytes) {
-        Ok(session) => {
-            let path = to_cstring(&session.path().display().to_string());
-            let image_path = to_cstring(&session.image_path().display().to_string());
-            Box::into_raw(Box::new(RemanenceSession {
-                session,
-                path,
-                image_path,
-            }))
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Frees a session handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) {
-    if !session.is_null() {
-        drop(unsafe { Box::from_raw(session) });
-    }
-}
-
-/// The path the session was opened from (the archive path for archive inputs).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_path(session: *const RemanenceSession) -> *const c_char {
-    match unsafe { session.as_ref() } {
-        Some(session) => session.path.as_ptr(),
+pub unsafe extern "C" fn remanence_disk_path(disk: *const RemanenceDisk) -> *const c_char {
+    match unsafe { disk.as_ref() } {
+        Some(handle) => handle.path.as_ptr(),
         None => ptr::null(),
     }
 }
 
 /// The resolved image path (the entry name for archive inputs).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_image_path(session: *const RemanenceSession) -> *const c_char {
-    match unsafe { session.as_ref() } {
-        Some(session) => session.image_path.as_ptr(),
+pub unsafe extern "C" fn remanence_disk_image_path(disk: *const RemanenceDisk) -> *const c_char {
+    match unsafe { disk.as_ref() } {
+        Some(handle) => handle.image_path.as_ptr(),
         None => ptr::null(),
     }
 }
 
 /// The resolved image's size in bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_size_bytes(session: *const RemanenceSession) -> u64 {
-    match unsafe { session.as_ref() } {
-        Some(session) => session.session.size_bytes(),
+pub unsafe extern "C" fn remanence_disk_image_size_bytes(disk: *const RemanenceDisk) -> u64 {
+    match unsafe { disk.as_ref() } {
+        Some(handle) => handle.disk.image_size_bytes(),
         None => 0,
     }
 }
@@ -477,8 +395,8 @@ pub unsafe extern "C" fn remanence_session_size_bytes(session: *const RemanenceS
 /// backing and is never resident whole. Returns false on failure and
 /// stores a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_read_at(
-    session: *const RemanenceSession,
+pub unsafe extern "C" fn remanence_disk_read_at(
+    disk: *const RemanenceDisk,
     offset: u64,
     buffer_out: *mut u8,
     length: usize,
@@ -486,8 +404,8 @@ pub unsafe extern "C" fn remanence_session_read_at(
     error_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out) };
-    let Some(session) = (unsafe { session.as_ref() }) else {
-        let error = remanence::Error::io("null session");
+    let Some(handle) = (unsafe { disk.as_ref() }) else {
+        let error = remanence::Error::io("null disk");
         unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     };
@@ -497,7 +415,7 @@ pub unsafe extern "C" fn remanence_session_read_at(
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
-    match session.session.read_at(offset, buffer) {
+    match handle.disk.read_at(offset, buffer) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -506,26 +424,20 @@ pub unsafe extern "C" fn remanence_session_read_at(
     }
 }
 
-/// Whether the session has unsaved modifications.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_is_modified(session: *const RemanenceSession) -> bool {
-    unsafe { session.as_ref() }.is_some_and(|session| session.session.is_modified())
-}
-
 /// Identifies the image's container layers and probable filesystem. Free the
 /// result with `remanence_identification_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_identify(
-    session: *const RemanenceSession,
+pub unsafe extern "C" fn remanence_disk_identify(
+    disk: *const RemanenceDisk,
 ) -> *mut RemanenceIdentification {
-    let Some(session) = (unsafe { session.as_ref() }) else {
+    let Some(handle) = (unsafe { disk.as_ref() }) else {
         return ptr::null_mut();
     };
     let Identification {
         containers,
         modified,
         evidence,
-    } = session.session.identify();
+    } = handle.disk.identify();
 
     Box::into_raw(Box::new(RemanenceIdentification {
         modified,
@@ -542,7 +454,7 @@ pub unsafe extern "C" fn remanence_identification_free(identification: *mut Rema
     }
 }
 
-/// Whether the session reported unsaved modifications at identify time.
+/// Whether the disk reported unsaved modifications at identify time.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_identification_modified(
     identification: *const RemanenceIdentification,
@@ -943,21 +855,21 @@ pub unsafe extern "C" fn remanence_list_hdos_files(
     hdos_list_from_bytes(bytes, error_category_out, error_out)
 }
 
-/// Parses the HDOS directory from a session's image. Returns null on
+/// Parses the HDOS directory from the disk's image. Returns null on
 /// failure and stores a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_list_hdos_files(
-    session: *const RemanenceSession,
+pub unsafe extern "C" fn remanence_disk_list_hdos_files(
+    disk: *const RemanenceDisk,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RemanenceHdosFileList {
     unsafe { clear_error(error_out) };
-    let Some(session) = (unsafe { session.as_ref() }) else {
-        let error = remanence::Error::io("null session");
+    let Some(handle) = (unsafe { disk.as_ref() }) else {
+        let error = remanence::Error::io("null disk");
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match session.session.list_hdos_files() {
+    match handle.disk.list_hdos_files() {
         Ok(files) => {
             let files = files.iter().map(HdosFileView::new).collect();
             Box::into_raw(Box::new(RemanenceHdosFileList { files }))
@@ -1079,8 +991,7 @@ pub enum RemanenceAccessIntent {
     Write,
 }
 
-/// A session's access mode. For a disk this echoes the declared intent;
-/// for an identification session it reports what the P7 ladder obtained.
+/// A disk's access mode — an echo of the declared intent (P7).
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RemanenceAccessMode {
@@ -1114,6 +1025,8 @@ fn access_mode(mode: AccessMode) -> RemanenceAccessMode {
 /// An open disk image.
 pub struct RemanenceDisk {
     disk: Disk,
+    path: CString,
+    image_path: CString,
 }
 
 /// A directory listing.
@@ -1182,7 +1095,7 @@ pub unsafe extern "C" fn remanence_disk_open(
         RemanenceAccessIntent::Write => AccessIntent::Write,
     };
     match Disk::open(path.as_ref(), intent) {
-        Ok(disk) => Box::into_raw(Box::new(RemanenceDisk { disk })),
+        Ok(disk) => Box::into_raw(Box::new(new_disk_handle(disk))),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
@@ -1214,11 +1127,23 @@ pub unsafe extern "C" fn remanence_disk_open_with_cache(
         RemanenceAccessIntent::Write => AccessIntent::Write,
     };
     match Disk::open_with_cache(path.as_ref(), intent, cache_bytes) {
-        Ok(disk) => Box::into_raw(Box::new(RemanenceDisk { disk })),
+        Ok(disk) => Box::into_raw(Box::new(new_disk_handle(disk))),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
             ptr::null_mut()
         }
+    }
+}
+
+/// Builds the disk handle, capturing the borrowed path strings a caller
+/// reads back through `remanence_disk_path` / `remanence_disk_image_path`.
+fn new_disk_handle(disk: Disk) -> RemanenceDisk {
+    let path = to_cstring(disk.path());
+    let image_path = to_cstring(&disk.image_path().display().to_string());
+    RemanenceDisk {
+        disk,
+        path,
+        image_path,
     }
 }
 
@@ -1658,14 +1583,6 @@ pub unsafe extern "C" fn remanence_disk_rollback(disk: *mut RemanenceDisk) {
     }
 }
 
-/// Which P7 mode the session's open obtained on its source file.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_access_mode(session: *const RemanenceSession) -> RemanenceAccessMode {
-    unsafe { session.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |session| {
-        access_mode(session.session.access_mode())
-    })
-}
-
 /// Reads a cataloged HDOS file's contents out of raw image bytes. Free
 /// with `remanence_file_data_free`.
 #[unsafe(no_mangle)]
@@ -1697,18 +1614,18 @@ pub unsafe extern "C" fn remanence_read_hdos_file(
     }
 }
 
-/// Reads a cataloged HDOS file out of a session's image. Free with
+/// Reads a cataloged HDOS file out of the disk's image. Free with
 /// `remanence_file_data_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_read_hdos_file(
-    session: *const RemanenceSession,
+pub unsafe extern "C" fn remanence_disk_read_hdos_file(
+    disk: *const RemanenceDisk,
     name: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
 ) -> *mut RemanenceFileData {
     unsafe { clear_error(error_out) };
-    let Some(session) = (unsafe { session.as_ref() }) else {
-        let error = remanence::Error::io("null session");
+    let Some(handle) = (unsafe { disk.as_ref() }) else {
+        let error = remanence::Error::io("null disk");
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
@@ -1717,7 +1634,7 @@ pub unsafe extern "C" fn remanence_session_read_hdos_file(
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match session.session.read_hdos_file(name.as_ref()) {
+    match handle.disk.read_hdos_file(name.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };

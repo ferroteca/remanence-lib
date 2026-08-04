@@ -90,18 +90,19 @@ int main(int argc, char **argv) {
 
     RemanenceErrorCategory error_category;
     char *error = NULL;
-    RemanenceSession *session = remanence_session_open(argv[1], &error_category, &error);
-    if (session == NULL) {
+    RemanenceDisk *disk =
+        remanence_disk_open(argv[1], REMANENCE_ACCESS_INTENT_READ, &error_category, &error);
+    if (disk == NULL) {
         fprintf(stderr, "error (category %d): %s\n",
                 (int)error_category, error != NULL ? error : "unknown");
         remanence_string_free(error);
         return EXIT_FAILURE;
     }
 
-    RemanenceIdentification *identification = remanence_session_identify(session);
+    RemanenceIdentification *identification = remanence_disk_identify(disk);
 
-    printf("Source:  %s\n", remanence_session_path(session));
-    printf("Image:   %s\n", remanence_session_image_path(session));
+    printf("Source:  %s\n", remanence_disk_path(disk));
+    printf("Image:   %s\n", remanence_disk_image_path(disk));
     printf("Modified: %s\n\n", remanence_identification_modified(identification) ? "yes" : "no");
 
     size_t container_count = remanence_identification_container_count(identification);
@@ -131,7 +132,7 @@ int main(int argc, char **argv) {
     int status = EXIT_SUCCESS;
     if (has_hdos) {
         RemanenceHdosFileList *files =
-            remanence_session_list_hdos_files(session, &error_category, &error);
+            remanence_disk_list_hdos_files(disk, &error_category, &error);
         if (files == NULL) {
             fprintf(stderr, "\nerror listing HDOS files (category %d): %s\n",
                     (int)error_category, error != NULL ? error : "unknown");
@@ -152,6 +153,6 @@ int main(int argc, char **argv) {
     }
 
     remanence_identification_free(identification);
-    remanence_session_free(session);
+    remanence_disk_free(disk);
     return status;
 }

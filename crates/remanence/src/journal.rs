@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use crate::device::{AccessIntent, Capture, Device, FileDevice, read_exact_at};
+use crate::device::{AccessIntent, Capture, Device, MediumDevice, read_exact_at};
 use crate::error::{Error, ErrorCategory, Result};
 
 const MAGIC: [u8; 8] = *b"RMNUNDO1";
@@ -102,7 +102,7 @@ impl SealedWriter {
 /// bounded buffer; nothing holds the write set in memory.
 pub(crate) fn record(
     sidecar: &Path,
-    device: &mut FileDevice,
+    device: &mut MediumDevice,
     capture: &Capture,
 ) -> Result<()> {
     let original_len = device.len();
@@ -202,7 +202,7 @@ fn walk_records(
     file: &File,
     header: &ArmedHeader,
     sidecar: &Path,
-    mut apply: Option<&mut FileDevice>,
+    mut apply: Option<&mut MediumDevice>,
 ) -> Result<()> {
     let mut buf = vec![0u8; CHUNK];
     let mut at = HEADER_LEN as u64;
@@ -281,7 +281,7 @@ fn sync_parent(_path: &Path) {}
 /// Either way the sidecar is gone when this returns.
 pub(crate) fn reconcile(
     sidecar: &Path,
-    device: &mut FileDevice,
+    device: &mut MediumDevice,
     image: &Path,
 ) -> Result<()> {
     let file = match File::open(sidecar) {
@@ -333,7 +333,7 @@ pub(crate) fn reconcile_at(image: &Path) -> Result<()> {
     if !sidecar.exists() {
         return Ok(());
     }
-    match FileDevice::open(image, AccessIntent::Write) {
+    match MediumDevice::open(image, AccessIntent::Write) {
         Ok(mut exclusive) => reconcile(&sidecar, &mut exclusive, image),
         Err(error) => {
             if !sidecar.exists() {

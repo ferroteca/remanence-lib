@@ -4,10 +4,13 @@
 //! Self-contained disk image analysis library.
 //!
 //! An [`Archive`] lists what a supported archive holds — ZIP and 7z —
-//! and a [`Session`] opens a disk image, optionally naming an entry
-//! inside one of those archives. [`Session::identify`] reports the
-//! container layers (archive, image, physical media, filesystem)
-//! recognized by built-in executable adapters.
+//! and a [`Disk`] opens a disk image, optionally naming an entry inside
+//! one of those archives. One open takes one P7 claim and serves both of
+//! the medium's planes: [`Disk::identify`] reports the container layers
+//! (archive, image, physical media, filesystem) recognized by built-in
+//! executable adapters, over the image's own bytes, while
+//! [`Disk::inspect`] and the volume-scoped file verbs work over the disk
+//! a format adapter presents above them.
 
 mod adapters;
 mod archive;
@@ -64,6 +67,6 @@ pub use report::{
 pub use p64::{P64HalfTrack, P64Image, P64Report};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout, FilesystemLayout,
-    Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, Session, SizeInformation,
+    Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, SizeInformation,
     TrackSectorLayout,
 };

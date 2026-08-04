@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{Error, Session, list_hdos_files};
+use remanence::{AccessIntent, Disk, Error, list_hdos_files};
 
 mod common;
 
@@ -13,7 +13,7 @@ fn fixture_h8d() -> PathBuf {
     common::ensure_fixture("HDOS_1-0_Issue_#50-00-00_890-1.h8d")
 }
 
-/// The session holds the P7 deny-write claim for its lifetime, so tests
+/// The disk holds the P7 deny-write claim for its lifetime, so tests
 /// opening the fixture concurrently take private copies.
 fn private_copy(tag: &str) -> PathBuf {
     let target = std::env::temp_dir().join(format!(
@@ -27,9 +27,9 @@ fn private_copy(tag: &str) -> PathBuf {
 #[test]
 fn lists_files_from_hdos_fixture_image() {
     let path = private_copy("list");
-    let session = Session::open(&path).expect("session opens");
+    let disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
 
-    let files = session.list_hdos_files().expect("directory parses");
+    let files = disk.list_hdos_files().expect("directory parses");
     assert_eq!(files.len(), 31);
 
     assert_eq!(files[0].display_name(), "HDOS.SYS");
@@ -81,17 +81,17 @@ fn lists_files_from_hdos_fixture_image() {
         assert_eq!(file.display_name(), expected);
     }
 
-    drop(session);
+    drop(disk);
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
 fn reads_a_file_out_through_the_grt_chain() {
     let path = private_copy("read");
-    let session = Session::open(&path).expect("session opens");
+    let disk = Disk::open(&path, AccessIntent::Read).expect("disk opens");
 
     let contents =
-        session.read_hdos_file("DEMO.BAS").expect("file reads");
+        disk.read_hdos_file("DEMO.BAS").expect("file reads");
     // 3 sectors cataloged: two full groups of 2 plus a final partial group
     // truncates to the last_sector_index — the byte size is
     // sector-granular in HDOS terms.
@@ -104,10 +104,10 @@ fn reads_a_file_out_through_the_grt_chain() {
         .count();
     assert!(printable * 10 >= contents.len() * 9, "mostly text/zero bytes");
 
-    let missing = session.read_hdos_file("NOPE.NOP");
+    let missing = disk.read_hdos_file("NOPE.NOP");
     assert!(missing.is_err());
 
-    drop(session);
+    drop(disk);
     std::fs::remove_file(&path).ok();
 }
 
