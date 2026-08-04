@@ -6,7 +6,7 @@ SPDX-License-Identifier: GPL-3.0-only
 # ARCHITECTURE (pledged)
 
 > **Status:** pledged at the owner's direction. P14, P15, P25, P31 and
-> P32, together with the P23, P19 scope-of-claim and P32 addressing-nature
+> P32, together with the P19 scope-of-claim and P32 addressing-nature
 > amendments, remain owed by the project and are armed only when they reach
 > root [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
@@ -17,7 +17,10 @@ SPDX-License-Identifier: GPL-3.0-only
 > they govern being delivered; the P10 amendment with them, the DOS
 > 8.3 rule set that first populated its field being delivered; the
 > P19 composer amendment likewise, the DOS drive-letter composer that
-> was its only demand being delivered; and P28, the degraded,
+> was its only demand being delivered; the P23 amendment in the two
+> halves it was armed in, its correction at the bottom on the delivered
+> flux stack and its extension above the medium once the two layers it
+> named were built; and P28, the degraded,
 > evidence-bounded reading of a truncated raw FAT image that was its
 > demand being delivered. What still cites them here cites
 > an in-force principle.
@@ -52,8 +55,24 @@ presented to a caller and configures the common layer's reusable timing,
 mechanism, read-channel, and electronics modules. Several presentations may
 operate over the same media instance without creating independently mutable
 copies of its recorded state. Product names in examples identify the
-contract and physical profile being tested; they do not create catalog
+contract and drive profile being tested; they do not create catalog
 entries or make support claims.
+
+**The contract carries machine configuration; the recording's own rules are
+the profile's.** Which family, which clock, which mechanism, and the declared
+state an open or reset starts from are the contract's. The rules the channel
+applies when it turns a pulse into a bit are not: P30 owns the mechanics and
+read-channel rules by which a medium's pulses become clocked bit cells — the
+window a transition is admitted by, and whether a transition restarts the
+cell counter — and the family's group code, and a profile declaring a channel
+a presentation does not implement is refused by name rather than
+approximated. **The runtime channel and the materializing channel apply the
+same declaration.** A drive advancing over a medium and the hardware
+bitstream materialized from that same medium are two readings of one
+recording; if they could clock it differently the disagreement would be the
+library's rather than the evidence's, and neither reading could be shown to
+be the right one. One declaration with two consumers — the ephemeral one here
+and the durable one under P23 — is what keeps that checkable.
 
 The default integration seam is the common drive interface presented to the
 system, with the device beneath it opaque. LBA hard drives and modern optical
@@ -90,9 +109,14 @@ deadline and may not run past an undelivered transition.
 
 The containing emulator also owns the 1541's 6502, RAM, ROM, IEC peers, and
 scheduling. The program running on that CPU owns GCR decoding, sector and
-filesystem recognition, DOS, and serial protocol. A P64 adapter may carry
-timed flux positions and strengths as its authoritative image layer; the
-same state is the P23 active media layer for this physical composition.
+filesystem recognition, DOS, and serial protocol. **That is what this seam
+hands over, not a statement about the library**: the same family's group code
+resolved over a durable encoded-bytestream layer under P23 and P30 answers a
+different question — what the recording's own bytes are, before any of them
+is a header, a sector or a file — and holding both in one session makes
+neither the other. A P64 adapter may carry timed flux positions and
+strengths as its authoritative image layer; the same state is the P23
+active media layer for this physical composition.
 The drive hardware resolves it through the read channel so weak pulses
 affect the caller's independently emulated VIA behavior without becoming a
 P64-shaped public interface.
@@ -133,11 +157,13 @@ the Apple CPU address bus at one controller card's sixteen slot soft
 switches—`$c0e0–$c0ef` for slot 6. Remanence owns the soft switches, data
 latch, logic-state sequencer, read channel, mechanism, and media. The
 caller owns the Apple CPU, memory, motherboard and slot ROM bytes, floating
-bus, and scheduling. Opening this physical composition materializes one
-P23 flux-active media state: WOZ 2.1 flux-mapped tracks enter directly and
-exact-length bitstream tracks synthesize downward with provenance. That
-state remains behind the seam and becomes timed latch behavior rather than
-a public WOZ-shaped stream.
+bus, and scheduling. Its sequencer samples a timed head signal, so this
+composition declares a flux floor: WOZ 2.1 flux-mapped tracks enter
+directly, and its exact-length bitstream tracks reach that floor by being
+mastered downward under a declared policy, their timings declared synthetic
+at every pulse so nothing claims to be recorded evidence. That state remains
+behind the seam and becomes timed latch behavior rather than a public
+WOZ-shaped stream.
 
 The Heath H17 supplies a third shape. Its low seam is an 8080/Z80 I/O-port
 window, normally `0x7c–0x7f`, above an AMI S2350 synchronous USRT and the
@@ -145,9 +171,10 @@ board's discrete drive-control and read/write electronics. The caller owns
 the CPU, memory, firmware, address decoding, and scheduler. Remanence owns
 the four ports, USRT, read channel, selected mechanism, hard-sector sensor,
 and media. A CPU program receives and transmits bytes through the USRT; it
-does not directly sample the recovered serial bitstream. Raw SCP flux and
-hard-sector timing form the P23 active media layer behind the seam and
-become timed port status, data bytes, and hole-detect state.
+does not directly sample the recovered serial bitstream. Behind the seam is
+a flux medium mastered from an SCP capture under a declared policy, with its
+hard-sector timing; that active layer becomes timed port status, data bytes,
+and hole-detect state.
 
 The original MITS 88-DCDD Altair disk system supplies an older fourth
 shape. Its claimed seam is the 8080's three programmed I/O ports, normally
@@ -327,9 +354,9 @@ settling, selected side, motor speed, and rotational phase. Those values
 determine which durable flux is observed and where a modeled write changes
 the medium, but they are properties of the drive mechanism, not of the
 disk. Ejecting or reopening an image never carries them with the medium.
-Open and reset use the integration contract and physical profile's declared
-initial state; they never infer head position or rotational phase from image
-bytes.
+Open and reset take their machine configuration from the integration
+contract and their declared initial mechanism state from the drive profile;
+they never infer head position or rotational phase from image bytes.
 
 The durable mutable state of the inserted disk belongs to the media model.
 For a composition which claims a physical recording path, that session
@@ -352,9 +379,19 @@ information floor. Hardware emulation receives the resulting active media
 state as its durable dependency when a family composition is opened.
 
 **The bitstream a drive works on is materialized when it is used, not
-stored.** The floor is whatever the composition materialized — timed flux
-for a P64 or a raw capture, hardware bitstream where the source is
-bitstream-authoritative and nothing deeper is needed, as G64 is. Where flux
+stored.** The floor is whatever the composition materialized — a flux medium
+for a P64 or for a capture mastered into one, hardware bitstream where the
+source is bitstream-authoritative and nothing deeper is needed, as G64 is.
+**A composition declares the floor its seam requires, and where that floor
+sits below the source's authoritative layer, reaching it is a mastering act
+that states its loss** (P29). A capture holds no active layer at any rung: it
+becomes a floor by being mastered under declared policy, never by a
+normalization nobody named, and it remains authoritative image state read by
+inspection and by mastering (P13, P31). A source already authoritative at the
+rung the seam needs keeps its own rung and is mastered nowhere. The floor is
+a property of the declared composition and is never inferred from the image,
+which is this principle's refusal that neither an image format nor a media
+profile chooses a seam implicitly, read one layer downward. Where flux
 is the floor, the read channel projects it into clocked bit state as
 rotation advances and that state is ephemeral: hardware emulation holds no
 durable layer of its own, and no second history of recovered bits is kept
@@ -484,7 +521,7 @@ and effects; the lower 1541 adapter is shown to make the distinction clear:
 | Read result | GCR port value plus sync, byte-ready, and write-protect signals | full latch byte or floating bus | USRT data/status or controller status | drive status, sector position, or data byte |
 | External effects | drive-signal transitions | none in the claimed journey | same-transaction boot-RAM write-enable; no autonomous event | none in the claimed polled journey |
 | Public time | 1541 reference-clock ticks | Apple CPU cycles under a timing profile | host CPU T-states under a timing profile | Altair 8080 T-states under a timing profile |
-| Preserved media test | P64 timed pulses and strength | WOZ bit timing and flux tracks | raw SCP flux plus hard-sector mark timings | raw SCP flux plus 32-sector marker timing |
+| Preserved media test | P64 timed pulses and strength | WOZ bit timing and flux tracks | a mastered SCP capture plus hard-sector mark timings | a mastered SCP capture plus 32-sector marker timing |
 
 There is no universal tick frequency: each family declares a typed clock
 and maps its internal media timing without per-event rounding. There is no
@@ -513,11 +550,14 @@ a media profile chooses one implicitly.
 
 ### Knock-on requirements
 
-The P15 section of the in-force image-format architecture places the 1541 public cut above
-the drive electronics but below the disk VIA, matching U7. It specifies the
-common hardware layer without introducing a drive catalog. The delivered adapter layer still
-adds no hardware implementation or emulator presentation, and its delivery
-cut does not otherwise change.
+This section places the 1541 public cut above the drive electronics but
+below the disk VIA, matching U7; the principle is pledged, so no in-force
+section states it. It specifies the common hardware layer without
+introducing a drive catalog. The delivered layer adds no hardware emulation
+and no emulator presentation: the read channel and group code that arrived
+with the two layers above the medium are declared profile rules (P30) and a
+presentation over durable state (P23), not the timed-causality layer this
+principle specifies. The delivery cut does not otherwise change.
 
 ## P25 — Artifact mappings make nesting recursive
 
