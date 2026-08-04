@@ -90,11 +90,16 @@ ABI, or Python module.
   image only, with each backing file claimed immutable; write path
   refuses snapshots and non-16-bit refcounts by name); `vdi.rs` the
   native VDI driver (P8 version gate first, then the enumerated
-  image-type claim — dynamically allocated and fixed, with undo and
-  differencing refused by name; the block map stays in the file and is
+  image-type claim — dynamically allocated, fixed and differencing,
+  with undo refused by name; the block map stays in the file and is
   read where it is needed, so the driver holds no mutable state and a
   block a dynamic image never allocated is allocated on the write path
-  alone); `mbr.rs`
+  alone; a differencing chain composes for reading and takes writes
+  copy-on-write into the top image only, and because the format records
+  the parent's identity and no path, the parent is **searched for by
+  identity** — beside the child, then the directory above it — with the
+  identity checking the file the search found rather than a path being
+  trusted); `mbr.rs`
   partition discovery with
   pinned types; `fat.rs` FAT12/16 volume read/write, with `dos_name.rs`
   owning every 8.3 name decision it makes — reading a stored name,

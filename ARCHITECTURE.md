@@ -18,8 +18,10 @@ One core, two bindings:
   the declared-intent deny-write claim, the native qcow2 v2/v3 driver
   with read composition and top-image copy-on-write through backing
   chains, the native VDI driver reading and writing the dynamically
-  allocated and fixed image types through the block map the format
-  keeps, MBR partition discovery, FAT12/FAT16 volume read/write, the
+  allocated, fixed and differencing image types through the block map
+  the format keeps — a differencing chain composing through parents it
+  finds by the identity each child declares, the format recording no
+  path — MBR partition discovery, FAT12/FAT16 volume read/write, the
   assurance gate that meets a source short of its own declaration with a
   bounded read-only reading rather than an all-or-nothing loss, and the
   commit-point session cache that keeps every write bufferable and
@@ -161,8 +163,9 @@ needs and keeps admitting other readers, every remanence write action
 refused by name. An identification session, which only reads, still
 takes the strongest access the file grants — read/write preferred,
 read-only otherwise — with writes denied to others either way. The
-claim covers every file of a backing chain, consistently: the top
-image is claimed per the declared intent, and every backing file is
+claim covers every file of a composed chain, consistently — a qcow2
+backing chain and a VDI differencing chain alike: the top
+image is claimed per the declared intent, and every file behind it is
 claimed immutable through this access — writes denied to others, the
 library's own access read-only. Contention anywhere in the chain is
 an immediate, named failure, never a hidden wait. The
@@ -205,7 +208,8 @@ The durable undo journal beneath the overlay is private transient
 state: no user-owned file, no cleanup verb, no contract about its shape
 or location. A fault-injection harness terminates a separate process
 after each durability boundary in commit and proves reconciliation for
-raw, standalone qcow2, VDI, and backing-chain images; in-process rollback
+raw, standalone qcow2, VDI, qcow2 backing-chain and VDI differencing-chain
+images; in-process rollback
 tests are not evidence for this principle.
 
 ### P10 — Every refusal is machine-addressable

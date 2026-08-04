@@ -58,6 +58,79 @@ removes it is the record either way.
 
 ## Decisions
 
+### D18 — A VDI parent is searched for by identity, because the format records no path
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-04. **Supports** U6, S1; P3, P4, P6, P7.
+
+A scope call made in F41's course, which its own text could not carry:
+**the VDI format records the parent's identity and no path at all.** F41
+was written as "names its parent by the parent's own identity rather than
+by path alone", which reads as a path plus a check. There is no path. The
+producing hypervisor resolves the identity through its own machine
+registry — an XML document outside this library's claim, and one this
+library will not acquire a reader for to open a disk image. So the choice
+is not *how to check a resolved path* but *how to resolve at all*, and the
+delivered answer is a **search by identity**.
+
+**The search is bounded and named**: the directory holding the child, then
+the directory above it — the layout this format's tooling produces, where
+differencing images sit in a subdirectory of their own and the base image
+stays in the folder above. In each, the file *named* for the identity is
+nominated first, in both spellings the tooling writes it with, because
+that is how a differencing image is named. Failing a nomination, the VDI
+files beside it are examined and the one declaring the identity is the
+parent.
+
+**Nomination is checked, not trusted**, which is where F41's sentence
+lands intact: a nominated file whose identity does not match is a refusal
+rather than a fallback to searching, so a substitute standing where the
+parent should be is never silently read in its place. Two matches in one
+directory is a contradiction and refuses; none anywhere is the
+missing-parent refusal, naming the identity looked for and every candidate
+it could not examine (P4).
+
+**A candidate that cannot be examined is not a failure of the open.** A
+scanned file another process holds against the P7 claim, or one that is
+not a VDI of the claimed major version, is recorded and passed over rather
+than failing the chain — it was never established to be in the chain. A
+*nominated* file is different: it is the parent by name, so contention on
+it fails the open as P7 requires. Without that split, one unrelated locked
+image in a directory would refuse an open that has nothing to do with it.
+
+**Identity also replaces the path-visited cycle check** qcow2 uses. The
+members' declared identities are what the chain carries, so a cycle is an
+identity already in the chain — which catches an image naming itself as
+squarely as it catches two naming each other, without canonicalizing a
+path to find out.
+
+**What this costs, stated rather than hidden:** a differencing image whose
+parent sits outside those two directories does not open, and says so by
+name. That is the missing-parent refusal F41 already enumerates, and the
+alternative — widening the search until it finds something — is the
+substitute this decision exists to refuse.
+
+**Weighed and declined:** resolving only by the nominated name and never
+searching (deterministic, and it cannot find a base image, which is named
+by a person and not after its identity — it would have shipped a feature
+that resolves snapshot-over-snapshot and fails the common case); reading
+the producing hypervisor's machine registry to get a real path (a second
+format, an XML reader in a crate that is deliberately dependency-free, and
+a machine-configuration document this library has no claim over); taking
+the parent's path from the caller through a new surface verb (it is
+defensible, and it contradicts F41's "the top image opens" — the caller
+would have to hold what the format was supposed to say); searching
+recursively from the child (unbounded, and every directory added makes an
+accidental identity collision likelier); and checking the parent's
+modification stamp beside its identity, which the format also records
+(it detects a parent changed since the branch, and F41 enumerates neither
+it nor a refusal for it — a claim to widen deliberately, with the evidence
+of a real chain it would have rejected, rather than in passing).
+
+**Reopens if:** a VDI is found that records a parent path after all, or
+the search is measured refusing a layout the format's own tooling
+produces.
+
 ### D17 — A design document's purpose ends at delivery
 
 **Decided** Paul Galbraith, 2026-08-04. **Supports** (none) — a records

@@ -20,6 +20,44 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A VDI differencing image is a first-class disk.** The top image opens
+  and the whole chain composes as one (U6), exactly as a qcow2 with a
+  backing file already did: a block the top image never allocated reads
+  through to its parent, a block it holds as discarded reads as zeroes
+  and masks the parent, and writes allocate copy-on-write into the top
+  image only. A parent is claimed immutable for the session's life (P7),
+  is never modified and is never flattened into the child, so after
+  commit the relationship stands and the delivering hypervisor's own
+  tooling reads the changed guest bytes.
+
+  **The parent is found by identity, not by a path, because the format
+  records no path.** A VDI names its parent by the parent's own
+  identity; the library searches for the image declaring that identity
+  beside the child and in the directory above it, and the file *named*
+  for the identity — how the format's own tooling names a differencing
+  image — is nominated first. That nomination is checked rather than
+  trusted: a file standing where the parent should be whose identity
+  does not match is refused by name, never read as a substitute. It is
+  the one place this format hands the library evidence a backing path
+  alone cannot give.
+
+  Every refusal a qcow2 chain already named is named here too, at the
+  open and never as a partial interpretation (P3, P6): a missing parent
+  naming the identity it looked for, a cycle — caught by identity, so an
+  image naming itself is caught as squarely as two naming each other —
+  a chain past the sixteen files this release claims, and a parent whose
+  own version or image type falls outside the claim, which refuses in
+  its own name. The `differencing` image type joins `dynamically
+  allocated` and `fixed` in the enumerated claim, leaving `undo` as the
+  one type refused by name.
+
+  Identification is deliberately untouched: a differencing VDI
+  identifies as the VDI container it is (U5), with its type and the
+  parent it declares among the evidence (P4). No S1, S2 or S3 symbol
+  changed — a composed chain is the same `Disk` presenting the same
+  `DiskFormat::Vdi { major, minor }`, and what changed is what the three
+  surfaces now open rather than refuse.
+
 - **A 1541 now reads the disk, not just the recording.** A mastered flux
   medium — or the one a P64 container holds at rest — materializes the
   family's **hardware bitstream** under declared mechanics and

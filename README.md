@@ -114,13 +114,23 @@ Writes allocate copy-on-write into the top image only and preserve the
 backing relationship; a missing member, a cycle, or a chain past the
 claimed depth is refused by name.
 A VDI is an ordinary image of the same stack: its version is validated
-before anything else is touched, its dynamically allocated and fixed
-image types are claimed by name — every other type the format defines,
-differencing among them, refused rather than attempted — and a block the
-block map marks unallocated reads as the zeroes the format says it holds,
+before anything else is touched, its dynamically allocated, fixed and
+differencing image types are claimed by name — the one other type the
+format defines, undo, refused rather than attempted — and a block the
+block map marks discarded reads as the zeroes the format says it holds,
 never confused with an allocated block that happens to hold them. A write
 into a block a dynamic image never allocated allocates one, inside the
 commit and never during a read.
+A VDI differencing image opens as one composed disk too, and the way it
+finds its parent is the format's own: a VDI records the parent's
+**identity** and no path at all, so the image declaring that identity is
+searched for beside the child and in the directory above it, and that
+identity is what checks the file the search found. A file standing where
+the parent should be whose identity does not match is refused by name
+rather than read as a substitute — evidence a backing path alone cannot
+give. A missing parent, a cycle, a chain past the claimed depth, or a
+parent whose own version or type falls outside the claim is refused at
+the open.
 Where the stopped machine ran DOS, it also answers which drive letter
 named which volume. A DOS machine persisted no such map — its letters
 were assigned at boot by a rule over the machine's own configuration, and

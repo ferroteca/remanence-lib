@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The VDI container through the public surface (U1, U3, U4): synthetic
-//! images the project owns outright — a dynamically allocated one whose
-//! unwritten blocks are genuinely absent, and a fixed one whose blocks
-//! are all present — each carrying the same hand-built FAT16 volume.
-//! Block-map semantics are unit-tested inside the crate; everything here
-//! runs through `Session`, `Disk` and the reports they issue.
+//! The VDI container through the public surface (U1, U3, U4, U6):
+//! synthetic images the project owns outright — a dynamically allocated
+//! one whose unwritten blocks are genuinely absent, a fixed one whose
+//! blocks are all present, and differencing chains over both — each
+//! carrying the same hand-built FAT16 volume. Block-map semantics and
+//! copy-on-write are unit-tested inside the crate; everything here runs
+//! through `Session`, `Disk` and the reports they issue, including the
+//! parent resolution that only exists once an image has a path.
 
 use std::path::PathBuf;
 
@@ -142,6 +144,97 @@ fn write_image(tag: &str, bytes: &[u8]) -> PathBuf {
     let path = temp_path(tag);
     std::fs::write(&path, bytes).expect("image writes");
     path
+}
+
+/// A directory of its own. A differencing image's parent is found by
+/// searching where the image sits, because the format records the
+/// parent's identity and no path, so a chain test owns its directory.
+fn temp_directory(tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "remanence-vdi-chain-{tag}-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("chain directory");
+    directory
+}
+
+/// A recognizable 16-byte identity, distinct per `tag`.
+fn identity(tag: u8) -> [u8; 16] {
+    let mut bytes = [tag; 16];
+    bytes[0] = 0x11;
+    bytes[15] = tag;
+    bytes
+}
+
+/// The identity spelled the way the format's own tooling spells it —
+/// first three groups read little-endian, as a Microsoft GUID is. Written
+/// out here rather than borrowed from the library, so the name a chain is
+/// searched by is checked against an independent reading.
+fn identity_text(bytes: &[u8; 16]) -> String {
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-\
+         {:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[3],
+        bytes[2],
+        bytes[1],
+        bytes[0],
+        bytes[5],
+        bytes[4],
+        bytes[7],
+        bytes[6],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    )
+}
+
+fn stamp(image: &mut [u8], create: &[u8; 16], parent: &[u8; 16]) {
+    image[0x188..0x198].copy_from_slice(create);
+    image[0x1a8..0x1b8].copy_from_slice(parent);
+}
+
+/// A dynamically allocated image carrying `content` and declaring
+/// `create` as its own identity — the base a differencing image names.
+fn base_vdi(content: &[u8], create: &[u8; 16]) -> Vec<u8> {
+    let mut image = dynamic_vdi(content);
+    stamp(&mut image, create, &[0; 16]);
+    image
+}
+
+/// A differencing image over `parent`, presenting `disk_size` bytes with
+/// every block free: the whole disk is the parent's until something is
+/// written into it.
+fn differencing_vdi(disk_size: u64, create: &[u8; 16], parent: &[u8; 16]) -> Vec<u8> {
+    let mut image = dynamic_vdi(&vec![0u8; disk_size as usize]);
+    image[0x4c..0x50].copy_from_slice(&4u32.to_le_bytes());
+    stamp(&mut image, create, parent);
+    image
+}
+
+/// Writes the base of a chain into `directory` under an ordinary name —
+/// not one derived from its identity — commits `BASE.BIN` into its
+/// volume, and answers with the path and the virtual size a differencing
+/// image over it must present.
+fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]) -> (PathBuf, u64) {
+    let volume_bytes = synthetic_fat16();
+    let path = directory.join("base.vdi");
+    std::fs::write(&path, base_vdi(&volume_bytes, create)).expect("base writes");
+
+    let (mut session, at) = attach(&path, AccessIntent::Write).expect("base opens");
+    let disk = session.medium(at).expect("the medium is attached");
+    let volume = only_volume(disk);
+    disk.write_file(volume, "BASE.BIN", content).expect("write");
+    disk.commit().expect("commit");
+    drop(session);
+    (path, volume_bytes.len() as u64)
 }
 
 #[test]
@@ -314,18 +407,218 @@ fn p8_refuses_a_vdi_version_past_the_claim_by_name() {
 
 #[test]
 fn an_image_type_outside_the_claim_is_refused_by_name() {
-    for (declared, named) in [(3u32, "undo"), (4, "differencing")] {
-        let mut bytes = dynamic_vdi(&synthetic_fat16());
-        bytes[0x4c..0x50].copy_from_slice(&declared.to_le_bytes());
-        let path = write_image(named, &bytes);
+    let mut bytes = dynamic_vdi(&synthetic_fat16());
+    bytes[0x4c..0x50].copy_from_slice(&3u32.to_le_bytes());
+    let path = write_image("undo", &bytes);
 
-        let error = attach(&path, AccessIntent::Read).expect_err("the type is refused");
-        assert_eq!(error.category(), ErrorCategory::Unsupported);
-        let message = error.to_string();
-        assert!(
-            message.contains(named),
-            "the refusal names the type rather than attempting it: {message}"
-        );
-        std::fs::remove_file(&path).ok();
+    let error = attach(&path, AccessIntent::Read).expect_err("the type is refused");
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
+    let message = error.to_string();
+    assert!(
+        message.contains("undo"),
+        "the refusal names the type rather than attempting it: {message}"
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_differencing_chain_composes_as_one_disk() {
+    let directory = temp_directory("composes");
+    let base_id = identity(0xb0);
+    let base_content: Vec<u8> = (0..30_000u32).map(|n| (n % 251) as u8).collect();
+    let (base, virtual_size) = committed_base(&directory, &base_id, &base_content);
+    let base_before = std::fs::read(&base).expect("base reads");
+
+    // The top image is named after nothing at all, and the base is named
+    // the way a person names it: what joins them is the identity the
+    // child declares, which is the whole of what the format records.
+    let top = directory.join("top.vdi");
+    std::fs::write(
+        &top,
+        differencing_vdi(virtual_size, &identity(0x70), &base_id),
+    )
+    .expect("top writes");
+
+    let (mut session, at) = attach(&top, AccessIntent::Write).expect("the chain opens");
+    let disk = session.medium(at).expect("the medium is attached");
+    assert_eq!(disk.format(), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(disk.size(), virtual_size);
+
+    // Identification is deliberately untouched: the top image identifies
+    // as the VDI container it is (U5), with its type and its parent among
+    // the evidence (P4).
+    let identification = disk.identify();
+    assert_eq!(identification.containers[0].id, "vdi");
+    let evidence = identification.evidence.join("\n");
+    assert!(evidence.contains("differencing"), "{evidence}");
+    assert!(
+        evidence.contains(&identity_text(&base_id)),
+        "the evidence names the parent the image declares: {evidence}"
+    );
+
+    // Every block is free in the top image, so the volume, its listing
+    // and its files are all the parent's, read through (U6).
+    let volume = only_volume(disk);
+    assert_eq!(
+        disk.read_file(volume, "BASE.BIN").expect("read through"),
+        base_content
+    );
+
+    let added: Vec<u8> = (0..70_000u32).map(|n| (n % 241) as u8).collect();
+    disk.write_file(volume, "TOP.BIN", &added).expect("write");
+    disk.commit().expect("commit");
+    drop(session);
+
+    assert_eq!(
+        std::fs::read(&base).expect("base reads"),
+        base_before,
+        "writes allocate into the top image only; the parent is never modified"
+    );
+
+    let (mut reopened_session, reopened_at) =
+        attach(&top, AccessIntent::Read).expect("the chain reopens");
+    let reopened = reopened_session.medium(reopened_at).expect("attached");
+    let volume = only_volume(reopened);
+    assert_eq!(
+        reopened.read_file(volume, "TOP.BIN").expect("read"),
+        added,
+        "what the top image took is read back from the top image"
+    );
+    assert_eq!(
+        reopened.read_file(volume, "BASE.BIN").expect("read"),
+        base_content,
+        "and what it never took still reads through to the parent"
+    );
+    drop(reopened_session);
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn a_parent_named_for_the_identity_is_never_a_substitute_for_it() {
+    let directory = temp_directory("substitute");
+    let wanted = identity(0xc1);
+
+    // A file named for the identity the child declares, carrying another
+    // identity entirely. It is the nominated parent, so it is refused
+    // rather than passed over in favour of a search.
+    let volume_bytes = synthetic_fat16();
+    let impostor = directory.join(format!("{{{}}}.vdi", identity_text(&wanted)));
+    std::fs::write(&impostor, base_vdi(&volume_bytes, &identity(0xc2)))
+        .expect("impostor writes");
+
+    let top = directory.join("top.vdi");
+    std::fs::write(
+        &top,
+        differencing_vdi(volume_bytes.len() as u64, &identity(0x71), &wanted),
+    )
+    .expect("top writes");
+
+    let error = attach(&top, AccessIntent::Read).expect_err("a substitute is refused");
+    assert_eq!(error.category(), ErrorCategory::InvalidImage);
+    let message = error.to_string();
+    assert!(
+        message.contains(&identity_text(&wanted))
+            && message.contains(&identity_text(&identity(0xc2))),
+        "the refusal names what was asked for and what was found: {message}"
+    );
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn a_missing_parent_is_a_named_refusal_rather_than_the_top_image_alone() {
+    let directory = temp_directory("missing");
+    let wanted = identity(0xc3);
+    let top = directory.join("top.vdi");
+    std::fs::write(
+        &top,
+        differencing_vdi(synthetic_fat16().len() as u64, &identity(0x72), &wanted),
+    )
+    .expect("top writes");
+
+    let error = attach(&top, AccessIntent::Read).expect_err("a missing parent is refused");
+    assert_eq!(error.category(), ErrorCategory::NotFound);
+    let message = error.to_string();
+    assert!(
+        message.contains(&identity_text(&wanted)),
+        "the refusal names the identity it looked for: {message}"
+    );
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn a_cycle_in_the_chain_is_refused_at_the_open() {
+    let directory = temp_directory("cycle");
+    let first = identity(0xe1);
+    let second = identity(0xe2);
+    let size = synthetic_fat16().len() as u64;
+
+    // Two differencing images, each naming the other. Both are written
+    // under the name the format's tooling gives a differencing image, so
+    // resolution finds them without searching.
+    for (own, parent) in [(first, second), (second, first)] {
+        let path = directory.join(format!("{{{}}}.vdi", identity_text(&own)));
+        std::fs::write(&path, differencing_vdi(size, &own, &parent)).expect("member writes");
     }
+
+    let top = directory.join(format!("{{{}}}.vdi", identity_text(&first)));
+    let error = attach(&top, AccessIntent::Read).expect_err("a cycle is refused");
+    assert_eq!(error.category(), ErrorCategory::InvalidImage);
+    assert!(
+        error.to_string().contains("cycles"),
+        "the refusal says what it found: {error}"
+    );
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn a_chain_past_the_claimed_bound_is_refused_rather_than_walked_partway() {
+    let directory = temp_directory("deep");
+    let size = synthetic_fat16().len() as u64;
+
+    // Seventeen differencing images, each naming the next: one past the
+    // sixteen files this release claims, and never a base to end on.
+    for step in 0..17u8 {
+        let own = identity(0x40 + step);
+        let parent = identity(0x40 + step + 1);
+        let path = directory.join(format!("{{{}}}.vdi", identity_text(&own)));
+        std::fs::write(&path, differencing_vdi(size, &own, &parent)).expect("member writes");
+    }
+
+    let top = directory.join(format!("{{{}}}.vdi", identity_text(&identity(0x40))));
+    let error = attach(&top, AccessIntent::Read).expect_err("a deep chain is refused");
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
+    let message = error.to_string();
+    assert!(
+        message.contains("16") && message.contains("partway"),
+        "the refusal names the bound rather than opening what fits: {message}"
+    );
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn a_parent_outside_the_claim_refuses_in_its_own_name() {
+    let directory = temp_directory("bad-parent");
+    let parent_id = identity(0xc4);
+    let volume_bytes = synthetic_fat16();
+
+    // The parent is an undo image: a type the release refuses by name,
+    // and it refuses there rather than being read as something else.
+    let mut parent = base_vdi(&volume_bytes, &parent_id);
+    parent[0x4c..0x50].copy_from_slice(&3u32.to_le_bytes());
+    std::fs::write(directory.join("base.vdi"), parent).expect("parent writes");
+
+    let top = directory.join("top.vdi");
+    std::fs::write(
+        &top,
+        differencing_vdi(volume_bytes.len() as u64, &identity(0x73), &parent_id),
+    )
+    .expect("top writes");
+
+    let error = attach(&top, AccessIntent::Read).expect_err("the parent is refused");
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
+    assert!(
+        error.to_string().contains("undo"),
+        "the parent's own refusal is what surfaces: {error}"
+    );
+    std::fs::remove_dir_all(&directory).ok();
 }

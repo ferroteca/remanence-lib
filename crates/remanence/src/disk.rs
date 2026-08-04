@@ -8,10 +8,10 @@
 //! durable (P9): a recovery journal is armed beneath the write-through,
 //! so an interruption at any point leaves state the next open
 //! reconciles — wholly the old image or wholly the committed new one —
-//! before the disk is exposed. A qcow2 whose content lives partly in a
-//! backing chain opens as one composed disk (U6), every member claimed
-//! for the session's life and writes allocated copy-on-write into the
-//! top image only.
+//! before the disk is exposed. An image whose content lives partly
+//! behind it — a qcow2 backing chain, a VDI differencing chain — opens
+//! as one composed disk (U6), every member claimed for the session's
+//! life and writes allocated copy-on-write into the top image only.
 //!
 //! Every open carries its assurance (P28). A source that satisfies its
 //! interpretation is verified and keeps whatever authority the caller
@@ -201,10 +201,11 @@ impl Disk {
     /// one, never a partial third state. The container is whichever
     /// image-format adapter recognizes it — qcow2 or VDI today — and raw
     /// where none does.
-    /// A qcow2 naming a backing file opens with its whole chain
-    /// composed, every backing file claimed immutable for the session's
-    /// life (U6). Writes allocate copy-on-write into the top image only;
-    /// commit preserves the backing relationship.
+    /// A qcow2 naming a backing file, and a VDI naming a parent
+    /// identity, open with their whole chain composed, every file behind
+    /// the top one claimed immutable for the session's life (U6). Writes
+    /// allocate copy-on-write into the top image only; commit preserves
+    /// the relationship.
     /// Opens `path` at the stated default cache bound.
     ///
     /// Test-only. A medium reaches a caller through
@@ -1188,6 +1189,51 @@ mod tests {
         disk.commit().expect("commits old state");
     }
 
+    /// The identity a synthetic base VDI is stamped with, and the one the
+    /// differencing image over it names as its parent.
+    const VDI_BASE_ID: [u8; 16] = [
+        0x51, 0x42, 0x33, 0x24, 0x15, 0x06, 0x47, 0x18, 0x29, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e, 0x8f,
+        0x90,
+    ];
+
+    /// A differencing image over [`VDI_BASE_ID`] presenting `disk_size`
+    /// bytes, with every block free: the whole disk is the parent's until
+    /// something is written into it.
+    fn differencing_vdi_bytes(disk_size: u64) -> Vec<u8> {
+        let mut image = dynamic_vdi_bytes(&vec![0u8; disk_size as usize]);
+        image[0x4c..0x50].copy_from_slice(&4u32.to_le_bytes()); // differencing
+        image[0x188..0x198].copy_from_slice(&[0xa5; 16]); // its own identity
+        image[0x1a8..0x1b8].copy_from_slice(&VDI_BASE_ID); // its parent's
+        image
+    }
+
+    /// A committed base VDI and an empty differencing image over it, in
+    /// their own directory. The base is named as a person names it, not
+    /// after its identity, so the open has to search the directory for
+    /// the file declaring the identity the child asked for.
+    fn build_committed_vdi_chain(directory: &std::path::Path) -> (PathBuf, PathBuf) {
+        std::fs::create_dir_all(directory).expect("chain directory");
+        let base = directory.join("base.vdi");
+        let top = directory.join("top.vdi");
+
+        let volume_bytes = fat16_volume_bytes();
+        let mut base_image = dynamic_vdi_bytes(&volume_bytes);
+        base_image[0x188..0x198].copy_from_slice(&VDI_BASE_ID);
+        std::fs::write(&base, base_image).expect("base writes");
+
+        let mut base_disk = Disk::open(&base, AccessIntent::Write).expect("base opens");
+        let volume = only_volume(&mut base_disk);
+        base_disk
+            .write_file(volume, "OLD.BIN", &old_content())
+            .expect("writes old state");
+        base_disk.commit().expect("commits old state");
+        drop(base_disk);
+
+        std::fs::write(&top, differencing_vdi_bytes(volume_bytes.len() as u64))
+            .expect("top writes");
+        (top, base)
+    }
+
     fn build_committed_chain(directory: &std::path::Path) -> (PathBuf, PathBuf) {
         std::fs::create_dir_all(directory).expect("chain directory");
         let base = directory.join("base.qcow2");
@@ -1218,7 +1264,7 @@ mod tests {
             ("journal-retired", true),
         ];
         for (boundary, expect_new) in boundaries {
-            for shape in ["raw", "qcow2", "vdi", "chain"] {
+            for shape in ["raw", "qcow2", "vdi", "chain", "vdi-chain"] {
                 let stem = format!("remanence-crash-{shape}-{boundary}-{}", std::process::id());
                 let (path, backing, directory) = match shape {
                     "raw" => {
@@ -1239,6 +1285,11 @@ mod tests {
                     "chain" => {
                         let directory = std::env::temp_dir().join(stem);
                         let (path, backing) = build_committed_chain(&directory);
+                        (path, Some(backing), Some(directory))
+                    }
+                    "vdi-chain" => {
+                        let directory = std::env::temp_dir().join(stem);
+                        let (path, backing) = build_committed_vdi_chain(&directory);
                         (path, Some(backing), Some(directory))
                     }
                     _ => unreachable!(),

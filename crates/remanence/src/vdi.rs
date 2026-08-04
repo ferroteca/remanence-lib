@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Native VDI driver — the standalone VirtualBox Disk Image container —
-//! written from the published format description. It presents the virtual
-//! disk as a [`Device`], exactly as the qcow2 driver does, so a VDI opens,
+//! Native VDI driver — the VirtualBox Disk Image container — written from
+//! the published format description. It presents the virtual disk as a
+//! [`Device`], exactly as the qcow2 driver does, so a VDI opens,
 //! identifies, inspects, reads and writes through the delivered disk stack
 //! unchanged.
 //!
@@ -11,23 +11,43 @@
 //! major version 1, minor 0 or 1, which are the two shapes of the same
 //! header — the fields this driver reads sit at the same offsets in both,
 //! and 1.1's additions are trailing bytes it never touches. Past the
-//! version the claim is enumerated (P3): the **dynamically allocated** and
-//! **fixed** image types are read and written by name, and every other
-//! type the format defines — undo, and differencing among them — is
-//! refused by name rather than attempted, as are per-block extra data and
-//! any image flag this release does not model.
+//! version the claim is enumerated (P3): the **dynamically allocated**,
+//! **fixed** and **differencing** image types are read and written by
+//! name, and the one other type the format defines — undo — is refused by
+//! name rather than attempted, as are per-block extra data and any image
+//! flag this release does not model.
+//!
+//! A differencing chain composes for reading and writing (U6): a block the
+//! top image never allocated reads through to its parent, and writes
+//! allocate copy-on-write into the top image only, which is never the
+//! parent. A missing parent, a cycle, a chain past [`MAX_CHAIN_LENGTH`]
+//! files, and a parent whose own version or image type falls outside the
+//! claim are refused by name at the open. Every parent is claimed
+//! immutable for the chain's life (P7).
+//!
+//! **The format records the parent's identity and no path at all**, which
+//! is what makes resolution different from qcow2's: the parent is searched
+//! for by identity rather than dereferenced from a name, and the identity
+//! the child declares is what checks the file that resolution found — see
+//! [`resolve_parent`]. A file standing where the parent should be whose
+//! identity does not match is a named refusal, never a substitute read in
+//! its place.
 //!
 //! The block map is the format's own mapping and stays in the file: an
 //! entry is read where it is needed and never held resident (P27), so the
 //! driver carries no mutable state of its own and a commit that does not
 //! land has nothing in memory to put back. An entry marking a block
-//! unallocated ([`BLOCK_FREE`]) or discarded ([`BLOCK_ZERO`]) reads as
-//! zeroes because the format says so, and is never confused with a block
+//! unallocated ([`BLOCK_FREE`]) reads as the parent's bytes, or as zeroes
+//! where there is no parent; an entry marking one discarded
+//! ([`BLOCK_ZERO`]) reads as zeroes and masks the parent, because the
+//! format keeps the two distinct. Neither is ever confused with a block
 //! that is allocated and happens to hold zeroes. Allocating a block
 //! belongs to the write path alone, which the disk stack reaches inside
 //! commit — never during a read.
 
-use crate::device::Device;
+use std::path::{Path, PathBuf};
+
+use crate::device::{AccessIntent, Device, MediumDevice};
 use crate::error::{Error, Result};
 
 /// The container signature, at [`SIGNATURE_AT`] rather than at the start:
@@ -53,6 +73,16 @@ const BLOCK_ZERO: u32 = 0xffff_fffe;
 /// so the bit is satisfied by construction rather than acted on.
 const FLAG_ZERO_EXPAND: u32 = 0x0000_0100;
 
+/// The longest differencing chain this release claims, counted in files
+/// with the top image included. A deeper chain is refused by name (P3),
+/// never walked partway.
+pub(crate) const MAX_CHAIN_LENGTH: usize = 16;
+
+/// The most VDI files this release examines in one directory while
+/// searching for a parent by identity. A directory holding more is
+/// refused by name rather than searched partway (P3).
+const MAX_PARENT_CANDIDATES: usize = 1024;
+
 const HEADER_SIZE_AT: usize = 0x48;
 const IMAGE_TYPE_AT: usize = 0x4c;
 const FLAGS_AT: usize = 0x50;
@@ -63,14 +93,22 @@ const BLOCK_SIZE_AT: usize = 0x178;
 const BLOCK_EXTRA_AT: usize = 0x17c;
 const BLOCK_COUNT_AT: usize = 0x180;
 const BLOCKS_ALLOCATED_AT: usize = 0x184;
+/// The identity this image was created with — what a differencing child
+/// names when it names this file as its parent.
+const UUID_CREATE_AT: usize = 0x188;
+/// The identity of the image this one differences against, all zeroes
+/// where there is none. The modification stamps that sit beside these two
+/// are outside this release's claim and are neither read nor written.
+const UUID_LINKAGE_AT: usize = 0x1a8;
 
-/// Everything the driver reads out of the header, which ends at the first
-/// UUID. The leading bytes are the creator line, the signature and the
-/// version; the trailing ones are identity and legacy geometry.
-const HEADER_READ_BYTES: usize = 0x188;
+/// Everything the driver reads out of the header, which ends at the
+/// linkage identity. The leading bytes are the creator line, the
+/// signature and the version; the trailing ones are legacy geometry and
+/// the two stamps above.
+const HEADER_READ_BYTES: usize = UUID_LINKAGE_AT + 16;
 
 /// The smallest declared header size the fields above fit inside.
-/// Version 1.0 declares 0x170 and 1.1 declares 0x190, both past it.
+/// Version 1.0 declares 0x180 and 1.1 declares 0x190, both past it.
 const MINIMUM_DECLARED_HEADER: u64 = (HEADER_READ_BYTES - HEADER_SIZE_AT) as u64;
 
 /// The largest block size this release claims. The format's own default
@@ -97,9 +135,46 @@ fn unsupported(reason: impl Into<String>) -> Error {
     Error::categorized_image(crate::ErrorCategory::Unsupported, "vdi", reason)
 }
 
+/// A 16-byte VDI identity. The format stores the same bytes a Microsoft
+/// GUID does, so it renders with its first three groups read
+/// little-endian — which is what the format's own tooling prints, and
+/// what a differencing image is named after.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VdiUuid([u8; 16]);
+
+impl VdiUuid {
+    fn read(raw: &[u8], offset: usize) -> Self {
+        Self(raw[offset..offset + 16].try_into().expect("16 bytes"))
+    }
+
+    /// The all-zero identity, which the format spells "none" with.
+    fn is_nil(self) -> bool {
+        self.0.iter().all(|&byte| byte == 0)
+    }
+}
+
+impl std::fmt::Display for VdiUuid {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let byte = &self.0;
+        write!(
+            formatter,
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-\
+             {:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            byte[3], byte[2], byte[1], byte[0], byte[5], byte[4], byte[7], byte[6], byte[8],
+            byte[9], byte[10], byte[11], byte[12], byte[13], byte[14], byte[15]
+        )
+    }
+}
+
+impl std::fmt::Debug for VdiUuid {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, formatter)
+    }
+}
+
 /// The image types this release claims, by name (P3). The format defines
-/// two more — undo and differencing — and each is refused by name at the
-/// header rather than read as one of these.
+/// one more — undo — and it is refused by name at the header rather than
+/// read as one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum VdiImageType {
     /// Blocks exist only where they were written; the block map says
@@ -108,6 +183,9 @@ pub(crate) enum VdiImageType {
     /// Every block is present from creation, the block map addressing
     /// each in turn.
     Fixed,
+    /// Blocks exist only where this image was written since it was
+    /// branched; every other block belongs to the parent it names.
+    Differencing,
 }
 
 impl VdiImageType {
@@ -115,6 +193,7 @@ impl VdiImageType {
         match self {
             Self::Dynamic => "dynamically allocated",
             Self::Fixed => "fixed",
+            Self::Differencing => "differencing",
         }
     }
 }
@@ -132,6 +211,11 @@ pub(crate) struct VdiHeader {
     pub disk_size: u64,
     pub block_size: u64,
     pub block_count: u32,
+    /// This image's own identity — what a differencing child names.
+    pub create_id: VdiUuid,
+    /// The identity of the parent a differencing image differences
+    /// against; nil on every other type, which names none.
+    pub parent_id: VdiUuid,
 }
 
 impl VdiHeader {
@@ -185,16 +269,11 @@ impl VdiHeader {
             3 => {
                 return Err(unsupported(
                     "VDI image type 3 (undo) is outside this release's claim; \
-                     the dynamically allocated and fixed types are supported",
+                     the dynamically allocated, fixed and differencing types \
+                     are supported",
                 ));
             }
-            4 => {
-                return Err(unsupported(
-                    "VDI image type 4 (differencing) is outside this release's \
-                     claim; the dynamically allocated and fixed types are \
-                     supported",
-                ));
-            }
+            4 => VdiImageType::Differencing,
             other => {
                 return Err(invalid(format!(
                     "VDI image type {other} is not a type the format defines"
@@ -275,10 +354,11 @@ impl VdiHeader {
 
         // A block the image says it holds must actually be in the file:
         // every block for a fixed image, the allocated ones for a dynamic
-        // one (P6 — the contradiction is sought before anything is read).
+        // or differencing one (P6 — the contradiction is sought before
+        // anything is read).
         let present = match image_type {
             VdiImageType::Fixed => block_count as u64,
-            VdiImageType::Dynamic => blocks_allocated as u64,
+            VdiImageType::Dynamic | VdiImageType::Differencing => blocks_allocated as u64,
         };
         let data_end = present
             .checked_mul(block_size)
@@ -293,6 +373,18 @@ impl VdiHeader {
             )));
         }
 
+        // The identities, last, so a file that is not the shape this
+        // release claims never has one read out of it. A differencing
+        // image that names no parent contradicts its own type (P6).
+        let create_id = VdiUuid::read(&raw, UUID_CREATE_AT);
+        let parent_id = VdiUuid::read(&raw, UUID_LINKAGE_AT);
+        if image_type == VdiImageType::Differencing && parent_id.is_nil() {
+            return Err(invalid(
+                "a differencing image names no parent: its linkage identity is \
+                 all zeroes",
+            ));
+        }
+
         Ok(Self {
             major,
             minor,
@@ -302,6 +394,8 @@ impl VdiHeader {
             disk_size,
             block_size,
             block_count,
+            create_id,
+            parent_id,
         })
     }
 }
@@ -319,20 +413,48 @@ pub(crate) fn version(prefix: &[u8]) -> (u32, u32) {
 pub(crate) struct Vdi<D: Device> {
     device: D,
     header: VdiHeader,
+    /// The image this one's unallocated blocks fall through to (U6).
+    /// Only a differencing image carries one, and it is only ever read:
+    /// no write path in this module reaches past [`Self::device`].
+    parent: Option<Box<Vdi<D>>>,
 }
 
 impl<D: Device> Vdi<D> {
+    /// Opens a standalone image. A differencing image is refused here:
+    /// composing the chain takes the containing file's path, which only
+    /// [`open_chain`] has.
     pub(crate) fn open(mut device: D) -> Result<Self> {
         let header = VdiHeader::parse(&mut device)?;
-        Ok(Self { device, header })
+        if header.image_type == VdiImageType::Differencing {
+            return Err(unsupported(format!(
+                "image names parent {}; a standalone open does not compose \
+                 the differencing chain",
+                header.parent_id
+            )));
+        }
+        Ok(Self::assemble(device, header, None))
+    }
+
+    /// Builds the driver over an already-parsed header and, for a chain
+    /// member, the parent its unallocated blocks fall through to.
+    pub(crate) fn assemble(
+        device: D,
+        header: VdiHeader,
+        parent: Option<Box<Vdi<D>>>,
+    ) -> Self {
+        Self {
+            device,
+            header,
+            parent,
+        }
     }
 
     pub(crate) fn header(&self) -> &VdiHeader {
         &self.header
     }
 
-    /// The host device the image lives in — a VDI is one file, so this is
-    /// the only file writes ever reach.
+    /// The host device the image lives in — for a chain, the top image
+    /// alone, which is the only file writes ever reach.
     pub(crate) fn host_mut(&mut self) -> &mut D {
         &mut self.device
     }
@@ -379,15 +501,39 @@ impl<D: Device> Vdi<D> {
 
         let block = (guest_offset / block_size) as u32;
         let entry = self.block_map_entry(block)?;
-        if entry == BLOCK_FREE || entry == BLOCK_ZERO {
-            // The format says so: an unallocated block and a discarded
-            // one read as zeroes, and neither is an allocated block that
-            // happens to hold them.
+        if entry == BLOCK_FREE {
+            // The image never allocated this block, so it holds none of
+            // it: the parent shows through (U6), and zeroes stand where
+            // there is no parent.
+            return self.read_parent(guest_offset, buf);
+        }
+        if entry == BLOCK_ZERO {
+            // Allocated and then discarded. The format keeps this
+            // distinct from never-allocated, so it reads as zeroes and
+            // masks the parent rather than falling through to it.
             buf.fill(0);
             return Ok(());
         }
         let at = self.data_at(entry)?;
         self.device.read_at(at + within, buf)
+    }
+
+    /// Reads from the parent, zero-filling wherever the chain has no
+    /// bytes: with no parent at all, and past a shorter parent's end.
+    fn read_parent(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let Some(parent) = self.parent.as_mut() else {
+            buf.fill(0);
+            return Ok(());
+        };
+        let parent_size = parent.header.disk_size;
+        if offset >= parent_size {
+            buf.fill(0);
+            return Ok(());
+        }
+        let take = (parent_size - offset).min(buf.len() as u64) as usize;
+        parent.read_at(offset, &mut buf[..take])?;
+        buf[take..].fill(0);
+        Ok(())
     }
 
     fn write_block(&mut self, guest_offset: u64, data: &[u8]) -> Result<()> {
@@ -422,14 +568,23 @@ impl<D: Device> Vdi<D> {
         }
         let at = self.header.data_offset + index as u64 * block_size;
 
-        // The fresh block reads as zeroes everywhere the write does not
-        // reach, which is what the entry it replaces read as. Zeroes go
-        // through a bounded buffer, so allocation costs the same whatever
-        // the block size (P27).
-        self.write_zeroes(at, within)?;
-        self.device.write_at(at + within, data)?;
+        // The fresh block must read as what it read before the write
+        // everywhere the write does not reach. A block the image never
+        // allocated read as the parent's bytes, so the copy-on-write seed
+        // comes from there; a discarded block masked the parent, so its
+        // seed is zeroes. Both go through a bounded buffer, so allocation
+        // costs the same whatever the block size (P27).
+        let block_start = guest_offset - within;
         let tail = within + data.len() as u64;
-        self.write_zeroes(at + tail, block_size - tail)?;
+        if entry == BLOCK_FREE && self.parent.is_some() {
+            self.copy_from_parent(at, block_start, within)?;
+            self.device.write_at(at + within, data)?;
+            self.copy_from_parent(at + tail, block_start + tail, block_size - tail)?;
+        } else {
+            self.write_zeroes(at, within)?;
+            self.device.write_at(at + within, data)?;
+            self.write_zeroes(at + tail, block_size - tail)?;
+        }
 
         // Only then the accounting: the map entry that reaches the new
         // block, and the count that says it exists.
@@ -439,6 +594,30 @@ impl<D: Device> Vdi<D> {
         )?;
         self.device
             .write_at(BLOCKS_ALLOCATED_AT as u64, &(index + 1).to_le_bytes())
+    }
+
+    /// Seeds `length` bytes at `offset` in the file with what the parent
+    /// presents from `guest_offset`, a bounded chunk at a time (P27).
+    /// This is the whole of copy-on-write: the parent is read, never
+    /// written, and the bytes land in this image's own fresh block.
+    fn copy_from_parent(
+        &mut self,
+        offset: u64,
+        guest_offset: u64,
+        length: u64,
+    ) -> Result<()> {
+        if length == 0 {
+            return Ok(());
+        }
+        let mut chunk = vec![0u8; (length as usize).min(ZERO_FILL_CHUNK)];
+        let mut done = 0u64;
+        while done < length {
+            let take = ((length - done) as usize).min(chunk.len());
+            self.read_parent(guest_offset + done, &mut chunk[..take])?;
+            self.device.write_at(offset + done, &chunk[..take])?;
+            done += take as u64;
+        }
+        Ok(())
     }
 
     fn write_zeroes(&mut self, offset: u64, length: u64) -> Result<()> {
@@ -497,6 +676,222 @@ impl<D: Device> Device for Vdi<D> {
     fn flush(&mut self) -> Result<()> {
         self.device.flush()
     }
+}
+
+/// Opens the image at `path` with its whole differencing chain composed
+/// (U6). `device` is the top file, already claimed per the caller's
+/// declared intent; every parent is claimed immutable for the chain's
+/// life (P7) — writes denied to every other process, the library's own
+/// access read-only. A missing parent, a cycle, a chain past
+/// [`MAX_CHAIN_LENGTH`] files, and a parent whose own version or image
+/// type falls outside the claim are refused by name (P3).
+pub(crate) fn open_chain(device: MediumDevice, path: &Path) -> Result<Vdi<MediumDevice>> {
+    open_member(device, path, &mut Vec::new())
+}
+
+/// Opens one member and, where it differences, the rest of the chain
+/// beneath it. `chain` carries the identities of the members already
+/// open, top-down: the format names a parent by identity, so a cycle is
+/// an identity already in the chain rather than a path already visited,
+/// and that reading catches an image naming itself as squarely as it
+/// catches two naming each other.
+fn open_member(
+    mut device: MediumDevice,
+    path: &Path,
+    chain: &mut Vec<VdiUuid>,
+) -> Result<Vdi<MediumDevice>> {
+    let header = VdiHeader::parse(&mut device)?;
+    if header.image_type != VdiImageType::Differencing {
+        return Ok(Vdi::assemble(device, header, None));
+    }
+
+    chain.push(header.create_id);
+    if chain.contains(&header.parent_id) {
+        return Err(invalid(format!(
+            "the differencing chain cycles: '{}' names parent {}, which is \
+             already a member",
+            path.display(),
+            header.parent_id
+        )));
+    }
+    if chain.len() >= MAX_CHAIN_LENGTH {
+        return Err(unsupported(format!(
+            "the differencing chain runs past the {MAX_CHAIN_LENGTH} files \
+             this release claims; refusing to open it partway"
+        )));
+    }
+
+    let resolved = resolve_parent(path, header.parent_id)?;
+
+    // A parent once used as a writable top image may carry an interrupted
+    // commit of its own; it is reconciled before the chain composes over
+    // it (P9), exactly as at a top-level open.
+    crate::journal::reconcile_at(&resolved)?;
+
+    // The immutability claim (P7); contention is an immediate, named
+    // failure inside this open.
+    let parent_device = MediumDevice::open(&resolved, AccessIntent::Read)?;
+    let parent = open_member(parent_device, &resolved, chain)?;
+
+    // The identity is checked again against the member actually opened,
+    // where the chain is joined: resolution selects a file, and this is
+    // what says the file selected is the one the child named.
+    if parent.header.create_id != header.parent_id {
+        return Err(invalid(format!(
+            "'{}' declares identity {}, but '{}' names parent {}; refusing to \
+             read it as a substitute",
+            resolved.display(),
+            parent.header.create_id,
+            path.display(),
+            header.parent_id
+        )));
+    }
+
+    Ok(Vdi::assemble(device, header, Some(Box::new(parent))))
+}
+
+/// Finds the file holding `parent`, the identity `child` declares.
+///
+/// The format records the parent's identity and **no path at all**, so
+/// resolution searches rather than dereferences a name. Two directories
+/// are searched, in order: the one holding `child`, then the one above
+/// it — which is where the format's own tooling leaves a base image when
+/// the differencing images over it sit in a subdirectory of their own.
+///
+/// In each, the file *named* for the identity is nominated first, because
+/// that is how the format's tooling names a differencing image, in both
+/// spellings it is written with. A nominated file is taken to be the
+/// parent: an identity that does not match is a refusal rather than a
+/// fallback to searching, so a substitute standing where the parent
+/// should be is never silently read in its place. Failing a nomination,
+/// every VDI beside it is examined and the one whose own identity matches
+/// is the parent — two in one directory is a contradiction, and none
+/// anywhere is the missing-parent refusal, which names what it looked for
+/// and every candidate it could not examine (P4).
+fn resolve_parent(child: &Path, parent: VdiUuid) -> Result<PathBuf> {
+    let here = match child.parent() {
+        Some(directory) if !directory.as_os_str().is_empty() => directory.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let mut directories = vec![here.clone()];
+    if let Some(above) = here.parent().filter(|above| !above.as_os_str().is_empty()) {
+        directories.push(above.to_path_buf());
+    }
+    let child_itself = std::fs::canonicalize(child).ok();
+    let mut unexamined: Vec<String> = Vec::new();
+
+    for directory in &directories {
+        for nominated in [format!("{{{parent}}}.vdi"), format!("{parent}.vdi")] {
+            let candidate = directory.join(nominated);
+            if !candidate.is_file() {
+                continue;
+            }
+            // A file the search cannot read an identity out of is still
+            // the nominated parent; opening it as a member is what names
+            // why it cannot be read.
+            if let Some(identity) = identity_of(&candidate)?.filter(|found| *found != parent) {
+                return Err(invalid(format!(
+                    "'{}' is named for parent {parent} but declares identity \
+                     {identity}; refusing to read it as a substitute",
+                    candidate.display()
+                )));
+            }
+            return Ok(candidate);
+        }
+
+        let Ok(listing) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        let mut matched: Vec<PathBuf> = Vec::new();
+        let mut examined = 0usize;
+        for entry in listing.flatten() {
+            let candidate = entry.path();
+            if !is_vdi_file(&candidate) {
+                continue;
+            }
+            if std::fs::canonicalize(&candidate).ok() == child_itself {
+                continue;
+            }
+            examined += 1;
+            if examined > MAX_PARENT_CANDIDATES {
+                return Err(unsupported(format!(
+                    "'{}' holds more than the {MAX_PARENT_CANDIDATES} VDI files \
+                     this release searches for a parent; refusing to search it \
+                     partway",
+                    directory.display()
+                )));
+            }
+            match identity_of(&candidate) {
+                Ok(Some(identity)) if identity == parent => matched.push(candidate),
+                Ok(_) => {}
+                Err(error) => {
+                    unexamined.push(format!("'{}' ({error})", candidate.display()));
+                }
+            }
+        }
+        match matched.len() {
+            0 => {}
+            1 => return Ok(matched.swap_remove(0)),
+            found => {
+                return Err(invalid(format!(
+                    "'{}' holds {found} images declaring identity {parent}; \
+                     refusing to choose between them",
+                    directory.display()
+                )));
+            }
+        }
+    }
+
+    let searched = directories
+        .iter()
+        .map(|directory| format!("'{}'", directory.display()))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let mut reason = format!(
+        "the parent of '{}' is missing: no image declaring identity {parent} \
+         was found in {searched}",
+        child.display()
+    );
+    if !unexamined.is_empty() {
+        reason.push_str(&format!(
+            " ({} candidate(s) could not be examined: {})",
+            unexamined.len(),
+            unexamined.join(", ")
+        ));
+    }
+    Err(Error::not_found(reason))
+}
+
+fn is_vdi_file(path: &Path) -> bool {
+    path.extension()
+        .map(|extension| extension.to_string_lossy().to_ascii_lowercase() == "vdi")
+        .unwrap_or(false)
+        && path.is_file()
+}
+
+/// The identity `path` declares as its own, read from a bounded prefix.
+/// `None` says the file declares none this release can read — it is not a
+/// VDI of the claimed major version, so it is not a candidate; an error
+/// is the host failing to deliver the bytes, or another process holding
+/// the file against the P7 claim, which is not the same thing as a
+/// mismatch and is never reported as one.
+fn identity_of(path: &Path) -> Result<Option<VdiUuid>> {
+    const NEEDED: usize = UUID_CREATE_AT + 16;
+    let mut device = MediumDevice::open(path, AccessIntent::Read)?;
+    if device.len() < NEEDED as u64 {
+        return Ok(None);
+    }
+    let mut raw = [0u8; NEEDED];
+    device.read_at(0, &mut raw)?;
+    if raw[SIGNATURE_AT..SIGNATURE_AT + 4] != VDI_SIGNATURE {
+        return Ok(None);
+    }
+    // Another major puts every field at an offset this release does not
+    // know, the identity included (P8).
+    if version(&raw).0 != SUPPORTED_MAJOR {
+        return Ok(None);
+    }
+    Ok(Some(VdiUuid::read(&raw, UUID_CREATE_AT)))
 }
 
 #[cfg(test)]
@@ -567,6 +962,36 @@ mod tests {
     /// block reading as zeroes.
     fn empty_dynamic(disk_size: u64) -> VecDevice {
         vdi_shell(disk_size, 1)
+    }
+
+    /// A recognizable identity, distinct per `tag`.
+    fn identity(tag: u8) -> VdiUuid {
+        let mut bytes = [tag; 16];
+        bytes[0] = 0x11;
+        bytes[15] = tag;
+        VdiUuid(bytes)
+    }
+
+    /// Stamps an image's own identity and, where it differences, the one
+    /// it names as its parent.
+    fn with_identity(mut device: VecDevice, create: VdiUuid, parent: VdiUuid) -> VecDevice {
+        device.write_at(UUID_CREATE_AT as u64, &create.0).unwrap();
+        device.write_at(UUID_LINKAGE_AT as u64, &parent.0).unwrap();
+        device
+    }
+
+    /// An empty differencing image over `parent`: every block free, so
+    /// every block reads through.
+    fn empty_differencing(disk_size: u64, parent: VdiUuid) -> VecDevice {
+        with_identity(vdi_shell(disk_size, 4), identity(0xd0), parent)
+    }
+
+    /// Attaches `parent` beneath a differencing image, the way
+    /// [`open_member`] does once resolution has found the file.
+    fn over(device: VecDevice, parent: Vdi<VecDevice>) -> Vdi<VecDevice> {
+        let mut device = device;
+        let header = VdiHeader::parse(&mut device).expect("parses");
+        Vdi::assemble(device, header, Some(Box::new(parent)))
     }
 
     /// A fixed image whose every block is present, carrying `content` from
@@ -704,17 +1129,117 @@ mod tests {
 
     #[test]
     fn unclaimed_image_types_are_refused_by_name() {
-        for (declared, named) in [(3u32, "undo"), (4, "differencing")] {
-            let error = Vdi::open(vdi_shell(BLOCK, declared))
-                .expect_err("an unclaimed type is refused");
-            assert_eq!(error.category(), crate::ErrorCategory::Unsupported);
-            assert!(error.to_string().contains(named), "{error}");
-        }
+        let error =
+            Vdi::open(vdi_shell(BLOCK, 3)).expect_err("an unclaimed type is refused");
+        assert_eq!(error.category(), crate::ErrorCategory::Unsupported);
+        assert!(error.to_string().contains("undo"), "{error}");
 
         let error =
             Vdi::open(vdi_shell(BLOCK, 9)).expect_err("an undefined type is refused");
         assert_eq!(error.category(), crate::ErrorCategory::InvalidImage);
         assert!(error.to_string().contains('9'), "{error}");
+    }
+
+    #[test]
+    fn a_standalone_open_refuses_to_read_a_differencing_image_alone() {
+        let parent = identity(0x2a);
+        let error = Vdi::open(empty_differencing(BLOCK, parent))
+            .expect_err("a chain member is not a standalone image");
+        assert_eq!(error.category(), crate::ErrorCategory::Unsupported);
+        let message = error.to_string();
+        assert!(
+            message.contains(&parent.to_string()),
+            "the refusal names the parent it will not go and find: {message}"
+        );
+
+        // And a differencing image naming no parent contradicts its own
+        // declared type (P6).
+        let error = Vdi::open(vdi_shell(BLOCK, 4)).expect_err("a nil linkage is refused");
+        assert_eq!(error.category(), crate::ErrorCategory::InvalidImage);
+        assert!(error.to_string().contains("all zeroes"), "{error}");
+    }
+
+    #[test]
+    fn reads_compose_through_the_chain() {
+        let disk_size = 4 * BLOCK;
+        let base_identity = identity(0xb0);
+        let content: Vec<u8> = (0..4000u32).map(|n| (n % 253 + 1) as u8).collect();
+        let base = Vdi::open(with_identity(
+            fixed_with(disk_size, &content),
+            base_identity,
+            VdiUuid([0; 16]),
+        ))
+        .expect("the base opens");
+
+        let top = empty_differencing(disk_size, base_identity);
+        let mut top = over(top, base);
+
+        // Every block is free in the top image, so the whole disk is the
+        // parent's.
+        let mut back = vec![0u8; content.len()];
+        top.read_at(0, &mut back).expect("reads through");
+        assert_eq!(back, content);
+
+        // A discarded block masks the parent instead of falling through.
+        top.device
+            .write_at(MAP_AT + 4, &BLOCK_ZERO.to_le_bytes())
+            .unwrap();
+        let mut masked = vec![0xffu8; 64];
+        top.read_at(BLOCK, &mut masked).expect("reads the mask");
+        assert!(
+            masked.iter().all(|&byte| byte == 0),
+            "a discarded block reads as zeroes over whatever the parent holds"
+        );
+    }
+
+    #[test]
+    fn a_write_copies_the_parents_block_before_changing_it() {
+        let disk_size = 4 * BLOCK;
+        let base_identity = identity(0xb1);
+        let filled: Vec<u8> = (0..disk_size as u32).map(|n| (n % 251 + 1) as u8).collect();
+        let base = Vdi::open(with_identity(
+            fixed_with(disk_size, &filled),
+            base_identity,
+            VdiUuid([0; 16]),
+        ))
+        .expect("the base opens");
+        let base_before = base.device.0.clone();
+
+        let mut top = over(empty_differencing(disk_size, base_identity), base);
+        top.write_at(2 * BLOCK + 100, b"changed here").expect("writes");
+
+        // The allocated block carries the parent's bytes everywhere the
+        // write did not reach, and the write where it did.
+        let mut whole = vec![0u8; BLOCK as usize];
+        top.read_at(2 * BLOCK, &mut whole).expect("reads back");
+        let parent_block = &filled[2 * BLOCK as usize..3 * BLOCK as usize];
+        assert_eq!(&whole[..100], &parent_block[..100]);
+        assert_eq!(&whole[100..112], b"changed here");
+        assert_eq!(&whole[112..], &parent_block[112..]);
+        assert_eq!(top.blocks_allocated().expect("count"), 1);
+
+        // Nothing about the write reached the parent (P7, U6).
+        assert_eq!(
+            top.parent.as_ref().expect("a parent").device.0,
+            base_before,
+            "the parent is read and never written"
+        );
+    }
+
+    #[test]
+    fn a_chain_member_reads_zero_past_a_shorter_parents_end() {
+        let base_identity = identity(0xb2);
+        let base = Vdi::open(with_identity(
+            fixed_with(BLOCK, &[7u8; 64]),
+            base_identity,
+            VdiUuid([0; 16]),
+        ))
+        .expect("the base opens");
+        let mut top = over(empty_differencing(2 * BLOCK, base_identity), base);
+
+        let mut buf = vec![0xffu8; 32];
+        top.read_at(BLOCK + 16, &mut buf).expect("reads past the parent");
+        assert!(buf.iter().all(|&byte| byte == 0));
     }
 
     #[test]

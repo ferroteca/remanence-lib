@@ -766,13 +766,19 @@ impl ImageFormatAdapter for VdiAdapter {
         }
     }
 
+    /// Identification is the container's own layers, and a differencing
+    /// image identifies as the VDI it is (U5): the header is evidence
+    /// before the chain is anyone's business, and walking the volumes
+    /// inside one would need the parent, which only an open through a
+    /// path can reach. The refusal that says so is what the session
+    /// reports as contents not walked.
     fn identify_filesystems(
         &self,
         source: &ImageSource,
         evidence: &mut Vec<String>,
     ) -> Result<Vec<DetectedFilesystem>> {
-        let mut vdi = Vdi::open(SourceDevice(source))?;
-        let header = *vdi.header();
+        let mut device = SourceDevice(source);
+        let header = crate::vdi::VdiHeader::parse(&mut device)?;
         evidence.push(format!(
             "VDI version {}.{}, {} image, virtual size {} bytes in {}-byte blocks",
             header.major,
@@ -781,11 +787,19 @@ impl ImageFormatAdapter for VdiAdapter {
             header.disk_size,
             header.block_size
         ));
+        if header.image_type == crate::vdi::VdiImageType::Differencing {
+            evidence.push(format!("declares parent image {}", header.parent_id));
+        }
+        let mut vdi = Vdi::open(device)?;
         volumes_of(&mut vdi, header.disk_size, evidence)
     }
 
-    fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
-        Ok(Box::new(VdiImage(Vdi::open(file)?)))
+    /// The whole differencing chain composes here (U6), which is why this
+    /// adapter takes the path: the format names a parent by identity and
+    /// never by path, so the file holding that identity is searched for
+    /// relative to this one.
+    fn open_disk(&self, file: MediumDevice, path: &Path) -> Result<Box<dyn OpenedImage>> {
+        Ok(Box::new(VdiImage(crate::vdi::open_chain(file, path)?)))
     }
 }
 
