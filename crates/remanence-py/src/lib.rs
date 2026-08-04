@@ -1153,21 +1153,32 @@ impl Disk {
         Ok(mode_str(self.get()?.mode()))
     }
 
-    /// `"raw"` or `"qcow2"`.
+    /// `"raw"`, `"qcow2"` or `"vdi"`.
     #[getter]
     fn format(&mut self) -> PyResult<&'static str> {
         Ok(match self.get()?.format() {
             remanence::DiskFormat::Raw => "raw",
             remanence::DiskFormat::Qcow2 { .. } => "qcow2",
+            remanence::DiskFormat::Vdi { .. } => "vdi",
         })
     }
 
-    /// The qcow2 version, or `None` for a raw image.
+    /// The qcow2 version, or `None` for an image of any other format.
     #[getter]
     fn qcow2_version(&mut self) -> PyResult<Option<u32>> {
         Ok(match self.get()?.format() {
             remanence::DiskFormat::Qcow2 { version } => Some(version),
-            remanence::DiskFormat::Raw => None,
+            remanence::DiskFormat::Raw | remanence::DiskFormat::Vdi { .. } => None,
+        })
+    }
+
+    /// The VDI version as a `(major, minor)` pair, or `None` for an image
+    /// of any other format.
+    #[getter]
+    fn vdi_version(&mut self) -> PyResult<Option<(u32, u32)>> {
+        Ok(match self.get()?.format() {
+            remanence::DiskFormat::Vdi { major, minor } => Some((major, minor)),
+            remanence::DiskFormat::Raw | remanence::DiskFormat::Qcow2 { .. } => None,
         })
     }
 

@@ -1023,7 +1023,7 @@ pub unsafe extern "C" fn remanence_hdos_file_modified_date(
 }
 
 // ---------------------------------------------------------------------------
-// The Disk surface (U3/U4): open a raw or qcow2 image under the
+// The Disk surface (U3/U4): open a raw, qcow2 or VDI image under the
 // P7 claim, report partitions and volumes, read/write FAT files with a
 // commit point.
 
@@ -1054,6 +1054,7 @@ pub enum RemanenceAccessMode {
 pub enum RemanenceDiskFormat {
     Raw,
     Qcow2,
+    Vdi,
 }
 
 /// What a FAT directory entry is.
@@ -1392,15 +1393,36 @@ pub unsafe extern "C" fn remanence_disk_mode(disk: *const RemanenceDisk) -> Rema
 pub unsafe extern "C" fn remanence_disk_format(disk: *const RemanenceDisk) -> RemanenceDiskFormat {
     match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
         Some(DiskFormat::Qcow2 { .. }) => RemanenceDiskFormat::Qcow2,
+        Some(DiskFormat::Vdi { .. }) => RemanenceDiskFormat::Vdi,
         _ => RemanenceDiskFormat::Raw,
     }
 }
 
-/// The qcow2 version, or 0 for a raw image.
+/// The qcow2 version, or 0 for an image of any other format.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_qcow2_version(disk: *const RemanenceDisk) -> u32 {
     match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
         Some(DiskFormat::Qcow2 { version }) => version,
+        _ => 0,
+    }
+}
+
+/// The VDI version's major part, or 0 for an image of any other format.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_disk_vdi_version_major(disk: *const RemanenceDisk) -> u32 {
+    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
+        Some(DiskFormat::Vdi { major, .. }) => major,
+        _ => 0,
+    }
+}
+
+/// The VDI version's minor part, or 0 for an image of any other format.
+/// Read it beside the major part: on its own, 0 is both "minor zero" and
+/// "not a VDI".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_disk_vdi_version_minor(disk: *const RemanenceDisk) -> u32 {
+    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
+        Some(DiskFormat::Vdi { minor, .. }) => minor,
         _ => 0,
     }
 }

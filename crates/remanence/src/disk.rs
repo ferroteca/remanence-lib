@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The `Disk` surface (U3 and U4): open a raw or qcow2
+//! The `Disk` surface (U3 and U4): open a raw, qcow2 or VDI
 //! image under the P7 claim, report its partitions and volumes as they
 //! actually are, and read/write files in its FAT volumes with a commit
 //! point (P2) — everything rolls back until `commit`. The commit is
@@ -50,6 +50,7 @@ fn crash_test_process_at(boundary: &str) {
 pub enum DiskFormat {
     Raw,
     Qcow2 { version: u32 },
+    Vdi { major: u32, minor: u32 },
 }
 
 /// A composed view: the session cache over the virtual disk (P27).
@@ -130,8 +131,9 @@ impl Disk {
     /// readers. An interrupted commit left by an earlier session is
     /// reconciled here, before the disk is exposed (P9): the image
     /// comes back wholly the old state or wholly the committed new
-    /// one, never a partial third state. The container is detected by
-    /// magic: qcow2, else raw.
+    /// one, never a partial third state. The container is whichever
+    /// image-format adapter recognizes it — qcow2 or VDI today — and raw
+    /// where none does.
     /// A qcow2 naming a backing file opens with its whole chain
     /// composed, every backing file claimed immutable for the session's
     /// life (U6). Writes allocate copy-on-write into the top image only;
@@ -847,6 +849,126 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// The block size the synthetic VDI images use — small enough that a
+    /// modest test volume spans several blocks, which is what makes the
+    /// allocated/free distinction visible.
+    const VDI_BLOCK: u64 = 64 * 1024;
+
+    /// A dynamically allocated VDI whose virtual disk holds `content`.
+    /// Only the blocks the content actually fills are allocated; the rest
+    /// stay free, which is both the shape a real dynamic image has and
+    /// the one a later write must allocate into.
+    fn dynamic_vdi_bytes(content: &[u8]) -> Vec<u8> {
+        let disk_size = content.len() as u64;
+        let block_count = disk_size.div_ceil(VDI_BLOCK) as u32;
+        let map_at = 0x200usize;
+        let data_at = (map_at + block_count as usize * 4).div_ceil(512) * 512;
+
+        let mut image = vec![0u8; data_at];
+        image[..37].copy_from_slice(b"<<< remanence synthetic VDI image >>>");
+        image[0x40..0x44].copy_from_slice(&0xbeda_107fu32.to_le_bytes());
+        image[0x44..0x48].copy_from_slice(&0x0001_0001u32.to_le_bytes()); // version 1.1
+        image[0x48..0x4c].copy_from_slice(&0x190u32.to_le_bytes()); // header size
+        image[0x4c..0x50].copy_from_slice(&1u32.to_le_bytes()); // dynamically allocated
+        image[0x154..0x158].copy_from_slice(&(map_at as u32).to_le_bytes());
+        image[0x158..0x15c].copy_from_slice(&(data_at as u32).to_le_bytes());
+        image[0x170..0x178].copy_from_slice(&disk_size.to_le_bytes());
+        image[0x178..0x17c].copy_from_slice(&(VDI_BLOCK as u32).to_le_bytes());
+        image[0x180..0x184].copy_from_slice(&block_count.to_le_bytes());
+
+        let mut allocated = 0u32;
+        for block in 0..block_count as usize {
+            let start = block * VDI_BLOCK as usize;
+            let end = (start + VDI_BLOCK as usize).min(content.len());
+            let slice = &content[start..end];
+            let entry = if slice.iter().all(|&byte| byte == 0) {
+                0xffff_ffffu32 // free: it reads as zeroes
+            } else {
+                let index = allocated;
+                allocated += 1;
+                let at = data_at + index as usize * VDI_BLOCK as usize;
+                image.resize(at + VDI_BLOCK as usize, 0);
+                image[at..at + slice.len()].copy_from_slice(slice);
+                index
+            };
+            let at = map_at + block * 4;
+            image[at..at + 4].copy_from_slice(&entry.to_le_bytes());
+        }
+        image[0x184..0x188].copy_from_slice(&allocated.to_le_bytes());
+        image
+    }
+
+    /// Builds a VDI file at `path` whose virtual disk carries the
+    /// synthetic FAT16 volume, and returns that virtual size.
+    fn build_fat16_vdi(path: &std::path::Path) -> u64 {
+        let volume = fat16_volume_bytes();
+        std::fs::write(path, dynamic_vdi_bytes(&volume)).expect("vdi writes");
+        volume.len() as u64
+    }
+
+    /// Exercises the whole public VDI path a caller runs: open, geometry,
+    /// write into a block the image never allocated, commit, reopen, read
+    /// back.
+    #[test]
+    fn fat16_inside_vdi_end_to_end() {
+        let path =
+            std::env::temp_dir().join(format!("remanence-vdi-e2e-{}.vdi", std::process::id()));
+        let virtual_size = build_fat16_vdi(&path);
+        let before = std::fs::metadata(&path).expect("metadata").len();
+
+        let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+        assert_eq!(
+            disk.format(),
+            DiskFormat::Vdi {
+                major: 1,
+                minor: 1
+            }
+        );
+        assert_eq!(disk.size(), virtual_size);
+        assert!(
+            disk.image_size_bytes() < virtual_size,
+            "a dynamic image is smaller than the disk it presents"
+        );
+
+        let report = disk.inspect().expect("inspection reads");
+        assert_eq!(report.volumes.len(), 1);
+        let volume = report.volumes[0].id;
+        assert_eq!(
+            report
+                .filesystem_on(volume)
+                .and_then(|fs| fs.label.as_ref())
+                .and_then(|label| label.name.clone()),
+            Some("REMANENCE".to_owned())
+        );
+
+        // The file data lands in the volume's data area, which the
+        // builder left unallocated: this write allocates.
+        disk.make_directory(volume, "GUEST").expect("mkdir");
+        disk.write_file(volume, "GUEST/PAYLOAD.BIN", &new_content())
+            .expect("write");
+        assert_eq!(
+            std::fs::metadata(&path).expect("metadata").len(),
+            before,
+            "nothing reaches the file before the commit"
+        );
+        disk.commit().expect("commit");
+        assert!(
+            std::fs::metadata(&path).expect("metadata").len() > before,
+            "the commit allocated new blocks into the image"
+        );
+        drop(disk);
+
+        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        assert_eq!(
+            reopened
+                .read_file(volume, "GUEST/PAYLOAD.BIN")
+                .expect("read"),
+            new_content()
+        );
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
+    }
+
     fn temp_image(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "remanence-durable-{tag}-{}.img",
@@ -919,6 +1041,15 @@ mod tests {
         disk.commit().expect("commits old state");
     }
 
+    fn build_committed_vdi(path: &std::path::Path) {
+        build_fat16_vdi(path);
+        let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
+        let volume = only_volume(&mut disk);
+        disk.write_file(volume, "OLD.BIN", &old_content())
+            .expect("writes old state");
+        disk.commit().expect("commits old state");
+    }
+
     fn build_committed_chain(directory: &std::path::Path) -> (PathBuf, PathBuf) {
         std::fs::create_dir_all(directory).expect("chain directory");
         let base = directory.join("base.qcow2");
@@ -949,7 +1080,7 @@ mod tests {
             ("journal-retired", true),
         ];
         for (boundary, expect_new) in boundaries {
-            for shape in ["raw", "qcow2", "chain"] {
+            for shape in ["raw", "qcow2", "vdi", "chain"] {
                 let stem = format!("remanence-crash-{shape}-{boundary}-{}", std::process::id());
                 let (path, backing, directory) = match shape {
                     "raw" => {
@@ -960,6 +1091,11 @@ mod tests {
                     "qcow2" => {
                         let path = std::env::temp_dir().join(format!("{stem}.qcow2"));
                         build_committed_qcow2(&path);
+                        (path, None, None)
+                    }
+                    "vdi" => {
+                        let path = std::env::temp_dir().join(format!("{stem}.vdi"));
+                        build_committed_vdi(&path);
                         (path, None, None)
                     }
                     "chain" => {

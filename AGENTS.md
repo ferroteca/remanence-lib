@@ -74,7 +74,13 @@ ABI, or Python module.
   driver (P8 version gate first, run for every member of a backing
   chain; chains compose for reading and allocate writes into the top
   image only, with each backing file claimed immutable; write path
-  refuses snapshots and non-16-bit refcounts by name); `mbr.rs`
+  refuses snapshots and non-16-bit refcounts by name); `vdi.rs` the
+  native VDI driver (P8 version gate first, then the enumerated
+  image-type claim — dynamically allocated and fixed, with undo and
+  differencing refused by name; the block map stays in the file and is
+  read where it is needed, so the driver holds no mutable state and a
+  block a dynamic image never allocated is allocated on the write path
+  alone); `mbr.rs`
   partition discovery with
   pinned types; `fat.rs` FAT12/16 volume read/write, with `dos_name.rs`
   owning every 8.3 name decision it makes — reading a stored name,
@@ -93,7 +99,7 @@ ABI, or Python module.
   with `report.rs` the layered inspection report its
   records are returned in — device, content outcome, partition schema,
   regions, volumes, filesystems, joined by opaque layout-derived
-  identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
+  identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2/VDI
   images built in-test, plus the fixture-driven HDOS tests.
 - `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`

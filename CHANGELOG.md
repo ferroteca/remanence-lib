@@ -20,6 +20,39 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **The VDI container is an ordinary image format.** A VirtualBox disk
+  image attaches, identifies, inspects, and reads and writes its files
+  exactly as a raw or qcow2 image does, through the same session, the
+  same evidence model and the same commit point, because the adapter is
+  the only thing that knows it is a VDI. `DiskFormat` gains
+  `Vdi { major, minor }`; the C ABI gains `REMANENCE_DISK_FORMAT_VDI`
+  with `remanence_disk_vdi_version_major` and
+  `remanence_disk_vdi_version_minor` beside it, and Python's
+  `Disk.format` answers `"vdi"` with a `(major, minor)` pair on
+  `Disk.vdi_version`.
+
+  The claim is stated and everything outside it is refused by name. The
+  declared version is validated before any other field is trusted (P8) —
+  major version 1, minor 0 or 1, the two shapes of the same header — and
+  the image type is enumerated after it (P3): the dynamically allocated
+  and fixed types are read and written, and undo and differencing name
+  themselves rather than being attempted, as do per-block extra data, an
+  image flag the release does not model, and a block size past the
+  claimed ceiling. A block map entry marking a block unallocated, or
+  allocated and then discarded, reads as the zeroes the format says it
+  holds, and is never confused with an allocated block whose contents
+  happen to be zero.
+
+  Writing follows the delivered disk stack unchanged: reads never alter
+  the image, writes buffer to the session cache under its declared bound,
+  and commit is the single durable moment with the recovery journal
+  beneath it (P2, P9, P27). Allocating a block into a dynamically
+  allocated image happens inside that commit and never during a read, and
+  the fault-injection harness now proves reconciliation for a VDI beside
+  the raw, qcow2 and backing-chain shapes it already covered. The block
+  map itself stays in the file and is read where it is needed, so the
+  driver holds no mapping of its own for a failed commit to put back.
+
 - **A stopped DOS machine's drive letters are now the library's answer.**
   `DosMachine` takes the machine facts a caller asserts — which medium
   occupies which floppy slot, which disks are attached in what order,

@@ -58,6 +58,27 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
     printf("\n");
 }
 
+/* The container format the adapter recognized, and the version the
+ * formats that declare one carry. A version accessor answers 0 for an
+ * image of any other format, so each is read only under its own format. */
+static void print_disk_format(const RemanenceDisk *disk) {
+    switch (remanence_disk_format(disk)) {
+        case REMANENCE_DISK_FORMAT_QCOW2:
+            printf("Format:  qcow2 (version %" PRIu32 ")\n",
+                   remanence_disk_qcow2_version(disk));
+            break;
+        case REMANENCE_DISK_FORMAT_VDI:
+            printf("Format:  vdi (version %" PRIu32 ".%" PRIu32 ")\n",
+                   remanence_disk_vdi_version_major(disk),
+                   remanence_disk_vdi_version_minor(disk));
+            break;
+        case REMANENCE_DISK_FORMAT_RAW:
+            printf("Format:  raw\n");
+            break;
+    }
+    printf("Size:    %" PRIu64 " bytes\n", remanence_disk_size(disk));
+}
+
 static const char *outcome_name(RemanenceLetterOutcome outcome) {
     switch (outcome) {
         case REMANENCE_LETTER_OUTCOME_VOLUME: return "volume";
@@ -213,6 +234,7 @@ int main(int argc, char **argv) {
 
     printf("Source:  %s\n", remanence_disk_path(disk));
     printf("Image:   %s\n", remanence_disk_image_path(disk));
+    print_disk_format(disk);
     printf("Modified: %s\n\n", remanence_identification_modified(identification) ? "yes" : "no");
 
     size_t container_count = remanence_identification_container_count(identification);

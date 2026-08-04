@@ -9,7 +9,8 @@
 
 ## U1 — Identify a disk image I know nothing about
 
-I have a file that claims to be a disk image — maybe raw, maybe
+I have a file that claims to be a disk image — maybe raw, maybe a
+container format the library claims such as qcow2 or VDI, maybe
 sitting inside a `.zip`. I attach it to a session and remanence tells
 me, layer by layer, what it is: the archive wrapper, the image format, the
 physical media it represents, the probable filesystem — each with a
@@ -26,7 +27,7 @@ mutating the image.
 ## U3 — I read and write a stopped machine's files
 
 My QEMU automation layer needs to reach inside a stopped
-machine's disk image on the host — qcow2 or raw — and work with the
+machine's disk image on the host — qcow2, VDI or raw — and work with the
 files in its FAT12/FAT16/FAT16B volumes, whether those volumes sit
 behind an MBR or bare on a partitionless image: list a directory's
 entries, ask after one path and get its entry — or the answer that
@@ -63,7 +64,7 @@ renamed to fit: a refused name is refused.
 My automation layer's drive reporting runs on host-side facts about a
 stopped machine's disk images, and this library is where those facts come
 from (the guest's own drive letters are U22's mapping, over the same
-facts). For each disk — qcow2 or
+facts). For each disk — qcow2, VDI or
 raw — one inspection answers, keeping each fact at the seam that owns
 it rather than flattening them into one snapshot.
 

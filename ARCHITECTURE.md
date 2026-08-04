@@ -17,7 +17,9 @@ One core, two bindings:
   an attached medium reach inside archives, and the disk stack —
   the declared-intent deny-write claim, the native qcow2 v2/v3 driver
   with read composition and top-image copy-on-write through backing
-  chains, MBR partition discovery, FAT12/FAT16 volume read/write, and the
+  chains, the native VDI driver reading and writing the dynamically
+  allocated and fixed image types through the block map the format
+  keeps, MBR partition discovery, FAT12/FAT16 volume read/write, and the
   commit-point session cache that keeps every write bufferable and
   revocable until committed — reads stream through a bounded working
   set, and altered extents hold in memory or spill to private session
@@ -200,7 +202,7 @@ The durable undo journal beneath the overlay is private transient
 state: no user-owned file, no cleanup verb, no contract about its shape
 or location. A fault-injection harness terminates a separate process
 after each durability boundary in commit and proves reconciliation for
-raw, standalone qcow2, and backing-chain images; in-process rollback
+raw, standalone qcow2, VDI, and backing-chain images; in-process rollback
 tests are not evidence for this principle.
 
 ### P10 — Every refusal is machine-addressable

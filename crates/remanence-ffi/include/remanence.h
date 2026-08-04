@@ -69,6 +69,7 @@ typedef enum {
 typedef enum {
   REMANENCE_DISK_FORMAT_RAW,
   REMANENCE_DISK_FORMAT_QCOW2,
+  REMANENCE_DISK_FORMAT_VDI,
 } RemanenceDiskFormat;
 
 // What a FAT directory entry is.
@@ -618,8 +619,16 @@ RemanenceAccessMode remanence_disk_mode(const RemanenceDisk *disk);
 // The detected container format.
 RemanenceDiskFormat remanence_disk_format(const RemanenceDisk *disk);
 
-// The qcow2 version, or 0 for a raw image.
+// The qcow2 version, or 0 for an image of any other format.
 uint32_t remanence_disk_qcow2_version(const RemanenceDisk *disk);
+
+// The VDI version's major part, or 0 for an image of any other format.
+uint32_t remanence_disk_vdi_version_major(const RemanenceDisk *disk);
+
+// The VDI version's minor part, or 0 for an image of any other format.
+// Read it beside the major part: on its own, 0 is both "minor zero" and
+// "not a VDI".
+uint32_t remanence_disk_vdi_version_minor(const RemanenceDisk *disk);
 
 // The virtual disk size in bytes.
 uint64_t remanence_disk_size(const RemanenceDisk *disk);

@@ -18,6 +18,11 @@ use crate::fat::FatVolume;
 use crate::filesystem;
 use crate::mbr;
 use crate::qcow2::{QCOW2_MAGIC, Qcow2, SUPPORTED_VERSION_CEILING};
+use crate::vdi::{
+    SIGNATURE_AT as VDI_SIGNATURE_AT, SUPPORTED_MAJOR as VDI_SUPPORTED_MAJOR,
+    SUPPORTED_MINOR_CEILING as VDI_SUPPORTED_MINOR_CEILING, VDI_SIGNATURE, VERSION_AT as VDI_VERSION_AT,
+    Vdi,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ImageLayer {
@@ -230,6 +235,57 @@ impl OpenedImage for Qcow2Image {
 
     fn presented_size(&self) -> u64 {
         self.0.header().virtual_size
+    }
+}
+
+#[derive(Debug)]
+struct VdiImage(Vdi<MediumDevice>);
+
+impl Device for VdiImage {
+    fn len(&self) -> u64 {
+        self.0.len()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.0.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        self.0.write_at(offset, data)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.0.flush()
+    }
+}
+
+impl OpenedImage for VdiImage {
+    fn device_mut(&mut self) -> &mut dyn Device {
+        self
+    }
+
+    fn host_mut(&mut self) -> &mut MediumDevice {
+        self.0.host_mut()
+    }
+
+    /// The driver holds no mapping of its own: a VDI's block map and its
+    /// allocation count live in the file, so a commit that does not land
+    /// has nothing here to put back.
+    fn cache_snapshot(&self) -> Option<Vec<u64>> {
+        None
+    }
+
+    fn restore_cache(&mut self, _snapshot: Option<Vec<u64>>) {}
+
+    fn format(&self) -> DiskFormat {
+        DiskFormat::Vdi {
+            major: self.0.header().major,
+            minor: self.0.header().minor,
+        }
+    }
+
+    fn presented_size(&self) -> u64 {
+        self.0.header().disk_size
     }
 }
 
@@ -554,77 +610,182 @@ impl ImageFormatAdapter for Qcow2Adapter {
             "qcow2 version {}, virtual size {} bytes",
             header.version, header.virtual_size
         ));
-        let spans: Vec<(Option<u32>, u64, u64)> = match crate::partition::discover(&mut qcow2)? {
-            mbr::Discovery::Blank => {
-                evidence.push("virtual disk is blank (sector 0 all zero)".to_owned());
-                Vec::new()
-            }
-            mbr::Discovery::BareVolume => {
-                let volume = crate::volume::direct(crate::volume::AddressedRegion {
-                    device: DeviceIdentity::first(),
-                    offset: 0,
-                    length: header.virtual_size,
-                });
-                vec![(None, volume.offset, volume.length)]
-            }
-            // Identification refuses guest content no adapter claims, as
-            // it always has. Stating it as an outcome instead is the
-            // layered report's change and belongs to that surface only.
-            mbr::Discovery::UnknownNonblank { evidence: reason } => {
-                return Err(mbr::unknown_nonblank(&reason));
-            }
-            mbr::Discovery::Partitioned(partitions) => {
-                evidence.push(format!(
-                    "found {} partition(s) in the virtual disk",
-                    partitions.len()
-                ));
-                partitions
-                    .into_iter()
-                    .filter(|partition| !mbr::is_extended(partition.type_byte))
-                    .map(|partition| {
-                        (
-                            Some(partition.number),
-                            partition.start_bytes,
-                            partition.length_bytes,
-                        )
-                    })
-                    .collect()
-            }
-        };
-
-        let mut found = Vec::new();
-        for (partition, offset, length) in spans {
-            let Ok(volume) = FatVolume::open(&mut qcow2, offset) else {
-                continue;
-            };
-            let info = volume.recognized(&mut qcow2)?;
-            let kind = info.kind.name();
-            let name = match &info.label.name {
-                Some(label) => format!("{kind} volume '{label}'"),
-                None => format!("{kind} volume"),
-            };
-            let observation = match (&info.label.name, partition) {
-                (Some(label), Some(number)) => {
-                    format!("{kind} volume '{label}' in partition {number}")
-                }
-                (Some(label), None) => format!("{kind} volume '{label}'"),
-                (None, Some(number)) => format!("{kind} volume in partition {number}"),
-                (None, None) => format!("{kind} volume"),
-            };
-            found.push(DetectedFilesystem {
-                id: kind.to_ascii_lowercase(),
-                name,
-                confidence: 100,
-                offset,
-                length,
-                evidence: vec![observation],
-            });
-        }
-        Ok(found)
+        volumes_of(&mut qcow2, header.virtual_size, evidence)
     }
 
     fn open_disk(&self, file: MediumDevice, path: &Path) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(Qcow2Image(crate::qcow2::open_chain(file, path)?)))
+    }
+}
+
+/// Walks the volumes a block-family virtual disk composes, and the
+/// filesystem recognized on each. This is a mechanism two image formats
+/// demonstrate rather than one format's rule (P12): it takes a presented
+/// device and its size, knows nothing about which container produced
+/// them, and leaves every format-specific observation to the adapter that
+/// called it.
+fn volumes_of(
+    device: &mut dyn Device,
+    virtual_size: u64,
+    evidence: &mut Vec<String>,
+) -> Result<Vec<DetectedFilesystem>> {
+    let spans: Vec<(Option<u32>, u64, u64)> = match crate::partition::discover(device)? {
+        mbr::Discovery::Blank => {
+            evidence.push("virtual disk is blank (sector 0 all zero)".to_owned());
+            Vec::new()
+        }
+        mbr::Discovery::BareVolume => {
+            let volume = crate::volume::direct(crate::volume::AddressedRegion {
+                device: DeviceIdentity::first(),
+                offset: 0,
+                length: virtual_size,
+            });
+            vec![(None, volume.offset, volume.length)]
+        }
+        // Identification refuses guest content no adapter claims, as
+        // it always has. Stating it as an outcome instead is the
+        // layered report's change and belongs to that surface only.
+        mbr::Discovery::UnknownNonblank { evidence: reason } => {
+            return Err(mbr::unknown_nonblank(&reason));
+        }
+        mbr::Discovery::Partitioned(partitions) => {
+            evidence.push(format!(
+                "found {} partition(s) in the virtual disk",
+                partitions.len()
+            ));
+            partitions
+                .into_iter()
+                .filter(|partition| !mbr::is_extended(partition.type_byte))
+                .map(|partition| {
+                    (
+                        Some(partition.number),
+                        partition.start_bytes,
+                        partition.length_bytes,
+                    )
+                })
+                .collect()
+        }
+    };
+
+    let mut found = Vec::new();
+    for (partition, offset, length) in spans {
+        let Ok(volume) = FatVolume::open(device, offset) else {
+            continue;
+        };
+        let info = volume.recognized(device)?;
+        let kind = info.kind.name();
+        let name = match &info.label.name {
+            Some(label) => format!("{kind} volume '{label}'"),
+            None => format!("{kind} volume"),
+        };
+        let observation = match (&info.label.name, partition) {
+            (Some(label), Some(number)) => {
+                format!("{kind} volume '{label}' in partition {number}")
+            }
+            (Some(label), None) => format!("{kind} volume '{label}'"),
+            (None, Some(number)) => format!("{kind} volume in partition {number}"),
+            (None, None) => format!("{kind} volume"),
+        };
+        found.push(DetectedFilesystem {
+            id: kind.to_ascii_lowercase(),
+            name,
+            confidence: 100,
+            offset,
+            length,
+            evidence: vec![observation],
+        });
+    }
+    Ok(found)
+}
+
+pub(crate) struct VdiAdapter;
+
+pub(crate) static VDI_ADAPTER: VdiAdapter = VdiAdapter;
+
+static VDI_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
+    id: "vdi",
+    name: "VirtualBox disk image",
+    extensions: &["vdi"],
+    authoritative_layer: ImageLayer::Block,
+    initial_active_layer: ActiveLayer::Block,
+    media_kind: Some("hard_disk"),
+    disk: None,
+};
+
+impl ImageFormatAdapter for VdiAdapter {
+    fn descriptor(&self) -> &'static ImageFormatDescriptor {
+        &VDI_DESCRIPTOR
+    }
+
+    fn probe(&self, input: &ProbeInput<'_>) -> ProbeResult {
+        // The signature sits past the format's creator line, so a prefix
+        // too short to hold it has not been recognized either way.
+        if input.prefix.len() < VDI_VERSION_AT + 4 {
+            return ProbeResult::NoMatch;
+        }
+        if input.prefix[VDI_SIGNATURE_AT..VDI_SIGNATURE_AT + 4] != VDI_SIGNATURE {
+            return ProbeResult::NoMatch;
+        }
+        let evidence = vec![format!(
+            "matched 4-byte VDI signature at offset {VDI_SIGNATURE_AT}"
+        )];
+        // P8's version gate is first once the signature and version field
+        // exist.
+        let (major, minor) = crate::vdi::version(input.prefix);
+        if major < VDI_SUPPORTED_MAJOR {
+            return ProbeResult::Invalid {
+                confidence: 100,
+                evidence,
+                category: ErrorCategory::Unsupported,
+                reason: format!(
+                    "unsupported VDI version {major}.{minor} (versions \
+                     {VDI_SUPPORTED_MAJOR}.0 and \
+                     {VDI_SUPPORTED_MAJOR}.{VDI_SUPPORTED_MINOR_CEILING} are supported)"
+                ),
+            };
+        }
+        if major > VDI_SUPPORTED_MAJOR || minor > VDI_SUPPORTED_MINOR_CEILING {
+            return ProbeResult::Invalid {
+                confidence: 100,
+                evidence,
+                category: ErrorCategory::Unsupported,
+                reason: format!(
+                    "VDI version {major}.{minor} is newer than this release \
+                     supports (ceiling: version \
+                     {VDI_SUPPORTED_MAJOR}.{VDI_SUPPORTED_MINOR_CEILING}); \
+                     refusing to touch it"
+                ),
+            };
+        }
+        ProbeResult::Match {
+            confidence: 100,
+            evidence: vec![
+                format!("matched 4-byte VDI signature at offset {VDI_SIGNATURE_AT}"),
+                format!("recognized VDI version {major}.{minor}"),
+            ],
+        }
+    }
+
+    fn identify_filesystems(
+        &self,
+        source: &ImageSource,
+        evidence: &mut Vec<String>,
+    ) -> Result<Vec<DetectedFilesystem>> {
+        let mut vdi = Vdi::open(SourceDevice(source))?;
+        let header = *vdi.header();
+        evidence.push(format!(
+            "VDI version {}.{}, {} image, virtual size {} bytes in {}-byte blocks",
+            header.major,
+            header.minor,
+            header.image_type.name(),
+            header.disk_size,
+            header.block_size
+        ));
+        volumes_of(&mut vdi, header.disk_size, evidence)
+    }
+
+    fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
+        Ok(Box::new(VdiImage(Vdi::open(file)?)))
     }
 }
 
@@ -655,7 +816,8 @@ impl ImageFormatAdapter for RawAdapter {
     }
 }
 
-static BUILT_IN_IMAGE_ADAPTERS: [&dyn ImageFormatAdapter; 2] = [&H8D_ADAPTER, &QCOW2_ADAPTER];
+static BUILT_IN_IMAGE_ADAPTERS: [&dyn ImageFormatAdapter; 3] =
+    [&H8D_ADAPTER, &QCOW2_ADAPTER, &VDI_ADAPTER];
 
 pub(crate) fn image_catalog() -> ImageCatalog<'static> {
     ImageCatalog::new(&BUILT_IN_IMAGE_ADAPTERS)

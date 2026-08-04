@@ -72,9 +72,9 @@ destination absent rather than half a file.
 
 The library is dependency-free at runtime, including its own ZIP
 central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
-LZMA/LZMA2 decompressors, and native qcow2 v2/v3 driver.
+LZMA/LZMA2 decompressors, and native qcow2 v2/v3 and VDI drivers.
 
-Beyond identification, attaching a raw or qcow2 disk image to a storage
+Beyond identification, attaching a raw, qcow2 or VDI disk image to a storage
 device takes a claim under a declared intent: a read session denies
 writes to every other process while admitting other readers; a writable
 session admits no observers at all; and an image whose claim cannot be
@@ -97,6 +97,14 @@ disk, every backing member claimed immutable for the session's life.
 Writes allocate copy-on-write into the top image only and preserve the
 backing relationship; a missing member, a cycle, or a chain past the
 claimed depth is refused by name.
+A VDI is an ordinary image of the same stack: its version is validated
+before anything else is touched, its dynamically allocated and fixed
+image types are claimed by name — every other type the format defines,
+differencing among them, refused rather than attempted — and a block the
+block map marks unallocated reads as the zeroes the format says it holds,
+never confused with an allocated block that happens to hold them. A write
+into a block a dynamic image never allocated allocates one, inside the
+commit and never during a read.
 Where the stopped machine ran DOS, it also answers which drive letter
 named which volume. A DOS machine persisted no such map — its letters
 were assigned at boot by a rule over the machine's own configuration, and

@@ -44,6 +44,7 @@ mod session;
 mod sevenzip;
 mod source;
 mod storage_device;
+mod vdi;
 mod volume;
 mod zip;
 
