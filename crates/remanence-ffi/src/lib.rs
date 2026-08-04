@@ -42,7 +42,11 @@ pub enum RemanenceErrorCategory {
     NotDirectory = 5,
     IsDirectory = 6,
     NoSpace = 7,
-    Io = 8,
+    /// The artifact does not hold what was asked for, and no retry or
+    /// permission change will produce it — a degraded session's withheld
+    /// read (P28), never a host failure.
+    Unavailable = 8,
+    Io = 9,
 }
 
 impl From<ErrorCategory> for RemanenceErrorCategory {
@@ -56,6 +60,7 @@ impl From<ErrorCategory> for RemanenceErrorCategory {
             ErrorCategory::NotDirectory => Self::NotDirectory,
             ErrorCategory::IsDirectory => Self::IsDirectory,
             ErrorCategory::NoSpace => Self::NoSpace,
+            ErrorCategory::Unavailable => Self::Unavailable,
             ErrorCategory::Io => Self::Io,
         }
     }
@@ -1040,9 +1045,10 @@ pub enum RemanenceAccessIntent {
     Write,
 }
 
-/// A disk's access mode — an echo of the declared intent (P7).
+/// A disk session's effective access mode: the declared intent's echo
+/// (P7) where the evidence supports it, read-only where it does not (P28).
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemanenceAccessMode {
     ReadWrite,
     ReadOnly,
@@ -1380,12 +1386,232 @@ pub unsafe extern "C" fn remanence_session_medium(
         .as_mut() as *mut RemanenceDisk
 }
 
-/// The disk session's access mode — an echo of the declared intent.
+/// The disk session's **effective** access mode: the declared intent's
+/// echo where the evidence supports it, and read-only where it does not
+/// (P28). `remanence_assurance_access_mode` reports the same value beside
+/// the reason for it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_mode(disk: *const RemanenceDisk) -> RemanenceAccessMode {
     unsafe { disk.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |disk| {
         access_mode(disk.medium().map_or(AccessMode::ReadOnly, |m| m.mode()))
     })
+}
+
+/// What an open established about the evidence beneath it (P28).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceAssuranceOutcome {
+    /// Every fact and bound the interpretation needs is evidenced.
+    Verified = 0,
+    /// A material shortfall is known and a bounded read-only reading
+    /// remains.
+    Degraded = 1,
+    /// No bounded interpretation exists. This outcome arrives as a
+    /// refusal, carrying the same condition as its rule identity, so no
+    /// open handle ever reports it.
+    Refused = 2,
+}
+
+/// One open's assurance state (P28). Free with
+/// `remanence_assurance_free`; the strings it returns are owned by it.
+pub struct RemanenceAssurance {
+    outcome: RemanenceAssuranceOutcome,
+    condition: Option<CString>,
+    evidence: Vec<CString>,
+    readable: Vec<remanence::ByteRange>,
+    access: RemanenceAccessMode,
+    declared_bytes: Option<u64>,
+    observed_bytes: Option<u64>,
+    first_unavailable_byte: Option<u64>,
+}
+
+/// The assurance of one open medium: what the open established, why, the
+/// exact extents that read, and the access the evidence permits.
+///
+/// It is available before anything is read, so a caller meets a deficiency
+/// by being told rather than by an operation failing halfway. Null only
+/// when the device holding this medium was detached.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_disk_assurance(
+    disk: *const RemanenceDisk,
+) -> *mut RemanenceAssurance {
+    let Some(medium) = (unsafe { disk.as_ref() }).and_then(RemanenceDisk::medium) else {
+        return ptr::null_mut();
+    };
+    let assurance = medium.assurance();
+    Box::into_raw(Box::new(RemanenceAssurance {
+        outcome: match assurance.outcome {
+            remanence::AssuranceOutcome::Verified => RemanenceAssuranceOutcome::Verified,
+            remanence::AssuranceOutcome::Degraded => RemanenceAssuranceOutcome::Degraded,
+            remanence::AssuranceOutcome::Refused => RemanenceAssuranceOutcome::Refused,
+        },
+        condition: assurance
+            .condition
+            .map(|condition| to_cstring(condition.as_str())),
+        evidence: evidence_views(&assurance.evidence),
+        readable: assurance.readable.clone(),
+        access: access_mode(assurance.access),
+        declared_bytes: assurance.declared_bytes,
+        observed_bytes: assurance.observed_bytes,
+        first_unavailable_byte: assurance.first_unavailable_byte,
+    }))
+}
+
+/// Frees an assurance record and everything borrowed from it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_free(assurance: *mut RemanenceAssurance) {
+    if !assurance.is_null() {
+        drop(unsafe { Box::from_raw(assurance) });
+    }
+}
+
+/// What the open established.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_outcome(
+    assurance: *const RemanenceAssurance,
+) -> RemanenceAssuranceOutcome {
+    unsafe { assurance.as_ref() }
+        .map_or(RemanenceAssuranceOutcome::Verified, |assurance| assurance.outcome)
+}
+
+/// The stable condition that narrowed this session — `source-truncated`
+/// or `evidence-conflict` — or null where nothing did. It is the same
+/// identity a withheld operation's refusal carries as its rule.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_condition(
+    assurance: *const RemanenceAssurance,
+) -> *const c_char {
+    unsafe { assurance.as_ref() }
+        .and_then(|assurance| assurance.condition.as_ref())
+        .map_or(ptr::null(), |condition| condition.as_ptr())
+}
+
+/// How many evidence lines the assurance carries, in the order they were
+/// observed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_evidence_count(
+    assurance: *const RemanenceAssurance,
+) -> usize {
+    unsafe { assurance.as_ref() }.map_or(0, |assurance| assurance.evidence.len())
+}
+
+/// One evidence line, or null when the index is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_evidence(
+    assurance: *const RemanenceAssurance,
+    index: usize,
+) -> *const c_char {
+    unsafe { assurance.as_ref() }
+        .and_then(|assurance| assurance.evidence.get(index))
+        .map_or(ptr::null(), |line| line.as_ptr())
+}
+
+/// How many readable extents the medium has.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_readable_count(
+    assurance: *const RemanenceAssurance,
+) -> usize {
+    unsafe { assurance.as_ref() }.map_or(0, |assurance| assurance.readable.len())
+}
+
+/// One readable extent as a half-open byte range. False when the index is
+/// out of range, leaving the outputs untouched.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_readable(
+    assurance: *const RemanenceAssurance,
+    index: usize,
+    start_out: *mut u64,
+    end_out: *mut u64,
+) -> bool {
+    let Some(range) = (unsafe { assurance.as_ref() })
+        .and_then(|assurance| assurance.readable.get(index))
+    else {
+        return false;
+    };
+    if !start_out.is_null() {
+        unsafe { *start_out = range.start };
+    }
+    if !end_out.is_null() {
+        unsafe { *end_out = range.end };
+    }
+    true
+}
+
+/// The access this session actually has.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_access_mode(
+    assurance: *const RemanenceAssurance,
+) -> RemanenceAccessMode {
+    unsafe { assurance.as_ref() }
+        .map_or(RemanenceAccessMode::ReadOnly, |assurance| assurance.access)
+}
+
+/// The size the interpretation declares. False where it declares none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_declared_bytes(
+    assurance: *const RemanenceAssurance,
+    out: *mut u64,
+) -> bool {
+    unsafe {
+        write_opt_u64(
+            assurance.as_ref().and_then(|assurance| assurance.declared_bytes),
+            out,
+        )
+    }
+}
+
+/// The size the source actually holds. False where it is unknown.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_observed_bytes(
+    assurance: *const RemanenceAssurance,
+    out: *mut u64,
+) -> bool {
+    unsafe {
+        write_opt_u64(
+            assurance.as_ref().and_then(|assurance| assurance.observed_bytes),
+            out,
+        )
+    }
+}
+
+/// The first byte the source does not hold. False where the session is not
+/// bounded short of its declaration.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_assurance_first_unavailable_byte(
+    assurance: *const RemanenceAssurance,
+    out: *mut u64,
+) -> bool {
+    unsafe {
+        write_opt_u64(
+            assurance
+                .as_ref()
+                .and_then(|assurance| assurance.first_unavailable_byte),
+            out,
+        )
+    }
+}
+
+/// How many assurance conditions this release claims.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_assurance_condition_count() -> usize {
+    remanence::AssuranceCondition::ALL.len()
+}
+
+/// One claimed condition's stable identity, or null when the index is out
+/// of range. The set is enumerated (P3), so a caller can hold every
+/// identity it may meet without waiting to meet one.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_assurance_condition_name(index: usize) -> *const c_char {
+    static NAMES: std::sync::OnceLock<Vec<CString>> = std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            remanence::AssuranceCondition::ALL
+                .iter()
+                .map(|condition| to_cstring(condition.as_str()))
+                .collect()
+        })
+        .get(index)
+        .map_or(ptr::null(), |name| name.as_ptr())
 }
 
 /// The detected container format.
@@ -5584,6 +5810,169 @@ mod tests {
         // that answer rather than an omission.
         assert!(rule.is_null());
         unsafe { remanence_string_free(message) };
+    }
+
+    /// A 1.44 MiB FAT12 floppy holding one file whose cluster chain runs
+    /// past `keep` bytes, then truncated to `keep` — the shape P28's
+    /// degraded reading is stated over.
+    fn truncated_floppy(path: &std::path::Path, keep: u64) {
+        const TOTAL_SECTORS: usize = 2880;
+        let mut image = vec![0u8; TOTAL_SECTORS * 512];
+        image[0] = 0xeb;
+        image[1] = 0x3c;
+        image[2] = 0x90;
+        image[3..11].copy_from_slice(b"REMANENC");
+        image[11..13].copy_from_slice(&512u16.to_le_bytes());
+        image[13] = 1;
+        image[14..16].copy_from_slice(&1u16.to_le_bytes());
+        image[16] = 2;
+        image[17..19].copy_from_slice(&224u16.to_le_bytes());
+        image[19..21].copy_from_slice(&(TOTAL_SECTORS as u16).to_le_bytes());
+        image[21] = 0xf0;
+        image[22..24].copy_from_slice(&9u16.to_le_bytes());
+        image[24..26].copy_from_slice(&18u16.to_le_bytes());
+        image[26..28].copy_from_slice(&2u16.to_le_bytes());
+        image[510] = 0x55;
+        image[511] = 0xaa;
+        for fat in 0..2usize {
+            let base = (1 + fat * 9) * 512;
+            image[base] = 0xf0;
+            image[base + 1] = 0xff;
+            image[base + 2] = 0xff;
+        }
+        std::fs::write(path, image).expect("image writes");
+
+        // The file is written through the library's own writer, so the
+        // chain the truncation cuts is a real one.
+        let mut session = remanence::Session::new();
+        let attachment = session
+            .attach(path, AccessIntent::Write)
+            .expect("the whole image attaches");
+        let medium = session.medium(attachment).expect("medium");
+        let volume = medium.inspect().expect("inspects").volumes[0].id;
+        let content: Vec<u8> = (0..1_200_000u32).map(|n| (n % 241) as u8).collect();
+        medium.write_file(volume, "FAR.BIN", &content).expect("writes");
+        medium.commit().expect("commits");
+        drop(session);
+
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("opens for truncation")
+            .set_len(keep)
+            .expect("truncates");
+    }
+
+    /// The C presentation of P28 carries what Rust's does: the outcome,
+    /// the condition, the ordered evidence, the exact readable extent,
+    /// and the effective access mode — and a withheld write names the
+    /// same condition as its rule (P5).
+    #[test]
+    fn the_c_surface_reports_a_degraded_medium_and_withholds_its_writes() {
+        let path = std::env::temp_dir().join(format!(
+            "remanence-ffi-degraded-{}.img",
+            std::process::id()
+        ));
+        truncated_floppy(&path, 1_000_000);
+
+        let session = unsafe { remanence_session_new() };
+        let path_arg = to_cstring(&path.display().to_string());
+        let mut attachment = ptr::null_mut();
+        let mut category = RemanenceErrorCategory::Io;
+        let mut message = ptr::null_mut();
+        let mut rule = ptr::null_mut();
+        assert!(
+            unsafe {
+                remanence_session_attach(
+                    session,
+                    path_arg.as_ptr(),
+                    RemanenceAccessIntent::Write,
+                    &mut attachment,
+                    &mut category,
+                    &mut message,
+                    &mut rule,
+                )
+            },
+            "a truncated source still attaches, degraded"
+        );
+        let disk = unsafe { remanence_session_medium(session, attachment) };
+        assert!(!disk.is_null());
+
+        let assurance = unsafe { remanence_disk_assurance(disk) };
+        assert_eq!(
+            unsafe { remanence_assurance_outcome(assurance) },
+            RemanenceAssuranceOutcome::Degraded
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(remanence_assurance_condition(assurance)) }
+                .to_str()
+                .expect("UTF-8"),
+            "source-truncated"
+        );
+        assert_eq!(
+            unsafe { remanence_assurance_access_mode(assurance) },
+            RemanenceAccessMode::ReadOnly
+        );
+        assert_eq!(
+            unsafe { remanence_disk_mode(disk) },
+            RemanenceAccessMode::ReadOnly,
+            "the effective mode is the same answer read another way"
+        );
+        assert!(unsafe { remanence_assurance_evidence_count(assurance) } > 0);
+        assert!(
+            !unsafe { remanence_assurance_evidence(assurance, 0) }.is_null(),
+            "the declaration leads the evidence"
+        );
+        assert!(unsafe { remanence_assurance_evidence(assurance, 99) }.is_null());
+
+        let mut declared = 0u64;
+        let mut observed = 0u64;
+        let mut first_unavailable = 0u64;
+        assert!(unsafe { remanence_assurance_declared_bytes(assurance, &mut declared) });
+        assert!(unsafe { remanence_assurance_observed_bytes(assurance, &mut observed) });
+        assert!(unsafe {
+            remanence_assurance_first_unavailable_byte(assurance, &mut first_unavailable)
+        });
+        assert_eq!(declared, 1_474_560);
+        assert_eq!(observed, 1_000_000);
+        assert_eq!(first_unavailable, 1_000_000);
+
+        assert_eq!(unsafe { remanence_assurance_readable_count(assurance) }, 1);
+        let mut start = u64::MAX;
+        let mut end = 0u64;
+        assert!(unsafe { remanence_assurance_readable(assurance, 0, &mut start, &mut end) });
+        assert_eq!((start, end), (0, 1_000_000));
+        assert!(!unsafe { remanence_assurance_readable(assurance, 1, &mut start, &mut end) });
+        unsafe { remanence_assurance_free(assurance) };
+
+        // Every mutation path carries the condition as its rule.
+        assert!(
+            !unsafe {
+                remanence_disk_commit(disk, &mut category, &mut message, &mut rule)
+            },
+            "commit is denied"
+        );
+        assert_eq!(category, RemanenceErrorCategory::ReadOnly);
+        assert_eq!(
+            unsafe { CStr::from_ptr(rule) }.to_str().expect("UTF-8"),
+            "source-truncated"
+        );
+        unsafe { remanence_string_free(message) };
+        unsafe { remanence_string_free(rule) };
+
+        // The claimed condition set is readable without meeting one.
+        assert_eq!(remanence_assurance_condition_count(), 2);
+        assert_eq!(
+            unsafe { CStr::from_ptr(remanence_assurance_condition_name(1)) }
+                .to_str()
+                .expect("UTF-8"),
+            "evidence-conflict"
+        );
+        assert!(remanence_assurance_condition_name(2).is_null());
+
+        unsafe { remanence_string_free(attachment) };
+        unsafe { remanence_session_free(session) };
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

@@ -220,6 +220,84 @@ impl Bpb {
     }
 }
 
+/// What a boot record declares about the extent of the volume it
+/// describes, read before anything is interpreted so the assurance gate
+/// (P28) can compare the declaration with what the source holds.
+pub(crate) enum VolumeDeclaration {
+    /// The sector is not a FAT12/FAT16 boot record, so this seam declares
+    /// nothing about the medium's size.
+    Absent,
+    /// The record declares `bytes`, and its own leading structures — boot
+    /// sector, FAT copies and root directory — end at `metadata_end`,
+    /// inside that declaration.
+    Bounded {
+        bytes: u64,
+        metadata_end: u64,
+        /// The declaration in the format's own terms, for the evidence.
+        reading: String,
+    },
+    /// The record's declarations contradict one another, so no bound can be
+    /// stated from it; `bytes` is the largest size any reading of it
+    /// declares, and `detail` says what disagrees with what.
+    Conflicted { bytes: u64, detail: String },
+}
+
+/// Reads what sector 0 declares about the size of the volume it describes.
+///
+/// This is deliberately a reading of the declaration alone, not a
+/// recognition: it is asked before the medium is trusted, so it refuses to
+/// answer for anything but a boot record the discovery seam would also
+/// call one (the same signature and BPB plausibility `mbr` tests), and it
+/// states a contradiction rather than resolving one.
+pub(crate) fn declared_volume(sector: &[u8]) -> VolumeDeclaration {
+    if sector.len() < 512
+        || sector[510..512] != [0x55, 0xaa]
+        || !crate::mbr::looks_like_bpb(sector)
+    {
+        return VolumeDeclaration::Absent;
+    }
+    let Ok(bpb) = Bpb::parse(sector) else {
+        return VolumeDeclaration::Absent;
+    };
+
+    // Exactly one of the two total-sector fields carries the count; a
+    // record filling both with different numbers declares two sizes and
+    // settles neither.
+    let small = le16(sector, 19);
+    let large = le32(sector, 32);
+    if small != 0 && large != 0 && small != large {
+        return VolumeDeclaration::Conflicted {
+            bytes: small.max(large) * bpb.bytes_per_sector,
+            detail: format!(
+                "the boot record's two total-sector fields disagree: {small} in the \
+                 16-bit field and {large} in the 32-bit one, where the format \
+                 requires exactly one of them to be zero"
+            ),
+        };
+    }
+
+    let bytes = bpb.total_sectors * bpb.bytes_per_sector;
+    let metadata_end = bpb.data_offset();
+    if bytes == 0 || metadata_end > bytes {
+        return VolumeDeclaration::Conflicted {
+            bytes,
+            detail: format!(
+                "the boot record's own reserved, FAT and root-directory areas end \
+                 at byte {metadata_end} of a volume it declares to be {bytes} \
+                 bytes long"
+            ),
+        };
+    }
+    VolumeDeclaration::Bounded {
+        bytes,
+        metadata_end,
+        reading: format!(
+            "the boot record declares {} sectors of {} bytes: {bytes} bytes",
+            bpb.total_sectors, bpb.bytes_per_sector
+        ),
+    }
+}
+
 /// What recognizing FAT on one volume established (P18). These are the
 /// filesystem's own declarations: the geometry here is what the boot
 /// record states, and it manufactures no physical drive.
@@ -599,6 +677,32 @@ impl FatVolume {
             .into_iter()
             .find(|(entry, _)| dos_name::matches(&entry.name, leaf))
             .map(|(entry, _)| entry))
+    }
+
+    /// The last byte, in the device's own addressing, that reading this
+    /// entry whole would touch: the directory record it was located
+    /// through, and every cluster its chain visits up to its recorded
+    /// size.
+    ///
+    /// A degraded session (P28) compares this with its readable extent, so
+    /// an entry whose chain leaves that extent is refused whole rather than
+    /// answered in part. It walks exactly what a read walks, so the two can
+    /// never disagree about what a file needs.
+    pub fn extent_end(&self, device: &mut dyn Device, segments: &[&str]) -> Result<u64> {
+        let located = self.locate(device, segments)?;
+        let mut end = located.record_offset + RECORD as u64;
+        if located.size > 0 && located.first_cluster >= 2 {
+            let cluster_bytes = self.bpb.cluster_bytes();
+            let mut remaining = located.size;
+            for cluster in self.chain(device, located.first_cluster)? {
+                if remaining == 0 {
+                    break;
+                }
+                end = end.max(self.cluster_offset(cluster) + cluster_bytes.min(remaining));
+                remaining = remaining.saturating_sub(cluster_bytes);
+            }
+        }
+        Ok(end)
     }
 
     /// Reads a file's bytes out.

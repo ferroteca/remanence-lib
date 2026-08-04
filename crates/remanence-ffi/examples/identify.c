@@ -79,6 +79,51 @@ static void print_disk_format(const RemanenceDisk *disk) {
     printf("Size:    %" PRIu64 " bytes\n", remanence_disk_size(disk));
 }
 
+/* What the open established about the evidence beneath it (P28), and what
+ * that narrows. A verified medium says so in one line; a degraded one
+ * states the condition, the evidence, the extents that read, and the
+ * access it actually has -- before anything is read from it. */
+static void print_assurance(const RemanenceDisk *disk) {
+    RemanenceAssurance *assurance = remanence_disk_assurance(disk);
+    if (assurance == NULL) {
+        return;
+    }
+
+    RemanenceAssuranceOutcome outcome = remanence_assurance_outcome(assurance);
+    const char *condition = remanence_assurance_condition(assurance);
+    printf("Assurance: %s", outcome == REMANENCE_ASSURANCE_OUTCOME_VERIFIED ? "verified"
+                                                                            : "degraded");
+    if (condition != NULL) {
+        printf(" (%s)", condition);
+    }
+    printf(", %s\n",
+           remanence_assurance_access_mode(assurance) == REMANENCE_ACCESS_MODE_READ_WRITE
+               ? "read-write"
+               : "read-only");
+
+    if (outcome != REMANENCE_ASSURANCE_OUTCOME_VERIFIED) {
+        uint64_t declared = 0;
+        uint64_t observed = 0;
+        if (remanence_assurance_declared_bytes(assurance, &declared) &&
+            remanence_assurance_observed_bytes(assurance, &observed)) {
+            printf("  declared %" PRIu64 " bytes, source holds %" PRIu64 "\n", declared,
+                   observed);
+        }
+        for (size_t i = 0; i < remanence_assurance_readable_count(assurance); ++i) {
+            uint64_t start = 0;
+            uint64_t end = 0;
+            if (remanence_assurance_readable(assurance, i, &start, &end)) {
+                printf("  readable: %" PRIu64 "..%" PRIu64 "\n", start, end);
+            }
+        }
+        for (size_t i = 0; i < remanence_assurance_evidence_count(assurance); ++i) {
+            printf("  * %s\n", remanence_assurance_evidence(assurance, i));
+        }
+    }
+
+    remanence_assurance_free(assurance);
+}
+
 static const char *outcome_name(RemanenceLetterOutcome outcome) {
     switch (outcome) {
         case REMANENCE_LETTER_OUTCOME_VOLUME: return "volume";
@@ -235,6 +280,7 @@ int main(int argc, char **argv) {
     printf("Source:  %s\n", remanence_disk_path(disk));
     printf("Image:   %s\n", remanence_disk_image_path(disk));
     print_disk_format(disk);
+    print_assurance(disk);
     printf("Modified: %s\n\n", remanence_identification_modified(identification) ? "yes" : "no");
 
     size_t container_count = remanence_identification_container_count(identification);

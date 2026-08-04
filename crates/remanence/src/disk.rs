@@ -12,14 +12,22 @@
 //! backing chain opens as one composed disk (U6), every member claimed
 //! for the session's life and writes allocated copy-on-write into the
 //! top image only.
+//!
+//! Every open carries its assurance (P28). A source that satisfies its
+//! interpretation is verified and keeps whatever authority the caller
+//! declared; one that falls short of it — a raw image whose FAT boot
+//! record declares more bytes than the file holds — is degraded: bounded
+//! to the extent that is really there, read-only for the session's whole
+//! life, and naming every operation it withholds.
 
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, OpenedImage};
+use crate::assurance::{self, Assurance, ReadBound, Shortfall};
 use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Device};
 use crate::error::{Error, Result};
-use crate::fat::{FatEntry, FatVolume};
+use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::journal;
 use crate::mbr::{self, Discovery};
 use crate::session::{self, Container, Identification};
@@ -60,6 +68,10 @@ pub enum DiskFormat {
 struct Composed<'a> {
     base: &'a mut dyn Device,
     cache: &'a mut SessionCache,
+    /// The readable extent of a degraded session (P28). Every read of the
+    /// presented disk passes through here, so the bound is checked once,
+    /// where the reads are, rather than at each verb that might cross it.
+    bound: Option<ReadBound>,
 }
 
 impl Device for Composed<'_> {
@@ -68,6 +80,9 @@ impl Device for Composed<'_> {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        if let Some(bound) = &self.bound {
+            bound.check(offset, buf.len() as u64)?;
+        }
         self.cache.read_at(self.base, offset, buf)
     }
 
@@ -78,6 +93,48 @@ impl Device for Composed<'_> {
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
+}
+
+/// The assurance gate (P28) over one opened image, run before the medium
+/// is exposed to anything.
+///
+/// The gate is narrow, and this is where its narrowness lives: it applies
+/// to a raw image whose leading sector is a FAT boot record — the one
+/// composition where a filesystem's own declaration bounds the whole disk,
+/// because the caller selected the image's bytes as the disk. A container
+/// format declares its own virtual size and answers for it at its version
+/// gate (P8), so no automatic degradation rule is claimed for qcow2, VDI,
+/// an archive, or a partition schema; each is its own feature if it is
+/// ever wanted.
+fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> Result<Assurance> {
+    let observed = image.presented_size();
+    if format != DiskFormat::Raw || observed < 512 {
+        return Ok(Assurance::verified(observed, mode));
+    }
+    let mut sector = [0u8; 512];
+    image.read_at(0, &mut sector)?;
+    Ok(match crate::fat::declared_volume(&sector) {
+        VolumeDeclaration::Bounded {
+            bytes,
+            metadata_end,
+            reading,
+        } if bytes > observed => assurance::degraded(
+            Shortfall {
+                declared: bytes,
+                observed,
+                metadata_end,
+            },
+            &reading,
+        ),
+        // A contradiction is only this gate's business where the source is
+        // also short: with the declared bytes all present there is nothing
+        // to bound, and what the boot record says about itself is the
+        // filesystem seam's to report as an issue, exactly as it does today.
+        VolumeDeclaration::Conflicted { bytes, detail } if bytes > observed => {
+            return Err(assurance::conflicted(&detail, bytes, observed));
+        }
+        _ => Assurance::verified(observed, mode),
+    })
 }
 
 /// An open disk image.
@@ -109,7 +166,17 @@ pub struct Disk {
     descriptor: &'static ImageFormatDescriptor,
     device_identity: DeviceIdentity,
     active_layer: ActiveLayer,
+    /// The session's **effective** access (P28): the declared intent's
+    /// echo, or read-only where the evidence never established write
+    /// authority.
     mode: AccessMode,
+    /// What this open established about the evidence beneath it (P28),
+    /// settled once at the open and never revisited: a session never
+    /// regains authority it did not open with.
+    assurance: Assurance,
+    /// The readable extent a degraded session reads under, carried beside
+    /// the assurance because every composed read consults it.
+    bound: Option<ReadBound>,
     path: String,
     /// The recovery sidecar's derived path (P9) — private transient
     /// state, never a user-owned file.
@@ -189,9 +256,20 @@ impl Disk {
         // One claim, two planes: the adapter opens the presented disk over
         // a medium device sharing the very claim the raw plane reads (F43).
         let host = resolved.source.medium_device(path.display().to_string());
-        let (virtual_disk, descriptor) =
+        let (mut virtual_disk, descriptor) =
             adapters::image_catalog().open_disk(host, &resolved.image_path)?;
         let format = virtual_disk.format();
+
+        // The assurance gate (P28), settled before the medium is exposed:
+        // a caller who is going to be told a disk is degraded is told
+        // before it reads a byte of it.
+        let assurance = assess(virtual_disk.as_mut(), format, mode)?;
+        let mode = assurance.access;
+        let bound = assurance.condition.map(|condition| ReadBound {
+            end: assurance.first_unavailable_byte.unwrap_or(0),
+            declared: assurance.declared_bytes.unwrap_or(0),
+            condition,
+        });
 
         let containers = resolved
             .archive_layers
@@ -211,6 +289,8 @@ impl Disk {
             device_identity: DeviceIdentity::first(),
             active_layer: descriptor.initial_active_layer,
             mode,
+            assurance,
+            bound,
             // The artifact claimed, which for an archived image is the
             // archive rather than the `archive/entry` path as given.
             path: resolved.source_path.display().to_string(),
@@ -240,6 +320,9 @@ impl Disk {
     /// (P27): the image streams from its backing through the session
     /// cache, and no operation requires it resident whole.
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        if let Some(bound) = &self.bound {
+            bound.check(offset, buf.len() as u64)?;
+        }
         self.source.read_at(offset, buf)
     }
 
@@ -272,9 +355,28 @@ impl Disk {
         crate::hdos::read_hdos_file(&bytes, name)
     }
 
-    /// The session's access mode — an echo of the declared intent.
+    /// The session's **effective** access mode: the declared intent's echo
+    /// where the evidence supports it, and read-only where it does not.
+    ///
+    /// A write-intent open whose evidence came up short reports read-only
+    /// here and says why in [`Disk::assurance`] (P28). The claim taken at
+    /// the open is unchanged — this is a restriction after a safe claim,
+    /// not P7's no-silent-fallback rule, which still fails an open that
+    /// cannot claim what it asked for.
     pub fn mode(&self) -> AccessMode {
         self.mode
+    }
+
+    /// What this open established about the evidence beneath it (P28):
+    /// the outcome, the condition where one narrowed the session, the
+    /// ordered evidence, the exact extents that read, and the access the
+    /// evidence permits.
+    ///
+    /// It is available immediately, before anything is read, so a caller
+    /// meets a deficiency by being told rather than by an operation
+    /// failing halfway.
+    pub fn assurance(&self) -> &Assurance {
+        &self.assurance
     }
 
     pub fn format(&self) -> DiskFormat {
@@ -302,6 +404,7 @@ impl Disk {
         Composed {
             base: self.virtual_disk.device_mut(),
             cache: &mut self.cache,
+            bound: self.bound,
         }
     }
 
@@ -523,12 +626,40 @@ impl Disk {
         fat.stat(&mut composed, &segments)
     }
 
+    /// The degraded session's extraction gate (P28): an entry is answered
+    /// whole or not at all, so its directory record and its complete
+    /// cluster chain must lie inside the readable extent before a byte of
+    /// it is served. A verified session has no gate to pass.
+    ///
+    /// This is what keeps a crossing file from being clipped, zero-filled,
+    /// or served in the part that happens to be present — including
+    /// through the ranged form, where the requested span alone might sit
+    /// inside the extent while the file does not.
+    fn require_whole(
+        &mut self,
+        volume_id: VolumeId,
+        segments: &[&str],
+        path: &str,
+    ) -> Result<()> {
+        let Some(bound) = self.bound else {
+            return Ok(());
+        };
+        let (_, fat) = self.volume_at(volume_id)?;
+        let mut composed = self.composed();
+        let end = fat.extent_end(&mut composed, segments)?;
+        if end > bound.end {
+            return Err(bound.withheld(&format!("'{path}'"), end));
+        }
+        Ok(())
+    }
+
     /// Copies a file's bytes out of the volume identified by `volume_id`.
     pub fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
+        self.require_whole(volume_id, &segments, path)?;
         let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.read_file(&mut composed, &segments)
@@ -548,6 +679,7 @@ impl Disk {
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
+        self.require_whole(volume_id, &segments, path)?;
         let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.read_file_at(&mut composed, &segments, offset, buf)
@@ -589,6 +721,12 @@ impl Disk {
     }
 
     fn require_writable(&self) -> Result<()> {
+        // A degraded session answers first and by name: its read-only mode
+        // is evidence-driven, and a caller that declared write intent is
+        // owed the condition rather than the generic refusal (P28).
+        if self.assurance.is_degraded() {
+            return Err(assurance::read_only(&self.assurance, &self.path));
+        }
         if self.mode == AccessMode::ReadOnly {
             return Err(Error::read_only(format!(
                 "'{}' was opened for reading; write actions are denied",

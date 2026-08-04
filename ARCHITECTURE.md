@@ -19,7 +19,9 @@ One core, two bindings:
   with read composition and top-image copy-on-write through backing
   chains, the native VDI driver reading and writing the dynamically
   allocated and fixed image types through the block map the format
-  keeps, MBR partition discovery, FAT12/FAT16 volume read/write, and the
+  keeps, MBR partition discovery, FAT12/FAT16 volume read/write, the
+  assurance gate that meets a source short of its own declaration with a
+  bounded read-only reading rather than an all-or-nothing loss, and the
   commit-point session cache that keeps every write bufferable and
   revocable until committed — reads stream through a bounded working
   set, and altered extents hold in memory or spill to private session
@@ -55,6 +57,7 @@ never reused.
   `Session`, `StorageDevice`, `AttachmentId` and `DeviceFamily`;
   `Disk` — reached through a device, never opened directly —
   `Identification` and the container/layout types,
+  `Assurance` and the outcome, condition and byte-range types beside it,
   `Archive` and `ArchiveEntry`,
   `list_hdos_files` and `HdosFile`, `Error`/`ErrorCategory`/`Result`,
   `DosMachine` and the drive-letter mapping it composes, and
@@ -217,7 +220,13 @@ never is.
 
 The initial set, covering every refusal the library makes today:
 `locked`, `invalid-image`, `unsupported`, `read-only`, `not-found`,
-`not-directory`, `is-directory`, `no-space`, `io`.
+`not-directory`, `is-directory`, `no-space`, `unavailable`, `io`.
+
+`unavailable` and `io` are deliberately distinct, and P28 is why: the
+first says the artifact does not hold what was asked for, and the second
+says the host failed to deliver bytes that do exist. A caller behaves
+differently about each, and collapsing them would let a host failure be
+re-described as imperfect media evidence.
 
 That set is deliberately cross-cutting and small: it answers *how should
 the caller behave*, and it answers it for the whole library at once. One
@@ -826,6 +835,88 @@ never as the only route. This principle constrains resources, not
 semantics: behavior is identical at every source size, and peak memory
 bounded independently of source size is the testable claim this entry
 makes.
+
+### P28 — Evidence may narrow authority without discarding readable evidence
+
+Fail-closed is a rule about authority, not a command to discard every byte
+whose complete intended interpretation cannot be proved. An image may be
+recognizably incomplete, contradictory, or only caller-described, yet
+still contain a bounded region that the library can read without inventing
+bytes or concealing the defect. In that case the library retains the
+evidence and offers only the operations whose preconditions it can
+establish.
+
+Every open therefore has one explicit **assurance outcome**: **verified**,
+where the selected interpretation and every bound needed by the requested
+operation are evidenced; **degraded**, where a material shortfall or
+contradiction is known but a truthful read-only interpretation of a
+bounded portion remains; or **refused**, where no bounded interpretation
+exists or an operation needs the missing or contradictory fact. The
+transition from verified to degraded is the confidence threshold. It is
+not a second arbitrary score beside P4's recognition confidence: it is a
+deterministic safety gate.
+
+A declared size exceeding the source, contradictory required structure, a
+caller assertion the source disproves, or a read reaching an unavailable
+extent fails that gate. The report states the evidence, resulting bounds,
+and withheld operations. An explicit caller selection is an interpretation
+request, not a waiver of evidence. Thus a raw 1.44 MiB FAT12 floppy
+declaration over a shorter source enters degraded read-only mode: the
+library may list or extract only data whose directory traversal and full
+cluster chain remain in the source. A chain entering the absent tail is a
+named unavailable result, never zero-filled, shortened, or successful.
+
+Degradation is not repair: the library does not fabricate missing sectors,
+skip damaged structures, choose an unresolved interpretation, or continue
+after it has lost the bounds that make a result meaningful. A malformed
+boot record that prevents a safe prefix from being addressed remains a
+refusal.
+
+The degraded path is deliberately narrow: it applies only while
+determining a catalog type or reading or writing through an already
+selected catalog type. A catalog adapter may preserve uncertainty in the
+image, layout, volume, filesystem, or file operation it owns when the
+result remains bounded and evidenced. It does not apply to the library
+machinery around that interpretation. Failure to acquire or use the host
+claim, to read or write the session cache or private storage, to persist
+the commit journal, to allocate a required resource, or to perform host
+I/O is an immediate P6 failure. Such a failure cannot be re-described as
+imperfect media evidence or yield a partial answer.
+
+Degraded state revokes mutation authority for the session. A write-intent
+open reports an evidence-driven effective read-only mode and a stable
+condition; every write, commit, and mutation-capable derived operation is
+refused with that condition. P7's no-silent-fallback rule still governs an
+inability to acquire host access — this is a distinct restriction after a
+safe claim has been made. A session never regains write authority without
+a new verified open.
+
+P3 and P6 remain intact: the library refuses an unclaimed interpretation
+and stops the first operation it cannot account for. It does not turn a
+known, bounded deficiency into an all-or-nothing loss of independently
+readable evidence. P4 carries the reason, P10 carries the stable
+condition, and P5 requires equivalent assurance outcome, evidence, bounds,
+and effective mode in Rust, C, and Python.
+
+#### The condition set, and where the gate is armed today
+
+The conditions are an enumerated claim (P3) owned by this seam, and they
+are the rule identities (P10) a withheld operation's refusal carries:
+`source-truncated`, where the interpretation declares more bytes than the
+source holds, and `evidence-conflict`, where required structure
+contradicts itself so no safe bound can be stated for the shortfall
+observed beside it.
+
+Which interpretations the gate is armed for is a claim like any other,
+and today it is one: a raw image whose leading sector is a FAT12/FAT16
+boot record — the composition where a filesystem's own declaration bounds
+the whole disk, because the caller selected the image's bytes as the
+disk. A container format declares its own virtual size and answers for it
+at its version gate (P8), so no automatic degradation rule is claimed for
+qcow2, VDI, an archive, or a partition schema. This principle says what
+an armed interpretation owes, not that every interpretation is armed;
+arming another is a feature, and stating the shortfall as this one does
+is what that feature would have to deliver.
 
 ### P29 — Mastering is declared, reproducible, and states its loss
 

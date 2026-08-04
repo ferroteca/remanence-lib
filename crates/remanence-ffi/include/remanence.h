@@ -25,7 +25,11 @@ typedef enum {
   REMANENCE_ERROR_CATEGORY_NOT_DIRECTORY = 5,
   REMANENCE_ERROR_CATEGORY_IS_DIRECTORY = 6,
   REMANENCE_ERROR_CATEGORY_NO_SPACE = 7,
-  REMANENCE_ERROR_CATEGORY_IO = 8,
+  // The artifact does not hold what was asked for, and no retry or
+  // permission change will produce it — a degraded session's withheld
+  // read (P28), never a host failure.
+  REMANENCE_ERROR_CATEGORY_UNAVAILABLE = 8,
+  REMANENCE_ERROR_CATEGORY_IO = 9,
 } RemanenceErrorCategory;
 
 // What role a detected container plays in the image's layering.
@@ -59,11 +63,25 @@ typedef enum {
   REMANENCE_ACCESS_INTENT_WRITE,
 } RemanenceAccessIntent;
 
-// A disk's access mode — an echo of the declared intent (P7).
+// A disk session's effective access mode: the declared intent's echo
+// (P7) where the evidence supports it, read-only where it does not (P28).
 typedef enum {
   REMANENCE_ACCESS_MODE_READ_WRITE,
   REMANENCE_ACCESS_MODE_READ_ONLY,
 } RemanenceAccessMode;
+
+// What an open established about the evidence beneath it (P28).
+typedef enum {
+  // Every fact and bound the interpretation needs is evidenced.
+  REMANENCE_ASSURANCE_OUTCOME_VERIFIED = 0,
+  // A material shortfall is known and a bounded read-only reading
+  // remains.
+  REMANENCE_ASSURANCE_OUTCOME_DEGRADED = 1,
+  // No bounded interpretation exists. This outcome arrives as a
+  // refusal, carrying the same condition as its rule identity, so no
+  // open handle ever reports it.
+  REMANENCE_ASSURANCE_OUTCOME_REFUSED = 2,
+} RemanenceAssuranceOutcome;
 
 // The container format a disk image turned out to be.
 typedef enum {
@@ -152,6 +170,10 @@ typedef enum {
 
 // An open archive listing, holding the claim on its file.
 typedef struct RemanenceArchive RemanenceArchive;
+
+// One open's assurance state (P28). Free with
+// `remanence_assurance_free`; the strings it returns are owned by it.
+typedef struct RemanenceAssurance RemanenceAssurance;
 
 // An open capture set, holding the claim on its archive.
 typedef struct RemanenceCaptureSet RemanenceCaptureSet;
@@ -613,8 +635,68 @@ bool remanence_session_device_attachment(const RemanenceSession *session,
 // attached there.
 RemanenceDisk *remanence_session_medium(RemanenceSession *session, const char *attachment);
 
-// The disk session's access mode — an echo of the declared intent.
+// The disk session's **effective** access mode: the declared intent's
+// echo where the evidence supports it, and read-only where it does not
+// (P28). `remanence_assurance_access_mode` reports the same value beside
+// the reason for it.
 RemanenceAccessMode remanence_disk_mode(const RemanenceDisk *disk);
+
+// The assurance of one open medium: what the open established, why, the
+// exact extents that read, and the access the evidence permits.
+//
+// It is available before anything is read, so a caller meets a deficiency
+// by being told rather than by an operation failing halfway. Null only
+// when the device holding this medium was detached.
+RemanenceAssurance *remanence_disk_assurance(const RemanenceDisk *disk);
+
+// Frees an assurance record and everything borrowed from it.
+void remanence_assurance_free(RemanenceAssurance *assurance);
+
+// What the open established.
+RemanenceAssuranceOutcome remanence_assurance_outcome(const RemanenceAssurance *assurance);
+
+// The stable condition that narrowed this session — `source-truncated`
+// or `evidence-conflict` — or null where nothing did. It is the same
+// identity a withheld operation's refusal carries as its rule.
+const char *remanence_assurance_condition(const RemanenceAssurance *assurance);
+
+// How many evidence lines the assurance carries, in the order they were
+// observed.
+size_t remanence_assurance_evidence_count(const RemanenceAssurance *assurance);
+
+// One evidence line, or null when the index is out of range.
+const char *remanence_assurance_evidence(const RemanenceAssurance *assurance, size_t index);
+
+// How many readable extents the medium has.
+size_t remanence_assurance_readable_count(const RemanenceAssurance *assurance);
+
+// One readable extent as a half-open byte range. False when the index is
+// out of range, leaving the outputs untouched.
+bool remanence_assurance_readable(const RemanenceAssurance *assurance,
+                                  size_t index,
+                                  uint64_t *start_out,
+                                  uint64_t *end_out);
+
+// The access this session actually has.
+RemanenceAccessMode remanence_assurance_access_mode(const RemanenceAssurance *assurance);
+
+// The size the interpretation declares. False where it declares none.
+bool remanence_assurance_declared_bytes(const RemanenceAssurance *assurance, uint64_t *out);
+
+// The size the source actually holds. False where it is unknown.
+bool remanence_assurance_observed_bytes(const RemanenceAssurance *assurance, uint64_t *out);
+
+// The first byte the source does not hold. False where the session is not
+// bounded short of its declaration.
+bool remanence_assurance_first_unavailable_byte(const RemanenceAssurance *assurance, uint64_t *out);
+
+// How many assurance conditions this release claims.
+size_t remanence_assurance_condition_count(void);
+
+// One claimed condition's stable identity, or null when the index is out
+// of range. The set is enumerated (P3), so a caller can hold every
+// identity it may meet without waiting to meet one.
+const char *remanence_assurance_condition_name(size_t index);
 
 // The detected container format.
 RemanenceDiskFormat remanence_disk_format(const RemanenceDisk *disk);

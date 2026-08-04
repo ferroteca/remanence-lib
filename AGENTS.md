@@ -16,7 +16,11 @@ ABI, or Python module.
   taxonomy (`Error`, three diagnostic variants, the stable
   `ErrorCategory` set, and the rule identity beside it — a value the seam
   owning the broken rule spells, never a second global set; display
-  messages remain human diagnostics);
+  messages remain human diagnostics); `assurance.rs` the P28 gate — the
+  outcome one open established, the enumerated condition set a withheld
+  operation names as its rule, the ordered evidence, the exact readable
+  extents, and the effective access mode, with the read bound carried to
+  where the reads happen;
   `adapters.rs` the executable image-format adapters, probe aggregation,
   authoritative/active layer vocabulary, device identity, and built-in
   image catalog; `partition.rs` the partition-layout catalog;
@@ -100,7 +104,8 @@ ABI, or Python module.
   records are returned in — device, content outcome, partition schema,
   regions, volumes, filesystems, joined by opaque layout-derived
   identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2/VDI
-  images built in-test, plus the fixture-driven HDOS tests.
+  images built in-test, including the truncated floppy the degraded
+  reading is stated over, plus the fixture-driven HDOS tests.
 - `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`
   regenerates `include/remanence.h` with cbindgen on every build; the

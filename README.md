@@ -121,6 +121,22 @@ rather than averaged into one that is neither. `LASTDRIVE`, `SUBST`,
 are outside every claimed rule, and a letter one of them could have
 changed is reported undetermined rather than approximated.
 
+An image that is short of what it declares is neither accepted whole nor
+thrown away whole. Every open states what it established — verified, or
+degraded with the condition that narrowed it — before anything is read,
+so a caller meets a deficiency by being told rather than by an operation
+failing halfway. A raw image whose FAT boot record declares more bytes
+than the file holds opens degraded and read-only for the session's whole
+life: the declaration, what the source actually holds, the first byte
+that is missing and the exact extent that reads all come back as
+evidence. Directories and files that are wholly present read normally; a
+file whose cluster chain runs into the missing tail is refused by name
+with its range, never clipped, zero-filled or served in part; and every
+write, every commit and every other mutation is denied with the same
+stable condition, in Rust, C and Python alike. Where the shortfall leaves
+no safe bound to state — a boot record declaring two different sizes —
+the medium is refused outright rather than read in part.
+
 The in-force vision — what the library is for (U-numbers) and the rules
 it holds itself to (P-numbers) — is in [USE-CASES.md](USE-CASES.md) and
 [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -175,6 +191,14 @@ for container in &identification.containers {
 }
 let files = disk.list_hdos_files()?;
 
+// What the open established about the evidence beneath it, before
+// anything is read from it.
+let assurance = disk.assurance();
+println!("{} {:?}", assurance.outcome, assurance.condition);
+for line in &assurance.evidence {
+    println!("  {line}");
+}
+
 let archive = remanence::Archive::open("captures.7z")?;
 for entry in archive.entries() {
     println!("{} ({} bytes)", entry.name, entry.uncompressed_size);
@@ -208,6 +232,7 @@ import remanence
 session = remanence.Session()
 hdd0 = session.attach("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
 disk = session.medium(hdd0)
+print(disk.assurance.outcome, disk.assurance.condition, disk.mode)
 for c in disk.identify().containers:
     print(c.kind, c.id, c.confidence)
 for f in disk.list_hdos_files():

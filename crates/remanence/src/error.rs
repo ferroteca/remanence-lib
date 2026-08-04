@@ -14,6 +14,12 @@ pub enum ErrorCategory {
     NotDirectory,
     IsDirectory,
     NoSpace,
+    /// The artifact does not hold what was asked for, and no retry or
+    /// permission change will produce it. Distinct from `io`, which says
+    /// the host failed to deliver bytes that exist: a degraded session
+    /// (P28) refuses this way, and P6 keeps a host failure from being
+    /// re-described as imperfect media evidence.
+    Unavailable,
     Io,
 }
 
@@ -29,6 +35,7 @@ impl ErrorCategory {
             Self::NotDirectory => "not-directory",
             Self::IsDirectory => "is-directory",
             Self::NoSpace => "no-space",
+            Self::Unavailable => "unavailable",
             Self::Io => "io",
         }
     }
@@ -111,6 +118,12 @@ impl Error {
 
     pub(crate) fn not_found(reason: impl Into<String>) -> Self {
         Self::categorized_io(ErrorCategory::NotFound, reason)
+    }
+
+    /// A refusal that names evidence the artifact does not hold — the
+    /// degraded session's withheld read (P28), never a host failure.
+    pub(crate) fn unavailable(reason: impl Into<String>) -> Self {
+        Self::categorized_io(ErrorCategory::Unavailable, reason)
     }
 
     /// A refusal that names something outside the library's claim, where
@@ -244,6 +257,7 @@ mod tests {
         assert_eq!(ErrorCategory::NotDirectory.as_str(), "not-directory");
         assert_eq!(ErrorCategory::IsDirectory.as_str(), "is-directory");
         assert_eq!(ErrorCategory::NoSpace.as_str(), "no-space");
+        assert_eq!(ErrorCategory::Unavailable.as_str(), "unavailable");
         assert_eq!(ErrorCategory::Io.as_str(), "io");
     }
 

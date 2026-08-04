@@ -889,6 +889,80 @@ fn mode_str(mode: remanence::AccessMode) -> &'static str {
     }
 }
 
+/// What one open established about the evidence beneath it (P28).
+///
+/// `outcome` is `"verified"` or `"degraded"`; the third outcome,
+/// `"refused"`, arrives as a `RemanenceError` carrying the same condition
+/// as its `rule`, so no open medium ever reports it. A degraded medium is
+/// read-only for its whole life, states the shortfall in `evidence`, and
+/// answers only for the extents in `readable` — an operation needing what
+/// is missing is refused by name rather than clipped or zero-filled.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct Assurance {
+    pub outcome: String,
+    /// `"source-truncated"` or `"evidence-conflict"`, or None where
+    /// nothing narrowed this session. It is the same identity a withheld
+    /// operation's refusal carries as its `rule`.
+    pub condition: Option<String>,
+    /// Why, in the order the observations were made.
+    pub evidence: Vec<String>,
+    /// The exact extents of the medium that read, as half-open
+    /// `(start, end)` byte pairs.
+    pub readable: Vec<(u64, u64)>,
+    /// The access this session actually has: `"read-write"` or
+    /// `"read-only"`.
+    pub access: String,
+    /// The size the interpretation declares, where one declares a size.
+    pub declared_bytes: Option<u64>,
+    /// The size the source actually holds.
+    pub observed_bytes: Option<u64>,
+    /// The first byte the source does not hold, where the session is
+    /// bounded short of its declaration.
+    pub first_unavailable_byte: Option<u64>,
+}
+
+impl Assurance {
+    fn new(assurance: &remanence::Assurance) -> Self {
+        Self {
+            outcome: assurance.outcome.as_str().to_owned(),
+            condition: assurance
+                .condition
+                .map(|condition| condition.as_str().to_owned()),
+            evidence: assurance.evidence.clone(),
+            readable: assurance
+                .readable
+                .iter()
+                .map(|range| (range.start, range.end))
+                .collect(),
+            access: mode_str(assurance.access).to_owned(),
+            declared_bytes: assurance.declared_bytes,
+            observed_bytes: assurance.observed_bytes,
+            first_unavailable_byte: assurance.first_unavailable_byte,
+        }
+    }
+}
+
+#[pymethods]
+impl Assurance {
+    fn __repr__(&self) -> String {
+        format!(
+            "Assurance(outcome={:?}, condition={:?})",
+            self.outcome, self.condition
+        )
+    }
+}
+
+/// Every assurance condition this release claims (P3), so a caller can
+/// hold every identity it may meet without waiting to meet one.
+#[pyfunction]
+fn assurance_conditions() -> Vec<String> {
+    remanence::AssuranceCondition::ALL
+        .iter()
+        .map(|condition| condition.as_str().to_owned())
+        .collect()
+}
+
 /// An open session: the machine scope, holding a set of family-typed
 /// storage devices (P32).
 ///
@@ -1147,10 +1221,21 @@ impl Disk {
         Ok(PyBytes::new(py, &bytes))
     }
 
-    /// `"read-write"` or `"read-only"` — an echo of the declared intent.
+    /// `"read-write"` or `"read-only"` — the **effective** mode: the
+    /// declared intent's echo where the evidence supports it, and
+    /// read-only where it does not (P28). `assurance` says why.
     #[getter]
     fn mode(&mut self) -> PyResult<&'static str> {
         Ok(mode_str(self.get()?.mode()))
+    }
+
+    /// What this open established about the evidence beneath it (P28),
+    /// available before anything is read: the outcome, the condition
+    /// where one narrowed the session, the ordered evidence, the exact
+    /// extents that read, and the access the evidence permits.
+    #[getter]
+    fn assurance(&mut self) -> PyResult<Assurance> {
+        Ok(Assurance::new(self.get()?.assurance()))
     }
 
     /// `"raw"`, `"qcow2"` or `"vdi"`.
@@ -2723,6 +2808,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<HdosFile>()?;
     m.add_class::<Session>()?;
     m.add_class::<Disk>()?;
+    m.add_class::<Assurance>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;
     m.add_class::<PartitionSchemaInfo>()?;
@@ -2736,6 +2822,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DriveMap>()?;
     m.add_class::<DriveMapping>()?;
     m.add_class::<DosAssignmentRule>()?;
+    m.add_function(wrap_pyfunction!(assurance_conditions, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
     m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
     m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;

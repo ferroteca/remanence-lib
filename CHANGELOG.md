@@ -20,6 +20,52 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A deficient image is no longer all-or-nothing.** Every open now states
+  what it established about the evidence beneath it, and it states it
+  before anything is read: `Disk::assurance` in Rust,
+  `remanence_disk_assurance` and the `remanence_assurance_*` accessors in
+  C, `Disk.assurance` in Python. A verified open says so and keeps every
+  authority it declared. A raw image whose FAT12/FAT16 boot record
+  declares more bytes than the source holds opens **degraded** instead:
+  the declaration, the observed size, the first byte that is not there,
+  the exact extent that reads, and the effective access mode all come
+  back as ordered evidence, with the stable condition `source-truncated`
+  beside them.
+
+  A degraded session is read-only for its whole life, and that is
+  evidence-driven rather than declared: a write-intent open reports the
+  effective read-only mode and every mutation — write, ranged write,
+  resize, mkdir, and commit — is refused carrying the condition as its
+  rule identity. Reads answer for what is wholly present: a directory
+  lists, a file inside the readable extent is copied out unchanged, and a
+  file whose cluster chain runs into the missing tail is refused whole,
+  by name, with its range — never clipped, zero-filled, or served in the
+  part that happens to be there. The ranged read form is refused for the
+  same file for the same reason, because an entry is extracted whole or
+  not at all. Where the shortfall leaves no safe bound to state — a boot
+  record declaring two different total-sector counts — the medium is
+  refused at the open under the condition `evidence-conflict`, rather
+  than read in part.
+
+  The gate is deliberately narrow and its scope is a claim like any
+  other: it is armed for a raw image whose leading sector is a FAT
+  boot record, the composition where a filesystem's own declaration
+  bounds the whole disk. A container format answers for its own declared
+  size at its version gate, so no automatic degradation rule is claimed
+  for qcow2, VDI, an archive, or a partition schema; and a failure of the
+  library machinery around an interpretation — a claim, the session
+  cache, private session storage, the commit journal, host I/O — remains
+  an immediate failure that is never re-described as imperfect media
+  evidence.
+
+  The error taxonomy gains one category for this, `unavailable`: the
+  artifact does not hold what was asked for, as distinct from `io`, where
+  the host failed to deliver bytes that exist. The C enumerator for `io`
+  moves accordingly, which the generated header carries.
+
+  **P28 is armed**: it moves from the pledged list to the in-force
+  architectural principles, where a divergence from it is a bug.
+
 - **The VDI container is an ordinary image format.** A VirtualBox disk
   image attaches, identifies, inspects, and reads and writes its files
   exactly as a raw or qcow2 image does, through the same session, the

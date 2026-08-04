@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, P25, P28, P31 and
+> **Status:** pledged at the owner's direction. P14, P15, P25, P31 and
 > P32, together with the P23, P19 scope-of-claim and P32 addressing-nature
 > amendments, remain owed by the project and are armed only when they reach
 > root [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
@@ -15,9 +15,11 @@ SPDX-License-Identifier: GPL-3.0-only
 >
 > P22, P29 and P30 have left this file for that one, the flux family
 > they govern being delivered; the P10 amendment with them, the DOS
-> 8.3 rule set that first populated its field being delivered; and the
+> 8.3 rule set that first populated its field being delivered; the
 > P19 composer amendment likewise, the DOS drive-letter composer that
-> was its only demand being delivered. What still cites them here cites
+> was its only demand being delivered; and P28, the degraded,
+> evidence-bounded reading of a truncated raw FAT image that was its
+> demand being delivered. What still cites them here cites
 > an in-force principle.
 >
 > A principle that establishes a seam guarantees that the architecture
@@ -696,22 +698,6 @@ view is likewise regenerated rather than migrated when the floor moves — a
 sector image whose composition later descends to flux is presented by a new
 view in flux addressing. Several views may coexist over one floor, since
 none of them is mutable and none is the truth.
-
-## P28 — Evidence may narrow authority without discarding readable evidence
-
-Fail-closed is a rule about authority, not a command to discard every byte whose complete intended interpretation cannot be proved. An image may be recognizably incomplete, contradictory, or only caller-described, yet still contain a bounded region that the library can read without inventing bytes or concealing the defect. In that case the library retains the evidence and offers only the operations whose preconditions it can establish.
-
-Every open therefore has one explicit **assurance outcome**: **verified**, where the selected interpretation and every bound needed by the requested operation are evidenced; **degraded**, where a material shortfall or contradiction is known but a truthful read-only interpretation of a bounded portion remains; or **refused**, where no bounded interpretation exists or an operation needs the missing or contradictory fact. The transition from verified to degraded is the confidence threshold. It is not a second arbitrary score beside P4's recognition confidence: it is a deterministic safety gate.
-
-A declared size exceeding the source, contradictory required structure, a caller assertion the source disproves, or a read reaching an unavailable extent fails that gate. The report states the evidence, resulting bounds, and withheld operations. An explicit caller selection is an interpretation request, not a waiver of evidence. Thus a raw 1.44 MiB FAT12 floppy declaration over a shorter source enters degraded read-only mode: the library may list or extract only data whose directory traversal and full cluster chain remain in the source. A chain entering the absent tail is a named unavailable result, never zero-filled, shortened, or successful.
-
-Degradation is not repair: the library does not fabricate missing sectors, skip damaged structures, choose an unresolved interpretation, or continue after it has lost the bounds that make a result meaningful. A malformed boot record that prevents a safe prefix from being addressed remains a refusal.
-
-The degraded path is deliberately narrow: it applies only while determining a catalog type or reading or writing through an already selected catalog type. A catalog adapter may preserve uncertainty in the image, layout, volume, filesystem, or file operation it owns when the result remains bounded and evidenced. It does not apply to the library machinery around that interpretation. Failure to acquire or use the host claim, to read or write the session cache or private storage, to persist the commit journal, to allocate a required resource, or to perform host I/O is an immediate P6 failure. Such a failure cannot be re-described as imperfect media evidence or yield a partial answer.
-
-Degraded state revokes mutation authority for the session. A write-intent open reports an evidence-driven effective read-only mode and a stable condition; every write, commit, and mutation-capable derived operation is refused with that condition. P7's no-silent-fallback rule still governs an inability to acquire host access — this is a distinct restriction after a safe claim has been made. A session never regains write authority without a new verified open.
-
-P3 and P6 remain intact: the library refuses an unclaimed interpretation and stops the first operation it cannot account for. It does not turn a known, bounded deficiency into an all-or-nothing loss of independently readable evidence. P4 carries the reason, P10 carries the stable condition, and P5 requires equivalent assurance outcome, evidence, bounds, and effective mode in Rust, C, and Python.
 
 ## P31 — Capture is a modality, not a layer
 

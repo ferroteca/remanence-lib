@@ -10,10 +10,15 @@
 //! (archive, image, physical media, filesystem) recognized by built-in
 //! executable adapters, over the image's own bytes, while
 //! [`Disk::inspect`] and the volume-scoped file verbs work over the disk
-//! a format adapter presents above them.
+//! a format adapter presents above them. Every open also states what it
+//! established about the evidence beneath it ([`Disk::assurance`]): a
+//! source short of what its own interpretation declares is read as far as
+//! it truthfully goes, read-only, with the shortfall named rather than
+//! hidden or thrown away whole (P28).
 
 mod adapters;
 mod archive;
+mod assurance;
 mod c1541_mastering;
 mod cache;
 mod checksum;
@@ -49,6 +54,7 @@ mod volume;
 mod zip;
 
 pub use archive::{Archive, ArchiveEntry};
+pub use assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
 pub use c1541_mastering::{
     DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan, MasteringPlanReport,
     MasteringPolicy, ObservationPolicy, OriginPolicy, ProjectionPolicy, PulseStrengthPolicy,
