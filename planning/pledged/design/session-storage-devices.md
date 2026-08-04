@@ -55,18 +55,37 @@ Machine-down status is also what makes id reuse safe (below): nothing is
 holding a live reference to a detached device's old occupant, because
 nothing is running.
 
-## Identity: predictable, not opaque, and that is deliberate
+## Identity: an attachment identity, which P21 already carved out
 
-The project holds volume and partition identity to a strict opaque-handle
+In-force P21 anticipated this precisely, and supplies the vocabulary:
+
+> An attachment identity such as `hdd0` is distinct from device identity. A
+> caller supplies placement only when placement changes semantics and cannot
+> be inferred. This principle adds neither multi-device opening nor
+> multi-device volume composition; those capabilities require their own
+> proposal.
+
+Three things follow. **"Device identity" is already taken** — P21 and D6
+reserve it for the opaque value the library assigns an addressed virtual
+device, and a storage device's `hdd0` is an *attachment identity*, a
+different thing at a different tier. Calling the latter a device identity
+would put two opposite disciplines behind one phrase. **The condition for
+caller-supplied placement is met**: which slot a medium occupies is exactly
+what a drive-letter rule reasons over, and no evidence in any image records
+it. And **this is the proposal P21 named** — multi-device opening was routed
+to its own proposal rather than refused, and P32 is it.
+
+The project holds volume and region identity to a strict opaque-handle
 discipline — U4 and U22 are explicit that the caller never reconstructs an
 identity from position, order, or a guessed name, because those identities
-are evidence read from a disk. Device identity is the opposite, and
+are evidence read from a disk. An attachment identity is the opposite, and
 correctly so: which devices exist and what family they are is machine
 configuration the caller supplies, the same class of fact U22 already
 carries as "machine facts" (medium, slot, attachment order) rather than
 something read as evidence.
 
-So a device id is composed, not opaque: `hdd0`, `floppy0`, `cbm-floppy0` —
+So an attachment identity is composed, not opaque: `hdd0`, `floppy0`,
+`cbm-floppy0` —
 family plus index, the naming a caller already expects from a VM, and from
 bare-metal device enumeration, where nobody chooses a BIOS-level name for an
 attached device either. The caller chooses the **slot** an attach lands in

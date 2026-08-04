@@ -855,22 +855,35 @@ A device only accepts a medium of its own family; attaching a mismatched
 medium is refused by name, the device-tier expression of P14's rule that a
 family owns its media representation.
 
-**Device identity is caller-facing and predictable, unlike volume or
-partition identity.** A device id is composed from its family and an index —
-`hdd0`, `floppy0`, `cbm-floppy0` — following the naming a caller already
-expects from a VM or from bare-metal device enumeration. The caller may
-choose the **slot** an attach lands in (attach explicitly as `hdd1`, skipping
-`hdd0`) but never an arbitrary name; an attach that does not name a slot
-takes the lowest free index for that family. This is deliberately not the
-opaque-identity discipline U4 and U22 hold volumes and partitions to:
-a device is machine configuration the caller supplies, the same class of
-fact U22 already calls out as owned by the caller rather than read as
-evidence, so a predictable, caller-reconstructible id is correct here where
-it would be wrong for anything read off a disk. Because attach and detach
-are machine-down operations, an index freed by detaching may be reused by a
-later same-family attach that does not name a slot; nothing depends on the
-old occupant once the machine is down, so this is not the renumbering U4
-refuses for evidence-bearing lists.
+**A storage device is named by an attachment identity, which in-force P21
+already distinguishes from device identity.** P21 reserves *device identity*
+for the opaque value the library assigns an addressed virtual device when it
+composes one, and says in the same breath that "an attachment identity such
+as `hdd0` is distinct from device identity", supplied by a caller "only when
+placement changes semantics and cannot be inferred". This principle uses
+that vocabulary exactly: the addressed virtual device beneath an attached
+medium keeps its opaque, library-assigned identity under P21 and D6, and the
+slot it is attached to carries an attachment identity instead.
+
+An attachment identity is composed from its family and an index — `hdd0`,
+`floppy0`, `cbm-floppy0` — following the naming a caller already expects
+from a VM or from bare-metal device enumeration. The caller may choose the
+**slot** an attach lands in (attach explicitly as `hdd1`, skipping `hdd0`)
+but never an arbitrary name; an attach that does not name a slot takes the
+lowest free index for that family. Placement here does change semantics and
+cannot be inferred, which is precisely P21's condition: which slot a medium
+occupies is what a drive-letter rule reasons over, and no evidence in any
+image records it.
+
+That predictability is correct only because of what the identity is a fact
+about. A device is machine configuration the caller supplies, the same class
+of fact U22 already calls out as owned by the caller rather than read as
+evidence; a region, volume or filesystem identity is read off a disk, and
+stays opaque. Because attach and detach are machine-down operations, an
+index freed by detaching may be reused by a later same-family attach that
+does not name a slot; nothing depends on the old occupant once the machine
+is down, so this is not the renumbering U4 refuses for evidence-bearing
+lists.
 
 **A storage device is an identity marker, not a functional interface.** The
 only things every device shares are its id, its family, its slot, and
@@ -924,6 +937,12 @@ The device set is what the U22/F26 drive-letter composer reasons over: it
 sees every attached device and produces an answer only for the families its
 claimed rule understands, so an attached `cbm-floppy0` legitimately receives
 no DOS drive letter rather than an error or an omission.
+
+D5's deferrals are otherwise untouched. This principle puts several devices
+in one session; it does not compose a volume spanning devices, and it adds
+no cross-source transaction. What D5 declined and this revisits is the
+multiple-source open with `hdd0`-style assignment, which in-force P21 had
+already routed to its own proposal rather than refused.
 
 ### Knock-on requirements
 

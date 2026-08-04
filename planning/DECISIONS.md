@@ -632,8 +632,12 @@ claims they are globally unique.
 
 **Weighed and declined:** building topology-ready identities and
 multi-parent provenance into F19; a multiple-source open with manual
-`hdd0`/`hdd1` assignment; a principle governing cross-file transactions
-before any multi-device write use exists.
+`hdd0`/`hdd1` assignment [no longer declined: pledged P32 admits a session
+device set with `hdd0`-style attachment identities, which in-force P21
+routed to its own proposal rather than refusing; the deferrals of
+volumes spanning devices and of cross-source transactions stand]; a
+principle governing cross-file transactions before any multi-device write
+use exists.
 
 **Folded into:** proposed P17; the F19 design; withdrawal of proposed P20.
 

@@ -280,3 +280,104 @@ wording moves to name the differencing formats the library then claims.
 Touches: S1, S2, S3. Supports: U1, U3, U6; P1, P3–P8, P12, P13, P27.
 Needs: F40 delivered, for the container, the version gate, and the block
 map this composes through.
+
+## F43 — One claim, one medium surface
+
+Merge the library's two top-level surfaces into one. `Session` and `Disk`
+are presently unrelated types over the same file — the session identifies
+and reads bytes, the disk inspects and performs file verbs, and neither
+mentions the other — and they cannot coexist over one artifact, because
+each takes its own P7 claim on it. That is not a tidiness problem. Two
+ways in that structurally cannot both be used on the same image is a defect
+in the surface, and it is the thing standing between the library and any
+device tier above it.
+
+One claim serves everything. A medium is opened once, and identification,
+bounded reads, the layered inspection report, the volume-scoped file verbs,
+commit and rollback are all served from that one claim. Which of the two
+present open paths survives is this feature's substance and its whole risk:
+the identification path (`ImageSource`) carries the session cache, the
+predictive reader, and `archive[/entry]` support through spooled backing,
+while the disk path carries the declared access intent, the recovery
+journal, and the image adapters — whose `open_disk` seam takes a concrete
+file device rather than anything more general. Neither is a superset, and
+**no capability either side has today may be dropped to make them meet**:
+an archive entry must still identify, and a qcow2 chain must still commit.
+
+The adapter seam is P12 contract surface, so whether it changes shape or
+archive spooling moves beneath it is a decision this feature makes and
+records, not one it may leave to the call site.
+
+Access intent is declared at open as the disk path already requires (P7,
+P1): a read open takes no stronger claim than it needs, a write open that
+cannot secure its claim is refused by name rather than degraded silently,
+and the mode holds for the medium's whole life. The identification path's
+present behavior of quietly degrading to read-only does not survive the
+merge, because one surface cannot hold both rules.
+
+Nothing above the merge changes. The report keeps its content, its seams,
+and its opaque region, volume and filesystem identities; the file verbs
+keep the identities F39 gave them; the P27 cache bound stays caller-declared
+with its stated default.
+
+Touches: S1, S2, S3. Supports: U1, U3, U4, U5, U6, U23; P1, P2, P5, P7,
+P9, P12, P13, P27. Needs: nothing pledged first.
+
+## F44 — The session device set
+
+Give a session a set of storage devices where it holds one medium. A device
+is a durable, family-typed slot: it has an identity, a family, and zero or
+one attached medium, and it outlives what is attached to it. The merged
+medium surface F43 delivers becomes what a device holds, and the block-family
+capability a caller obtains from it.
+
+A device carries an **attachment identity** in P21's sense — that principle
+already distinguishes "an attachment identity such as `hdd0`" from the
+opaque device identity it assigns an addressed virtual device, and this
+feature adds the first of the former without disturbing the latter. It is
+composed from the family and an index (`hdd0`, `floppy0`), caller-facing and
+predictable, which is the deliberate opposite of the opaque identities the
+delivered report issues for regions, volumes and filesystems. The
+distinction is what the identity *is a fact about*: a device is machine
+configuration the caller supplies, of the same kind U22 already calls its
+own, while a region is evidence read off a disk. A caller may name the
+**slot** an attach lands in but never a name; an attach naming no slot takes
+the lowest free index for that family.
+
+Attach and detach are **machine-down operations**, and this feature claims
+only that state — there is no hardware composition to be running yet, so
+the rule is stated and cheap to honor now and does not have to be
+retrofitted when one exists. An index freed by a detach may be reused by a
+later same-family attach, which is safe for exactly that reason and is not
+the renumbering U4 refuses for evidence-bearing lists. A device refuses a
+medium outside its family by name (P3, P14).
+
+Nothing is reachable except through a device, because a medium opened beside
+the session would belong to no machine and contradict the principle on the
+public surface. **Volume, region and filesystem identities are not
+re-derived**, and P21 is why — device identity qualifies otherwise-local
+identifiers "only where more than one device makes that distinction
+necessary," and an interface already scoped to one disk "may continue to
+accept a disk-local identity." Because every file verb is reached through
+the device that owns the medium, the identities stay device-scoped and F39's
+contract holds unchanged. A flat session-wide volume list would have forced
+the qualification D5 priced, and this feature does not create one.
+
+Scope is deliberately the tier and nothing above it. This feature adds no
+new media family, no region enumeration for a family that lacks one, no
+move of file access onto a region, and no device capability presenting
+`Hardware<C>` — each is separate work that needs this delivered first. The
+one family it must carry is the block family the library already reads, so
+`hdd0` is real and `floppy0` is not yet.
+
+U1's, U3's and U4's journeys are unchanged in what they achieve and change
+in how they are reached, so their wording moves to the device expression of
+the same guarantees — the delivering feature's ordinary job, as F39 did for
+U4.
+
+Touches: S1, S2, S3. Supports: U1, U3, U4, U22; P3, P5, P14, P21, P27,
+P32. Needs: F43 delivered, for the one merged medium surface a device
+holds.
+
+Companion design:
+[design/session-storage-devices.md](design/session-storage-devices.md).
