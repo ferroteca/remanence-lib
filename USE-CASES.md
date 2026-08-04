@@ -46,6 +46,19 @@ the format work itself. Reading never changes the image. Writing is
 a separate, explicit mode with a commit point: until I commit,
 everything I wrote can be rolled back cleanly.
 
+Names are the seam's rule, not mine. A read matches the way DOS matched
+— without regard to case — and gives me back the name as stored, so
+what I show a user is what the directory holds. A write takes the name
+I have and stores the DOS one, uppercasing and padding it itself,
+because doing that in my code is doing the library's job where it
+cannot be checked against the format. When a name cannot be a DOS name
+the refusal names which of the namespace's rules it broke — an empty
+base, too long a base or extension, a stray separator, an excluded
+character, a leading or trailing space, a reserved device name — so I
+can branch on the rule and tell the user which one in my own words
+without parsing a sentence. Nothing is truncated, transliterated, or
+renamed to fit: a refused name is refused.
+
 ## U4 — I retrieve a stopped machine's partition and volume information
 
 My automation layer's drive reporting and its guest drive-letter map

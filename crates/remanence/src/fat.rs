@@ -7,6 +7,7 @@
 //! follow the Python implementation whose behavior this absorbs.
 
 use crate::device::Device;
+use crate::dos_name;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::report::{LabelReading, VolumeLabel};
 
@@ -413,22 +414,6 @@ impl FatVolume {
         Ok(records)
     }
 
-    fn short_name(record: &[u8; RECORD]) -> String {
-        let mut base: Vec<u8> = record[..8].to_vec();
-        if base[0] == 0x05 {
-            base[0] = 0xe5; // The 0x05 escape for a leading 0xE5 byte.
-        }
-        let base = String::from_utf8_lossy(&base).trim_end().to_string();
-        let ext = String::from_utf8_lossy(&record[8..11])
-            .trim_end()
-            .to_string();
-        if ext.is_empty() {
-            base
-        } else {
-            format!("{base}.{ext}")
-        }
-    }
-
     fn entries_of(
         &self,
         device: &mut dyn Device,
@@ -446,7 +431,7 @@ impl FatVolume {
             if attributes & ATTR_LONG_NAME == ATTR_LONG_NAME || attributes & ATTR_VOLUME_ID != 0 {
                 continue;
             }
-            let name = Self::short_name(&record);
+            let name = dos_name::read(&record);
             if name == "." || name == ".." {
                 continue;
             }
@@ -548,7 +533,7 @@ impl FatVolume {
             let entries = self.entries_of(device, current)?;
             let found = entries
                 .iter()
-                .find(|(entry, _)| entry.name.eq_ignore_ascii_case(dir))
+                .find(|(entry, _)| dos_name::matches(&entry.name, dir))
                 .ok_or_else(|| not_found(format!("directory '{dir}' not found")))?;
             if found.0.kind != FatEntryKind::Directory {
                 return Err(not_directory(format!("'{dir}' is not a directory")));
@@ -562,7 +547,7 @@ impl FatVolume {
         let (parent, leaf) = self.walk_to_parent(device, segments)?;
         self.entries_of(device, parent)?
             .into_iter()
-            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
+            .find(|(entry, _)| dos_name::matches(&entry.name, leaf))
             .map(|(_, located)| located)
             .ok_or_else(|| not_found(format!("'{leaf}' not found")))
     }
@@ -601,7 +586,7 @@ impl FatVolume {
             let found = self
                 .entries_of(device, current)?
                 .into_iter()
-                .find(|(entry, _)| entry.name.eq_ignore_ascii_case(dir));
+                .find(|(entry, _)| dos_name::matches(&entry.name, dir));
             match found {
                 Some((entry, located)) if entry.kind == FatEntryKind::Directory => {
                     current = located.first_cluster;
@@ -612,7 +597,7 @@ impl FatVolume {
         Ok(self
             .entries_of(device, current)?
             .into_iter()
-            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf))
+            .find(|(entry, _)| dos_name::matches(&entry.name, leaf))
             .map(|(entry, _)| entry))
     }
 
@@ -765,11 +750,11 @@ impl FatVolume {
         size: u64,
     ) -> Result<()> {
         let (parent, leaf) = self.walk_to_parent(device, segments)?;
-        let (raw_name, _) = Self::validated_short_name(leaf)?;
+        let raw_name = dos_name::store(leaf)?;
         let existing = self
             .entries_of(device, parent)?
             .into_iter()
-            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf));
+            .find(|(entry, _)| dos_name::matches(&entry.name, leaf));
         let (old_chain, old_size, slot) = match &existing {
             Some((entry, located)) => {
                 if entry.kind == FatEntryKind::Directory {
@@ -869,54 +854,6 @@ impl FatVolume {
         Ok(found)
     }
 
-    fn validated_short_name(name: &str) -> Result<([u8; 11], String)> {
-        let upper = name.to_ascii_uppercase();
-        let (base, ext) = match upper.split_once('.') {
-            Some((base, ext)) => (base, ext),
-            None => (upper.as_str(), ""),
-        };
-        let valid = |part: &str, max: usize| -> bool {
-            !part.is_empty() && part.len() <= max || (max == 3 && part.is_empty())
-        };
-        if !valid(base, 8) || !(ext.len() <= 3) || base.contains('.') {
-            return Err(io(format!("'{name}' is not a valid 8.3 name")));
-        }
-        let ok_byte = |byte: u8| {
-            byte.is_ascii_uppercase()
-                || byte.is_ascii_digit()
-                || matches!(
-                    byte,
-                    b'!' | b'#'
-                        | b'$'
-                        | b'%'
-                        | b'&'
-                        | b'\''
-                        | b'('
-                        | b')'
-                        | b'-'
-                        | b'@'
-                        | b'^'
-                        | b'_'
-                        | b'`'
-                        | b'{'
-                        | b'}'
-                        | b'~'
-                )
-        };
-        if !base.bytes().all(ok_byte) || !ext.bytes().all(ok_byte) {
-            return Err(io(format!("'{name}' is not a valid 8.3 name")));
-        }
-        let mut raw = [b' '; 11];
-        raw[..base.len()].copy_from_slice(base.as_bytes());
-        raw[8..8 + ext.len()].copy_from_slice(ext.as_bytes());
-        let display = if ext.is_empty() {
-            base.to_string()
-        } else {
-            format!("{base}.{ext}")
-        };
-        Ok((raw, display))
-    }
-
     fn timestamp() -> (u16, u16) {
         // Seconds since the epoch, folded into FAT date/time fields
         // without a timezone database: days since 1980-01-01 rendered
@@ -1005,11 +942,11 @@ impl FatVolume {
         contents: &[u8],
     ) -> Result<()> {
         let (parent, leaf) = self.walk_to_parent(device, segments)?;
-        let (raw_name, _) = Self::validated_short_name(leaf)?;
+        let raw_name = dos_name::store(leaf)?;
         let existing = self
             .entries_of(device, parent)?
             .into_iter()
-            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(leaf));
+            .find(|(entry, _)| dos_name::matches(&entry.name, leaf));
         let old_chain = match &existing {
             Some((entry, located)) => {
                 if entry.kind == FatEntryKind::Directory {
@@ -1117,7 +1054,7 @@ impl FatVolume {
             let found = self
                 .entries_of(device, current)?
                 .into_iter()
-                .find(|(entry, _)| entry.name.eq_ignore_ascii_case(name));
+                .find(|(entry, _)| dos_name::matches(&entry.name, name));
             match found {
                 Some((entry, located)) => {
                     if entry.kind != FatEntryKind::Directory {
@@ -1137,7 +1074,7 @@ impl FatVolume {
         }
         let raw_names = missing
             .iter()
-            .map(|name| Ok(Self::validated_short_name(name)?.0))
+            .map(|name| dos_name::store(name))
             .collect::<Result<Vec<_>>>()?;
         let slot = self.find_free_record(device, current)?;
         let growth = u64::from(slot.is_none());

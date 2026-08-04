@@ -40,24 +40,40 @@ impl fmt::Display for ErrorCategory {
     }
 }
 
+/// Which rule of an enumerated set an input broke, in the stable spelling
+/// owned by the seam that defines those rules (P10).
+///
+/// This is deliberately a bare identity rather than a second global enum.
+/// The category set is small and cross-cutting because it answers *how
+/// should the caller behave* for the whole library at once; a rule set
+/// answers *which rule did this input break* and belongs to the format,
+/// namespace, or grammar that defines it — `DosNameRule` is the first one.
+/// A refusal belonging to no such set carries `None`, which is ordinary
+/// rather than an omission.
+pub type RuleIdentity = &'static str;
+
 /// Library error type. Each variant records the data required to produce its
-/// display message and its stable machine-readable category.
+/// display message, its stable machine-readable category, and the rule
+/// identity where the refusal came from an enumerated rule set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     /// A container archive (e.g. ZIP, 7z) could not be read.
     Archive {
         category: ErrorCategory,
+        rule: Option<RuleIdentity>,
         archive: String,
         reason: String,
     },
     /// An underlying I/O operation failed.
     Io {
         category: ErrorCategory,
+        rule: Option<RuleIdentity>,
         reason: String,
     },
     /// A disk image did not match its container format.
     InvalidImage {
         category: ErrorCategory,
+        rule: Option<RuleIdentity>,
         container: String,
         reason: String,
     },
@@ -75,6 +91,7 @@ impl Error {
     ) -> Self {
         Self::Archive {
             category,
+            rule: None,
             archive: archive.into(),
             reason: reason.into(),
         }
@@ -105,6 +122,7 @@ impl Error {
     fn categorized_io(category: ErrorCategory, reason: impl Into<String>) -> Self {
         Self::Io {
             category,
+            rule: None,
             reason: reason.into(),
         }
     }
@@ -120,8 +138,50 @@ impl Error {
     ) -> Self {
         Self::InvalidImage {
             category,
+            rule: None,
             container: container.into(),
             reason: reason.into(),
+        }
+    }
+
+    /// Names the rule of an enumerated set this refusal broke. The
+    /// identity sits beside the category and never substitutes for it: the
+    /// category still says how the caller should behave, and this says
+    /// which rule. Rule sets are owned by their seam, so the value passed
+    /// here comes from that seam's own enumeration —
+    /// [`DosNameRule::as_str`](crate::DosNameRule::as_str) for the DOS 8.3
+    /// namespace's.
+    pub fn broke_rule(self, rule: RuleIdentity) -> Self {
+        match self {
+            Self::Archive {
+                category,
+                archive,
+                reason,
+                ..
+            } => Self::Archive {
+                category,
+                rule: Some(rule),
+                archive,
+                reason,
+            },
+            Self::Io {
+                category, reason, ..
+            } => Self::Io {
+                category,
+                rule: Some(rule),
+                reason,
+            },
+            Self::InvalidImage {
+                category,
+                container,
+                reason,
+                ..
+            } => Self::InvalidImage {
+                category,
+                rule: Some(rule),
+                container,
+                reason,
+            },
         }
     }
 
@@ -131,6 +191,18 @@ impl Error {
             Self::Archive { category, .. }
             | Self::Io { category, .. }
             | Self::InvalidImage { category, .. } => *category,
+        }
+    }
+
+    /// Which rule this refusal broke, where it came from an enumerated rule
+    /// set, and `None` where no such set applies. The identity is stable
+    /// and machine-readable; the seam owning the set is what gives it
+    /// meaning, and [`crate::DosNameRule`] reads the DOS 8.3 namespace's.
+    pub const fn rule(&self) -> Option<RuleIdentity> {
+        match self {
+            Self::Archive { rule, .. }
+            | Self::Io { rule, .. }
+            | Self::InvalidImage { rule, .. } => *rule,
         }
     }
 }
@@ -183,6 +255,35 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "invalid fat disk image: 'FILE.TXT' not found"
+        );
+    }
+
+    #[test]
+    fn a_refusal_outside_any_rule_set_carries_no_rule_identity() {
+        assert_eq!(Error::io("failed").rule(), None);
+        assert_eq!(Error::archive("zip", "malformed").rule(), None);
+        assert_eq!(Error::invalid_image("fat", "malformed").rule(), None);
+    }
+
+    #[test]
+    fn a_rule_identity_sits_beside_the_category_without_replacing_it() {
+        let error = Error::io("'CON' names a reserved device").broke_rule("reserved-device-name");
+        assert_eq!(error.category(), ErrorCategory::Io);
+        assert_eq!(error.rule(), Some("reserved-device-name"));
+        assert_eq!(error.to_string(), "'CON' names a reserved device");
+    }
+
+    #[test]
+    fn every_variant_can_carry_a_rule_identity() {
+        assert_eq!(
+            Error::archive("zip", "malformed").broke_rule("some-rule").rule(),
+            Some("some-rule")
+        );
+        assert_eq!(
+            Error::invalid_image("fat", "malformed")
+                .broke_rule("some-rule")
+                .rule(),
+            Some("some-rule")
         );
     }
 

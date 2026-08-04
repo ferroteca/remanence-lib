@@ -19,6 +19,7 @@ mod cache;
 mod checksum;
 mod device;
 mod disk;
+mod dos_name;
 mod drive_profile;
 mod error;
 mod evidence;
@@ -53,8 +54,9 @@ pub use c1541_mastering::{
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat};
+pub use dos_name::DosNameRule;
 pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim};
-pub use error::{Error, ErrorCategory, Result};
+pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
 pub use fat::{FatEntry, FatEntryKind, FatKind};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};

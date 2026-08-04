@@ -10,7 +10,10 @@
 //! `Disk.identify()` reports the detected container layers over the
 //! image's own bytes, while `Disk.inspect()` and the volume-scoped file
 //! verbs work over the disk a format adapter presents above them.
-//! Failures raise `RemanenceError`.
+//! Failures raise `RemanenceError`, which carries a stable `category`
+//! saying how to behave and, where the refusal came from an enumerated rule
+//! set such as the DOS 8.3 namespace's, a stable `rule` naming which rule
+//! the input broke.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -24,22 +27,40 @@ create_exception!(
     remanence,
     RemanenceError,
     PyException,
-    "Raised when the remanence library reports an error; `category` is stable."
+    "Raised when the remanence library reports an error; `category` and \
+     `rule` are stable. `category` says how to behave and is always set; \
+     `rule` names which rule of an enumerated set the input broke — the DOS \
+     8.3 namespace's rules are the set the file verbs draw on — and is None \
+     where the refusal belongs to no such set."
 );
 
+/// A refusal raised by the binding itself. It belongs to no format's rule
+/// set, so it carries no rule identity, and that absence is the ordinary
+/// case rather than an omission.
 fn categorized_py_err(category: remanence::ErrorCategory, message: impl Into<String>) -> PyErr {
+    py_err(category, None, message)
+}
+
+fn py_err(
+    category: remanence::ErrorCategory,
+    rule: Option<remanence::RuleIdentity>,
+    message: impl Into<String>,
+) -> PyErr {
     let error = RemanenceError::new_err(message.into());
     Python::attach(|py| {
-        error
-            .value(py)
+        let value = error.value(py);
+        value
             .setattr("category", category.as_str())
+            .expect("RemanenceError instances accept attributes");
+        value
+            .setattr("rule", rule)
             .expect("RemanenceError instances accept attributes");
     });
     error
 }
 
 fn to_py_err(error: remanence::Error) -> PyErr {
-    categorized_py_err(error.category(), error.to_string())
+    py_err(error.category(), error.rule(), error.to_string())
 }
 
 fn kind_str(kind: remanence::ContainerKind) -> &'static str {

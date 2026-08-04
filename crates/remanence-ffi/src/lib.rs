@@ -8,9 +8,16 @@
 //!   `RemanenceArchive`) are opaque and freed with their matching `*_free` function.
 //! - `const char*` return values are UTF-8, owned by the handle they were read
 //!   from, and valid until that handle is freed. Do not free them.
-//! - Fallible calls take optional category and message outputs; on failure they
-//!   store a stable [`RemanenceErrorCategory`] and a message to free with
-//!   `remanence_string_free`.
+//! - Fallible calls take optional category, message and rule outputs; on
+//!   failure they store a stable [`RemanenceErrorCategory`], a message to free
+//!   with `remanence_string_free`, and — where the refusal came from an
+//!   enumerated rule set — the stable identity of the rule that was broken,
+//!   also freed with `remanence_string_free`. The rule output is null where
+//!   no rule set applies, which is ordinary rather than an omission: the
+//!   category says how to behave, and the rule says which rule the input
+//!   broke. Rule sets belong to the seam that defines them and are documented
+//!   there — the DOS 8.3 namespace's is the set the file verbs draw on — so
+//!   the identity is a string rather than a second library-wide enum.
 //! - Accessors taking an index return null / false / 0 when the index is out of
 //!   range or the field does not apply to the container's layout.
 
@@ -93,15 +100,19 @@ fn to_owned_c_char(value: &str) -> *mut c_char {
     to_cstring(value).into_raw()
 }
 
-unsafe fn clear_error(error_out: *mut *mut c_char) {
+unsafe fn clear_error(error_out: *mut *mut c_char, rule_out: *mut *mut c_char) {
     if !error_out.is_null() {
         unsafe { *error_out = ptr::null_mut() };
+    }
+    if !rule_out.is_null() {
+        unsafe { *rule_out = ptr::null_mut() };
     }
 }
 
 unsafe fn set_error(
     category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    rule_out: *mut *mut c_char,
     error: &remanence::Error,
 ) {
     if !category_out.is_null() {
@@ -109,6 +120,14 @@ unsafe fn set_error(
     }
     if !error_out.is_null() {
         unsafe { *error_out = to_owned_c_char(&error.to_string()) };
+    }
+    if !rule_out.is_null() {
+        unsafe {
+            *rule_out = match error.rule() {
+                Some(rule) => to_owned_c_char(rule),
+                None => ptr::null_mut(),
+            }
+        };
     }
 }
 
@@ -326,6 +345,7 @@ fn hdos_list_from_bytes(
     bytes: &[u8],
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceHdosFileList {
     match list_hdos_files(bytes) {
         Ok(files) => {
@@ -333,7 +353,7 @@ fn hdos_list_from_bytes(
             Box::into_raw(Box::new(RemanenceHdosFileList { files }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -352,7 +372,20 @@ pub extern "C" fn remanence_default_cache_bytes() -> u64 {
     remanence::DEFAULT_CACHE_BYTES
 }
 
-/// Frees a string returned through an `error_out` parameter.
+/// Frees a string returned through an `error_out` or `error_rule_out`
+/// parameter.
+///
+/// A fallible call writes three things on failure: the stable
+/// category, which says how to behave; the human diagnostic; and,
+/// where the refusal is one of an enumerated set of rules a format,
+/// namespace, or grammar defines, the stable identity of the rule the input
+/// broke. `error_rule_out` is null where no such rule set applies, which is
+/// the ordinary case rather than an omission — the rule identity never
+/// substitutes for the category. Each output is optional; passing null for
+/// any of them declines it. The DOS 8.3 namespace owns the set the file
+/// verbs draw on: `empty-base`, `base-too-long`, `extension-too-long`,
+/// `separator`, `excluded-character`, `reserved-device-name`,
+/// `surrounding-space`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
     if !string.is_null() {
@@ -402,28 +435,29 @@ pub unsafe extern "C" fn remanence_disk_read_at(
     length: usize,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { disk.as_ref() }) else {
         let error = remanence::Error::io("null disk");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     if buffer_out.is_null() {
         let error = remanence::Error::io("null buffer");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
         let Some(medium) = handle.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     match medium.read_at(offset, buffer) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -852,15 +886,16 @@ pub unsafe extern "C" fn remanence_list_hdos_files(
     length: usize,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceHdosFileList {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     if bytes.is_null() {
         let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     }
     let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
-    hdos_list_from_bytes(bytes, error_category_out, error_out)
+    hdos_list_from_bytes(bytes, error_category_out, error_out, error_rule_out)
 }
 
 /// Parses the HDOS directory from the disk's image. Returns null on
@@ -870,16 +905,17 @@ pub unsafe extern "C" fn remanence_disk_list_hdos_files(
     disk: *const RemanenceDisk,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceHdosFileList {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { disk.as_ref() }) else {
         let error = remanence::Error::io("null disk");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
         let Some(medium) = handle.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match medium.list_hdos_files() {
@@ -888,7 +924,7 @@ pub unsafe extern "C" fn remanence_disk_list_hdos_files(
             Box::into_raw(Box::new(RemanenceHdosFileList { files }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1142,16 +1178,17 @@ pub unsafe extern "C" fn remanence_session_attach(
     attachment_out: *mut *mut c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { session.as_mut() }) else {
         let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     let intent = match intent {
@@ -1166,7 +1203,7 @@ pub unsafe extern "C" fn remanence_session_attach(
             true
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1184,24 +1221,25 @@ pub unsafe extern "C" fn remanence_session_attach_at(
     intent: RemanenceAccessIntent,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { session.as_mut() }) else {
         let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     let (Some(attachment), Some(path)) =
         (unsafe { utf8_arg(attachment) }, unsafe { utf8_arg(path) })
     else {
         let error = remanence::Error::io("null attachment or path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     let attachment = match AttachmentId::parse(attachment.as_ref()) {
         Ok(attachment) => attachment,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             return false;
         }
     };
@@ -1217,7 +1255,7 @@ pub unsafe extern "C" fn remanence_session_attach_at(
     ) {
         Ok(_) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1232,22 +1270,23 @@ pub unsafe extern "C" fn remanence_session_detach(
     attachment: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { session.as_mut() }) else {
         let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     let Some(attachment) = (unsafe { utf8_arg(attachment) }) else {
         let error = remanence::Error::io("null attachment");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     let attachment = match AttachmentId::parse(attachment.as_ref()) {
         Ok(attachment) => attachment,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             return false;
         }
     };
@@ -1257,7 +1296,7 @@ pub unsafe extern "C" fn remanence_session_detach(
             true
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1387,15 +1426,16 @@ pub unsafe extern "C" fn remanence_disk_entries(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFatEntryList {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return ptr::null_mut();
     };
     let path = unsafe { utf8_arg(path) }.unwrap_or_default();
         let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match medium.entries(VolumeId::from_value(volume_id), path.as_ref()) {
@@ -1404,7 +1444,7 @@ pub unsafe extern "C" fn remanence_disk_entries(
             Box::into_raw(Box::new(RemanenceFatEntryList { entries }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1422,19 +1462,20 @@ pub unsafe extern "C" fn remanence_disk_stat(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFatEntryList {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return ptr::null_mut();
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
         let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match medium.stat(VolumeId::from_value(volume_id), path.as_ref()) {
@@ -1443,7 +1484,7 @@ pub unsafe extern "C" fn remanence_disk_stat(
             Box::into_raw(Box::new(RemanenceFatEntryList { entries }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1506,25 +1547,26 @@ pub unsafe extern "C" fn remanence_disk_read_file(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFileData {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return ptr::null_mut();
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
         let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match medium.read_file(VolumeId::from_value(volume_id), path.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1543,31 +1585,32 @@ pub unsafe extern "C" fn remanence_disk_read_file_at(
     length: usize,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     if buffer_out.is_null() {
         let error = remanence::Error::io("null buffer");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
     let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     match medium.read_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, buffer) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1584,25 +1627,26 @@ pub unsafe extern "C" fn remanence_disk_resize_file(
     size: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
         let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     match medium.resize_file(VolumeId::from_value(volume_id), path.as_ref(), size) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1621,19 +1665,20 @@ pub unsafe extern "C" fn remanence_disk_write_file_at(
     length: usize,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     if bytes.is_null() && length != 0 {
         let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     }
     let data = if length == 0 {
@@ -1643,13 +1688,13 @@ pub unsafe extern "C" fn remanence_disk_write_file_at(
     };
     let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     match medium.write_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, data) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1697,19 +1742,20 @@ pub unsafe extern "C" fn remanence_disk_write_file(
     length: usize,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     if bytes.is_null() && length > 0 {
         let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     }
     let contents = if length == 0 {
@@ -1719,13 +1765,13 @@ pub unsafe extern "C" fn remanence_disk_write_file(
     };
     let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     match medium.write_file(VolumeId::from_value(volume_id), path.as_ref(), contents) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1741,25 +1787,26 @@ pub unsafe extern "C" fn remanence_disk_make_directory(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
         let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     match medium.make_directory(VolumeId::from_value(volume_id), path.as_ref()) {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1776,20 +1823,21 @@ pub unsafe extern "C" fn remanence_disk_commit(
     disk: *mut RemanenceDisk,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
         let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
     match medium.commit() {
         Ok(()) => true,
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
         }
     }
@@ -1814,23 +1862,24 @@ pub unsafe extern "C" fn remanence_read_hdos_file(
     name: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFileData {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     if bytes.is_null() {
         let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     }
     let Some(name) = (unsafe { utf8_arg(name) }) else {
         let error = remanence::Error::io("null name");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     let image = unsafe { std::slice::from_raw_parts(bytes, length) };
     match read_hdos_file(image, name.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1844,27 +1893,28 @@ pub unsafe extern "C" fn remanence_disk_read_hdos_file(
     name: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFileData {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { disk.as_ref() }) else {
         let error = remanence::Error::io("null disk");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     let Some(name) = (unsafe { utf8_arg(name) }) else {
         let error = remanence::Error::io("null name");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
         let Some(medium) = handle.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match medium.read_hdos_file(name.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -1921,11 +1971,12 @@ pub unsafe extern "C" fn remanence_archive_open(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceArchive {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     if path.is_null() {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     }
 
@@ -1945,7 +1996,7 @@ pub unsafe extern "C" fn remanence_archive_open(
             }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -2199,11 +2250,12 @@ unsafe fn open_capture_set(
     cache_bytes: Option<u64>,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceCaptureSet {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     if path.is_null() {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     }
     let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
@@ -2214,7 +2266,7 @@ unsafe fn open_capture_set(
     match opened {
         Ok(set) => Box::into_raw(Box::new(RemanenceCaptureSet::new(set))),
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -2231,8 +2283,9 @@ pub unsafe extern "C" fn remanence_capture_set_open(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceCaptureSet {
-    unsafe { open_capture_set(path, None, error_category_out, error_out) }
+    unsafe { open_capture_set(path, None, error_category_out, error_out, error_rule_out) }
 }
 
 /// Opens a capture set as `remanence_capture_set_open` does, under a
@@ -2245,8 +2298,9 @@ pub unsafe extern "C" fn remanence_capture_set_open_with_cache(
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceCaptureSet {
-    unsafe { open_capture_set(path, Some(cache_bytes), error_category_out, error_out) }
+    unsafe { open_capture_set(path, Some(cache_bytes), error_category_out, error_out, error_rule_out) }
 }
 
 /// Frees a capture-set handle, releasing its claim on the archive and
@@ -2774,17 +2828,18 @@ pub unsafe extern "C" fn remanence_capture_set_recognize(
     set: *const RemanenceCaptureSet,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceRecognition {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(set) = (unsafe { set.as_ref() }) else {
         let error = remanence::Error::io("null capture set");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match set.set.recognize() {
         Ok(recognition) => Box::into_raw(Box::new(RemanenceRecognition::new(recognition))),
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -2799,18 +2854,19 @@ pub unsafe extern "C" fn remanence_capture_set_recognize_as(
     profile_id: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceRecognition {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let (Some(set), false) = (unsafe { set.as_ref() }, profile_id.is_null()) else {
         let error = remanence::Error::io("null capture set or profile id");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     let id = String::from_utf8_lossy(unsafe { CStr::from_ptr(profile_id) }.to_bytes());
     match set.set.recognize_as(id.as_ref()) {
         Ok(recognition) => Box::into_raw(Box::new(RemanenceRecognition::new(recognition))),
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -3241,11 +3297,12 @@ pub unsafe extern "C" fn remanence_capture_set_plan_c1541_mastering(
     policy: *const RemanenceMasteringPolicy,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceMasteringPlan {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let (Some(set), Some(policy)) = (unsafe { set.as_ref() }, unsafe { policy.as_ref() }) else {
         let error = remanence::Error::io("null capture set or policy");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match set.set.plan_c1541_mastering(to_policy(policy)) {
@@ -3259,7 +3316,7 @@ pub unsafe extern "C" fn remanence_capture_set_plan_c1541_mastering(
             }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -3282,11 +3339,12 @@ pub unsafe extern "C" fn remanence_mastering_plan_execute(
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceMasteredMedium {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     if plan.is_null() {
         let error = remanence::Error::io("null plan");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     }
     let owned = unsafe { Box::from_raw(plan) };
@@ -3297,7 +3355,7 @@ pub unsafe extern "C" fn remanence_mastering_plan_execute(
     } = *owned
     else {
         let error = remanence::Error::io("plan has already been executed");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match plan.execute(cache_bytes) {
@@ -3307,7 +3365,7 @@ pub unsafe extern "C" fn remanence_mastering_plan_execute(
             view,
         })),
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -3618,11 +3676,12 @@ unsafe fn open_p64(
     cache_bytes: Option<u64>,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceP64Image {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     if path.is_null() {
         let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     }
     let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
@@ -3642,7 +3701,7 @@ unsafe fn open_p64(
             }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -3659,8 +3718,9 @@ pub unsafe extern "C" fn remanence_p64_image_open(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceP64Image {
-    unsafe { open_p64(path, None, error_category_out, error_out) }
+    unsafe { open_p64(path, None, error_category_out, error_out, error_rule_out) }
 }
 
 /// Opens a P64 image as `remanence_p64_image_open` does, under a
@@ -3673,8 +3733,9 @@ pub unsafe extern "C" fn remanence_p64_image_open_with_cache(
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceP64Image {
-    unsafe { open_p64(path, Some(cache_bytes), error_category_out, error_out) }
+    unsafe { open_p64(path, Some(cache_bytes), error_category_out, error_out, error_rule_out) }
 }
 
 /// Frees an image handle, releasing its claim on the file and discarding
@@ -3728,11 +3789,12 @@ pub unsafe extern "C" fn remanence_mastered_medium_describe_p64(
     medium: *const RemanenceMasteredMedium,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceP64Report {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(medium) = (unsafe { medium.as_ref() }) else {
         let error = remanence::Error::io("null mastered medium");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match medium.medium.describe_p64() {
@@ -3741,7 +3803,7 @@ pub unsafe extern "C" fn remanence_mastered_medium_describe_p64(
             Box::into_raw(Box::new(RemanenceP64Report { report, view }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -3758,11 +3820,12 @@ pub unsafe extern "C" fn remanence_mastered_medium_write_p64(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceP64Report {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let (Some(medium), false) = (unsafe { medium.as_ref() }, path.is_null()) else {
         let error = remanence::Error::io("null mastered medium or path");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
@@ -3772,7 +3835,7 @@ pub unsafe extern "C" fn remanence_mastered_medium_write_p64(
             Box::into_raw(Box::new(RemanenceP64Report { report, view }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -4133,14 +4196,15 @@ pub unsafe extern "C" fn remanence_disk_inspect(
     disk: *mut RemanenceDisk,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceDiskReport {
-    unsafe { clear_error(error_out) };
+    unsafe { clear_error(error_out, error_rule_out) };
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return ptr::null_mut();
     };
         let Some(medium) = disk.medium() else {
         let error = remanence::Error::io("the device holding this medium was detached");
-        unsafe { set_error(error_category_out, error_out, &error) };
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
     match medium.inspect() {
@@ -4228,7 +4292,7 @@ pub unsafe extern "C" fn remanence_disk_inspect(
             }))
         }
         Err(error) => {
-            unsafe { set_error(error_category_out, error_out, &error) };
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
     }
@@ -4903,14 +4967,36 @@ mod tests {
         let error = remanence::Error::invalid_image("qcow2", "malformed");
         let mut category = RemanenceErrorCategory::Io;
         let mut message = ptr::null_mut();
+        let mut rule = ptr::null_mut();
 
-        unsafe { set_error(&mut category, &mut message, &error) };
+        unsafe { set_error(&mut category, &mut message, &mut rule, &error) };
 
         assert_eq!(category, RemanenceErrorCategory::InvalidImage);
         assert_eq!(
             unsafe { CStr::from_ptr(message) }.to_str().expect("UTF-8"),
             "invalid qcow2 disk image: malformed"
         );
+        // A refusal belonging to no rule set reports none, and null is
+        // that answer rather than an omission.
+        assert!(rule.is_null());
         unsafe { remanence_string_free(message) };
+    }
+
+    #[test]
+    fn error_output_carries_the_rule_identity_where_one_applies() {
+        let mut category = RemanenceErrorCategory::Io;
+        let mut message = ptr::null_mut();
+        let mut rule = ptr::null_mut();
+        let error = remanence::Error::io("'CON.TXT' names the reserved device 'CON'")
+            .broke_rule(remanence::DosNameRule::ReservedDeviceName.as_str());
+
+        unsafe { set_error(&mut category, &mut message, &mut rule, &error) };
+
+        assert_eq!(
+            unsafe { CStr::from_ptr(rule) }.to_str().expect("UTF-8"),
+            "reserved-device-name"
+        );
+        unsafe { remanence_string_free(message) };
+        unsafe { remanence_string_free(rule) };
     }
 }

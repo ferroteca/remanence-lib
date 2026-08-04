@@ -212,6 +212,40 @@ The initial set, covering every refusal the library makes today:
 `locked`, `invalid-image`, `unsupported`, `read-only`, `not-found`,
 `not-directory`, `is-directory`, `no-space`, `io`.
 
+That set is deliberately cross-cutting and small: it answers *how should
+the caller behave*, and it answers it for the whole library at once. One
+question it cannot answer is *which rule did this input break*. Where a
+format, namespace, or grammar defines a bounded set of rules an input must
+satisfy — a DOS 8.3 name has seven, and FAT is one filesystem of many — the
+category is the same for every one of them, and the only difference between
+them is the sentence. Widening the category set to close that gap would
+dissolve it: the categories would grow one per format rule, and the small
+cross-cutting mapping this principle exists to provide would be gone. So
+the error carries one field beside the category, not a second mapping:
+
+Where a refusal is one of an enumerated set of rules defined by a format,
+namespace, or grammar, the error also carries a **rule identity** — a
+stable machine-readable value naming which rule was broken, from the set
+owned by the seam that defines those rules. The category still says how to
+behave and remains the interface an embedder maps onto; the rule identity
+says which rule, and never substitutes for the category. A refusal
+belonging to no such rule set carries none, and that absence is ordinary
+rather than an omission. Each rule set is part of the surface that owns it
+— adding a rule identity is a surface change, and rewording the diagnostic
+that states it is not — and every presentation carries the same identities
+(P5). Because the sets belong to their seams rather than to the library,
+the identity is a value the seam spells rather than a second library-wide
+enumeration; a Rust caller reads it back through the seam's own type, and
+the C and Python presentations carry the same spellings.
+
+The rule identity is not a second diagnostic. It names the rule, and P6's
+human diagnostic still says what was expected, what was found, and where.
+
+The DOS 8.3 namespace owns the first such set — `empty-base`,
+`base-too-long`, `extension-too-long`, `separator`, `excluded-character`,
+`reserved-device-name`, `surrounding-space` — and nothing else the library
+refuses today has a rule set behind it.
+
 ### P11 — Portable Rust comes first
 
 Remanence is written as portable Rust, not as a Windows implementation

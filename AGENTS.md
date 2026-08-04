@@ -13,8 +13,10 @@ authoritative implementation; callers consume it through the Rust API, C
 ABI, or Python module.
 
 - `crates/remanence/` — the core library. `error.rs` owns the error
-  taxonomy (`Error`, three diagnostic variants, and the stable
-  `ErrorCategory` set; display messages remain human diagnostics);
+  taxonomy (`Error`, three diagnostic variants, the stable
+  `ErrorCategory` set, and the rule identity beside it — a value the seam
+  owning the broken rule spells, never a second global set; display
+  messages remain human diagnostics);
   `adapters.rs` the executable image-format adapters, probe aggregation,
   authoritative/active layer vocabulary, device identity, and built-in
   image catalog; `partition.rs` the partition-layout catalog;
@@ -74,7 +76,10 @@ ABI, or Python module.
   image only, with each backing file claimed immutable; write path
   refuses snapshots and non-16-bit refcounts by name); `mbr.rs`
   partition discovery with
-  pinned types; `fat.rs` FAT12/16 volume read/write; `machine.rs` the
+  pinned types; `fat.rs` FAT12/16 volume read/write, with `dos_name.rs`
+  owning every 8.3 name decision it makes — reading a stored name,
+  matching one without regard to case, storing a caller's, and the
+  seven-rule set a refusal names; `machine.rs` the
   session — the machine scope holding a dynamic set of family-typed
   storage devices (P32) — with `storage_device.rs` the device itself: a
   durable slot, its attachment identity (`hdd0`), and the medium

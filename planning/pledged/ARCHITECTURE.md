@@ -6,15 +6,16 @@ SPDX-License-Identifier: GPL-3.0-only
 # ARCHITECTURE (pledged)
 
 > **Status:** pledged at the owner's direction. P14, P15, P25, P31, P32, the
-> P23 and P10 amendments, and both P19 amendments remain
+> P23 amendment, and both P19 amendments remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
 > reused.
 >
 > P22, P29 and P30 have left this file for that one, the flux family
-> they govern being delivered. What still cites them here cites an
-> in-force principle.
+> they govern being delivered, and the P10 amendment with them, the DOS
+> 8.3 rule set that first populated its field being delivered. What
+> still cites them here cites an in-force principle.
 >
 > A principle that establishes a seam guarantees that the architecture
 > can host implementations at that seam without redesigning adjacent
@@ -983,53 +984,6 @@ block devices and which optical and floppy families must answer in the same
 shape; the P19 file-access capability on a region rather than on a device;
 and the 1541 family's device capability presenting (or wrapping)
 `Hardware<C>`.
-
-## P10 amendment — a refusal may also name the rule it broke
-
-In-force P10 gives every refusal a stable category from one enumerated set,
-so an embedder maps behavior without parsing text. That set is deliberately
-cross-cutting and small: it answers *how should the caller behave*, and it
-answers it for the whole library at once.
-
-One question it cannot answer is *which rule did this input break*. Where a
-format, namespace, or grammar defines a bounded set of rules an input must
-satisfy — a DOS 8.3 name has seven, and FAT is one filesystem of many — the
-category is the same for every one of them, and the only difference between
-them is the sentence. A caller that must act on the distinction, or state
-it to a user in its own words, is then reduced to parsing the message no
-release promises to keep, or to reimplementing the rule set to decide what
-it would have said. Widening the category set instead would dissolve it:
-the categories would grow one per format rule, and the small cross-cutting
-mapping P10 exists to provide would be gone.
-
-The amendment adds one field beside the category, not a second mapping:
-
-Where a refusal is one of an enumerated set of rules defined by a format,
-namespace, or grammar, the error also carries a **rule identity** — a
-stable machine-readable value naming which rule was broken, from the set
-owned by the seam that defines those rules. The category still says how to
-behave and remains the interface an embedder maps onto; the rule identity
-says which rule, and never substitutes for the category. A refusal
-belonging to no such rule set carries none, and that absence is ordinary
-rather than an omission. Each rule set is part of the surface that owns it
-— adding a rule identity is a surface change, and rewording the diagnostic
-that states it is not — and every presentation carries the same identities
-(P5).
-
-The rule identity is not a second diagnostic. It names the rule, and P6's
-human diagnostic still says what was expected, what was found, and where.
-
-U22's DOS 8.3 refusals are the first demand for this; nothing else the
-library refuses today has a rule set behind it.
-
-### What arming it will require
-
-The field is surface on all three presentations, so nothing arms this by
-adding it to the Rust error alone. The C and Python errors carry the same
-identities, the generated header is committed with them, and the first rule
-set is enumerated in the seam that owns it rather than in the error type —
-which is the whole point of the field being a seam's value rather than a
-second global set. F25 is the feature that carries it.
 
 ## P19 amendment — namespace composition may derive a mapping, not only consume one
 

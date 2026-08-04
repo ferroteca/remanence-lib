@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, AttachmentId, Disk, DiskContent, DiskFormat, ErrorCategory,
-    FatEntryKind, FatKind, RegionRole, Session, VolumeId, VolumeOrigin,
+    AccessIntent, AccessMode, AttachmentId, Disk, DiskContent, DiskFormat, DosNameRule,
+    ErrorCategory, FatEntryKind, FatKind, RegionRole, Session, VolumeId, VolumeOrigin,
 };
 
 /// Attaches `path` to a fresh session and returns both, because a medium
@@ -1293,5 +1293,132 @@ fn an_empty_partition_table_inspects_as_a_schema_with_no_volumes() {
     assert_eq!(report.composed_volume_count(), 0);
     assert_ne!(report.content, DiskContent::Blank, "distinct from blank");
 
+    std::fs::remove_file(&path).ok();
+}
+
+// The DOS 8.3 namespace at the file-access seam (U3, U22): what a read
+// matches, what a write stores, and which rule a refused name broke.
+
+/// Returns the rule a refused name broke, insisting the refusal names one.
+fn refused_rule(error: remanence::Error) -> DosNameRule {
+    let identity = error
+        .rule()
+        .unwrap_or_else(|| panic!("a name refusal names its rule: {error}"));
+    DosNameRule::from_identity(identity)
+        .unwrap_or_else(|| panic!("'{identity}' is a rule of the DOS 8.3 set"))
+}
+
+/// A caller hands over the name it has and the library stores the DOS one:
+/// uppercased and padded into the record. A read then matches without
+/// regard to case and gives back the name the directory holds, so what a
+/// caller shows a user is what is actually there.
+#[test]
+fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
+    let path = temp_path("dos-names");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+    let (mut session, at) = attach(&path, AccessIntent::Write).expect("disk opens");
+    let disk = session.medium(at).expect("the medium is attached");
+    let volume = only_volume(disk);
+
+    disk.make_directory(volume, "out").expect("mkdir");
+    disk.write_file(volume, "out/x.txt", b"payload")
+        .expect("write");
+
+    let entries = disk.entries(volume, "OUT").expect("list");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].name, "X.TXT",
+        "the listing returns the name as stored, not as supplied"
+    );
+    let root = disk.entries(volume, "").expect("list root");
+    assert!(
+        root.iter().any(|entry| entry.name == "OUT"),
+        "the directory name was uppercased at the seam too"
+    );
+
+    for spelling in ["out/x.txt", "OUT/X.TXT", "Out/X.Txt"] {
+        assert_eq!(
+            disk.read_file(volume, spelling).expect("read"),
+            b"payload",
+            "'{spelling}' matches the stored name without regard to case"
+        );
+    }
+    assert_eq!(
+        disk.stat(volume, "out/x.txt")
+            .expect("stat reads")
+            .expect("the file is there")
+            .name,
+        "X.TXT"
+    );
+
+    // Case is not a second file: writing the same name in another case
+    // overwrites the one record rather than adding a second.
+    disk.write_file(volume, "OUT/X.TXT", b"replaced")
+        .expect("overwrite");
+    assert_eq!(disk.entries(volume, "out").expect("list").len(), 1);
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// Every rule of the namespace is reachable through the file verbs, and
+/// each refusal names the rule it broke rather than leaving a consumer to
+/// reimplement the set to find out (P10). Nothing is truncated,
+/// transliterated, or repaired to fit (P6).
+#[test]
+fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
+    let path = temp_path("dos-name-rules");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+    let (mut session, at) = attach(&path, AccessIntent::Write).expect("disk opens");
+    let disk = session.medium(at).expect("the medium is attached");
+    let volume = only_volume(disk);
+
+    let cases = [
+        (".txt", DosNameRule::EmptyBase),
+        ("longfilename.txt", DosNameRule::BaseTooLong),
+        ("index.html", DosNameRule::ExtensionTooLong),
+        ("archive.tar.gz", DosNameRule::Separator),
+        ("draft.", DosNameRule::Separator),
+        ("my file.txt", DosNameRule::ExcludedCharacter),
+        ("report+1.txt", DosNameRule::ExcludedCharacter),
+        (" lead.txt", DosNameRule::SurroundingSpace),
+        ("trail .txt", DosNameRule::SurroundingSpace),
+        ("con", DosNameRule::ReservedDeviceName),
+        ("AUX.TXT", DosNameRule::ReservedDeviceName),
+        ("com9", DosNameRule::ReservedDeviceName),
+        ("lpt1", DosNameRule::ReservedDeviceName),
+    ];
+    for (name, expected) in cases {
+        let error = disk
+            .write_file(volume, name, b"contents")
+            .expect_err("a name outside the namespace is refused");
+        assert_eq!(refused_rule(error), expected, "writing '{name}'");
+
+        let error = disk
+            .make_directory(volume, name)
+            .expect_err("a directory name takes the same rules");
+        assert_eq!(refused_rule(error), expected, "creating '{name}'");
+    }
+
+    assert!(
+        disk.entries(volume, "").expect("list root").is_empty(),
+        "a refused name is refused, not repaired into some other name"
+    );
+    assert!(!disk.is_modified(), "nothing was staged for commit");
+
+    // The rule sits beside the category rather than replacing it, and a
+    // refusal belonging to no rule set carries none at all.
+    let error = disk
+        .write_file(volume, "con", b"contents")
+        .expect_err("reserved");
+    assert_eq!(error.category(), ErrorCategory::Io);
+    assert_eq!(
+        disk.read_file(volume, "MISSING.TXT")
+            .expect_err("absent")
+            .rule(),
+        None
+    );
+
+    drop(session);
     std::fs::remove_file(&path).ok();
 }

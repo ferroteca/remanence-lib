@@ -7,50 +7,6 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** pledged, not delivered. Every feature here is owed by the project, but no entry promises an order, date, or implementation approval.
 
-## F25 — DOS 8.3 name rules owned at the file-access seam
-
-Make every 8.3 name decision the file-access seam's own, and make each refusal
-name the rule it broke.
-
-Reads match without regard to case and return the name as stored. That is the
-behavior today; this feature states it as a claim rather than leaving it a
-property of the implementation, so a caller may rely on showing the user what
-the directory actually holds. Writes validate and normalize at the same seam:
-the caller supplies the name it has, and the library uppercases, pads, and
-stores it. A caller uppercasing first is performing the library's rule in the
-one place it cannot be checked against the format.
-
-A name outside the namespace is refused with a rule identity from one
-enumerated set, under the P10 amendment:
-
-- an empty base;
-- a base longer than eight characters;
-- an extension longer than three;
-- more than one separator, or one where the format does not allow it;
-- a character the format excludes, naming the character;
-- a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
-  `LPT1`–`LPT9`), with or without an extension; and
-- a leading or trailing space in a component.
-
-The reserved-device rule is the one the code does not enforce at all today;
-the others are enforced and refused with a single undifferentiated diagnostic,
-which is what leaves a consumer reimplementing the set to say which rule was
-broken. Nothing is truncated, transliterated, or repaired to fit — a refused
-name is refused (P6), and the caller decides what to do about it.
-
-The stored escape for a leading `0xe5` byte stays internal. It encodes a
-stored name; it is not a rule a caller can break.
-
-F25 is where the P10 amendment ([ARCHITECTURE.md](ARCHITECTURE.md)) arrives in
-the surface, being its first and only present demand. So this feature carries
-both halves: the rule-identity field on the error, in Rust, C and Python
-together with the generated header, and the DOS 8.3 rule set that is the first
-thing to populate it. The field is not a Rust-only addition that a later
-feature reflects outward.
-
-Touches: S1, S2, S3. Supports: U3, U22; P3, P5, P6, P10, P18, P19. Needs:
-nothing delivered first.
-
 ## F26 — The DOS drive-letter composer
 
 Deliver the namespace-mapping composer of the P19 composer amendment for DOS.

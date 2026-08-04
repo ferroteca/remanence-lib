@@ -303,7 +303,20 @@ const char *remanence_version(void);
 // without a declared bound uses.
 uint64_t remanence_default_cache_bytes(void);
 
-// Frees a string returned through an `error_out` parameter.
+// Frees a string returned through an `error_out` or `error_rule_out`
+// parameter.
+//
+// A fallible call writes three things on failure: the stable
+// category, which says how to behave; the human diagnostic; and,
+// where the refusal is one of an enumerated set of rules a format,
+// namespace, or grammar defines, the stable identity of the rule the input
+// broke. `error_rule_out` is null where no such rule set applies, which is
+// the ordinary case rather than an omission — the rule identity never
+// substitutes for the category. Each output is optional; passing null for
+// any of them declines it. The DOS 8.3 namespace owns the set the file
+// verbs draw on: `empty-base`, `base-too-long`, `extension-too-long`,
+// `separator`, `excluded-character`, `reserved-device-name`,
+// `surrounding-space`.
 void remanence_string_free(char *string);
 
 // The artifact the disk was opened from (the archive path for archive inputs).
@@ -324,7 +337,8 @@ bool remanence_disk_read_at(const RemanenceDisk *disk,
                             uint8_t *buffer_out,
                             size_t length,
                             RemanenceErrorCategory *error_category_out,
-                            char **error_out);
+                            char **error_out,
+                            char **error_rule_out);
 
 // Identifies the image's container layers and probable filesystem. Free the
 // result with `remanence_identification_free`.
@@ -471,13 +485,15 @@ bool remanence_container_fs_length_bytes(const RemanenceIdentification *identifi
 RemanenceHdosFileList *remanence_list_hdos_files(const uint8_t *bytes,
                                                  size_t length,
                                                  RemanenceErrorCategory *error_category_out,
-                                                 char **error_out);
+                                                 char **error_out,
+                                                 char **error_rule_out);
 
 // Parses the HDOS directory from the disk's image. Returns null on
 // failure and stores a message in `error_out` (free with `remanence_string_free`).
 RemanenceHdosFileList *remanence_disk_list_hdos_files(const RemanenceDisk *disk,
                                                       RemanenceErrorCategory *error_category_out,
-                                                      char **error_out);
+                                                      char **error_out,
+                                                      char **error_rule_out);
 
 // Frees an HDOS file list handle.
 void remanence_hdos_file_list_free(RemanenceHdosFileList *list);
@@ -533,7 +549,8 @@ bool remanence_session_attach(RemanenceSession *session,
                               RemanenceAccessIntent intent,
                               char **attachment_out,
                               RemanenceErrorCategory *error_category_out,
-                              char **error_out);
+                              char **error_out,
+                              char **error_rule_out);
 
 // Attaches the medium at `path` to the slot `attachment` names (such as
 // `hdd1`). The caller chooses the slot, never the name. A slot already
@@ -544,7 +561,8 @@ bool remanence_session_attach_at(RemanenceSession *session,
                                  const char *path,
                                  RemanenceAccessIntent intent,
                                  RemanenceErrorCategory *error_category_out,
-                                 char **error_out);
+                                 char **error_out,
+                                 char **error_rule_out);
 
 // Detaches the device at `attachment`, releasing its medium's P7 claim
 // and freeing the slot. Borrowed medium views for that device become
@@ -552,7 +570,8 @@ bool remanence_session_attach_at(RemanenceSession *session,
 bool remanence_session_detach(RemanenceSession *session,
                               const char *attachment,
                               RemanenceErrorCategory *error_category_out,
-                              char **error_out);
+                              char **error_out,
+                              char **error_rule_out);
 
 // How many devices the session holds.
 size_t remanence_session_device_count(const RemanenceSession *session);
@@ -592,7 +611,8 @@ RemanenceFatEntryList *remanence_disk_entries(RemanenceDisk *disk,
                                               uint64_t volume_id,
                                               const char *path,
                                               RemanenceErrorCategory *error_category_out,
-                                              char **error_out);
+                                              char **error_out,
+                                              char **error_rule_out);
 
 // Answers one path in `volume_id` (U3): a one-entry listing when
 // something exists there, an empty listing when nothing does — a
@@ -603,7 +623,8 @@ RemanenceFatEntryList *remanence_disk_stat(RemanenceDisk *disk,
                                            uint64_t volume_id,
                                            const char *path,
                                            RemanenceErrorCategory *error_category_out,
-                                           char **error_out);
+                                           char **error_out,
+                                           char **error_rule_out);
 
 // Frees a directory listing.
 void remanence_fat_entry_list_free(RemanenceFatEntryList *list);
@@ -626,7 +647,8 @@ RemanenceFileData *remanence_disk_read_file(RemanenceDisk *disk,
                                             uint64_t volume_id,
                                             const char *path,
                                             RemanenceErrorCategory *error_category_out,
-                                            char **error_out);
+                                            char **error_out,
+                                            char **error_rule_out);
 
 // Reads part of a file into `buffer_out` — the streamed form beside
 // `remanence_disk_read_file`: exactly `length` bytes at `offset`,
@@ -638,7 +660,8 @@ bool remanence_disk_read_file_at(RemanenceDisk *disk,
                                  uint8_t *buffer_out,
                                  size_t length,
                                  RemanenceErrorCategory *error_category_out,
-                                 char **error_out);
+                                 char **error_out,
+                                 char **error_rule_out);
 
 // Sets a file's size, creating it when absent — with
 // `remanence_disk_write_file_at`, the streamed replacement for
@@ -648,7 +671,8 @@ bool remanence_disk_resize_file(RemanenceDisk *disk,
                                 const char *path,
                                 uint64_t size,
                                 RemanenceErrorCategory *error_category_out,
-                                char **error_out);
+                                char **error_out,
+                                char **error_rule_out);
 
 // Writes part of a file in place — the streamed form beside
 // `remanence_disk_write_file`: the span must lie within the file's
@@ -660,7 +684,8 @@ bool remanence_disk_write_file_at(RemanenceDisk *disk,
                                   const uint8_t *bytes,
                                   size_t length,
                                   RemanenceErrorCategory *error_category_out,
-                                  char **error_out);
+                                  char **error_out,
+                                  char **error_rule_out);
 
 // The bytes of a read-out file; valid until the handle is freed.
 const uint8_t *remanence_file_data_bytes(const RemanenceFileData *data, size_t *length_out);
@@ -677,7 +702,8 @@ bool remanence_disk_write_file(RemanenceDisk *disk,
                                const uint8_t *bytes,
                                size_t length,
                                RemanenceErrorCategory *error_category_out,
-                               char **error_out);
+                               char **error_out,
+                               char **error_rule_out);
 
 // Ensures a directory exists in `volume_id`: missing parents are
 // created, and a path that already leads to a directory succeeds
@@ -686,7 +712,8 @@ bool remanence_disk_make_directory(RemanenceDisk *disk,
                                    uint64_t volume_id,
                                    const char *path,
                                    RemanenceErrorCategory *error_category_out,
-                                   char **error_out);
+                                   char **error_out,
+                                   char **error_rule_out);
 
 // The commit point (P2): everything buffered reaches the image, then a
 // flush. Until this call, nothing has touched the file. The commit is
@@ -696,7 +723,8 @@ bool remanence_disk_make_directory(RemanenceDisk *disk,
 // the committed new one.
 bool remanence_disk_commit(RemanenceDisk *disk,
                            RemanenceErrorCategory *error_category_out,
-                           char **error_out);
+                           char **error_out,
+                           char **error_rule_out);
 
 // Discards everything buffered; the image is untouched.
 void remanence_disk_rollback(RemanenceDisk *disk);
@@ -707,14 +735,16 @@ RemanenceFileData *remanence_read_hdos_file(const uint8_t *bytes,
                                             size_t length,
                                             const char *name,
                                             RemanenceErrorCategory *error_category_out,
-                                            char **error_out);
+                                            char **error_out,
+                                            char **error_rule_out);
 
 // Reads a cataloged HDOS file out of the disk's image. Free with
 // `remanence_file_data_free`.
 RemanenceFileData *remanence_disk_read_hdos_file(const RemanenceDisk *disk,
                                                  const char *name,
                                                  RemanenceErrorCategory *error_category_out,
-                                                 char **error_out);
+                                                 char **error_out,
+                                                 char **error_rule_out);
 
 // Opens the archive at `path` (UTF-8) and reads its entry list. A path
 // naming no archive format this library reads is refused by name.
@@ -722,7 +752,8 @@ RemanenceFileData *remanence_disk_read_hdos_file(const RemanenceDisk *disk,
 // `remanence_string_free`).
 RemanenceArchive *remanence_archive_open(const char *path,
                                          RemanenceErrorCategory *error_category_out,
-                                         char **error_out);
+                                         char **error_out,
+                                         char **error_rule_out);
 
 // Frees an archive handle, releasing its claim on the file.
 void remanence_archive_free(RemanenceArchive *archive);
@@ -771,7 +802,8 @@ bool remanence_archive_entry_compressed_size(const RemanenceArchive *archive,
 // `error_out` (free with `remanence_string_free`).
 RemanenceCaptureSet *remanence_capture_set_open(const char *path,
                                                 RemanenceErrorCategory *error_category_out,
-                                                char **error_out);
+                                                char **error_out,
+                                                char **error_rule_out);
 
 // Opens a capture set as `remanence_capture_set_open` does, under a
 // declared cache bound: at most `cache_bytes` of the decoded capture
@@ -780,7 +812,8 @@ RemanenceCaptureSet *remanence_capture_set_open(const char *path,
 RemanenceCaptureSet *remanence_capture_set_open_with_cache(const char *path,
                                                            uint64_t cache_bytes,
                                                            RemanenceErrorCategory *error_category_out,
-                                                           char **error_out);
+                                                           char **error_out,
+                                                           char **error_rule_out);
 
 // Frees a capture-set handle, releasing its claim on the archive and
 // discarding the private session storage the capture decoded into.
@@ -947,7 +980,8 @@ uint64_t remanence_capture_set_observation_markers(const RemanenceCaptureSet *se
 // `remanence_string_free`).
 RemanenceRecognition *remanence_capture_set_recognize(const RemanenceCaptureSet *set,
                                                       RemanenceErrorCategory *error_category_out,
-                                                      char **error_out);
+                                                      char **error_out,
+                                                      char **error_rule_out);
 
 // Recognizes the capture against one named profile, whether or not it
 // would have won the ranking. A profile this build does not enroll is
@@ -955,7 +989,8 @@ RemanenceRecognition *remanence_capture_set_recognize(const RemanenceCaptureSet 
 RemanenceRecognition *remanence_capture_set_recognize_as(const RemanenceCaptureSet *set,
                                                          const char *profile_id,
                                                          RemanenceErrorCategory *error_category_out,
-                                                         char **error_out);
+                                                         char **error_out,
+                                                         char **error_rule_out);
 
 // Frees a recognition handle.
 void remanence_recognition_free(RemanenceRecognition *recognition);
@@ -1039,7 +1074,8 @@ const char *remanence_recognition_location_refusal(const RemanenceRecognition *r
 RemanenceMasteringPlan *remanence_capture_set_plan_c1541_mastering(const RemanenceCaptureSet *set,
                                                                    const RemanenceMasteringPolicy *policy,
                                                                    RemanenceErrorCategory *error_category_out,
-                                                                   char **error_out);
+                                                                   char **error_out,
+                                                                   char **error_rule_out);
 
 // Frees a plan handle.
 void remanence_mastering_plan_free(RemanenceMasteringPlan *plan);
@@ -1050,7 +1086,8 @@ void remanence_mastering_plan_free(RemanenceMasteringPlan *plan);
 RemanenceMasteredMedium *remanence_mastering_plan_execute(RemanenceMasteringPlan *plan,
                                                           uint64_t cache_bytes,
                                                           RemanenceErrorCategory *error_category_out,
-                                                          char **error_out);
+                                                          char **error_out,
+                                                          char **error_rule_out);
 
 // Frees a mastered-medium handle, discarding its private session
 // storage.
@@ -1126,7 +1163,8 @@ const char *remanence_mastering_evidence(const RemanenceMasteringPlan *plan,
 // `remanence_string_free`).
 RemanenceP64Image *remanence_p64_image_open(const char *path,
                                             RemanenceErrorCategory *error_category_out,
-                                            char **error_out);
+                                            char **error_out,
+                                            char **error_rule_out);
 
 // Opens a P64 image as `remanence_p64_image_open` does, under a
 // declared cache bound: at most `cache_bytes` of the decoded medium
@@ -1135,7 +1173,8 @@ RemanenceP64Image *remanence_p64_image_open(const char *path,
 RemanenceP64Image *remanence_p64_image_open_with_cache(const char *path,
                                                        uint64_t cache_bytes,
                                                        RemanenceErrorCategory *error_category_out,
-                                                       char **error_out);
+                                                       char **error_out,
+                                                       char **error_rule_out);
 
 // Frees an image handle, releasing its claim on the file and discarding
 // the private session storage the medium decoded into.
@@ -1158,7 +1197,8 @@ uint64_t remanence_p64_image_resident_bytes(const RemanenceP64Image *image);
 // the account. Returns null on failure.
 RemanenceP64Report *remanence_mastered_medium_describe_p64(const RemanenceMasteredMedium *medium,
                                                            RemanenceErrorCategory *error_category_out,
-                                                           char **error_out);
+                                                           char **error_out,
+                                                           char **error_rule_out);
 
 // Writes a mastered medium into a new P64 image at `path` (UTF-8) and
 // reports what the container carried. The medium is untouched, an
@@ -1168,7 +1208,8 @@ RemanenceP64Report *remanence_mastered_medium_describe_p64(const RemanenceMaster
 RemanenceP64Report *remanence_mastered_medium_write_p64(const RemanenceMasteredMedium *medium,
                                                         const char *path,
                                                         RemanenceErrorCategory *error_category_out,
-                                                        char **error_out);
+                                                        char **error_out,
+                                                        char **error_rule_out);
 
 // Frees a report handle.
 void remanence_p64_report_free(RemanenceP64Report *report);
@@ -1240,7 +1281,8 @@ const char *remanence_p64_evidence(const RemanenceP64Image *image,
 // with the category and message written to the out-parameters.
 RemanenceDiskReport *remanence_disk_inspect(RemanenceDisk *disk,
                                             RemanenceErrorCategory *error_category_out,
-                                            char **error_out);
+                                            char **error_out,
+                                            char **error_rule_out);
 
 // Frees an inspection report and everything borrowed from it.
 void remanence_disk_report_free(RemanenceDiskReport *report);

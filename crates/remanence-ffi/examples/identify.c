@@ -28,6 +28,21 @@ static const char *container_kind_name(RemanenceContainerKind kind) {
     return "unknown";
 }
 
+/* Reports a refusal the way the ABI states it: the stable category, which
+ * says how to behave; the rule identity where the refusal came from an
+ * enumerated rule set, absent otherwise; and the human diagnostic. Both
+ * strings are ours to free, and this consumes them. */
+static void report_error(const char *what, RemanenceErrorCategory category,
+                         char *message, char *rule) {
+    fprintf(stderr, "%s (category %d", what, (int)category);
+    if (rule != NULL) {
+        fprintf(stderr, ", rule %s", rule);
+    }
+    fprintf(stderr, "): %s\n", message != NULL ? message : "unknown");
+    remanence_string_free(message);
+    remanence_string_free(rule);
+}
+
 static void print_size(const RemanenceIdentification *identification, size_t index) {
     uint64_t current = 0;
     uint64_t expected = 0;
@@ -47,11 +62,11 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
 static int list_archive(const char *path) {
     RemanenceErrorCategory error_category;
     char *error = NULL;
-    RemanenceArchive *archive = remanence_archive_open(path, &error_category, &error);
+    char *error_rule = NULL;
+    RemanenceArchive *archive =
+        remanence_archive_open(path, &error_category, &error, &error_rule);
     if (archive == NULL) {
-        fprintf(stderr, "error (category %d): %s\n",
-                (int)error_category, error != NULL ? error : "unknown");
-        remanence_string_free(error);
+        report_error("error", error_category, error, error_rule);
         return EXIT_FAILURE;
     }
 
@@ -90,15 +105,14 @@ int main(int argc, char **argv) {
 
     RemanenceErrorCategory error_category;
     char *error = NULL;
+    char *error_rule = NULL;
     /* Nothing is reachable except through a device (P32): attach the
      * medium to a session, then borrow the medium the device holds. */
     RemanenceSession *session = remanence_session_new();
     char *attachment = NULL;
     if (!remanence_session_attach(session, argv[1], REMANENCE_ACCESS_INTENT_READ,
-                                  &attachment, &error_category, &error)) {
-        fprintf(stderr, "error (category %d): %s\n",
-                (int)error_category, error != NULL ? error : "unknown");
-        remanence_string_free(error);
+                                  &attachment, &error_category, &error, &error_rule)) {
+        report_error("error", error_category, error, error_rule);
         remanence_session_free(session);
         return EXIT_FAILURE;
     }
@@ -146,11 +160,9 @@ int main(int argc, char **argv) {
     int status = EXIT_SUCCESS;
     if (has_hdos) {
         RemanenceHdosFileList *files =
-            remanence_disk_list_hdos_files(disk, &error_category, &error);
+            remanence_disk_list_hdos_files(disk, &error_category, &error, &error_rule);
         if (files == NULL) {
-            fprintf(stderr, "\nerror listing HDOS files (category %d): %s\n",
-                    (int)error_category, error != NULL ? error : "unknown");
-            remanence_string_free(error);
+            report_error("\nerror listing HDOS files", error_category, error, error_rule);
             status = EXIT_FAILURE;
         } else {
             size_t file_count = remanence_hdos_file_count(files);

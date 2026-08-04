@@ -20,6 +20,40 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **A refusal may now name the rule it broke, beside its category.**
+  `Error::rule()` returns a stable machine-readable identity where the
+  refusal came from an enumerated set of rules a format, namespace, or
+  grammar defines, and `None` where no such set applies — which is the
+  ordinary case rather than an omission. The category still says how a
+  caller should behave and is unchanged; the rule identity says which
+  rule, and never substitutes for it. Rule sets belong to the seam that
+  defines them rather than to the error type, which is why the identity
+  is a value the seam spells and not a second library-wide enumeration:
+  widening the small cross-cutting category set one entry per format rule
+  would have dissolved the mapping it exists to provide (P10). Every
+  fallible C ABI call takes a third optional output, `error_rule_out`,
+  null where no rule applies and freed with `remanence_string_free` like
+  the message; `RemanenceError` in Python gains a `rule` attribute beside
+  `category`.
+- **The DOS 8.3 namespace is the file-access seam's own rule**, and its
+  seven rules are the first set to populate that field. A read matches
+  without regard to case and returns the name as stored, so a caller can
+  show a user what the directory actually holds; a write takes the name
+  the caller has and stores the DOS one, uppercasing and padding at the
+  seam rather than leaving a caller to perform the library's rule in the
+  one place it cannot be checked against the format. A name outside the
+  namespace is refused with its rule named — `empty-base`,
+  `base-too-long`, `extension-too-long`, `separator`,
+  `excluded-character`, `reserved-device-name`, `surrounding-space` —
+  read back in Rust through `DosNameRule::from_identity`. Nothing is
+  truncated, transliterated, or repaired to fit (P6). Two of those rules
+  were not enforced at all before: `CON`, `PRN`, `AUX`, `NUL`,
+  `COM1`–`COM9` and `LPT1`–`LPT9` are refused with or without an
+  extension, being names DOS resolves ahead of any file on a volume, and
+  a name ending in the separator is refused rather than silently stored
+  without it. The rest were enforced already and refused with one
+  undifferentiated diagnostic, which is what left a consumer
+  reimplementing the set to say which rule was broken.
 - **A recognized FAT volume's label is one complete answer.**
   `FilesystemInfo.label` is a `VolumeLabel` rather than a bare string:
   `name` is the label or `None` for a volume that has none, `answered_by`
