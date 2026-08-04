@@ -5,8 +5,8 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # ARCHITECTURE (pledged)
 
-> **Status:** pledged at the owner's direction. P14, P15, P25, P31, the P23
-> and P10 amendments, and both P19 amendments remain
+> **Status:** pledged at the owner's direction. P14, P15, P25, P31, P32, the
+> P23 and P10 amendments, and both P19 amendments remain
 > owed by the project and are armed only when they reach root
 > [ARCHITECTURE.md](../../ARCHITECTURE.md), where a divergence becomes
 > a bug. Numbers come from the one global P-sequence and are never
@@ -832,6 +832,138 @@ the models were found; this principle generalizes the shape without amending
 that clause, and P22's own statement of it stands as written. The pledged P23
 amendment's upper half gains one sentence when it arms: capture-form artifacts
 take no row at any rung, as flux capture takes none at its own.
+
+## P32 — A session holds a dynamic set of family-typed storage devices
+
+There is no separate machine object. A `Session` is itself the scope within
+which device identity and drive-letter-style reasoning (U22, the P19 composer
+amendment) are resolved; nothing above it groups several sessions into one
+machine, and nothing needs to.
+
+Within a session, a **storage device** is a durable slot distinct from
+whatever medium currently occupies it. It is family-typed — a 1541 drive, an
+HDD, an optical drive, a tape drive are different families — and holds zero
+or one attached medium (P14) at a time. Ejecting or replacing the medium
+leaves the device in place; the device is the slot, not the disk. A session's
+device set is dynamic across its life: devices are attached and detached, not
+fixed at open. Attach and detach are **machine-down operations**: they are
+not available while a P15 hardware-emulation composition is open over that
+device, matching a real machine or a VM, where devices are reconfigured
+between runs, not while the emulated CPU is executing.
+
+A device only accepts a medium of its own family; attaching a mismatched
+medium is refused by name, the device-tier expression of P14's rule that a
+family owns its media representation.
+
+**Device identity is caller-facing and predictable, unlike volume or
+partition identity.** A device id is composed from its family and an index —
+`hdd0`, `floppy0`, `cbm-floppy0` — following the naming a caller already
+expects from a VM or from bare-metal device enumeration. The caller may
+choose the **slot** an attach lands in (attach explicitly as `hdd1`, skipping
+`hdd0`) but never an arbitrary name; an attach that does not name a slot
+takes the lowest free index for that family. This is deliberately not the
+opaque-identity discipline U4 and U22 hold volumes and partitions to:
+a device is machine configuration the caller supplies, the same class of
+fact U22 already calls out as owned by the caller rather than read as
+evidence, so a predictable, caller-reconstructible id is correct here where
+it would be wrong for anything read off a disk. Because attach and detach
+are machine-down operations, an index freed by detaching may be reused by a
+later same-family attach that does not name a slot; nothing depends on the
+old occupant once the machine is down, so this is not the renumbering U4
+refuses for evidence-bearing lists.
+
+**A storage device is an identity marker, not a functional interface.** The
+only things every device shares are its id, its family, its slot, and
+whichever medium is currently attached. What a caller can *do* with a device
+is entirely family-specific, reached through a family-typed capability rather
+than a method set common to `StorageDevice` itself — the same refusal of one
+universal vocabulary P15 already states for the hardware-emulation contract,
+applied one tier higher. A modern block-addressed family (HDD, optical)
+offers direct block-level I/O and the P16 partition seam. A 1541 offers head
+control and the read/write electronics directly — its family capability
+either is or wraps the P15 `Hardware<C>` contract for that family, not a
+separate raw-media interface alongside it. Identification and inspection
+(U1; P16 partitions and volumes; P19 file containers) address the attached
+medium directly and require none of a device's family-specific operate
+capability — a 1541's flux evidence is readable without any head-control
+operation, exactly as a stopped HDD's partitions are readable without issuing
+block I/O.
+
+**A device answers for regions, not for files.** A device's root enumerates
+the addressed regions its leading structure declares — partition-table
+entries under P16, tracks and sessions for an optical family, one direct
+region for an unpartitioned medium — each carrying its declared kind, its
+extent, and the opaque identity U4 and P21 already require. This is the
+delivered layered inspection report's shape rather than new machinery: that
+report already states a leading structure, enumerates declared regions with
+a raw type value and a reading of it, and issues opaque region identities.
+What this principle adds is that families beyond block devices answer in the
+same shape.
+
+File access is a capability of a **region**, and only of a region that
+carries a recognized file-bearing interpretation. There is no device-level
+file shortcut, and the uniformity is the point: a partitioned disk, a bare
+floppy, and a mixed-mode optical disc all answer the same first question,
+and none of them has to be tested for whether a shortcut would be safe. A
+mixed-mode disc's audio tracks are regions carrying no file interpretation,
+which is an ordinary answer rather than a refusal — in-force P19 already
+holds that Remanence neither calls valid non-file data empty nor
+manufactures pseudo-files to force it through the file seam.
+
+A region's interpretation may claim less than the whole region, and the
+pledged P19 scope-of-claim amendment governs the remainder. **An opaque
+extent and a region are different things**: a region is a positive claim
+that some seam declares an extent and states its kind, while an opaque
+extent is the absence of any claim over part of one interpretation's floor.
+A mixed-mode disc's audio tracks are regions; a protected floppy's
+unexplained tracks are opaque. Where a region does bear files and the
+result is hierarchical, it is a container whose directories are themselves
+containers rather than a flat namespace addressed only by path strings.
+
+The device set is what the U22/F26 drive-letter composer reasons over: it
+sees every attached device and produces an answer only for the families its
+claimed rule understands, so an attached `cbm-floppy0` legitimately receives
+no DOS drive letter rather than an error or an omission.
+
+### Knock-on requirements
+
+The P19 composer amendment and F26 have the caller assert the machine facts
+— medium, slot, attachment order — as composer inputs, because before this
+principle nothing in a session held them. A session's device set now does.
+Whichever of the two is delivered second states where the composer reads
+those facts: from the session's devices, from caller-asserted facts as F26
+has it today, or from both. Nothing else in either changes — the composer
+still opens no artifact, still names the rule it applied, and still reports
+what the rule cannot settle as undetermined.
+
+The pledged P19 scope-of-claim amendment obliges a file-bearing view to
+account for every addressable unit of its floor. Nested directory containers
+are several views over one shared floor, so whichever of the two is delivered
+second states whether that account belongs to the root view, to each nested
+container for the portion it claims, or to the floor-owning provider beneath
+all of them. Two of the amendment's four classes — allocation metadata and
+the space it claims free — are global to an interpretation and not divisible
+per directory, which rules out the second. Region enumeration supplies the
+positive argument for the third: **an account's domain is what its provider
+was composed over**, not the whole medium and not one region by
+construction. Usually that is a single region; a multisession optical volume
+whose later session references extents in an earlier one is composed over
+several, and accounts for all of them. A directory is never handed an extent
+at all — it is a navigational position inside one interpretation — and owes
+no separate account.
+
+### What arming it will require
+
+The delivered library opens a single `Disk` per session and has no device
+tier above it, so nothing here is honored today. Arming it requires a
+session-level device collection with id issuance and machine-down attach and
+detach; a family-typed capability obtained from a device rather than a
+shared `StorageDevice` method set; family-declared region enumeration at a
+device's root, which the delivered inspection report already supplies for
+block devices and which optical and floppy families must answer in the same
+shape; the P19 file-access capability on a region rather than on a device;
+and the 1541 family's device capability presenting (or wrapping)
+`Hardware<C>`.
 
 ## P10 amendment — a refusal may also name the rule it broke
 
