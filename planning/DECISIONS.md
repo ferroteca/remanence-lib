@@ -283,13 +283,8 @@ produced it.
 **Folded into:** P22 and the P23 amendment in
 [pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); pledged F30 (renamed),
 F31, F33, F34, F36 and the new F37 in
-[pledged/FEATURES.md](pledged/FEATURES.md);
-[pledged/design/flux-capture-foundation.md](pledged/design/flux-capture-foundation.md)
-(renamed from `flux-layer-foundation.md`),
-[pledged/design/flux-medium-foundation.md](pledged/design/flux-medium-foundation.md),
-`c1541-flux-mastering.md`, `p64-image-adapter.md`, `kryoflux-capture-set.md`,
-`file-container-presentation.md`; proposed F32 and its design; the annotation
-on D8.
+[pledged/FEATURES.md](pledged/FEATURES.md); proposed F32 and its design; the
+annotation on D8.
 
 ### D13 — The capture's two head designators are the disk's sides, not two capture channels
 
@@ -345,7 +340,6 @@ measured to be false.
 
 **Folded into:** U23 in [pledged/USE-CASES.md](pledged/USE-CASES.md); F31 and
 F33 in [pledged/FEATURES.md](pledged/FEATURES.md);
-[pledged/design/c1541-flux-mastering.md](pledged/design/c1541-flux-mastering.md);
 [AGENTS.md](../AGENTS.md); `testing-prep/prep_fixtures.py`;
 `testing-prep/test-rigs/README.md`;
 `crates/remanence/tests/sevenzip_catalog.rs`;
@@ -408,9 +402,7 @@ profile as a P12 image-format adapter (it owns no container grammar and
 recognizes recorded state rather than an encoding).
 
 **Folded into:** P30 in [pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md);
-pledged F36 and
-[pledged/design/drive-profile-recognition.md](pledged/design/drive-profile-recognition.md);
-the annotation on D8.
+pledged F36; the annotation on D8.
 
 ### D11 — A design outlives the feature that carried it
 
@@ -450,8 +442,7 @@ no surface — the feature's own scope was `Touches: none`); and leaving both
 entries in place until a later cleanup, which is what let the first one
 persist.
 
-**Folded into:** [pledged/FEATURES.md](pledged/FEATURES.md);
-[pledged/design/file-container-presentation.md](pledged/design/file-container-presentation.md).
+**Folded into:** [pledged/FEATURES.md](pledged/FEATURES.md).
 
 ### D10 — The truth is the lowest materialized layer; file container is an interface, not a layer
 
@@ -502,8 +493,7 @@ vocabularies.
 
 **Folded into:** the pledged P19 scope-of-claim amendment in
 [pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); the annotation on D9;
-pledged F35, whose companion design is renamed by this ruling to
-[pledged/design/file-container-presentation.md](pledged/design/file-container-presentation.md).
+pledged F35 and its companion design.
 
 ### D9 — The file-container model's scope calls
 
@@ -522,6 +512,10 @@ uses the phrase.
 manufacture pseudo-files stands untouched: the namespace lists only what the
 source names, and the opaque remainder is itemized without a name,
 reachable through the coverage account rather than by path.
+
+[Overruled in part by D17: there is no design-level home for a delivered
+feature's contract. The metadata contract lives in the code implementing
+it; the principle-level half of this split stands.]
 
 **The scope clause is principle-level; the metadata contract is
 design-level.** The coverage obligation amends P19, while the superset
@@ -556,9 +550,7 @@ itemizing deleted entries (a recovery claim in disguise).
 
 **Folded into:** the pledged P19 scope-of-claim amendment in
 [pledged/ARCHITECTURE.md](pledged/ARCHITECTURE.md); pledged F35 and its
-companion design, drafted as `file-container-layer-foundation.md` and
-renamed by D10 to
-[pledged/design/file-container-presentation.md](pledged/design/file-container-presentation.md).
+companion design.
 
 ### D8 — Mastering a capture to P64 stops at flux, and gets its own principle
 
