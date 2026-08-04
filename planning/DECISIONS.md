@@ -58,6 +58,102 @@ removes it is the record either way.
 
 ## Decisions
 
+### D20 — A principle in force states the rule; the argument lives here
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-04. **Supports** (none) — a form ruling about how the in-force
+list is written. No numbered vision entry demands it, and it changes no
+claim any of them makes.
+
+**The observation that prompted it.** The nine principles written first
+average 127 words. Everything from P10 onward averages 540, and P23 had
+reached 2101 — an entire treatise per rule. The list had stopped being a
+list of rules and become an essay collection, which makes it unreadable
+as the thing it exists to be: the place a triage decision looks up what
+binds.
+
+**The rule adopted.** A principle in force states its claim, what it
+binds, and **at most one line of why**. That is not an aesthetic
+preference; it is the shape the first nine already had, and P5 is the
+proof that a real principle survives it in 38 words.
+
+**Three things a principle no longer carries, each because it has a home
+that will not drift:**
+
+- **The argument that settled it** — this file. Most of what was removed
+  was already *here*, in duplicate: P30's "an angle, never a byte" was
+  D12's sentence verbatim, and P23's capture/medium reasoning was D14's.
+  A second copy in the norm is not a safeguard, it is a second thing to
+  keep in step. Where the argument is worth finding, the principle now
+  cites the D-number.
+- **The enumerated sets a claim ranges over** — the code, which is the
+  norm ([ARCHITECTURE.md](../ARCHITECTURE.md) "The application
+  surfaces" says so). P10 listed its ten error categories and the DOS
+  8.3 rule identities; P28 listed its conditions and which
+  interpretation the gate is armed for; P14 listed the enrolled media
+  types. Each principle keeps the rule that the set is enumerated, owned
+  by its seam, and part of that seam's surface. What it drops is the
+  transcript, which could only ever be a stale copy of an enum.
+- **A restatement of a neighbouring principle** — a cross-reference.
+  P23 re-explained P13, P22 and P27 before reaching its own subject.
+
+**What was deliberately not cut.** Every normative clause, including the
+ones wearing rhetorical clothes. The one class nearly lost on the first
+pass was the **surface limit** buried at the end of each "Knock-on
+requirements" section — "creates no public evidence iterator", "the flux
+floor is not a public interface", "adds no multi-device opening". Those
+sections were otherwise cross-references, and the limits were restored to
+the body of P21, P22, P29 and P30 once the review caught them. A negative
+claim about the surface is as binding as a positive one and is easier to
+delete by accident.
+
+**Planning prose is untouched, deliberately.** Under `planning/`,
+precision and accuracy outrank brevity: an argument takes the length the
+argument takes, and this file is the clearest case. The rule bites only
+where a principle is *in force*, because that is where prose stops being
+an argument and becomes the thing the code is measured against.
+
+**Three principles resisted compression, and were reported rather than
+re-cut.** They are the finding, not a failure of the pass, and each is a
+candidate split rather than a candidate trim:
+
+- **P23 (2101 → 1147 words)** reads as three rules sharing a heading: one
+  active layer per independently mutable instance and the vocabulary it
+  ranges over; how the initial layer is chosen and how a transition
+  between layers behaves (generate-flux and its atomicity); and the
+  layer/cache tie, which was a restatement of P27 and has now been folded
+  into P27 where it belongs. The first two are separable and were not
+  separated here.
+- **P19 (805 → 543)** carries the file-container seam and, bolted to it,
+  the namespace-mapping composer with its own three constraints. The
+  composer derives a mapping where a system persisted none, which is a
+  different act from exposing a namespace.
+- **P27 (602 → 515)** carries a resource rule and a concurrency rule. The
+  four rules that keep threading observationally invisible are a
+  self-contained claim about behavior, not about size.
+
+**Weighed and declined:** splitting those three in the same act (the
+splits are principle amendments in their own right and each deserves its
+own argument, which is exactly what this pass is trying to stop being
+smuggled into an edit); a companion `RATIONALE.md` beside the principles
+(a third home for prose, competing with both the norm and this file, and
+D11 already refused that shape for delivered designs); keeping the
+enumerated sets with a "may be stale" caveat (a caveat on a copy is an
+admission the copy should not exist); and compressing the pledged and
+proposed principle drafts in the same pass (they are planning prose,
+which the ruling above deliberately exempts — they take this shape when
+they arm, not before).
+
+**Landed as:** root [ARCHITECTURE.md](../ARCHITECTURE.md), 1172 → 839
+lines, with the rule itself stated under "The architectural principles"
+so the next entry is written to it. No S1–S3 surface is touched and no
+principle changed what it claims, so no code, binding, test, or changelog
+entry moves with it.
+
+**Reopens if:** a principle is found to have lost a binding clause — in
+which case the clause returns to the principle, since this ruling removed
+argument, transcript and restatement only.
+
 ### D19 — A media profile holds what the article is, and nothing that was recorded on it
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
