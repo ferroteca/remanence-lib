@@ -18,8 +18,8 @@ use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 
 use remanence::{
-    Container, ContainerKind, ContainerLayout, DiskLayout, ErrorCategory, HdosFile, Identification,
-    PhysicalMediaLayout, SectorLayout, list_hdos_files,
+    AttachmentId, Container, ContainerKind, ContainerLayout, DiskLayout, ErrorCategory,
+    HdosFile, Identification, PhysicalMediaLayout, SectorLayout, Session, list_hdos_files,
 };
 
 /// Stable, machine-readable classification of a library refusal. A fallible
@@ -385,7 +385,7 @@ pub unsafe extern "C" fn remanence_disk_image_path(disk: *const RemanenceDisk) -
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_image_size_bytes(disk: *const RemanenceDisk) -> u64 {
     match unsafe { disk.as_ref() } {
-        Some(handle) => handle.disk.image_size_bytes(),
+        Some(handle) => handle.medium().map_or(0, |m| m.image_size_bytes()),
         None => 0,
     }
 }
@@ -415,7 +415,12 @@ pub unsafe extern "C" fn remanence_disk_read_at(
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
-    match handle.disk.read_at(offset, buffer) {
+        let Some(medium) = handle.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match medium.read_at(offset, buffer) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -437,7 +442,10 @@ pub unsafe extern "C" fn remanence_disk_identify(
         containers,
         modified,
         evidence,
-    } = handle.disk.identify();
+    } = match handle.medium() {
+        Some(medium) => medium.identify(),
+        None => return ptr::null_mut(),
+    };
 
     Box::into_raw(Box::new(RemanenceIdentification {
         modified,
@@ -869,7 +877,12 @@ pub unsafe extern "C" fn remanence_disk_list_hdos_files(
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match handle.disk.list_hdos_files() {
+        let Some(medium) = handle.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium.list_hdos_files() {
         Ok(files) => {
             let files = files.iter().map(HdosFileView::new).collect();
             Box::into_raw(Box::new(RemanenceHdosFileList { files }))
@@ -1022,11 +1035,38 @@ fn access_mode(mode: AccessMode) -> RemanenceAccessMode {
     }
 }
 
-/// An open disk image.
+/// An open session: the machine scope, holding a set of family-typed
+/// storage devices (P32).
+pub struct RemanenceSession {
+    session: Session,
+    /// Borrowed medium views handed to callers. Owned here so their
+    /// strings outlive the call that produced them, and freed with the
+    /// session.
+    views: Vec<Box<RemanenceDisk>>,
+}
+
+/// A borrowed view of the medium in one storage device.
+///
+/// **The session owns this; never free it.** It stays valid until the
+/// device is detached or the session is freed.
+///
+/// It names the medium by session and attachment identity rather than by
+/// pointer, and re-resolves on every call. That is deliberate: a later
+/// attach may reallocate the session's device storage, so a cached
+/// pointer to the medium itself would dangle silently.
 pub struct RemanenceDisk {
-    disk: Disk,
+    session: *mut RemanenceSession,
+    attachment: AttachmentId,
     path: CString,
     image_path: CString,
+}
+
+impl RemanenceDisk {
+    /// The medium this view names, or `None` once its device is detached.
+    #[allow(clippy::mut_from_ref)]
+    fn medium(&self) -> Option<&mut Disk> {
+        unsafe { (*self.session).session.medium(self.attachment).ok() }
+    }
 }
 
 /// A directory listing.
@@ -1067,107 +1107,251 @@ unsafe fn utf8_arg<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
     ))
 }
 
-/// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected by
-/// magic — with the caller's declared intent (P7). A `Write` open
-/// claims the image exclusively for the session's whole life and fails
-/// at the open, naming the reason, when the claim cannot be secured —
-/// never by falling back; a `Read` open takes read access only, denies
-/// writes to others, and admits other readers. An interrupted commit
-/// left by an earlier session is reconciled before the disk is exposed
-/// (P9): the image comes back wholly the old state or wholly the
-/// committed new one, never a partial third state. Returns null on
-/// failure with a message in `error_out`.
+/// Opens an empty session — the machine scope. Devices are attached and
+/// detached over its life; the set is not fixed at open. Free with
+/// `remanence_session_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_open(
+pub unsafe extern "C" fn remanence_session_new() -> *mut RemanenceSession {
+    Box::into_raw(Box::new(RemanenceSession {
+        session: Session::new(),
+        views: Vec::new(),
+    }))
+}
+
+/// Frees a session, detaching every device and releasing every P7 claim.
+/// Every borrowed medium view obtained from it becomes invalid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) {
+    if !session.is_null() {
+        drop(unsafe { Box::from_raw(session) });
+    }
+}
+
+/// Attaches the medium at `path` (UTF-8) — a raw disk image, or
+/// `archive[/entry]` — to a new device in the lowest free slot of its
+/// family, writing the attachment identity it took (such as `hdd0`) to
+/// `attachment_out`. Free that string with `remanence_string_free`. A
+/// `Write` intent claims the medium exclusively and fails at the open
+/// when the claim cannot be secured, never by falling back. Returns
+/// false on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_attach(
+    session: *mut RemanenceSession,
     path: *const c_char,
     intent: RemanenceAccessIntent,
+    attachment_out: *mut *mut c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
-) -> *mut RemanenceDisk {
+) -> bool {
     unsafe { clear_error(error_out) };
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
         let error = remanence::Error::io("null path");
         unsafe { set_error(error_category_out, error_out, &error) };
-        return ptr::null_mut();
+        return false;
     };
     let intent = match intent {
         RemanenceAccessIntent::Read => AccessIntent::Read,
         RemanenceAccessIntent::Write => AccessIntent::Write,
     };
-    match Disk::open(path.as_ref(), intent) {
-        Ok(disk) => Box::into_raw(Box::new(new_disk_handle(disk))),
+    match handle.session.attach(path.as_ref(), intent) {
+        Ok(attachment) => {
+            if !attachment_out.is_null() {
+                unsafe { *attachment_out = to_owned_c_char(&attachment.to_string()) };
+            }
+            true
+        }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
-            ptr::null_mut()
+            false
         }
     }
 }
 
-/// Opens a disk as `remanence_disk_open` does, under a declared session
-/// cache bound: at most `cache_bytes` of session state stays resident,
-/// rounded up to whole 64 KiB extents with one extent as the floor;
-/// altered state past the bound spills to private session storage,
-/// never the image.
+/// Attaches the medium at `path` to the slot `attachment` names (such as
+/// `hdd1`). The caller chooses the slot, never the name. A slot already
+/// occupied is refused rather than displaced, and a family this release
+/// does not claim is refused by name (P3).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_open_with_cache(
+pub unsafe extern "C" fn remanence_session_attach_at(
+    session: *mut RemanenceSession,
+    attachment: *const c_char,
     path: *const c_char,
     intent: RemanenceAccessIntent,
-    cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
-) -> *mut RemanenceDisk {
+) -> bool {
     unsafe { clear_error(error_out) };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        let error = remanence::Error::io("null session");
         unsafe { set_error(error_category_out, error_out, &error) };
-        return ptr::null_mut();
+        return false;
+    };
+    let (Some(attachment), Some(path)) =
+        (unsafe { utf8_arg(attachment) }, unsafe { utf8_arg(path) })
+    else {
+        let error = remanence::Error::io("null attachment or path");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    let attachment = match AttachmentId::parse(attachment.as_ref()) {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            return false;
+        }
     };
     let intent = match intent {
         RemanenceAccessIntent::Read => AccessIntent::Read,
         RemanenceAccessIntent::Write => AccessIntent::Write,
     };
-    match Disk::open_with_cache(path.as_ref(), intent, cache_bytes) {
-        Ok(disk) => Box::into_raw(Box::new(new_disk_handle(disk))),
+    match handle.session.attach_at(
+        attachment.family(),
+        attachment.index(),
+        path.as_ref(),
+        intent,
+    ) {
+        Ok(_) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
-            ptr::null_mut()
+            false
         }
     }
 }
 
-/// Builds the disk handle, capturing the borrowed path strings a caller
-/// reads back through `remanence_disk_path` / `remanence_disk_image_path`.
-fn new_disk_handle(disk: Disk) -> RemanenceDisk {
-    let path = to_cstring(disk.path());
-    let image_path = to_cstring(&disk.image_path().display().to_string());
-    RemanenceDisk {
-        disk,
+/// Detaches the device at `attachment`, releasing its medium's P7 claim
+/// and freeing the slot. Borrowed medium views for that device become
+/// invalid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_detach(
+    session: *mut RemanenceSession,
+    attachment: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out) };
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    let Some(attachment) = (unsafe { utf8_arg(attachment) }) else {
+        let error = remanence::Error::io("null attachment");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    let attachment = match AttachmentId::parse(attachment.as_ref()) {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            return false;
+        }
+    };
+    match handle.session.detach(attachment) {
+        Ok(()) => {
+            handle.views.retain(|view| view.attachment != attachment);
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, &error) };
+            false
+        }
+    }
+}
+
+/// How many devices the session holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_device_count(
+    session: *const RemanenceSession,
+) -> usize {
+    unsafe { session.as_ref() }.map_or(0, |handle| handle.session.devices().len())
+}
+
+/// Writes the attachment identity of device `index` to
+/// `attachment_out`, freed with `remanence_string_free`. Returns false
+/// when `index` is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_device_attachment(
+    session: *const RemanenceSession,
+    index: usize,
+    attachment_out: *mut *mut c_char,
+) -> bool {
+    let Some(handle) = (unsafe { session.as_ref() }) else {
+        return false;
+    };
+    let Some(device) = handle.session.devices().get(index) else {
+        return false;
+    };
+    if !attachment_out.is_null() {
+        unsafe { *attachment_out = to_owned_c_char(&device.attachment().to_string()) };
+    }
+    true
+}
+
+/// A **borrowed** view of the medium in the device at `attachment`.
+///
+/// The session owns it; never free it. It stays valid until that device
+/// is detached or the session is freed. Returns null when nothing is
+/// attached there.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_medium(
+    session: *mut RemanenceSession,
+    attachment: *const c_char,
+) -> *mut RemanenceDisk {
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        return ptr::null_mut();
+    };
+    let Some(text) = (unsafe { utf8_arg(attachment) }) else {
+        return ptr::null_mut();
+    };
+    let Ok(attachment) = AttachmentId::parse(text.as_ref()) else {
+        return ptr::null_mut();
+    };
+    if let Some(at) = handle
+        .views
+        .iter()
+        .position(|view| view.attachment == attachment)
+    {
+        return handle.views[at].as_mut() as *mut RemanenceDisk;
+    }
+    let Some(medium) = handle
+        .session
+        .device_mut(attachment)
+        .and_then(|device| device.medium_mut())
+    else {
+        return ptr::null_mut();
+    };
+    let path = to_cstring(medium.path());
+    let image_path = to_cstring(&medium.image_path().display().to_string());
+    handle.views.push(Box::new(RemanenceDisk {
+        session,
+        attachment,
         path,
         image_path,
-    }
-}
-
-/// Frees a disk handle, releasing the P7 claim. Uncommitted changes are
-/// discarded (the commit point never reached the file).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_free(disk: *mut RemanenceDisk) {
-    if !disk.is_null() {
-        drop(unsafe { Box::from_raw(disk) });
-    }
+    }));
+    handle
+        .views
+        .last_mut()
+        .expect("just pushed")
+        .as_mut() as *mut RemanenceDisk
 }
 
 /// The disk session's access mode — an echo of the declared intent.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_mode(disk: *const RemanenceDisk) -> RemanenceAccessMode {
     unsafe { disk.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |disk| {
-        access_mode(disk.disk.mode())
+        access_mode(disk.medium().map_or(AccessMode::ReadOnly, |m| m.mode()))
     })
 }
 
 /// The detected container format.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_format(disk: *const RemanenceDisk) -> RemanenceDiskFormat {
-    match unsafe { disk.as_ref() }.map(|disk| disk.disk.format()) {
+    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
         Some(DiskFormat::Qcow2 { .. }) => RemanenceDiskFormat::Qcow2,
         _ => RemanenceDiskFormat::Raw,
     }
@@ -1176,7 +1360,7 @@ pub unsafe extern "C" fn remanence_disk_format(disk: *const RemanenceDisk) -> Re
 /// The qcow2 version, or 0 for a raw image.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_qcow2_version(disk: *const RemanenceDisk) -> u32 {
-    match unsafe { disk.as_ref() }.map(|disk| disk.disk.format()) {
+    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
         Some(DiskFormat::Qcow2 { version }) => version,
         _ => 0,
     }
@@ -1185,13 +1369,13 @@ pub unsafe extern "C" fn remanence_disk_qcow2_version(disk: *const RemanenceDisk
 /// The virtual disk size in bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_size(disk: *const RemanenceDisk) -> u64 {
-    unsafe { disk.as_ref() }.map_or(0, |disk| disk.disk.size())
+    unsafe { disk.as_ref() }.map_or(0, |disk| disk.medium().map_or(0, |m| m.size()))
 }
 
 /// Whether uncommitted changes exist.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_is_modified(disk: *const RemanenceDisk) -> bool {
-    unsafe { disk.as_ref() }.is_some_and(|disk| disk.disk.is_modified())
+    unsafe { disk.as_ref() }.is_some_and(|disk| disk.medium().is_some_and(|m| m.is_modified()))
 }
 
 /// Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
@@ -1209,7 +1393,12 @@ pub unsafe extern "C" fn remanence_disk_entries(
         return ptr::null_mut();
     };
     let path = unsafe { utf8_arg(path) }.unwrap_or_default();
-    match disk.disk.entries(VolumeId::from_value(volume_id), path.as_ref()) {
+        let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium.entries(VolumeId::from_value(volume_id), path.as_ref()) {
         Ok(entries) => {
             let entries = entries.iter().map(FatEntryView::new).collect();
             Box::into_raw(Box::new(RemanenceFatEntryList { entries }))
@@ -1243,7 +1432,12 @@ pub unsafe extern "C" fn remanence_disk_stat(
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match disk.disk.stat(VolumeId::from_value(volume_id), path.as_ref()) {
+        let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium.stat(VolumeId::from_value(volume_id), path.as_ref()) {
         Ok(entry) => {
             let entries = entry.iter().map(FatEntryView::new).collect();
             Box::into_raw(Box::new(RemanenceFatEntryList { entries }))
@@ -1322,7 +1516,12 @@ pub unsafe extern "C" fn remanence_disk_read_file(
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match disk.disk.read_file(VolumeId::from_value(volume_id), path.as_ref()) {
+        let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium.read_file(VolumeId::from_value(volume_id), path.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1360,10 +1559,12 @@ pub unsafe extern "C" fn remanence_disk_read_file_at(
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
-    match disk
-        .disk
-        .read_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, buffer)
-    {
+    let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match medium.read_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, buffer) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1393,7 +1594,12 @@ pub unsafe extern "C" fn remanence_disk_resize_file(
         unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     };
-    match disk.disk.resize_file(VolumeId::from_value(volume_id), path.as_ref(), size) {
+        let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match medium.resize_file(VolumeId::from_value(volume_id), path.as_ref(), size) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1435,10 +1641,12 @@ pub unsafe extern "C" fn remanence_disk_write_file_at(
     } else {
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
-    match disk
-        .disk
-        .write_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, data)
-    {
+    let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match medium.write_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, data) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1509,10 +1717,12 @@ pub unsafe extern "C" fn remanence_disk_write_file(
     } else {
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
-    match disk
-        .disk
-        .write_file(VolumeId::from_value(volume_id), path.as_ref(), contents)
-    {
+    let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match medium.write_file(VolumeId::from_value(volume_id), path.as_ref(), contents) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1541,7 +1751,12 @@ pub unsafe extern "C" fn remanence_disk_make_directory(
         unsafe { set_error(error_category_out, error_out, &error) };
         return false;
     };
-    match disk.disk.make_directory(VolumeId::from_value(volume_id), path.as_ref()) {
+        let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match medium.make_directory(VolumeId::from_value(volume_id), path.as_ref()) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1566,7 +1781,12 @@ pub unsafe extern "C" fn remanence_disk_commit(
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return false;
     };
-    match disk.disk.commit() {
+        let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return false;
+    };
+    match medium.commit() {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -1579,7 +1799,9 @@ pub unsafe extern "C" fn remanence_disk_commit(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_disk_rollback(disk: *mut RemanenceDisk) {
     if let Some(disk) = unsafe { disk.as_mut() } {
-        disk.disk.rollback();
+        if let Some(medium) = disk.medium() {
+            medium.rollback();
+        }
     }
 }
 
@@ -1634,7 +1856,12 @@ pub unsafe extern "C" fn remanence_disk_read_hdos_file(
         unsafe { set_error(error_category_out, error_out, &error) };
         return ptr::null_mut();
     };
-    match handle.disk.read_hdos_file(name.as_ref()) {
+        let Some(medium) = handle.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium.read_hdos_file(name.as_ref()) {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, &error) };
@@ -3881,7 +4108,12 @@ pub unsafe extern "C" fn remanence_disk_inspect(
     let Some(disk) = (unsafe { disk.as_mut() }) else {
         return ptr::null_mut();
     };
-    match disk.disk.inspect() {
+        let Some(medium) = disk.medium() else {
+        let error = remanence::Error::io("the device holding this medium was detached");
+        unsafe { set_error(error_category_out, error_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium.inspect() {
         Ok(report) => {
             let (content, content_evidence) = match &report.content {
                 DiskContent::Blank => (RemanenceDiskContent::Blank, None),

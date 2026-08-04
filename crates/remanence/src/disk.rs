@@ -136,17 +136,24 @@ impl Disk {
     /// composed, every backing file claimed immutable for the session's
     /// life (U6). Writes allocate copy-on-write into the top image only;
     /// commit preserves the backing relationship.
-    pub fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
+    /// Opens `path` at the stated default cache bound.
+    ///
+    /// Test-only. A medium reaches a caller through
+    /// [`crate::Session::attach`] and nothing else (P32), so this exists
+    /// for the unit tests in this module, which exercise the disk stack
+    /// below the device tier.
+    #[cfg(test)]
+    pub(crate) fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
         Self::open_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
     }
 
-    /// Opens `path` as [`Disk::open`] does, under a caller-declared
+    /// Opens `path` as [`Disk::open_with_cache`] does, under a caller-declared
     /// session cache bound (P27): at most `cache_bytes` of session
     /// state stays resident — reads, uncommitted writes, and a
     /// commit's staging alike — rounded up to whole 64 KiB extents,
     /// with one extent as the floor. Altered state past the bound
     /// spills to private session storage, never the image.
-    pub fn open_with_cache(
+    pub(crate) fn open_with_cache(
         path: impl AsRef<Path>,
         intent: AccessIntent,
         cache_bytes: u64,

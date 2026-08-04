@@ -9,7 +9,19 @@
 
 use std::path::{Path, PathBuf};
 
-use remanence::{AccessIntent, Archive, ContainerKind, Disk, ErrorCategory};
+use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind, Disk, ErrorCategory};
+
+/// Attaches `path` to a fresh session and returns both, because a medium
+/// is reachable only through the device holding it (P32). Tests keep the
+/// session alive for as long as they use the medium.
+fn attach(
+    path: impl AsRef<std::path::Path>,
+    intent: AccessIntent,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = Session::new();
+    let attachment = session.attach(path, intent)?;
+    Ok((session, attachment))
+}
 
 mod common;
 
@@ -92,7 +104,8 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
     let path = private_copy("member");
     // The second member: reached by decoding past the first, which is
     // what a solid folder costs, and no further.
-    let disk = Disk::open(entry_path(&path, SECOND_MEMBER), AccessIntent::Read).expect("the member opens");
+    let (mut disk_session, disk_at) = attach(entry_path(&path, SECOND_MEMBER), AccessIntent::Read).expect("the member opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     assert_eq!(disk.image_size_bytes(), SECOND_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
@@ -111,7 +124,7 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
     assert_eq!(container.id, "7z");
     assert_eq!(container.name, "7z archive");
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
 
@@ -123,8 +136,9 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     // the archive's own per-member CRC, which the catalog checks as it
     // spools, is what says so.
     let path = private_copy("long");
-    let disk =
-        Disk::open(entry_path(&path, LAST_MEMBER), AccessIntent::Read).expect("the last member opens");
+    let (mut disk_session, disk_at) =
+        attach(entry_path(&path, LAST_MEMBER), AccessIntent::Read).expect("the last member opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     assert_eq!(disk.image_size_bytes(), LAST_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
@@ -140,14 +154,14 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
         [0x00, 0xf4, 0x20, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d]
     );
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
 fn a_member_the_archive_does_not_hold_is_refused_by_name() {
     let path = private_copy("missing");
-    let error = Disk::open(entry_path(&path, "track99.raw"), AccessIntent::Read).expect_err("the member is absent");
+    let error = attach(entry_path(&path, "track99.raw"), AccessIntent::Read).expect_err("the member is absent");
     assert_eq!(error.category(), ErrorCategory::NotFound);
     assert!(error.to_string().contains("track99.raw"), "{error}");
     std::fs::remove_file(&path).ok();
@@ -168,7 +182,7 @@ fn a_corrupted_solid_folder_fails_closed() {
     assert_eq!(archive.entries().len(), MEMBER_COUNT);
     drop(archive);
 
-    let error = Disk::open(entry_path(&path, FIRST_MEMBER), AccessIntent::Read)
+    let error = attach(entry_path(&path, FIRST_MEMBER), AccessIntent::Read)
         .expect_err("a corrupted member is refused, never delivered");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     std::fs::remove_file(&path).ok();
@@ -177,7 +191,7 @@ fn a_corrupted_solid_folder_fails_closed() {
 #[test]
 fn an_archive_holding_many_members_names_the_ambiguity() {
     let path = private_copy("ambiguous");
-    let error = Disk::open(&path, AccessIntent::Read).expect_err("168 members is ambiguous");
+    let error = attach(&path, AccessIntent::Read).expect_err("168 members is ambiguous");
     assert!(
         error.to_string().contains("contains multiple files"),
         "{error}"

@@ -6,9 +6,21 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, ArchiveLayout, ContainerKind, ContainerLayout, Disk, Identification, ImageLayout,
-    PhysicalMediaLayout, SectorLayout,
+    AccessIntent, ArchiveLayout, AttachmentId, ContainerKind, ContainerLayout, Disk,
+    Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, Session,
 };
+
+/// Attaches `path` to a fresh session and returns both, because a medium
+/// is reachable only through the device holding it (P32). Tests keep the
+/// session alive for as long as they use the medium.
+fn attach(
+    path: impl AsRef<std::path::Path>,
+    intent: AccessIntent,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = Session::new();
+    let attachment = session.attach(path, intent)?;
+    Ok((session, attachment))
+}
 
 mod common;
 
@@ -71,7 +83,8 @@ fn archive_layout(identification: &Identification) -> &ArchiveLayout {
 fn identifies_hdos_fixture_image() {
     let image_path = fixture_path(IMAGE_NAME);
 
-    let disk = Disk::open(&image_path, AccessIntent::Read).expect("disk opens");
+    let (mut disk_session, disk_at) = attach(&image_path, AccessIntent::Read).expect("disk opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     let identification = disk.identify();
 
     assert_eq!(identification.containers.len(), 3);
@@ -82,7 +95,8 @@ fn identifies_hdos_fixture_image() {
 fn identifies_single_image_inside_zip_fixture() {
     let zip_path = private_copy(ZIP_NAME, "single");
 
-    let disk = Disk::open(&zip_path, AccessIntent::Read).expect("disk opens");
+    let (mut disk_session, disk_at) = attach(&zip_path, AccessIntent::Read).expect("disk opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     let identification = disk.identify();
 
     let archive = &identification.containers[0];
@@ -95,7 +109,7 @@ fn identifies_single_image_inside_zip_fixture() {
     assert_eq!(disk.image_path(), PathBuf::from(IMAGE_NAME));
     assert_hdos_identification(&identification);
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&zip_path).ok();
 }
 
@@ -104,7 +118,8 @@ fn identifies_explicit_image_inside_zip_fixture() {
     let zip_path = private_copy(ZIP_NAME, "explicit");
     let image_path = zip_path.join(IMAGE_NAME);
 
-    let disk = Disk::open(&image_path, AccessIntent::Read).expect("disk opens");
+    let (mut disk_session, disk_at) = attach(&image_path, AccessIntent::Read).expect("disk opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     let identification = disk.identify();
 
     let layout = archive_layout(&identification);
@@ -112,6 +127,6 @@ fn identifies_explicit_image_inside_zip_fixture() {
     assert_eq!(identification.containers.len(), 4);
     assert_hdos_identification(&identification);
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&zip_path).ok();
 }

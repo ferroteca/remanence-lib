@@ -32,6 +32,7 @@ mod inflate;
 mod journal;
 mod kryoflux;
 mod lzma;
+mod machine;
 mod mbr;
 mod p64;
 mod partition;
@@ -40,6 +41,7 @@ mod report;
 mod session;
 mod sevenzip;
 mod source;
+mod storage_device;
 mod volume;
 mod zip;
 
@@ -56,6 +58,7 @@ pub use error::{Error, ErrorCategory, Result};
 pub use evidence::DeclaredLoss;
 pub use fat::{FatEntry, FatEntryKind, FatKind};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
+pub use machine::Session;
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,
@@ -65,6 +68,7 @@ pub use report::{
     PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
 };
 pub use p64::{P64HalfTrack, P64Image, P64Report};
+pub use storage_device::{AttachmentId, DeviceFamily, StorageDevice};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout, FilesystemLayout,
     Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, SizeInformation,

@@ -10,7 +10,19 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use remanence::{AccessIntent, Disk, DiskFormat, ErrorCategory};
+use remanence::{AttachmentId, Session, AccessIntent, Disk, DiskFormat, ErrorCategory};
+
+/// Attaches `path` to a fresh session and returns both, because a medium
+/// is reachable only through the device holding it (P32). Tests keep the
+/// session alive for as long as they use the medium.
+fn attach(
+    path: impl AsRef<std::path::Path>,
+    intent: AccessIntent,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = Session::new();
+    let attachment = session.attach(path, intent)?;
+    Ok((session, attachment))
+}
 
 const CLUSTER_BITS: u32 = 12;
 const CLUSTER: u64 = 1 << CLUSTER_BITS;
@@ -179,7 +191,8 @@ fn reads_compose_through_a_raw_backing_file() {
         &qcow2_shell(base.len() as u64, Some(("base.img", Some("raw")))),
     );
 
-    let mut disk = Disk::open(&overlay, AccessIntent::Read).expect("the chain opens");
+    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Read).expect("the chain opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     assert_eq!(disk.format(), DiskFormat::Qcow2 { version: 3 });
     assert_eq!(disk.size(), base.len() as u64);
 
@@ -196,39 +209,42 @@ fn reads_compose_through_a_raw_backing_file() {
             .expect("the marker reads through the chain"),
         b"read through the chain"
     );
-    drop(disk);
+    drop(disk_session);
 
     // A write is seeded from the composed view, then allocated into the
     // top image. The backing bytes and the top's recorded relationship
     // remain byte-for-byte unchanged.
     let untouched_top = std::fs::read(&overlay).expect("top reads");
     let top_header = untouched_top[..CLUSTER as usize].to_vec();
-    let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("write chain opens");
-    let volume = only_volume(&mut disk);
+    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"rolled back")
         .expect("write buffers");
     disk.rollback();
-    drop(disk);
+    drop(disk_session);
     assert_eq!(
         std::fs::read(&overlay).expect("rolled-back top reads"),
         untouched_top,
         "rollback never reaches the top image"
     );
 
-    let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("write chain opens");
-    let volume = only_volume(&mut disk);
+    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"changed in the top")
         .expect("write buffers");
     disk.commit().expect("write commits");
-    drop(disk);
+    drop(disk_session);
 
     assert_eq!(std::fs::read(dir.join("base.img")).expect("base reads"), base);
     assert_eq!(
         &std::fs::read(&overlay).expect("top reads")[..CLUSTER as usize],
         top_header.as_slice()
     );
-    let mut reopened = Disk::open(&overlay, AccessIntent::Read).expect("written chain reopens");
-    let volume = only_volume(&mut reopened);
+    let (mut reopened_session, reopened_at) = attach(&overlay, AccessIntent::Read).expect("written chain reopens");
+    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let volume = only_volume(reopened);
     assert_eq!(
         reopened.read_file(volume, "MARKER.TXT").expect("changed file reads"),
         b"changed in the top"
@@ -255,12 +271,13 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     );
     let before = run_qemu_img(&qemu, &["info", overlay_arg]);
 
-    let mut disk = Disk::open(&overlay, AccessIntent::Write).expect("QEMU chain opens");
-    let volume = only_volume(&mut disk);
+    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("QEMU chain opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"remanence copy-on-write")
         .expect("write buffers");
     disk.commit().expect("write commits");
-    drop(disk);
+    drop(disk_session);
 
     let after = run_qemu_img(&qemu, &["info", overlay_arg]);
     assert!(
@@ -271,8 +288,9 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
 
     let flattened_arg = flattened.to_str().expect("utf-8 flattened path");
     run_qemu_img(&qemu, &["convert", "-O", "raw", overlay_arg, flattened_arg]);
-    let mut qemu_view =
-        Disk::open(&flattened, AccessIntent::Read).expect("QEMU-rendered disk opens");
+    let (mut qemu_session, qemu_at) =
+        attach(&flattened, AccessIntent::Read).expect("QEMU-rendered disk opens");
+    let qemu_view = qemu_session.medium(qemu_at).expect("the medium is attached");
     assert_eq!(
         qemu_view
             .read_file(volume, "MARKER.TXT")
@@ -301,7 +319,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         &qcow2_shell(base.len() as u64, Some(("../mid.qcow2", Some("qcow2")))),
     );
 
-    let mut disk = Disk::open(&top, AccessIntent::Read).expect("the chain opens");
+    let (mut disk_session, disk_at) = attach(&top, AccessIntent::Read).expect("the chain opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     let report = disk.inspect().expect("inspection composes");
     assert_eq!(report.volumes.len(), 1);
     let volume = report.volumes[0].id;
@@ -310,16 +329,17 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
             .expect("reads through two members"),
         b"read through the chain"
     );
-    drop(disk);
+    drop(disk_session);
 
     let base_before = std::fs::read(dir.join("base.img")).expect("base reads");
     let mid_before = std::fs::read(dir.join("mid.qcow2")).expect("middle reads");
-    let mut disk = Disk::open(&top, AccessIntent::Write).expect("two-level write opens");
-    let volume = only_volume(&mut disk);
+    let (mut disk_session, disk_at) = attach(&top, AccessIntent::Write).expect("two-level write opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"changed above two levels")
         .expect("write buffers");
     disk.commit().expect("write commits");
-    drop(disk);
+    drop(disk_session);
     assert_eq!(
         std::fs::read(dir.join("base.img")).expect("base reads"),
         base_before
@@ -328,7 +348,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         std::fs::read(dir.join("mid.qcow2")).expect("middle reads"),
         mid_before
     );
-    let mut reopened = Disk::open(&top, AccessIntent::Read).expect("changed chain reopens");
+    let (mut reopened_session, reopened_at) = attach(&top, AccessIntent::Read).expect("changed chain reopens");
+    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
     assert_eq!(
         reopened
             .read_file(volume, "MARKER.TXT")
@@ -356,14 +377,15 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
 
     // No format extension anywhere: the qcow2 middle and the raw base
     // are each told apart by magic, exactly as at the top.
-    let mut disk = Disk::open(&top, AccessIntent::Read).expect("the chain opens");
-    let volume = only_volume(&mut disk);
+    let (mut disk_session, disk_at) = attach(&top, AccessIntent::Read).expect("the chain opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let volume = only_volume(disk);
     assert_eq!(
         disk.read_file(volume, "MARKER.TXT")
             .expect("reads"),
         b"read through the chain"
     );
-    drop(disk);
+    drop(disk_session);
     cleanup(&dir);
 }
 
@@ -373,7 +395,7 @@ fn a_missing_backing_file_is_refused_by_name() {
     let overlay = dir.join("overlay.qcow2");
     write(&overlay, &qcow2_shell(64 * CLUSTER, Some(("gone.img", None))));
 
-    let error = Disk::open(&overlay, AccessIntent::Read).expect_err("missing member refused");
+    let error = attach(&overlay, AccessIntent::Read).expect_err("missing member refused");
     assert_eq!(error.category(), ErrorCategory::NotFound);
     let message = error.to_string();
     assert!(
@@ -391,7 +413,7 @@ fn a_backing_cycle_is_refused_by_name() {
     write(&a, &qcow2_shell(64 * CLUSTER, Some(("b.qcow2", Some("qcow2")))));
     write(&b, &qcow2_shell(64 * CLUSTER, Some(("a.qcow2", Some("qcow2")))));
 
-    let error = Disk::open(&a, AccessIntent::Read).expect_err("a cycle is refused");
+    let error = attach(&a, AccessIntent::Read).expect_err("a cycle is refused");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     assert!(
         error.to_string().contains("cycle"),
@@ -414,7 +436,7 @@ fn a_chain_past_the_claimed_depth_is_refused_by_name() {
         );
     }
 
-    let error = Disk::open(dir.join("member0.qcow2"), AccessIntent::Read)
+    let error = attach(dir.join("member0.qcow2"), AccessIntent::Read)
         .expect_err("a chain past the claim is refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(
@@ -423,9 +445,9 @@ fn a_chain_past_the_claimed_depth_is_refused_by_name() {
     );
 
     // One member shorter sits exactly at the claim, and opens.
-    let disk = Disk::open(dir.join("member1.qcow2"), AccessIntent::Read)
+    let (session, _at) = attach(dir.join("member1.qcow2"), AccessIntent::Read)
         .expect("sixteen files are within the claim");
-    drop(disk);
+    drop(session);
     cleanup(&dir);
 }
 
@@ -440,7 +462,7 @@ fn an_unclaimed_backing_format_is_refused_by_name() {
         &qcow2_shell(base.len() as u64, Some(("base.img", Some("vmdk")))),
     );
 
-    let error = Disk::open(&overlay, AccessIntent::Read).expect_err("vmdk backing refused");
+    let error = attach(&overlay, AccessIntent::Read).expect_err("vmdk backing refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();
     assert!(
@@ -463,7 +485,7 @@ fn the_p8_gates_run_for_every_chain_member() {
         &qcow2_shell(64 * CLUSTER, Some(("base.qcow2", Some("qcow2")))),
     );
 
-    let error = Disk::open(&overlay, AccessIntent::Read).expect_err("encrypted member refused");
+    let error = attach(&overlay, AccessIntent::Read).expect_err("encrypted member refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(
         error.to_string().contains("encrypted"),
@@ -484,23 +506,25 @@ fn every_chain_member_is_claimed_immutable() {
         &qcow2_shell(base.len() as u64, Some(("base.img", Some("raw")))),
     );
 
-    let disk = Disk::open(&overlay, AccessIntent::Read).expect("the chain opens");
+    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Read).expect("the chain opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
 
     // The backing file is immutable while the chain holds it: another
     // writer is refused immediately, another reader stays admitted.
     assert_eq!(
-        Disk::open(&base_path, AccessIntent::Write)
+        attach(&base_path, AccessIntent::Write)
             .expect_err("a writer is refused on a claimed member")
             .category(),
         ErrorCategory::Locked
     );
-    let reader = Disk::open(&base_path, AccessIntent::Read).expect("readers stay admitted");
-    drop(reader);
+    let (mut reader_session, reader_at) = attach(&base_path, AccessIntent::Read).expect("readers stay admitted");
+    let reader = reader_session.medium(reader_at).expect("the medium is attached");
+    drop(reader_session);
 
     // The claim lasts exactly as long as the chain.
-    drop(disk);
+    drop(disk_session);
     let writer =
-        Disk::open(&base_path, AccessIntent::Write).expect("the claim releases with the chain");
+        attach(&base_path, AccessIntent::Write).expect("the claim releases with the chain");
     drop(writer);
     cleanup(&dir);
 }

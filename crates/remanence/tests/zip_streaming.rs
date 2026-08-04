@@ -7,7 +7,19 @@
 //! reads without the entry resident whole. These tests build their zip
 //! by hand, so they run without fixtures.
 
-use remanence::{AccessIntent, Archive, ContainerKind, Disk};
+use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind, Disk};
+
+/// Attaches `path` to a fresh session and returns both, because a medium
+/// is reachable only through the device holding it (P32). Tests keep the
+/// session alive for as long as they use the medium.
+fn attach(
+    path: impl AsRef<std::path::Path>,
+    intent: AccessIntent,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = Session::new();
+    let attachment = session.attach(path, intent)?;
+    Ok((session, attachment))
+}
 
 const IMAGE_LEN: usize = 102_400; // h8d-sized, so identification bites
 
@@ -90,7 +102,8 @@ fn temp_zip(tag: &str, bytes: &[u8]) -> std::path::PathBuf {
 }
 
 fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
-    let disk = Disk::open(path, AccessIntent::Read).expect("disk opens");
+    let (mut disk_session, disk_at) = attach(path, AccessIntent::Read).expect("disk opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     assert_eq!(disk.image_size_bytes(), expected.len() as u64);
 
     // Bounded reads round-trip, at the front and across the tail.
@@ -162,7 +175,7 @@ fn a_lying_uncompressed_size_is_refused_by_name() {
     let zip = build_zip("disk.h8d", 8, &compressed, IMAGE_LEN as u32 + 1);
     let path = temp_zip("lying", &zip);
 
-    let error = Disk::open(&path, AccessIntent::Read).expect_err("the size lie is refused");
+    let error = attach(&path, AccessIntent::Read).expect_err("the size lie is refused");
     assert!(error.to_string().contains("expected"), "names the mismatch: {error}");
     std::fs::remove_file(&path).ok();
 }
@@ -179,7 +192,8 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("inspects", &zip);
 
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("the archived image opens");
+    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("the archived image opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
 
     // The raw plane: the archive wrapper is still reported.
     let identification = disk.identify();
@@ -193,7 +207,7 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
     // And both planes agree about the medium's size.
     assert_eq!(disk.image_size_bytes(), IMAGE_LEN as u64);
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
 
@@ -208,7 +222,7 @@ fn an_archive_entry_refuses_a_write_open_naming_the_reason() {
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("nowrite", &zip);
 
-    let error = Disk::open(&path, AccessIntent::Write).expect_err("a write open is refused");
+    let error = attach(&path, AccessIntent::Write).expect_err("a write open is refused");
     let message = error.to_string();
     assert!(message.contains("archive"), "names the archive: {message}");
     assert!(message.contains("writing"), "names the refusal: {message}");

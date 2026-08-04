@@ -90,14 +90,28 @@ int main(int argc, char **argv) {
 
     RemanenceErrorCategory error_category;
     char *error = NULL;
-    RemanenceDisk *disk =
-        remanence_disk_open(argv[1], REMANENCE_ACCESS_INTENT_READ, &error_category, &error);
-    if (disk == NULL) {
+    /* Nothing is reachable except through a device (P32): attach the
+     * medium to a session, then borrow the medium the device holds. */
+    RemanenceSession *session = remanence_session_new();
+    char *attachment = NULL;
+    if (!remanence_session_attach(session, argv[1], REMANENCE_ACCESS_INTENT_READ,
+                                  &attachment, &error_category, &error)) {
         fprintf(stderr, "error (category %d): %s\n",
                 (int)error_category, error != NULL ? error : "unknown");
         remanence_string_free(error);
+        remanence_session_free(session);
         return EXIT_FAILURE;
     }
+
+    /* Borrowed: the session owns this, so we never free it. */
+    RemanenceDisk *disk = remanence_session_medium(session, attachment);
+    if (disk == NULL) {
+        fprintf(stderr, "no medium attached at %s\n", attachment);
+        remanence_string_free(attachment);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
+    printf("Device:  %s\n", attachment);
 
     RemanenceIdentification *identification = remanence_disk_identify(disk);
 
@@ -153,6 +167,7 @@ int main(int argc, char **argv) {
     }
 
     remanence_identification_free(identification);
-    remanence_disk_free(disk);
+    remanence_string_free(attachment);
+    remanence_session_free(session);
     return status;
 }

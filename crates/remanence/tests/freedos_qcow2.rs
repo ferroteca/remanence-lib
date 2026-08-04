@@ -12,7 +12,19 @@
 
 use std::path::PathBuf;
 
-use remanence::{AccessIntent, Disk, DiskFormat, RegionRole};
+use remanence::{AttachmentId, Session, AccessIntent, Disk, DiskFormat, RegionRole};
+
+/// Attaches `path` to a fresh session and returns both, because a medium
+/// is reachable only through the device holding it (P32). Tests keep the
+/// session alive for as long as they use the medium.
+fn attach(
+    path: impl AsRef<std::path::Path>,
+    intent: AccessIntent,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = Session::new();
+    let attachment = session.attach(path, intent)?;
+    Ok((session, attachment))
+}
 
 mod common;
 
@@ -30,7 +42,8 @@ fn private_artifact(tag: &str) -> PathBuf {
 #[test]
 fn inspection_reports_primaries_extended_and_logicals() {
     let path = private_artifact("regions");
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
+    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     assert!(matches!(disk.format(), DiskFormat::Qcow2 { .. }));
 
     let report = disk.inspect().expect("inspection reads");
@@ -82,14 +95,15 @@ fn inspection_reports_primaries_extended_and_logicals() {
         );
     }
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
 fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
+    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
     let volumes: Vec<_> = disk
         .inspect()
         .expect("inspection reads")
@@ -107,14 +121,15 @@ fn marker_files_read_out_of_every_volume() {
         );
     }
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
 fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let path = private_artifact("roundtrip");
-    let mut disk = Disk::open(&path, AccessIntent::Write).expect("rig artifact opens");
+    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("rig artifact opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
 
     let volume_id = disk.inspect().expect("inspection reads").volumes[0].id;
     disk.write_file(
@@ -134,7 +149,7 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
         "rollback leaves the image untouched"
     );
 
-    drop(disk);
+    drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
 
@@ -143,7 +158,8 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
 #[test]
 fn inspection_reports_the_qcow2_device_schema_and_volumes() {
     let path = private_artifact("inspect");
-    let mut disk = Disk::open(&path, AccessIntent::Read).expect("rig artifact opens");
+    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
+    let disk = disk_session.medium(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 

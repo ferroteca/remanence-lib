@@ -13,6 +13,7 @@
 //! Failures raise `RemanenceError`.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -493,49 +494,196 @@ fn mode_str(mode: remanence::AccessMode) -> &'static str {
     }
 }
 
-/// An open disk image (raw or qcow2), held under the claim the
-/// declared intent takes until the object is closed or dropped.
+/// An open session: the machine scope, holding a set of family-typed
+/// storage devices (P32).
+///
+/// There is no separate machine object — a session *is* the scope within
+/// which device identity is resolved.
 #[pyclass(module = "remanence")]
-pub struct Disk {
-    inner: Option<remanence::Disk>,
-}
-
-impl Disk {
-    fn get(&mut self) -> PyResult<&mut remanence::Disk> {
-        self.inner
-            .as_mut()
-            .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "disk is closed"))
-    }
+pub struct Session {
+    inner: Arc<Mutex<remanence::Session>>,
 }
 
 #[pymethods]
-impl Disk {
-    /// Opens `path` with the caller's declared intent (P7).
-    /// `writable=True` claims the image exclusively — no other reader
-    /// or writer for the session's whole life — and fails at the open,
-    /// naming the reason, when the claim cannot be secured, never by
-    /// falling back to read-only. `writable=False` takes read access
-    /// only, denies writes to others, and admits other readers. An
-    /// interrupted commit left by an earlier session is reconciled
-    /// before the disk is exposed (P9): the image comes back wholly
-    /// the old state or wholly the committed new one, never a partial
-    /// third state.
+impl Session {
+    /// A session with no devices. Devices are attached and detached over
+    /// its life; the set is not fixed at open.
     #[new]
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(remanence::Session::new())),
+        }
+    }
+
+    /// Attaches the medium at `path` — a raw disk image, or
+    /// `archive[/entry]` — to a new device in the lowest free slot of
+    /// its family, returning the attachment identity it took (`"hdd0"`).
+    /// `writable=True` claims the medium exclusively and fails at the
+    /// open when that claim cannot be secured, never by falling back.
     #[pyo3(signature = (path, *, writable, cache_bytes = None))]
-    fn new(path: PathBuf, writable: bool, cache_bytes: Option<u64>) -> PyResult<Self> {
+    fn attach(
+        &self,
+        path: PathBuf,
+        writable: bool,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<String> {
         let intent = if writable {
             remanence::AccessIntent::Write
         } else {
             remanence::AccessIntent::Read
         };
-        match cache_bytes {
-            Some(cache_bytes) => remanence::Disk::open_with_cache(path, intent, cache_bytes),
-            None => remanence::Disk::open(path, intent),
+        let mut session = self.lock();
+        let attachment = match cache_bytes {
+            Some(cache_bytes) => session.attach_with_cache(path, intent, cache_bytes),
+            None => session.attach(path, intent),
         }
-        .map(|inner| Self { inner: Some(inner) })
-        .map_err(to_py_err)
+        .map_err(to_py_err)?;
+        Ok(attachment.to_string())
     }
 
+    /// Attaches the medium at `path` to the slot `attachment` names
+    /// (such as `"hdd1"`). The caller chooses the slot, never the name.
+    /// An occupied slot is refused rather than displaced, and a family
+    /// this release does not claim is refused by name.
+    #[pyo3(signature = (attachment, path, *, writable, cache_bytes = None))]
+    fn attach_at(
+        &self,
+        attachment: &str,
+        path: PathBuf,
+        writable: bool,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<String> {
+        let intent = if writable {
+            remanence::AccessIntent::Write
+        } else {
+            remanence::AccessIntent::Read
+        };
+        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
+        let mut session = self.lock();
+        match cache_bytes {
+            Some(cache_bytes) => session.attach_at_with_cache(
+                attachment.family(),
+                attachment.index(),
+                path,
+                intent,
+                cache_bytes,
+            ),
+            None => session.attach_at(attachment.family(), attachment.index(), path, intent),
+        }
+        .map_err(to_py_err)?;
+        Ok(attachment.to_string())
+    }
+
+    /// Detaches the device at `attachment`, releasing its medium's claim
+    /// and freeing the slot.
+    fn detach(&self, attachment: &str) -> PyResult<()> {
+        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
+        self.lock().detach(attachment).map_err(to_py_err)
+    }
+
+    /// The attachment identities currently in use, in slot-fill order.
+    #[getter]
+    fn devices(&self) -> Vec<String> {
+        self.lock()
+            .attachments()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    /// The medium in the device at `attachment`. The session owns it;
+    /// the returned object stays valid until that device is detached.
+    fn medium(&self, attachment: &str) -> PyResult<Disk> {
+        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
+        self.lock().medium(attachment).map_err(to_py_err)?;
+        Ok(Disk {
+            session: Arc::clone(&self.inner),
+            attachment,
+        })
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exception_type: Bound<'_, PyAny>,
+        _exception: Bound<'_, PyAny>,
+        _traceback: Bound<'_, PyAny>,
+    ) -> bool {
+        *self.lock() = remanence::Session::new();
+        false
+    }
+}
+
+impl Session {
+    fn lock(&self) -> MutexGuard<'_, remanence::Session> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// The medium in one storage device, reached through the session that
+/// holds it. Nothing is reachable except through a device (P32).
+#[pyclass(module = "remanence")]
+pub struct Disk {
+    session: Arc<Mutex<remanence::Session>>,
+    attachment: remanence::AttachmentId,
+}
+
+/// A borrow of the session with one medium selected.
+///
+/// It dereferences to the medium, so every verb below reads as though it
+/// held the disk directly while the session stays the owner. The medium
+/// is re-resolved on each borrow, so a detached device refuses rather
+/// than reaching freed state.
+struct MediumGuard<'a> {
+    session: MutexGuard<'a, remanence::Session>,
+    attachment: remanence::AttachmentId,
+}
+
+impl std::ops::Deref for MediumGuard<'_> {
+    type Target = remanence::Disk;
+
+    fn deref(&self) -> &Self::Target {
+        self.session
+            .device(self.attachment)
+            .and_then(remanence::StorageDevice::medium)
+            .expect("the device was present when this guard was taken")
+    }
+}
+
+impl std::ops::DerefMut for MediumGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.session
+            .medium(self.attachment)
+            .expect("the device was present when this guard was taken")
+    }
+}
+
+impl Disk {
+    fn get(&mut self) -> PyResult<MediumGuard<'_>> {
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if session.device(self.attachment).is_none() {
+            return Err(categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                "the device holding this medium was detached",
+            ));
+        }
+        Ok(MediumGuard {
+            session,
+            attachment: self.attachment,
+        })
+    }
+}
+
+#[pymethods]
+impl Disk {
     /// The artifact the disk was opened from (the archive path for
     /// archive inputs).
     #[getter]
@@ -848,23 +996,10 @@ impl Disk {
         Ok(())
     }
 
-    /// Releases the claim. Uncommitted changes are discarded.
-    fn close(&mut self) {
-        self.inner = None;
-    }
-
-    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __exit__(
-        &mut self,
-        _exception_type: Bound<'_, PyAny>,
-        _exception: Bound<'_, PyAny>,
-        _traceback: Bound<'_, PyAny>,
-    ) -> bool {
-        self.inner = None;
-        false
+    /// The attachment identity of the device holding this medium.
+    #[getter]
+    fn attachment(&self) -> String {
+        self.attachment.to_string()
     }
 }
 
@@ -2179,6 +2314,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TrackSectorLayout>()?;
     m.add_class::<FilesystemLayout>()?;
     m.add_class::<HdosFile>()?;
+    m.add_class::<Session>()?;
     m.add_class::<Disk>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;

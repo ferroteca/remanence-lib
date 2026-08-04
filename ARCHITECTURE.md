@@ -14,7 +14,7 @@ One core, two bindings:
   serialized-container, partition-layout, and filesystem adapters with
   built-in role-specific catalogs; the identification model, the HDOS directory lister and
   file extractor, the self-contained ZIP/DEFLATE reader that lets
-  `Disk::open` reach inside archives, and the disk stack —
+  an attached medium reach inside archives, and the disk stack —
   the declared-intent deny-write claim, the native qcow2 v2/v3 driver
   with read composition and top-image copy-on-write through backing
   chains, MBR partition discovery, FAT12/FAT16 volume read/write, and the
@@ -46,7 +46,9 @@ application surface?" by lookup, not judgement. Numbers are permanent and
 never reused.
 
 - **S1 — The Rust crate API.** The public surface of `crates/remanence`:
-  `Disk`, `Identification` and the container/layout types,
+  `Session`, `StorageDevice`, `AttachmentId` and `DeviceFamily`;
+  `Disk` — reached through a device, never opened directly —
+  `Identification` and the container/layout types,
   `Archive` and `ArchiveEntry`,
   `list_hdos_files` and `HdosFile`, `Error`/`ErrorCategory`/`Result`, and
   the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo

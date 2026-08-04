@@ -2,9 +2,10 @@
 
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-A self-contained disk image analysis library in Rust. A `Disk` opens a
-disk image — raw, or an entry inside a `.zip` or `.7z` archive — under one
-claim, and identifies its container
+A self-contained disk image analysis library in Rust. A `Session` holds
+family-typed storage devices; attaching a disk image — raw, or an entry
+inside a `.zip` or `.7z` archive — to one opens it under a single claim
+and identifies its container
 layers: the archive wrapper, image format, physical media geometry, and
 probable filesystem, each with comparable confidence and human-readable
 evidence. Executable, role-specific adapters recognize and validate formats;
@@ -138,7 +139,11 @@ with build instructions in its header comment.
 ## Using the library
 
 ```rust
-let mut disk = remanence::Disk::open("disk.h8d", remanence::AccessIntent::Read)?;
+// A session is the machine scope; a medium is reached through the
+// storage device it is attached to.
+let mut session = remanence::Session::new();
+let hdd0 = session.attach("disk.h8d", remanence::AccessIntent::Read)?;
+let disk = session.medium(hdd0)?;
 let identification = disk.identify();
 for container in &identification.containers {
     println!("{:?} {} ({}%)", container.kind, container.id, container.confidence);
@@ -149,7 +154,7 @@ let archive = remanence::Archive::open("captures.7z")?;
 for entry in archive.entries() {
     println!("{} ({} bytes)", entry.name, entry.uncompressed_size);
 }
-let member = remanence::Disk::open("captures.7z/track00.raw", remanence::AccessIntent::Read)?;
+let member = session.attach("captures.7z/track00.raw", remanence::AccessIntent::Read)?;
 
 let capture = remanence::CaptureSet::open("captures.7z")?;
 for member in &capture.inspect().members {
@@ -166,7 +171,9 @@ for member in &capture.inspect().members {
 
 ```python
 import remanence
-disk = remanence.Disk("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
+session = remanence.Session()
+hdd0 = session.attach("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
+disk = session.medium(hdd0)
 for c in disk.identify().containers:
     print(c.kind, c.id, c.confidence)
 for f in disk.list_hdos_files():

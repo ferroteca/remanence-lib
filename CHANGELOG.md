@@ -18,6 +18,43 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **A session holds storage devices, and a medium is reached through
+  one.** `Session` is the machine scope: it holds a dynamic set of
+  family-typed `StorageDevice`s, each a durable slot distinct from
+  whatever medium occupies it. `Session::attach` takes the lowest free
+  slot in the medium's family and returns the **attachment identity** it
+  took — `hdd0`, `hdd1` — while `attach_at` lets a caller choose the
+  slot. A caller chooses the slot, never the name. Attachment identities
+  are deliberately caller-facing and predictable, which is the opposite
+  of the opaque region, volume and filesystem identities an inspection
+  report issues: a device is machine configuration the caller supplied,
+  not evidence read off a disk (P21 already distinguishes the two).
+  Reflected as `remanence_session_*` on the C ABI, with
+  `remanence_session_medium` returning a **borrowed** medium view the
+  session owns, and as the Python `Session` class with `attach`,
+  `attach_at`, `detach`, `devices` and `medium`.
+- **Attach and detach are machine-down operations**, so a slot freed by
+  detaching is reused by a later same-family attach. That is safe
+  because nothing live refers to the old occupant, and it is not the
+  renumbering the layered report refuses for evidence-bearing lists.
+  Each attached medium holds its own claim for exactly as long as it is
+  attached; detaching releases it.
+- **A storage-device family is an enumerated claim.** Only the block
+  family is claimed, so `hdd0` is real and `floppy0` is refused by name
+  rather than guessed at.
+
+### Removed
+
+- **`Disk::open` and `remanence_disk_open`.** A medium is reachable only
+  through the device holding it, because a medium opened beside the
+  session would belong to no machine. The Python `Disk` constructor goes
+  with them: a `Disk` now arrives from `Session.medium(...)` and cannot
+  be constructed directly. `Disk::open_with_cache`'s declared cache
+  bound survives as `Session::attach_with_cache` and
+  `attach_at_with_cache`.
+
 ### Changed
 
 - **One claim, one medium surface: `Session` is merged into `Disk`.** The

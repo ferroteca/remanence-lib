@@ -141,7 +141,15 @@ typedef struct RemanenceArchive RemanenceArchive;
 // An open capture set, holding the claim on its archive.
 typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 
-// An open disk image.
+// A borrowed view of the medium in one storage device.
+//
+// **The session owns this; never free it.** It stays valid until the
+// device is detached or the session is freed.
+//
+// It names the medium by session and attachment identity rather than by
+// pointer, and re-resolves on every call. That is deliberate: a later
+// attach may reallocate the session's device storage, so a cached
+// pointer to the medium itself would dangle silently.
 typedef struct RemanenceDisk RemanenceDisk;
 
 // A snapshot of one disk's layered inspection. Owned by the caller and
@@ -176,6 +184,10 @@ typedef struct RemanenceP64Report RemanenceP64Report;
 
 // A recognition result, ranked highest confidence first.
 typedef struct RemanenceRecognition RemanenceRecognition;
+
+// An open session: the machine scope, holding a set of family-typed
+// storage devices (P32).
+typedef struct RemanenceSession RemanenceSession;
 
 // One zone as a profile declares it, and what the capture recovered of
 // it.
@@ -500,35 +512,64 @@ const char *remanence_hdos_file_flags(const RemanenceHdosFileList *list, size_t 
 // HDOS catalog date, e.g. "09-May-78", or "No-Date".
 const char *remanence_hdos_file_modified_date(const RemanenceHdosFileList *list, size_t index);
 
-// Opens `path` (UTF-8) as a disk image — raw or qcow2, detected by
-// magic — with the caller's declared intent (P7). A `Write` open
-// claims the image exclusively for the session's whole life and fails
-// at the open, naming the reason, when the claim cannot be secured —
-// never by falling back; a `Read` open takes read access only, denies
-// writes to others, and admits other readers. An interrupted commit
-// left by an earlier session is reconciled before the disk is exposed
-// (P9): the image comes back wholly the old state or wholly the
-// committed new one, never a partial third state. Returns null on
-// failure with a message in `error_out`.
-RemanenceDisk *remanence_disk_open(const char *path,
-                                   RemanenceAccessIntent intent,
-                                   RemanenceErrorCategory *error_category_out,
-                                   char **error_out);
+// Opens an empty session — the machine scope. Devices are attached and
+// detached over its life; the set is not fixed at open. Free with
+// `remanence_session_free`.
+RemanenceSession *remanence_session_new(void);
 
-// Opens a disk as `remanence_disk_open` does, under a declared session
-// cache bound: at most `cache_bytes` of session state stays resident,
-// rounded up to whole 64 KiB extents with one extent as the floor;
-// altered state past the bound spills to private session storage,
-// never the image.
-RemanenceDisk *remanence_disk_open_with_cache(const char *path,
-                                              RemanenceAccessIntent intent,
-                                              uint64_t cache_bytes,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out);
+// Frees a session, detaching every device and releasing every P7 claim.
+// Every borrowed medium view obtained from it becomes invalid.
+void remanence_session_free(RemanenceSession *session);
 
-// Frees a disk handle, releasing the P7 claim. Uncommitted changes are
-// discarded (the commit point never reached the file).
-void remanence_disk_free(RemanenceDisk *disk);
+// Attaches the medium at `path` (UTF-8) — a raw disk image, or
+// `archive[/entry]` — to a new device in the lowest free slot of its
+// family, writing the attachment identity it took (such as `hdd0`) to
+// `attachment_out`. Free that string with `remanence_string_free`. A
+// `Write` intent claims the medium exclusively and fails at the open
+// when the claim cannot be secured, never by falling back. Returns
+// false on failure.
+bool remanence_session_attach(RemanenceSession *session,
+                              const char *path,
+                              RemanenceAccessIntent intent,
+                              char **attachment_out,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out);
+
+// Attaches the medium at `path` to the slot `attachment` names (such as
+// `hdd1`). The caller chooses the slot, never the name. A slot already
+// occupied is refused rather than displaced, and a family this release
+// does not claim is refused by name (P3).
+bool remanence_session_attach_at(RemanenceSession *session,
+                                 const char *attachment,
+                                 const char *path,
+                                 RemanenceAccessIntent intent,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out);
+
+// Detaches the device at `attachment`, releasing its medium's P7 claim
+// and freeing the slot. Borrowed medium views for that device become
+// invalid.
+bool remanence_session_detach(RemanenceSession *session,
+                              const char *attachment,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out);
+
+// How many devices the session holds.
+size_t remanence_session_device_count(const RemanenceSession *session);
+
+// Writes the attachment identity of device `index` to
+// `attachment_out`, freed with `remanence_string_free`. Returns false
+// when `index` is out of range.
+bool remanence_session_device_attachment(const RemanenceSession *session,
+                                         size_t index,
+                                         char **attachment_out);
+
+// A **borrowed** view of the medium in the device at `attachment`.
+//
+// The session owns it; never free it. It stays valid until that device
+// is detached or the session is freed. Returns null when nothing is
+// attached there.
+RemanenceDisk *remanence_session_medium(RemanenceSession *session, const char *attachment);
 
 // The disk session's access mode — an echo of the declared intent.
 RemanenceAccessMode remanence_disk_mode(const RemanenceDisk *disk);

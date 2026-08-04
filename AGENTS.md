@@ -74,9 +74,13 @@ ABI, or Python module.
   image only, with each backing file claimed immutable; write path
   refuses snapshots and non-16-bit refcounts by name); `mbr.rs`
   partition discovery with
-  pinned types; `fat.rs` FAT12/16 volume read/write; `disk.rs` the
-  public `Disk` API (open/inspect/entries/stat/read/write/mkdir/
-  commit/rollback), with `report.rs` the layered inspection report its
+  pinned types; `fat.rs` FAT12/16 volume read/write; `machine.rs` the
+  session — the machine scope holding a dynamic set of family-typed
+  storage devices (P32) — with `storage_device.rs` the device itself: a
+  durable slot, its attachment identity (`hdd0`), and the medium
+  occupying it; `disk.rs` the medium API reached through a device
+  (identify/inspect/entries/stat/read/write/mkdir/commit/rollback),
+  with `report.rs` the layered inspection report its
   records are returned in — device, content outcome, partition schema,
   regions, volumes, filesystems, joined by opaque layout-derived
   identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2
