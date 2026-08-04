@@ -5,10 +5,16 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # One claim, one medium surface
 
-Design for pledged [F43](../FEATURES.md#f43--one-claim-one-medium-surface),
-serving U1, U3–U6 and U23 alongside in-force P1, P2, P7, P9, P12, P13 and
-P27. This is pledged, not implemented. Public names remain delivery surface
-design; what is settled here is the seam.
+> **Status:** delivered; the feature that carried it has been struck and
+> its handle retired. This remains the written statement of the seam —
+> the merged medium surface in `crates/remanence/src/disk.rs`, opened
+> through `crates/remanence/src/source.rs` over the claimed range device
+> in `crates/remanence/src/device.rs`. It serves U1, U3–U6 and U23
+> alongside in-force P1, P2, P7, P9, P12, P13 and P27.
+>
+> One thing it lists is narrower in the delivery than the prose below
+> once suggested, and deliberately: an archive entry is not writable, for
+> the reason the acceptance list now states.
 
 ## The defect being fixed
 
@@ -87,8 +93,11 @@ The merge is complete only when all of these hold, and the first two are
 combinations that were **impossible before** — they are what the merge
 newly admits, and therefore what proves it:
 
-- an archive entry (ZIP and 7z) identifies **and** inspects, reads files,
-  and where the claim allows it, writes;
+- an archive entry (ZIP and 7z) identifies **and** inspects and reads
+  files. It is **not** writable, and that is a decision rather than an
+  omission: a write would have to be encoded back into the archive's own
+  grammar before it meant anything, and no adapter claims that (P13), so
+  a write open on an entry is refused by name rather than degraded;
 - a qcow2 backing chain composes, commits and rolls back, reached the same
   way as any other medium;
 - an uncompressed archive entry is still read in place rather than extracted

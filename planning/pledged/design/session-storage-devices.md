@@ -5,10 +5,17 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # Session storage devices
 
-Design for pledged [P32](../ARCHITECTURE.md#p32--a-session-holds-a-dynamic-set-of-family-typed-storage-devices),
-serving U1, U3, U4, U7, U22 alongside pledged P14, P15, P16, P19, and F26.
-This is pledged, not implemented — the owed shape, not delivery surface
-design. Exact public type and method names remain delivery surface design.
+> **Status:** the device tier it specifies is delivered; the feature that
+> carried it has been struck and its handle retired. This remains the
+> written statement of the tier — `crates/remanence/src/machine.rs` and
+> `crates/remanence/src/storage_device.rs`.
+>
+> **P32 is not thereby armed.** What is delivered is the tier: a session
+> holding family-typed devices, attachment identities, machine-down
+> attach and detach. Region enumeration for families beyond block, file
+> access moving onto a region, and a device capability presenting
+> `Hardware<C>` remain unbuilt, and the sections below describing them
+> are still the owed shape rather than a claim about the code.
 
 ## No machine, just the session
 

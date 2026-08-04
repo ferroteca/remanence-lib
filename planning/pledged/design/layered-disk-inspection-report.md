@@ -5,12 +5,16 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # The layered disk inspection report
 
-> **Status:** pledged, not delivered. Design for
-> [F38](../FEATURES.md#f38--the-layered-disk-inspection-report), serving U4
-> and in-force P13, P16–P18, P21, and P23. Type and method names below
-> describe semantics; the public spelling settles during delivery. The
-> removal half — file verbs on the opaque identity, and the deletion of the
-> geometry surface — is F39 and is specified in its own entry.
+> **Status:** delivered, together with the removal half that retired the
+> model it replaced; both handles have been struck and retired. This
+> remains the written statement of the report — implemented in
+> `crates/remanence/src/report.rs` and produced by `Disk::inspect` —
+> serving U4 and in-force P13, P16–P18, P21, and P23.
+>
+> Two things it describes are of its moment rather than of the code. The
+> geometry surface it says coexists with the report is gone, deleted by
+> that removal half; and the report is now reached through the storage
+> device holding the medium, not from a disk opened on its own.
 
 ## Outcome
 

@@ -229,3 +229,32 @@ fn an_archive_entry_refuses_a_write_open_naming_the_reason() {
 
     std::fs::remove_file(&path).ok();
 }
+
+#[test]
+fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
+    // F43's acceptance list: the merge must not have lost the P27 bound
+    // the HDOS reader is held to. HDOS lives on small vintage disks, so
+    // anything past the bound is refused by its size alone — the point
+    // being that the refusal happens before a byte is materialized, not
+    // after a large image has been read whole.
+    let path = std::env::temp_dir().join(format!(
+        "remanence-hdos-bound-{}.img",
+        std::process::id()
+    ));
+    std::fs::write(&path, vec![0u8; 9 * 1024 * 1024]).expect("oversized image writes");
+
+    let mut session = Session::new();
+    let id = session
+        .attach(&path, AccessIntent::Read)
+        .expect("the image itself opens; only the HDOS reader is bounded");
+    let medium = session.medium(id).expect("the medium is attached");
+
+    let error = medium
+        .list_hdos_files()
+        .expect_err("an image past the bound is refused");
+    let message = error.to_string();
+    assert!(message.contains("bounded"), "names the bound: {message}");
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
