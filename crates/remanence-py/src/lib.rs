@@ -2379,15 +2379,7 @@ impl MasteringPolicy {
 
 impl MasteringPolicy {
     fn to_core(&self) -> PyResult<remanence::MasteringPolicy> {
-        let named = |what: &str, given: &str, admitted: &[&str]| {
-            categorized_py_err(
-                remanence::ErrorCategory::Unsupported,
-                format!(
-                    "{what} policy {given:?} is not one this library admits; it takes \
-                     one of {admitted:?}"
-                ),
-            )
-        };
+        let named = unadmitted;
         Ok(remanence::MasteringPolicy {
             side: self.side,
             observation: remanence::ObservationPolicy::Selected {
@@ -2536,8 +2528,478 @@ impl MasteredMedium {
             .map_err(to_py_err)
     }
 
+    /// Materializes the family's hardware bitstream from this medium
+    /// under declared mechanics and read-channel rules.
+    ///
+    /// The medium is untouched and stays exactly what it was: the
+    /// bitstream is separate session state, carrying this medium's own
+    /// reduction policy as provenance beneath the channel that produced
+    /// it. There is no way back down — returning to a medium is a
+    /// separate, explicit mastering operation.
+    #[pyo3(signature = (policy, *, cache_bytes = None))]
+    fn materialize_c1541_bitstream(
+        &self,
+        policy: &ReadChannelPolicy,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<C1541Bitstream> {
+        C1541Bitstream::produce(
+            self.inner
+                .materialize_c1541_bitstream(
+                    policy.to_core()?,
+                    cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
+                )
+                .map_err(to_py_err)?,
+        )
+    }
+
     fn __repr__(&self) -> String {
         format!("MasteredMedium(locations={})", self.inner.locations())
+    }
+}
+
+/// One location the bitstream holds, and what the channel resolved
+/// there.
+///
+/// Every field is an observation: a count, a cell, a run, a remainder.
+/// Nothing here names a byte.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct BitstreamLocation {
+    /// The family half-track this addresses, as an exact ratio.
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub surface: Option<u64>,
+    /// Which declared density zone supplied the cell.
+    pub zone: u32,
+    /// The cell, in reference-clock cycles, exactly.
+    pub cell_cycles_numerator: u64,
+    pub cell_cycles_denominator: u64,
+    pub cells: u64,
+    pub one_bits: u64,
+    /// Bits the medium recorded, and bits a declared rule resolved.
+    /// They sum to `cells`.
+    pub recorded_bits: u64,
+    pub resolved_bits: u64,
+    pub short_cells: u64,
+    pub longest_zero_run: u64,
+    /// What is left of the circle after the last whole cell, over
+    /// `cell_cycles_denominator`.
+    pub wrap_slack_numerator: u64,
+}
+
+#[pymethods]
+impl BitstreamLocation {
+    fn __repr__(&self) -> String {
+        format!(
+            "BitstreamLocation(half_track={}/{}, zone={}, cells={})",
+            self.half_track_numerator, self.half_track_denominator, self.zone, self.cells
+        )
+    }
+}
+
+/// What one medium-to-bitstream transition produced.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct BitstreamReport {
+    pub profile_id: String,
+    pub profile_name: String,
+    pub profile_version: u32,
+    pub reference_clock_hz: u64,
+    pub cycles_per_rotation: u64,
+    pub locations: Vec<BitstreamLocation>,
+    /// Everything the bitstream does not carry of the medium beneath it.
+    pub declared_loss: Vec<DeclaredLoss>,
+    /// The channel that produced it and the policy that produced the
+    /// medium, in that order.
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl BitstreamReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "BitstreamReport(locations={}, declared_loss={})",
+            self.locations.len(),
+            self.declared_loss.len()
+        )
+    }
+}
+
+impl BitstreamReport {
+    fn new(report: &remanence::BitstreamReport) -> Self {
+        Self {
+            profile_id: report.profile_id.clone(),
+            profile_name: report.profile_name.clone(),
+            profile_version: report.profile_version,
+            reference_clock_hz: report.reference_clock_hz,
+            cycles_per_rotation: report.cycles_per_rotation,
+            locations: report
+                .locations
+                .iter()
+                .map(|location| BitstreamLocation {
+                    half_track_numerator: location.half_track_numerator,
+                    half_track_denominator: location.half_track_denominator,
+                    surface: location.surface,
+                    zone: location.zone,
+                    cell_cycles_numerator: location.cell_cycles_numerator,
+                    cell_cycles_denominator: location.cell_cycles_denominator,
+                    cells: location.cells,
+                    one_bits: location.one_bits,
+                    recorded_bits: location.recorded_bits,
+                    resolved_bits: location.resolved_bits,
+                    short_cells: location.short_cells,
+                    longest_zero_run: location.longest_zero_run,
+                    wrap_slack_numerator: location.wrap_slack_numerator,
+                })
+                .collect(),
+            declared_loss: report
+                .declared_loss
+                .iter()
+                .map(|loss| DeclaredLoss {
+                    code: loss.code.clone(),
+                    detail: loss.detail.clone(),
+                    count: loss.count,
+                })
+                .collect(),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// One location the bytestream holds.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct BytestreamLocation {
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub surface: Option<u64>,
+    pub bytes: u64,
+    pub resolved_bytes: u64,
+    /// Groups holding a pattern the family's table does not assign.
+    pub unassigned_groups: u64,
+    /// How many times framing was established on the family's landmark.
+    /// It says where bytes begin and nothing about what they are.
+    pub alignments: u64,
+    pub longest_landmark_bits: u64,
+    pub unframed_bits: u64,
+}
+
+#[pymethods]
+impl BytestreamLocation {
+    fn __repr__(&self) -> String {
+        format!(
+            "BytestreamLocation(half_track={}/{}, bytes={})",
+            self.half_track_numerator, self.half_track_denominator, self.bytes
+        )
+    }
+}
+
+/// What one bitstream-to-bytestream transition produced.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct BytestreamReport {
+    pub profile_id: String,
+    pub codec_id: String,
+    pub codec_name: String,
+    pub symbol_bits: u32,
+    pub data_bits: u32,
+    pub symbols_per_byte: u32,
+    pub locations: Vec<BytestreamLocation>,
+    pub declared_loss: Vec<DeclaredLoss>,
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl BytestreamReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "BytestreamReport(codec_id={:?}, locations={})",
+            self.codec_id,
+            self.locations.len()
+        )
+    }
+}
+
+impl BytestreamReport {
+    fn new(report: &remanence::BytestreamReport) -> Self {
+        Self {
+            profile_id: report.profile_id.clone(),
+            codec_id: report.codec_id.clone(),
+            codec_name: report.codec_name.clone(),
+            symbol_bits: report.symbol_bits,
+            data_bits: report.data_bits,
+            symbols_per_byte: report.symbols_per_byte,
+            locations: report
+                .locations
+                .iter()
+                .map(|location| BytestreamLocation {
+                    half_track_numerator: location.half_track_numerator,
+                    half_track_denominator: location.half_track_denominator,
+                    surface: location.surface,
+                    bytes: location.bytes,
+                    resolved_bytes: location.resolved_bytes,
+                    unassigned_groups: location.unassigned_groups,
+                    alignments: location.alignments,
+                    longest_landmark_bits: location.longest_landmark_bits,
+                    unframed_bits: location.unframed_bits,
+                })
+                .collect(),
+            declared_loss: report
+                .declared_loss
+                .iter()
+                .map(|loss| DeclaredLoss {
+                    code: loss.code.clone(),
+                    detail: loss.detail.clone(),
+                    count: loss.count,
+                })
+                .collect(),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// The complete declared policy for one medium-to-bitstream transition.
+///
+/// Every argument is keyword-only and required, deliberately: each is a
+/// decision about evidence, and a channel that arrived at one by
+/// construction rather than by declaration is what the drive profile
+/// exists to prevent. `density` is `"declared"` or `"fixed"` with
+/// `density_zone`; `unzoned` is `"refuse"` or `"omit"`; `weak_pulse` is
+/// `"declared"` with `weak_pulse_detected` or `"seeded"`.
+#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ReadChannelPolicy {
+    pub density: String,
+    pub density_zone: u32,
+    pub unzoned: String,
+    pub weak_pulse: String,
+    pub weak_pulse_detected: bool,
+    /// What makes any stochastic element of the channel reproducible.
+    pub seed: u64,
+}
+
+#[pymethods]
+impl ReadChannelPolicy {
+    #[new]
+    #[pyo3(signature = (
+        *,
+        density,
+        unzoned,
+        weak_pulse,
+        seed,
+        density_zone = 0,
+        weak_pulse_detected = false,
+    ))]
+    fn new(
+        density: String,
+        unzoned: String,
+        weak_pulse: String,
+        seed: u64,
+        density_zone: u32,
+        weak_pulse_detected: bool,
+    ) -> Self {
+        Self {
+            density,
+            density_zone,
+            unzoned,
+            weak_pulse,
+            weak_pulse_detected,
+            seed,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ReadChannelPolicy(density={:?}, unzoned={:?}, weak_pulse={:?})",
+            self.density, self.unzoned, self.weak_pulse
+        )
+    }
+}
+
+impl ReadChannelPolicy {
+    fn to_core(&self) -> PyResult<remanence::ReadChannelPolicy> {
+        Ok(remanence::ReadChannelPolicy {
+            density: match self.density.as_str() {
+                "declared" => remanence::DensityPolicy::Declared,
+                "fixed" => remanence::DensityPolicy::Fixed {
+                    zone: self.density_zone,
+                },
+                other => return Err(unadmitted("density", other, &["declared", "fixed"])),
+            },
+            unzoned: match self.unzoned.as_str() {
+                "refuse" => remanence::UnzonedPolicy::Refuse,
+                "omit" => remanence::UnzonedPolicy::Omit,
+                other => return Err(unadmitted("unzoned", other, &["refuse", "omit"])),
+            },
+            weak_pulse: match self.weak_pulse.as_str() {
+                "declared" => remanence::WeakPulsePolicy::Declared {
+                    detected: self.weak_pulse_detected,
+                },
+                "seeded" => remanence::WeakPulsePolicy::Seeded,
+                other => return Err(unadmitted("weak pulse", other, &["declared", "seeded"])),
+            },
+            seed: self.seed,
+        })
+    }
+}
+
+/// The complete declared policy for one bitstream-to-bytestream
+/// transition. `alignment` is `"landmark"` or `"origin"`;
+/// `unassigned_symbol` is `"refuse"` or `"declare-loss"`.
+#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct GcrCodecPolicy {
+    pub alignment: String,
+    pub unassigned_symbol: String,
+}
+
+#[pymethods]
+impl GcrCodecPolicy {
+    #[new]
+    #[pyo3(signature = (*, alignment, unassigned_symbol))]
+    fn new(alignment: String, unassigned_symbol: String) -> Self {
+        Self {
+            alignment,
+            unassigned_symbol,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "GcrCodecPolicy(alignment={:?}, unassigned_symbol={:?})",
+            self.alignment, self.unassigned_symbol
+        )
+    }
+}
+
+impl GcrCodecPolicy {
+    fn to_core(&self) -> PyResult<remanence::GcrCodecPolicy> {
+        Ok(remanence::GcrCodecPolicy {
+            alignment: match self.alignment.as_str() {
+                "landmark" => remanence::AlignmentPolicy::Landmark,
+                "origin" => remanence::AlignmentPolicy::Origin,
+                other => return Err(unadmitted("alignment", other, &["landmark", "origin"])),
+            },
+            unassigned_symbol: match self.unassigned_symbol.as_str() {
+                "refuse" => remanence::UnassignedSymbolPolicy::Refuse,
+                "declare-loss" => remanence::UnassignedSymbolPolicy::DeclareLoss,
+                other => {
+                    return Err(unadmitted(
+                        "unassigned symbol",
+                        other,
+                        &["refuse", "declare-loss"],
+                    ));
+                }
+            },
+        })
+    }
+}
+
+/// A policy spelling this library does not admit.
+fn unadmitted(what: &str, given: &str, admitted: &[&str]) -> PyErr {
+    categorized_py_err(
+        remanence::ErrorCategory::Unsupported,
+        format!(
+            "{what} policy {given:?} is not one this library admits; it takes one of \
+             {admitted:?}"
+        ),
+    )
+}
+
+/// A hardware bitstream, held in the session. The bits stay behind this
+/// surface: what a hardware presentation makes of them is that seam's
+/// business.
+#[pyclass(module = "remanence")]
+pub struct C1541Bitstream {
+    inner: remanence::C1541Bitstream,
+    report: BitstreamReport,
+}
+
+impl C1541Bitstream {
+    fn produce(inner: remanence::C1541Bitstream) -> PyResult<Self> {
+        let report = BitstreamReport::new(inner.inspect());
+        Ok(Self { inner, report })
+    }
+}
+
+#[pymethods]
+impl C1541Bitstream {
+    /// The transition that produced this bitstream, and everything it
+    /// does not carry of the medium beneath it.
+    fn inspect(&self) -> BitstreamReport {
+        self.report.clone()
+    }
+
+    /// How many locations the bitstream claims.
+    #[getter]
+    fn locations(&self) -> u64 {
+        self.inner.locations()
+    }
+
+    #[getter]
+    fn backing_bytes(&self) -> u64 {
+        self.inner.backing_bytes()
+    }
+
+    #[getter]
+    fn resident_bytes(&self) -> u64 {
+        self.inner.resident_bytes()
+    }
+
+    /// Materializes the family's encoded bytestream from this bitstream
+    /// under its declared group code. The bitstream is untouched.
+    #[pyo3(signature = (policy, *, cache_bytes = None))]
+    fn materialize_c1541_bytestream(
+        &self,
+        policy: &GcrCodecPolicy,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<C1541Bytestream> {
+        let inner = self
+            .inner
+            .materialize_c1541_bytestream(
+                policy.to_core()?,
+                cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
+            )
+            .map_err(to_py_err)?;
+        let report = BytestreamReport::new(inner.inspect());
+        Ok(C1541Bytestream { inner, report })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("C1541Bitstream(locations={})", self.inner.locations())
+    }
+}
+
+/// An encoded bytestream, held in the session.
+#[pyclass(module = "remanence")]
+pub struct C1541Bytestream {
+    inner: remanence::C1541Bytestream,
+    report: BytestreamReport,
+}
+
+#[pymethods]
+impl C1541Bytestream {
+    fn inspect(&self) -> BytestreamReport {
+        self.report.clone()
+    }
+
+    #[getter]
+    fn locations(&self) -> u64 {
+        self.inner.locations()
+    }
+
+    #[getter]
+    fn backing_bytes(&self) -> u64 {
+        self.inner.backing_bytes()
+    }
+
+    #[getter]
+    fn resident_bytes(&self) -> u64 {
+        self.inner.resident_bytes()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("C1541Bytestream(locations={})", self.inner.locations())
     }
 }
 
@@ -2706,6 +3168,29 @@ impl P64Image {
         Ok(self.get()?.resident_bytes())
     }
 
+    /// Materializes the family's hardware bitstream from the medium
+    /// this container holds at rest.
+    ///
+    /// The container is read and nothing else. What the bitstream says
+    /// about how its medium came to exist is what the container said:
+    /// that it was found already a medium and this library derived none
+    /// of it.
+    #[pyo3(signature = (policy, *, cache_bytes = None))]
+    fn materialize_c1541_bitstream(
+        &self,
+        policy: &ReadChannelPolicy,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<C1541Bitstream> {
+        C1541Bitstream::produce(
+            self.get()?
+                .materialize_c1541_bitstream(
+                    policy.to_core()?,
+                    cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
+                )
+                .map_err(to_py_err)?,
+        )
+    }
+
     /// Releases the claim on the file and discards the private session
     /// storage the medium decoded into.
     fn close(&mut self) {
@@ -2792,6 +3277,14 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MasteringPlan>()?;
     m.add_class::<MasteringPlanReport>()?;
     m.add_class::<MasteredMedium>()?;
+    m.add_class::<ReadChannelPolicy>()?;
+    m.add_class::<GcrCodecPolicy>()?;
+    m.add_class::<C1541Bitstream>()?;
+    m.add_class::<C1541Bytestream>()?;
+    m.add_class::<BitstreamReport>()?;
+    m.add_class::<BitstreamLocation>()?;
+    m.add_class::<BytestreamReport>()?;
+    m.add_class::<BytestreamLocation>()?;
     m.add_class::<P64Image>()?;
     m.add_class::<P64Report>()?;
     m.add_class::<P64HalfTrack>()?;

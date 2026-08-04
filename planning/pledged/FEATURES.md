@@ -7,14 +7,6 @@ SPDX-License-Identifier: GPL-3.0-only
 
 > **Status:** pledged, not delivered. Every feature here is owed by the project, but no entry promises an order, date, or implementation approval.
 
-## F32 — C1541 drive and codec presentation
-
-Materialize a C1541-family hardware bitstream from a `FluxMedium` under declared mechanics and read-channel rules, then materialize the family's encoded GCR bytestream without assigning synchronization, headers, sectors, or files. The P30 drive profile owns this detailed knowledge; neither a capture adapter nor either flux model decides what a drive observes.
-
-Touches: S1, S2, S3. Supports: U7; P3–P5, P13, P15, P22, P23, P27. Needs: the flux-medium foundation, which is delivered, and the pledged P23 amendment, whose hardware-bitstream and encoded-bytestream layers this materializes. It does not promise sector recovery, a generic bitstream API, or every drive family.
-
-Companion design: [design/flux-capture-and-hardware-bitstream.md](design/flux-capture-and-hardware-bitstream.md).
-
 ## F41 — VDI differencing chains
 
 Make a VDI differencing image a first-class disk, as a qcow2 with a

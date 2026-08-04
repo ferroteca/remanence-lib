@@ -20,6 +20,7 @@ mod adapters;
 mod archive;
 mod assurance;
 mod c1541_mastering;
+mod c1541_presentation;
 mod cache;
 mod checksum;
 mod device;
@@ -27,6 +28,7 @@ mod disk;
 mod dos_letters;
 mod dos_name;
 mod drive_profile;
+mod encoded_bytestream;
 mod error;
 mod evidence;
 mod fat;
@@ -34,6 +36,7 @@ mod file_container;
 mod filesystem;
 mod flux_capture;
 mod flux_medium;
+mod hardware_bitstream;
 mod hdos;
 mod inflate;
 mod journal;
@@ -58,6 +61,11 @@ pub use assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
 pub use c1541_mastering::{
     DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan, MasteringPlanReport,
     MasteringPolicy, ObservationPolicy, OriginPolicy, ProjectionPolicy, PulseStrengthPolicy,
+};
+pub use c1541_presentation::{
+    AlignmentPolicy, BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport,
+    C1541Bitstream, C1541Bytestream, DensityPolicy, GcrCodecPolicy, ReadChannelPolicy,
+    UnassignedSymbolPolicy, UnzonedPolicy, WeakPulsePolicy,
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};

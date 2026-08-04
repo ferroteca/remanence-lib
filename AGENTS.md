@@ -51,13 +51,23 @@ ABI, or Python module.
   beside them — always derived and never constructible without the
   policy that produced it, over the same backing keyed by the family's
   own addressing; `drive_profile.rs` the P30 seam — a family's declared
-  stepping, rotation, surfaces, encoding shape and density map, the
+  stepping, rotation, surfaces, encoding shape and density map, its
+  read-channel and group-code declarations, the
   C1541 entry, and the probe that recognizes a capture from interval
   statistics alone and reports a ranked verdict with its evidence;
   `c1541_mastering.rs` the reduction from capture to medium under a
   declared policy (P29) — a plan that computes everything and writes
   nothing, the declared-loss account it carries, and the execution that
-  produces the medium; `p64.rs` the P64 image-format adapter, claimed in
+  produces the medium; `hardware_bitstream.rs` and
+  `encoded_bytestream.rs` the two P23 layers above the medium — circular
+  track-relative clocked bit state, every bit saying whether it was
+  recorded or resolved by a declared rule, and the byte sequence a
+  declared group code makes of it, which assigns no header, sector or
+  file to any of them — with `c1541_presentation.rs` the family's read
+  channel and GCR codec above both: the declared policy inputs of each
+  transition, the clocking, the framing, and the account of what each
+  layer does not carry from the one below;
+  `p64.rs` the P64 image-format adapter, claimed in
   both directions — the container grammar and its own range coder, the
   version gate and the structural refusals, decode of a stored medium
   into the flux-medium layer, and encode of a mastered one into a new

@@ -1043,9 +1043,8 @@ impl P64Image {
     }
 
     /// The decoded medium itself. The pulses stay behind the public
-    /// surface — no consumer of a decoded medium is delivered, and the
-    /// adapter's own round-trip test is what reads them.
-    #[cfg(test)]
+    /// surface: the presentation above the medium reads them, and
+    /// nothing outside the crate does.
     pub(crate) fn medium(&self) -> &FluxMedium {
         &self.medium
     }

@@ -542,7 +542,12 @@ impl SectionAddress for MediumSectionKey {
     }
 }
 
-fn write_location_key(out: &mut Vec<u8>, key: &LocationKey) {
+/// Writes one location key into a section address.
+///
+/// It is shared with the layers above the medium: they address by the
+/// same family locations, and two spellings of one key would put two
+/// answers about where a location's sections sit into one crate.
+pub(crate) fn write_location_key(out: &mut Vec<u8>, key: &LocationKey) {
     write_text(out, key.profile);
     write_varint(out, key.numerator);
     write_varint(out, key.denominator);
@@ -554,7 +559,7 @@ fn write_location_key(out: &mut Vec<u8>, key: &LocationKey) {
     }
 }
 
-fn read_location_key(
+pub(crate) fn read_location_key(
     source: &str,
     bytes: &[u8],
     at: usize,

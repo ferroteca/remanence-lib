@@ -124,7 +124,7 @@ pub(crate) struct DensityZone {
 impl DensityZone {
     /// The cell this zone claims, in reference-clock cycles, exactly:
     /// the clock divided by the rate.
-    fn nominal_cell(&self, rotation: &Rotation) -> (u128, u128) {
+    pub(crate) fn nominal_cell(&self, rotation: &Rotation) -> (u128, u128) {
         (
             u128::from(rotation.reference_clock) * u128::from(self.rate_denominator),
             u128::from(self.rate_numerator),
@@ -206,6 +206,84 @@ pub(crate) struct Materialization {
     pub(crate) strength_states: &'static [&'static str],
 }
 
+/// How the family's read channel clocks a medium's pulses into bit
+/// cells.
+///
+/// These are the mechanics and read-channel rules the presentation
+/// above the medium is materialized under. They belong to the family
+/// exactly as the recording conventions above them do: a medium records
+/// pulses and says nothing about the counter that turns them into bits.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ReadChannel {
+    /// A detected transition restarts the cell counter, so the next cell
+    /// boundary falls one whole cell after the transition rather than
+    /// one whole cell after the boundary it displaced.
+    pub(crate) resync_on_transition: bool,
+    /// How far past a cell boundary a transition may still arrive and be
+    /// admitted into the cell it opened, as a fraction of the cell.
+    ///
+    /// It is what makes the channel phase-locked rather than a boundary
+    /// comparison: at one half, a transition is admitted into whichever
+    /// cell boundary it is nearest, which is the only value that does
+    /// not read a disk running slightly fast as a disk with extra bits
+    /// on it. Declaring it is what keeps the number out of the code.
+    pub(crate) window_numerator: u64,
+    pub(crate) window_denominator: u64,
+    /// How many consecutive one bits the family's byte-framing landmark
+    /// is. `EncodingShape::landmark` states the same convention one
+    /// layer down, as a run of shortest intervals; a run of `n`
+    /// intervals is `n + 1` one bits, and the two are checked against
+    /// each other rather than one being derived from the other.
+    pub(crate) alignment_one_bits: u32,
+}
+
+/// The family's declared group code: how many bits of the recording
+/// carry how many bits of a byte, and which symbol each value is
+/// recorded as.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GroupCodec {
+    pub(crate) id: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) symbol_bits: u32,
+    pub(crate) data_bits: u32,
+    /// The symbol each data value is recorded as, indexed by the value.
+    /// A bit pattern this table does not hold is not a symbol, and the
+    /// codec says so rather than choosing the nearest entry.
+    pub(crate) symbols: &'static [u16],
+    pub(crate) provenance: &'static str,
+}
+
+impl GroupCodec {
+    /// How many symbols make one byte. Derived rather than declared, so
+    /// the two cannot disagree; a code whose symbols do not divide a
+    /// byte states no byte at all.
+    pub(crate) fn symbols_per_byte(&self) -> Option<u32> {
+        (self.data_bits > 0 && 8 % self.data_bits == 0).then(|| 8 / self.data_bits)
+    }
+
+    /// The value a symbol records, or `None` where the pattern is not
+    /// one the family assigns.
+    pub(crate) fn value_of(&self, symbol: u16) -> Option<u8> {
+        self.symbols
+            .iter()
+            .position(|candidate| *candidate == symbol)
+            .map(|value| value as u8)
+    }
+}
+
+/// The half of a profile the medium-to-bitstream and
+/// bitstream-to-bytestream materializations read.
+///
+/// It sits beside the recognition and materialization halves for the
+/// same reason they sit together: these are facts about one drive, and
+/// splitting them across two places is how two features come to hold
+/// different answers about it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Presentation {
+    pub(crate) read_channel: ReadChannel,
+    pub(crate) codec: GroupCodec,
+}
+
 /// One family's recording conventions, and the published description
 /// each declared fact derives from.
 #[derive(Debug, Clone, Copy)]
@@ -220,6 +298,7 @@ pub(crate) struct DriveProfile {
     pub(crate) encoding: EncodingShape,
     pub(crate) density: &'static [DensityZone],
     pub(crate) materialization: Materialization,
+    pub(crate) presentation: Presentation,
 }
 
 impl DriveProfile {
@@ -228,6 +307,26 @@ impl DriveProfile {
             .iter()
             .enumerate()
             .find(|(_, zone)| zone.first_location <= location && location <= zone.last_location)
+    }
+
+    /// The zone covering a location the family addresses as an exact
+    /// ratio of its steps.
+    ///
+    /// A half-track between two zones is covered by neither, which is a
+    /// fact about the family's declaration rather than a gap to be
+    /// closed: no published rate covers it, and choosing a neighbour's
+    /// would put an undeclared number into the presentation.
+    pub(crate) fn zone_for_ratio(
+        &self,
+        numerator: u64,
+        denominator: u64,
+    ) -> Option<(usize, &DensityZone)> {
+        let denominator = u128::from(denominator.max(1));
+        let position = u128::from(numerator);
+        self.density.iter().enumerate().find(|(_, zone)| {
+            u128::from(zone.first_location) * denominator <= position
+                && position <= u128::from(zone.last_location) * denominator
+        })
     }
 
     /// How many family locations this profile's density map covers.
@@ -321,7 +420,44 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
         density: DensityProjection::SnapToZoneNominal,
         strength_states: &["absent", "weak", "strong"],
     },
+    presentation: Presentation {
+        read_channel: ReadChannel {
+            // The 1541's read channel restarts its cell counter at every
+            // detected transition, which is what keeps a track readable
+            // while the disk's speed wanders away from the nominal.
+            resync_on_transition: true,
+            // Half a cell either way: the channel locks onto the
+            // recording's own phase rather than to the nominal one.
+            window_numerator: 1,
+            window_denominator: 2,
+            // Ten consecutive one bits. GCR's own table cannot produce
+            // more than four in a row across any pair of symbols, so ten
+            // is a pattern the recording cannot mean as data.
+            alignment_one_bits: 10,
+        },
+        codec: GroupCodec {
+            id: "c1541-gcr",
+            name: "Commodore group-coded recording",
+            symbol_bits: 5,
+            data_bits: 4,
+            symbols: &C1541_GCR_SYMBOLS,
+            provenance: "declared from the published Commodore GCR table: each four-bit \
+                         value is recorded as one of sixteen five-bit symbols, chosen so \
+                         that no symbol and no pair of them runs more than two zeros or \
+                         four ones together",
+        },
+    },
 };
+
+/// The symbol each four-bit value is recorded as, indexed by the value.
+///
+/// It is a declared fact of the family in exactly the sense every other
+/// field of the profile is: a published table, not a pattern any
+/// recording is permitted to establish.
+static C1541_GCR_SYMBOLS: [u16; 16] = [
+    0b01010, 0b01011, 0b10010, 0b10011, 0b01110, 0b01111, 0b10110, 0b10111, 0b01001, 0b11001,
+    0b11010, 0b11011, 0b01101, 0b11101, 0b11110, 0b10101,
+];
 
 /// The enrolled families, in the order they are consulted. Adding one
 /// changes its declaration, its tests, and this list.
@@ -1457,6 +1593,89 @@ mod tests {
         // Four cells is past what GCR produces, so it is unresolved
         // rather than admitted as a fourth multiple.
         assert_eq!(classify(256, cell, &C1541.encoding), None);
+    }
+
+    #[test]
+    fn the_landmark_is_one_convention_stated_at_two_layers_and_they_agree() {
+        // A run of n shortest intervals is n + 1 one bits: the interval
+        // shape the probe reads and the bit run the codec frames on are
+        // the same convention seen from either side of the bitstream,
+        // and the profile is where they are held to each other.
+        assert_eq!(
+            C1541.presentation.read_channel.alignment_one_bits,
+            C1541.encoding.landmark.min_run + 1
+        );
+        assert!(C1541.presentation.read_channel.resync_on_transition);
+    }
+
+    #[test]
+    fn the_group_code_is_a_declared_table_and_admits_no_pattern_outside_it() {
+        let codec = &C1541.presentation.codec;
+        assert_eq!(codec.symbol_bits, 5);
+        assert_eq!(codec.data_bits, 4);
+        // Two five-bit symbols to a byte, derived from the widths rather
+        // than declared beside them.
+        assert_eq!(codec.symbols_per_byte(), Some(2));
+        assert_eq!(codec.symbols.len(), 16);
+
+        // Every value round-trips, and the sixteen symbols are distinct.
+        for value in 0..16u8 {
+            assert_eq!(codec.value_of(codec.symbols[value as usize]), Some(value));
+        }
+        let mut sorted = codec.symbols.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 16);
+
+        // A five-bit pattern the table does not hold is not a symbol,
+        // and the codec says so rather than choosing the nearest entry.
+        assert_eq!(codec.value_of(0b00000), None);
+        assert_eq!(codec.value_of(0b11111), None);
+        assert_eq!(codec.value_of(0b00111), None);
+    }
+
+    #[test]
+    fn the_table_records_no_pattern_that_could_be_read_as_the_landmark() {
+        // The whole reason ten one bits can mean "landmark" is that no
+        // pair of symbols can produce a run that long. Checking it here
+        // is what keeps the two declarations honest about each other.
+        let codec = &C1541.presentation.codec;
+        let mut longest = 0u32;
+        for left in codec.symbols {
+            for right in codec.symbols {
+                let pair = (u64::from(*left) << codec.symbol_bits) | u64::from(*right);
+                let (mut run, mut best) = (0u32, 0u32);
+                for bit in (0..codec.symbol_bits * 2).rev() {
+                    if pair >> bit & 1 == 1 {
+                        run += 1;
+                        best = best.max(run);
+                    } else {
+                        run = 0;
+                    }
+                }
+                longest = longest.max(best);
+            }
+        }
+        assert!(
+            longest < C1541.presentation.read_channel.alignment_one_bits,
+            "the table can record a run of {longest} ones, which the landmark claims \
+             data cannot"
+        );
+    }
+
+    #[test]
+    fn a_half_track_between_two_zones_is_covered_by_neither() {
+        // Whole tracks are covered exactly as before.
+        assert_eq!(C1541.zone_for_ratio(1, 1).map(|(at, _)| at), Some(0));
+        assert_eq!(C1541.zone_for_ratio(18, 1).map(|(at, _)| at), Some(1));
+        // A half-track inside a zone's declared span is inside it.
+        assert_eq!(C1541.zone_for_ratio(3, 2).map(|(at, _)| at), Some(0));
+        assert_eq!(C1541.zone_for_ratio(33, 2).map(|(at, _)| at), Some(0));
+        // And one between two zones is covered by neither: no published
+        // rate reaches it, and a neighbour's would be an undeclared
+        // number in the presentation.
+        assert!(C1541.zone_for_ratio(35, 2).is_none());
+        assert!(C1541.zone_for_ratio(71, 2).is_none());
     }
 
     #[test]

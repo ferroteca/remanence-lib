@@ -362,8 +362,8 @@ beside the flux that produced them. The drive consumes a bitstream either
 way and does not care which floor supplied it, which is what lets one
 hardware model serve both a flux capture and a bitstream image.
 
-This is which of the P23 amendment's two permitted paths the project takes,
-not a new claim: that amendment lets a hardware profile materialize a
+This is which of in-force P23's two permitted paths the project takes, not a
+new claim: that principle lets a hardware profile materialize a
 hardware-bitstream active layer, and the ordinary drive composition
 declines to, leaving the floor where the image put it. A profile that does
 perform that ascending transition is doing something explicit and separate,
@@ -518,66 +518,6 @@ the drive electronics but below the disk VIA, matching U7. It specifies the
 common hardware layer without introducing a drive catalog. The delivered adapter layer still
 adds no hardware implementation or emulator presentation, and its delivery
 cut does not otherwise change.
-
-## P23 amendment — the durable magnetic layers, named from flux medium up
-
-P23's durable active-layer vocabulary is corrected at its bottom and
-extended above it.
-
-**The correction at the bottom is in force.** Renaming the `flux` row to
-**flux medium**, the clause that gives flux capture no row, capture becoming
-medium by mastering rather than by lowering, and generate-flux being
-generate-medium are all claims the code already honors, and they moved to
-root [ARCHITECTURE.md](../../ARCHITECTURE.md) as the delivered half of this
-amendment. They were armed on their own because they depend on no unbuilt
-work — the delivered flux stack is where they were true — and because in-force
-P22 named two flux models while in-force P23's vocabulary still named one,
-which is a divergence between two armed principles rather than a gap awaiting
-a feature.
-
-What remains below is the extension above the medium, which stays pledged
-until the layers it names exist.
-
-### Hardware bitstream and encoded bytestream sit above it
-
-The vocabulary gains **hardware bitstream** and
-**encoded bytestream** between flux medium and CHS. Hardware bitstream is circular,
-track-relative, clocked bit state, including the timing and provenance
-required by its declared drive family. G64 illustrates an image whose
-authoritative and initial active layer are hardware bitstream.
-
-Encoded bytestream is the circular, track-relative byte sequence a declared
-family codec materializes from hardware bitstream. For a 1541 it is GCR-decoded
-bytes, before the library identifies synchronization, headers, data fields,
-sectors, or files. No source format is presumed to begin at this layer.
-
-The magnetic-disk path above encoded bytestream is CHS, then filesystem.
-A family-owned synchronization and sector interpretation materializes CHS
-only where its claimed rules support it; a byte sequence is not assumed to
-contain sectors. P18 then recognizes and presents a filesystem above CHS.
-CHS is durable active media state; filesystem remains the higher derived
-seam, not a peer mutable media copy.
-
-The magnetic ladder therefore reads: flux capture → flux medium → hardware
-bitstream → encoded bytestream → CHS → filesystem. Block stays terminal and
-disjoint from all of it, and P23's prohibition on crossing between the block
-and flux families is untouched in both directions.
-
-Flux medium, hardware bitstream, and encoded bytestream are distinct durable
-layers, not caches and not mutable peer copies. A source whose authoritative
-layer is a flux medium begins medium-active; a hardware profile may
-explicitly materialize a hardware-bitstream active layer from it; a declared
-codec may then materialize an encoded-bytestream active layer. Each
-transition is atomic, preserves source state and codec/profile as provenance,
-and makes the destination the sole mutable session truth. Descending or
-returning to a lower layer is a separate explicit mastering transition. In
-either direction, P13 governs write availability: any unrepresentable
-projection is refused or requires explicit conversion.
-
-The existing P23 clauses for active-layer replacement, cache invalidation,
-bounded backing, and the ban on independently mutable peer copies apply to
-these layers. P22 continues to govern both flux models and the medium's
-marker channels.
 
 ## P25 — Artifact mappings make nesting recursive
 
@@ -835,9 +775,9 @@ form.
 
 In-force P22's two-model clause is scoped to the flux family, which is where
 the models were found; this principle generalizes the shape without amending
-that clause, and P22's own statement of it stands as written. The pledged P23
-amendment's upper half gains one sentence when it arms: capture-form artifacts
-take no row at any rung, as flux capture takes none at its own.
+that clause, and P22's own statement of it stands as written. In-force P23
+gains one sentence when this principle arms: capture-form artifacts take no
+row at any rung, as flux capture takes none at its own.
 
 ## P32 — A session holds a dynamic set of family-typed storage devices
 

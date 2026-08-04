@@ -55,6 +55,22 @@ caller says which it is. The plan carries the complete account of what
 the destination will not carry, in the source's own terms and before
 anything exists to carry it.
 
+A mastered medium — or the one a P64 holds at rest — can then be read
+the way a drive reads it. The family's read channel clocks the medium's
+pulses into a circular, track-relative **hardware bitstream**, and its
+declared group code resolves that into the family's **encoded
+bytestream**. Both rules are the drive profile's: the cell comes from
+the density zone the family declares, the counter restarts at every
+transition and admits one within half a cell of a boundary, and the
+bytes come from the published sixteen-symbol GCR table. Every bit says
+whether it was recorded or resolved by a declared rule; a location no
+zone covers is refused rather than clocked at a neighbour's rate; and a
+pattern the table does not assign keeps its own bits rather than
+becoming the nearest value. Neither layer assigns anything above a byte:
+no byte is a header, a data field, a sector or a file, and the framing
+landmark the codec locates says where bytes begin and nothing about what
+follows it.
+
 A mastered medium can then be saved as a P64, and a P64 opened back.
 The container's grammar and its own adaptive range coder are the
 adapter's claim, stated in the module from the published format
@@ -266,6 +282,16 @@ with remanence.CaptureSet("captures.7z") as capture:
     for loss in plan.report().declared_loss:
         print(loss.code, loss.count, loss.detail)
     medium = plan.execute()
+
+    # What a 1541's read channel and GCR codec make of that medium.
+    bits = medium.materialize_c1541_bitstream(remanence.ReadChannelPolicy(
+        density="declared", unzoned="refuse", weak_pulse="seeded",
+        seed=0x0123456789abcdef))
+    bytes_ = bits.materialize_c1541_bytestream(remanence.GcrCodecPolicy(
+        alignment="landmark", unassigned_symbol="declare-loss"))
+    for track in bytes_.inspect().locations:
+        print(track.half_track_numerator, track.bytes, track.resolved_bytes,
+              track.alignments, track.unframed_bits)
 
     for loss in medium.describe_p64().declared_loss:
         print(loss.code, loss.count, loss.detail)

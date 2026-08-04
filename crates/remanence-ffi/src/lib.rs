@@ -4296,6 +4296,675 @@ pub unsafe extern "C" fn remanence_p64_evidence(
 }
 
 // ---------------------------------------------------------------------------
+// The C1541 presentation: the hardware bitstream a declared read channel
+// clocks out of a flux medium, and the encoded bytestream a declared
+// group code resolves out of that. Neither layer assigns
+// synchronization, headers, sectors or files to what it holds, and there
+// is no way back down.
+
+use remanence::{C1541Bitstream, C1541Bytestream};
+
+/// Which declared density a location is clocked at.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceDensityPolicy {
+    /// The zone the family's density map declares for the location.
+    Declared = 0,
+    /// The zone in `density_zone`, for every location.
+    Fixed = 1,
+}
+
+/// What a location no declared zone covers becomes.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceUnzonedPolicy {
+    Refuse = 0,
+    Omit = 1,
+}
+
+/// How a pulse the medium states does not read the same every time
+/// becomes a definite bit.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceWeakPulsePolicy {
+    /// Every such pulse is taken as `weak_pulse_detected`, uniformly.
+    Declared = 0,
+    /// Each is resolved reproducibly from `seed` and its own angle.
+    Seeded = 1,
+}
+
+/// The complete declared policy for one medium-to-bitstream transition.
+/// There is no default: every field is a decision about evidence.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceReadChannelPolicy {
+    pub density: RemanenceDensityPolicy,
+    pub density_zone: u32,
+    pub unzoned: RemanenceUnzonedPolicy,
+    pub weak_pulse: RemanenceWeakPulsePolicy,
+    pub weak_pulse_detected: bool,
+    pub seed: u64,
+}
+
+/// Where byte framing begins.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceAlignmentPolicy {
+    /// At the family's declared landmark and nowhere else.
+    Landmark = 0,
+    /// At the circle's origin as well, the caller declaring it a byte
+    /// boundary.
+    Origin = 1,
+}
+
+/// What a group holding a pattern the family's table does not assign
+/// becomes.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceUnassignedSymbolPolicy {
+    Refuse = 0,
+    DeclareLoss = 1,
+}
+
+/// The complete declared policy for one bitstream-to-bytestream
+/// transition.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceGcrCodecPolicy {
+    pub alignment: RemanenceAlignmentPolicy,
+    pub unassigned_symbol: RemanenceUnassignedSymbolPolicy,
+}
+
+/// One location the bitstream holds, and what the channel resolved
+/// there.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceBitstreamLocation {
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub has_surface: bool,
+    pub surface: u64,
+    pub zone: u32,
+    /// The cell, in reference-clock cycles, exactly.
+    pub cell_cycles_numerator: u64,
+    pub cell_cycles_denominator: u64,
+    pub cells: u64,
+    pub one_bits: u64,
+    /// Bits the medium recorded, and bits a declared rule resolved.
+    pub recorded_bits: u64,
+    pub resolved_bits: u64,
+    pub short_cells: u64,
+    pub longest_zero_run: u64,
+    /// What is left of the circle after the last whole cell, over
+    /// `cell_cycles_denominator`.
+    pub wrap_slack_numerator: u64,
+}
+
+/// One location the bytestream holds.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceBytestreamLocation {
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub has_surface: bool,
+    pub surface: u64,
+    pub bytes: u64,
+    pub resolved_bytes: u64,
+    pub unassigned_groups: u64,
+    pub alignments: u64,
+    pub longest_landmark_bits: u64,
+    pub unframed_bits: u64,
+}
+
+struct LayerView {
+    first: CString,
+    second: CString,
+    third: CString,
+    loss_codes: Vec<CString>,
+    loss_details: Vec<CString>,
+    evidence: Vec<CString>,
+}
+
+impl LayerView {
+    fn new(
+        first: &str,
+        second: &str,
+        third: &str,
+        loss: &[remanence::DeclaredLoss],
+        evidence: &[String],
+    ) -> Self {
+        Self {
+            first: to_cstring(first),
+            second: to_cstring(second),
+            third: to_cstring(third),
+            loss_codes: loss.iter().map(|entry| to_cstring(&entry.code)).collect(),
+            loss_details: loss.iter().map(|entry| to_cstring(&entry.detail)).collect(),
+            evidence: evidence.iter().map(|line| to_cstring(line)).collect(),
+        }
+    }
+}
+
+/// A hardware bitstream, held in the session. The bits stay behind this
+/// handle; what it reports is the transition that produced them.
+pub struct RemanenceC1541Bitstream {
+    bitstream: C1541Bitstream,
+    view: LayerView,
+}
+
+/// An encoded bytestream, held in the session.
+pub struct RemanenceC1541Bytestream {
+    bytestream: C1541Bytestream,
+    view: LayerView,
+}
+
+fn to_channel_policy(policy: &RemanenceReadChannelPolicy) -> remanence::ReadChannelPolicy {
+    remanence::ReadChannelPolicy {
+        density: match policy.density {
+            RemanenceDensityPolicy::Declared => remanence::DensityPolicy::Declared,
+            RemanenceDensityPolicy::Fixed => remanence::DensityPolicy::Fixed {
+                zone: policy.density_zone,
+            },
+        },
+        unzoned: match policy.unzoned {
+            RemanenceUnzonedPolicy::Refuse => remanence::UnzonedPolicy::Refuse,
+            RemanenceUnzonedPolicy::Omit => remanence::UnzonedPolicy::Omit,
+        },
+        weak_pulse: match policy.weak_pulse {
+            RemanenceWeakPulsePolicy::Declared => remanence::WeakPulsePolicy::Declared {
+                detected: policy.weak_pulse_detected,
+            },
+            RemanenceWeakPulsePolicy::Seeded => remanence::WeakPulsePolicy::Seeded,
+        },
+        seed: policy.seed,
+    }
+}
+
+fn to_codec_policy(policy: &RemanenceGcrCodecPolicy) -> remanence::GcrCodecPolicy {
+    remanence::GcrCodecPolicy {
+        alignment: match policy.alignment {
+            RemanenceAlignmentPolicy::Landmark => remanence::AlignmentPolicy::Landmark,
+            RemanenceAlignmentPolicy::Origin => remanence::AlignmentPolicy::Origin,
+        },
+        unassigned_symbol: match policy.unassigned_symbol {
+            RemanenceUnassignedSymbolPolicy::Refuse => remanence::UnassignedSymbolPolicy::Refuse,
+            RemanenceUnassignedSymbolPolicy::DeclareLoss => {
+                remanence::UnassignedSymbolPolicy::DeclareLoss
+            }
+        },
+    }
+}
+
+fn own_bitstream(bitstream: C1541Bitstream) -> *mut RemanenceC1541Bitstream {
+    let report = bitstream.inspect();
+    let view = LayerView::new(
+        &report.profile_id,
+        &report.profile_name,
+        "",
+        &report.declared_loss,
+        &report.evidence,
+    );
+    Box::into_raw(Box::new(RemanenceC1541Bitstream { bitstream, view }))
+}
+
+/// Materializes the family's hardware bitstream from a mastered medium
+/// under declared mechanics and read-channel rules. The medium is
+/// untouched. Returns null on failure and stores a message in
+/// `error_out` (free with `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_mastered_medium_materialize_c1541_bitstream(
+    medium: *const RemanenceMasteredMedium,
+    policy: *const RemanenceReadChannelPolicy,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceC1541Bitstream {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let (Some(medium), Some(policy)) = (unsafe { medium.as_ref() }, unsafe { policy.as_ref() })
+    else {
+        let error = remanence::Error::io("null mastered medium or policy");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match medium
+        .medium
+        .materialize_c1541_bitstream(to_channel_policy(policy), cache_bytes)
+    {
+        Ok(bitstream) => own_bitstream(bitstream),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// The same, from the medium a P64 container holds at rest.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_p64_image_materialize_c1541_bitstream(
+    image: *const RemanenceP64Image,
+    policy: *const RemanenceReadChannelPolicy,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceC1541Bitstream {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let (Some(image), Some(policy)) = (unsafe { image.as_ref() }, unsafe { policy.as_ref() })
+    else {
+        let error = remanence::Error::io("null P64 image or policy");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match image
+        .image
+        .materialize_c1541_bitstream(to_channel_policy(policy), cache_bytes)
+    {
+        Ok(bitstream) => own_bitstream(bitstream),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a bitstream handle, discarding its private session storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_free(bitstream: *mut RemanenceC1541Bitstream) {
+    if !bitstream.is_null() {
+        drop(unsafe { Box::from_raw(bitstream) });
+    }
+}
+
+/// Materializes the family's encoded bytestream from a bitstream under
+/// its declared group code. The bitstream is untouched. Returns null on
+/// failure and stores a message in `error_out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_materialize_bytestream(
+    bitstream: *const RemanenceC1541Bitstream,
+    policy: *const RemanenceGcrCodecPolicy,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceC1541Bytestream {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let (Some(bitstream), Some(policy)) =
+        (unsafe { bitstream.as_ref() }, unsafe { policy.as_ref() })
+    else {
+        let error = remanence::Error::io("null bitstream or policy");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match bitstream
+        .bitstream
+        .materialize_c1541_bytestream(to_codec_policy(policy), cache_bytes)
+    {
+        Ok(bytestream) => {
+            let report = bytestream.inspect();
+            let view = LayerView::new(
+                &report.profile_id,
+                &report.codec_id,
+                &report.codec_name,
+                &report.declared_loss,
+                &report.evidence,
+            );
+            Box::into_raw(Box::new(RemanenceC1541Bytestream { bytestream, view }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a bytestream handle, discarding its private session storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_free(
+    bytestream: *mut RemanenceC1541Bytestream,
+) {
+    if !bytestream.is_null() {
+        drop(unsafe { Box::from_raw(bytestream) });
+    }
+}
+
+/// The profile the channel was declared by.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_profile_id(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> *const c_char {
+    unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| held.view.first.as_ptr())
+}
+
+/// Its human-readable name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_profile_name(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> *const c_char {
+    unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| held.view.second.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_profile_version(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> u32 {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().profile_version)
+}
+
+/// The frame the cells are angles in, carried from the medium unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_reference_clock_hz(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> u64 {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().reference_clock_hz)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_cycles_per_rotation(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> u64 {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().cycles_per_rotation)
+}
+
+/// How many bytes of private session storage the bitstream occupies, and
+/// how much of that is currently resident. It is never held whole (P27).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_backing_bytes(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> u64 {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.backing_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_resident_bytes(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> u64 {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.resident_bytes())
+}
+
+/// How many locations the bitstream claims.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_location_count(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> usize {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().locations.len())
+}
+
+/// One of them, written into `out`. Returns false when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_location(
+    bitstream: *const RemanenceC1541Bitstream,
+    index: usize,
+    out: *mut RemanenceBitstreamLocation,
+) -> bool {
+    let Some(held) = (unsafe { bitstream.as_ref() }) else {
+        return false;
+    };
+    let Some(location) = held.bitstream.inspect().locations.get(index) else {
+        return false;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = RemanenceBitstreamLocation {
+                half_track_numerator: location.half_track_numerator,
+                half_track_denominator: location.half_track_denominator,
+                has_surface: location.surface.is_some(),
+                surface: location.surface.unwrap_or(0),
+                zone: location.zone,
+                cell_cycles_numerator: location.cell_cycles_numerator,
+                cell_cycles_denominator: location.cell_cycles_denominator,
+                cells: location.cells,
+                one_bits: location.one_bits,
+                recorded_bits: location.recorded_bits,
+                resolved_bits: location.resolved_bits,
+                short_cells: location.short_cells,
+                longest_zero_run: location.longest_zero_run,
+                wrap_slack_numerator: location.wrap_slack_numerator,
+            };
+        }
+    }
+    true
+}
+
+/// How many kinds of thing the bitstream does not carry of the medium.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_count(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> usize {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.view.loss_codes.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_code(
+    bitstream: *const RemanenceC1541Bitstream,
+    index: usize,
+) -> *const c_char {
+    unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| {
+        held.view
+            .loss_codes
+            .get(index)
+            .map_or(ptr::null(), |code| code.as_ptr())
+    })
+}
+
+/// What was not carried, in the medium's own terms. A count is not an
+/// account.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_detail(
+    bitstream: *const RemanenceC1541Bitstream,
+    index: usize,
+) -> *const c_char {
+    unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| {
+        held.view
+            .loss_details
+            .get(index)
+            .map_or(ptr::null(), |detail| detail.as_ptr())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_amount(
+    bitstream: *const RemanenceC1541Bitstream,
+    index: usize,
+) -> u64 {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| {
+        held.bitstream
+            .inspect()
+            .declared_loss
+            .get(index)
+            .map_or(0, |loss| loss.count)
+    })
+}
+
+/// The channel that produced the bitstream and the policy that produced
+/// the medium, in that order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_evidence_count(
+    bitstream: *const RemanenceC1541Bitstream,
+) -> usize {
+    unsafe { bitstream.as_ref() }.map_or(0, |held| held.view.evidence.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bitstream_evidence(
+    bitstream: *const RemanenceC1541Bitstream,
+    index: usize,
+) -> *const c_char {
+    unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| {
+        held.view
+            .evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
+/// The profile and the group code the bytes were resolved by.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_profile_id(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> *const c_char {
+    unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| held.view.first.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_codec_id(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> *const c_char {
+    unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| held.view.second.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_codec_name(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> *const c_char {
+    unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| held.view.third.as_ptr())
+}
+
+/// How many bits of the recording carry how many bits of a byte, and how
+/// many symbols make one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_symbol_bits(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> u32 {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().symbol_bits)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_data_bits(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> u32 {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().data_bits)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_symbols_per_byte(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> u32 {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().symbols_per_byte)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_backing_bytes(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> u64 {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.backing_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_resident_bytes(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> u64 {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.resident_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_location_count(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> usize {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().locations.len())
+}
+
+/// One of them, written into `out`. Returns false when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_location(
+    bytestream: *const RemanenceC1541Bytestream,
+    index: usize,
+    out: *mut RemanenceBytestreamLocation,
+) -> bool {
+    let Some(held) = (unsafe { bytestream.as_ref() }) else {
+        return false;
+    };
+    let Some(location) = held.bytestream.inspect().locations.get(index) else {
+        return false;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = RemanenceBytestreamLocation {
+                half_track_numerator: location.half_track_numerator,
+                half_track_denominator: location.half_track_denominator,
+                has_surface: location.surface.is_some(),
+                surface: location.surface.unwrap_or(0),
+                bytes: location.bytes,
+                resolved_bytes: location.resolved_bytes,
+                unassigned_groups: location.unassigned_groups,
+                alignments: location.alignments,
+                longest_landmark_bits: location.longest_landmark_bits,
+                unframed_bits: location.unframed_bits,
+            };
+        }
+    }
+    true
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_count(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> usize {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.view.loss_codes.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_code(
+    bytestream: *const RemanenceC1541Bytestream,
+    index: usize,
+) -> *const c_char {
+    unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| {
+        held.view
+            .loss_codes
+            .get(index)
+            .map_or(ptr::null(), |code| code.as_ptr())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_detail(
+    bytestream: *const RemanenceC1541Bytestream,
+    index: usize,
+) -> *const c_char {
+    unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| {
+        held.view
+            .loss_details
+            .get(index)
+            .map_or(ptr::null(), |detail| detail.as_ptr())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_amount(
+    bytestream: *const RemanenceC1541Bytestream,
+    index: usize,
+) -> u64 {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| {
+        held.bytestream
+            .inspect()
+            .declared_loss
+            .get(index)
+            .map_or(0, |loss| loss.count)
+    })
+}
+
+/// The codec, the channel beneath it and the medium policy beneath that,
+/// in that order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_evidence_count(
+    bytestream: *const RemanenceC1541Bytestream,
+) -> usize {
+    unsafe { bytestream.as_ref() }.map_or(0, |held| held.view.evidence.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_evidence(
+    bytestream: *const RemanenceC1541Bytestream,
+    index: usize,
+) -> *const c_char {
+    unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| {
+        held.view
+            .evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
+// ---------------------------------------------------------------------------
 // The layered disk inspection report: one owned handle over the whole
 // report graph, with indexed bounds-checked access to its records and
 // relationships. Strings are borrowed from the handle that owns them, and

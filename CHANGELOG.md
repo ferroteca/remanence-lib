@@ -20,6 +20,58 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A 1541 now reads the disk, not just the recording.** A mastered flux
+  medium — or the one a P64 container holds at rest — materializes the
+  family's **hardware bitstream** under declared mechanics and
+  read-channel rules, and that bitstream materializes the family's
+  **encoded bytestream** under its declared group code:
+  `MasteredMedium::materialize_c1541_bitstream` and
+  `P64Image::materialize_c1541_bitstream` in Rust, then
+  `C1541Bitstream::materialize_c1541_bytestream`, with
+  `remanence_mastered_medium_materialize_c1541_bitstream`,
+  `remanence_p64_image_materialize_c1541_bitstream` and
+  `remanence_c1541_bitstream_materialize_bytestream` in C, and the same
+  three verbs on `MasteredMedium`, `P64Image` and `C1541Bitstream` in
+  Python. Each layer reports what it holds — per location the cell and
+  its zone, the bit counts, the framing landmarks, the byte counts — and
+  what it does not carry from the layer below.
+
+  **Every rule either transition applies is the drive profile's**, and
+  the profile gains the half that owns them: the read channel's resync
+  behavior and the window a transition is admitted by, and the family's
+  group code, which is the published sixteen-symbol table its bytes are
+  recorded as. Nothing derives either from what it is reading. The
+  window is why this is a read channel rather than a comparison: at half
+  a cell the channel locks onto the recording's own phase, so a disk
+  written a little fast holds a few more bits than the nominal rate
+  states rather than being read as though it did not.
+
+  **Every bit says how it came to be.** A pulse the medium states reads
+  the same every time yields a recorded bit; one it states does not is
+  resolved by a declared rule — flatly, or reproducibly from a seed —
+  and which rule resolved it travels with it. A location the family's
+  density map does not cover is refused or omitted by declaration, never
+  clocked at a neighbouring zone's rate. A group holding a pattern the
+  family's table does not assign keeps its own bits and is counted, or
+  refuses; there is no nearest entry.
+
+  **Neither layer assigns anything.** No byte is a header, a data field,
+  a sector or a file. The codec locates the family's framing landmark
+  because byte framing has to begin where the family says it does, and
+  having located one it claims nothing about what follows it. There is
+  no way back down: returning to a medium is a separate, explicit
+  mastering operation, and this release performs none. Both layers live
+  in private session storage under a declared bound and are never held
+  whole (P27); the bits and bytes themselves stay behind the surface, as
+  the medium's pulses already do.
+
+  **The upper half of the P23 amendment is armed**: the durable
+  active-layer vocabulary gains hardware bitstream and encoded
+  bytestream between flux medium and CHS, with the magnetic ladder
+  stated in full, and it moves from the pledged list to the in-force
+  architectural principles. P30's enumeration of what a drive profile
+  owns takes the read channel and the group code beside it.
+
 - **A deficient image is no longer all-or-nothing.** Every open now states
   what it established about the evidence beneath it, and it states it
   before anything is read: `Disk::assurance` in Rust,

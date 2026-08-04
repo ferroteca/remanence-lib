@@ -619,14 +619,65 @@ The durable active-layer vocabulary is exactly:
 |---|---|---|
 | **file container** | a rooted namespace of named entries and nested containers, entry bytes, and claimed metadata | container structure, not disk allocation or recording |
 | **flux medium** | circular track-relative flux transitions and strength semantics, with marker/sensor channels and provenance | a modeled magnetic recording surface |
+| **hardware bitstream** | circular track-relative clocked bit state, with the timing and provenance its declared drive family requires | what a family's read channel resolved, not what it means |
+| **encoded bytestream** | the circular track-relative byte sequence a declared family codec materializes from that bit state | the recording's own bytes, before any of them is a header, a sector, or a file |
 | **CHS** | records addressed by cylinder, head, and sector under a declared geometry | geometry and records, but not their physical encoding |
 | **block** | geometry-opaque logical blocks addressed by number | no cylinder, head, track, recording, or mechanism claim |
 
-These are four family-owned representations, not variants of one universal
+These are six family-owned representations, not variants of one universal
 schema. The flux medium includes its parallel marker channels; they are not
 another active layer. CHS and block both carry record bytes, but CHS's declared
 geometry is observable and load-bearing while block deliberately hides it.
 File container is semantic named-entry state and makes no disk claim.
+
+#### Hardware bitstream and encoded bytestream sit above the medium
+
+Hardware bitstream is pre-synchronization and pre-decoding: a bit cell is
+not a symbol, a byte, a sector or a file. Encoded bytestream is the byte
+sequence one declared family codec resolves out of it — for a 1541,
+GCR-decoded bytes — before the library identifies synchronization, headers,
+data fields, sectors, or files. A codec locates the family's declared
+framing landmark because byte framing has to begin where the family says it
+does, and having located one it claims nothing about what follows it. No
+source format is presumed to begin at either layer. An image whose
+authoritative and initial active layer were hardware bitstream — G64 is the
+example — would enter there; the library claims no such adapter today.
+
+The magnetic-disk path above encoded bytestream is CHS, then filesystem. A
+family-owned synchronization and sector interpretation materializes CHS only
+where its claimed rules support it; a byte sequence is not assumed to
+contain sectors. P18 then recognizes and presents a filesystem above CHS.
+CHS is durable active media state; filesystem remains the higher derived
+seam, not a peer mutable media copy.
+
+The magnetic ladder therefore reads: flux capture → flux medium → hardware
+bitstream → encoded bytestream → CHS → filesystem. Block stays terminal and
+disjoint from all of it, and the prohibition below on crossing between the
+block and flux families is untouched in both directions.
+
+Flux medium, hardware bitstream, and encoded bytestream are distinct durable
+layers, not caches and not mutable peer copies. A source whose authoritative
+layer is a flux medium begins medium-active; a hardware profile may
+explicitly materialize a hardware-bitstream active layer from it; a declared
+codec may then materialize an encoded-bytestream active layer. Each
+transition is atomic, preserves source state and codec/profile as
+provenance, and makes the destination the sole mutable session truth.
+Descending or returning to a lower layer is a separate explicit mastering
+transition. In either direction, P13 governs write availability: any
+unrepresentable projection is refused or requires explicit conversion.
+
+**Neither layer is writable in this release.** Both transitions materialize
+state a presentation reads, and no verb mutates either, so the sole-mutable-
+truth clause binds without yet having a mutation to bind: a medium and the
+bitstream above it may both be held, because neither is an independently
+mutable instance. What is already a property of the code is the rest — the
+transitions are whole or they refuse, each carries the profile, the codec
+and the source's own policy as provenance, and there is no way back down.
+
+The clauses below for active-layer replacement, cache invalidation, bounded
+backing, and the ban on independently mutable peer copies apply to these
+layers. P22 continues to govern both flux models and the medium's marker
+channels.
 
 **Flux capture takes no row.** It is an authoritative image layer under P13,
 which is a statement about what an artifact records, and it is read by
@@ -1002,8 +1053,12 @@ addressing and how many steps a location takes; its rotation rate and
 reference clock; its density or zone map and what each zone claims; the
 timing shape of its encoding landmarks; which surfaces it records; and the
 selection or variation rule by which several observed revolutions become one
-served medium. Each is a declared fact of the family, carried with its
-provenance — never arithmetic a capture is assumed to justify.
+served medium. It owns the same knowledge above the medium: the mechanics
+and read-channel rules by which a medium's pulses become clocked bit cells —
+the window a transition is admitted by, and whether a transition restarts
+the cell counter — and the family's group code, which is the table its
+bytes are recorded as. Each is a declared fact of the family, carried with
+its provenance — never arithmetic a capture is assumed to justify.
 
 **Recognition is a probe that carries its evidence.** A profile is offered
 the evidence and answers with a bounded, comparable confidence and the
