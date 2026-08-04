@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # C1541 hardware-bitstream and encoded-bytestream design
 
-> **Status:** proposed, not pledged. This design serves F32 and authorizes no implementation.
+> **Status:** pledged, not delivered. This design serves F32 and authorizes no implementation.
 
 F32 consumes a `FluxMedium` — the delivered flux-medium layer — through a declared C1541 drive profile. It alone owns the mechanical selection policy, read-channel timing/recovery behavior, and the resulting circular, track-relative hardware bitstream. Neither a catalog nor a capture adapter may supply those conclusions.
 

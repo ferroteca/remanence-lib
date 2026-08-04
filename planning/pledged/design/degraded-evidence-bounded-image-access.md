@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # Degraded, evidence-bounded image access
 
-Design for [F27](../FEATURES.md#f27--degraded-evidence-bounded-image-access), serving U3 and proposed P28. This is a proposed destination and delivery cut, not approval to implement it.
+Design for [F27](../FEATURES.md#f27--degraded-evidence-bounded-image-access), serving in-force U3 and pledged P28. This is a pledged destination and delivery cut, not approval to implement it.
 
 ## Outcome
 
