@@ -45,6 +45,16 @@ such as retries, C2 reports, drive offset, RF capture chain, and conflicting
 reads attach as evidence and never become deterministic recorded state merely
 because an image format stores them.
 
+A signal seam may hold more than one model behind its single active layer, as
+the magnetic family already does. A sampled capture and the corrected signal a
+player would have read are different objects: the second carries a timebase and
+frame the first does not, supplied by a declared decoder policy rather than
+found in the samples. D14's test governs the boundary unchanged — disagreement
+across observations is a capture fact, a corrected reading is a medium fact,
+and neither becomes the other unasked. A report names which model it speaks
+about. This creates no second active representation and no second commit
+target.
+
 An optical-active disc may expose a derived block presentation only over a
 family-declared recorded extent or channel mapping that defines logical user
 data. The presentation declares its scope, block size, address mapping, and
@@ -165,3 +175,55 @@ The degraded path is deliberately narrow: it applies only while determining a ca
 Degraded state revokes mutation authority for the session. A write-intent open reports an evidence-driven effective read-only mode and a stable condition; every write, commit, and mutation-capable derived operation is refused with that condition. P7's no-silent-fallback rule still governs an inability to acquire host access — this is a distinct restriction after a safe claim has been made. A session never regains write authority without a new verified open.
 
 P3 and P6 remain intact: the library refuses an unclaimed interpretation and stops the first operation it cannot account for. It does not turn a known, bounded deficiency into an all-or-nothing loss of independently readable evidence. P4 carries the reason, P10 carries the stable condition, and P5 requires equivalent assurance outcome, evidence, bounds, and effective mode in Rust, C, and Python.
+
+## P32 amendment — A device declares an addressing nature, and no family owns one
+
+A storage device declares an **addressing nature** when it is created: the
+shape of the address a caller presents to it. Two are claimed — **CHS**, where
+a declared geometry is observable and load-bearing, and **LBA**, where a flat
+block number deliberately hides it. A third, **sequential**, is owed wherever a
+tape family is claimed; it is the only one whose address cannot be formed
+without the device's current position, so a nature is not always a pure
+function from an address to a location.
+
+Nature is a fact about the device. It is machine configuration the caller
+supplies — the class this principle already places on the caller's side of the
+line, beside the slot an attach lands in — and it never reaches the media
+instance or its profile. P14 supplies the proof rather than the constraint:
+media is the independent mutable state *between image formats and drives*, and
+a medium carries no nature of its own. One 1.44 MiB disk is CHS-addressed in a
+floppy-controller drive and LBA-addressed over the USB floppy command set, and
+nothing about the disk changes when it moves between them.
+
+**No family is confined to one nature, deliberately.** A hard drive answers
+both CHS and LBA depending on the command issued, which is what makes nature a
+choice rather than a constant. Nothing here is served by additionally ruling
+which natures a floppy or optical family may take: such a rule would be a claim
+about hardware that exists rather than about what this library implements,
+which is the distinction P3 draws, and it would already be false, since ATAPI
+and USB floppy drives are LBA-addressed over ordinary floppy media. If a source
+addressed that way is ever claimed, it is claimed as LBA and this principle
+does not amend.
+
+**Nature constrains which layers can serve a device; it never selects one.**
+P13 and P23 settle the active layer from the evidence, and nature is checked
+against the result. An LBA device requires block state, which is why P23
+already holds that an LBA device cannot be lowered merely because another
+family knows CHS or flux; a CHS device requires a geometry, from evidence or
+from configuration. **Where a nature is not native to the source, its mapping
+is declared rather than assumed** — a CHS presentation over geometry-opaque
+block state declares the geometry it translates through, and an LBA
+presentation over CHS- or flux-active state declares the order that makes
+blocks of records. That is the requirement proposed P24 already places on an
+optical block presentation, stated once for every family instead of once per
+family.
+
+Nature also bounds the seams a device offers, without a further rule: an LBA
+device presents no P15 low hardware seam, having no geometry to position.
+
+**Not every way of reaching recorded state is an addressing, and nature names
+only those that are.** A flux medium and a sampled signal are reached by
+position and time — P15's seam applies timestamped control changes and returns
+causally ordered transitions rather than answering reads at addresses — so they
+carry no nature at all. They are active layers under P23 and proposed P24,
+beneath a device whose nature describes the addressed presentation above them.

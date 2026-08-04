@@ -16,8 +16,8 @@ the same family at different durable seams:
 
 ```text
 raw RF image  -> optical signal active -> family decoder -> program observations
-                                                        -> player presentation
-                                                        -> LV-ROM block view
+                 = RF capture, then                      -> player presentation
+                   corrected signal                      -> LV-ROM block view
 
 decoded CHD   -> optical program active ----------------> player presentation
                                                         -> LV-ROM block view
@@ -42,6 +42,87 @@ after a particular capture chain; they do not prove original pits, lands,
 reflectivity, pickup transfer function, or servo behavior. Re-decoding is the
 fidelity test. Byte-for-byte reproduction of a source wrapper is a separate
 adapter capability, not the definition of optical equivalence.
+
+## The signal seam holds two models
+
+The magnetic family already met this shape and split it (D14): a **flux
+capture** is what an instrument recorded, and a **flux medium** is what a drive
+would read, derived from the capture under declared policy and never
+constructible without it. The LaserDisc signal seam holds the same two objects
+under different names, and naming only one of them would repeat the ambiguity
+D14 found in P22.
+
+A raw RF capture is instrument state — uniform amplitude samples on the
+sampler's own clock, referred to nothing on the disc. A Domesday Duplicator
+stream at 40 MSPS and ten bits is one such capture, and two captures of one
+disc are not comparable sample for sample. Demodulating and time-base
+correcting yields the second object: line-locked composite at four times the
+colour subcarrier, organized into fields, with per-field dropout, blanking and
+confidence observations beside it, which is what `ld-decode` writes as a `.tbc`
+and its JSON companion. Two corrected readings of one disc *are* comparable,
+field for field.
+
+That comparability is the whole argument for a second model, and it is not a
+new argument. It is why the Aaru format carries a bitstream block beside its
+flux block: repeated dumps of one medium yield inconsistent flux, and the
+decoded bitstream is where results become comparable regardless of whether
+anything above it can be extracted. The corrected signal is that rung for this
+family.
+
+D14's test transfers without modification. **Disagreement across captures is a
+capture fact; a corrected, addressable reading is a medium fact.** What
+correction adds — the line and field frame, the subcarrier-locked clock, the
+dropout vocabulary — is absent from the samples and supplied by a declared
+decoder policy, exactly as a flux medium's rotational frame is supplied by a
+P30 profile rather than found in the flux. D14's reason for refusing flux
+capture an active-layer row applies here too: a write into a set of disagreeing
+observations has no principled destination.
+
+The corrected signal is therefore **not a third active representation**. P24's
+rule stands unchanged — one optical active layer, signal or program — and the
+two models sit behind the signal half of it. A report names which model it
+speaks about, because "the signal" alone does not say.
+
+## The layering, against the magnetic family
+
+| magnetic | LaserDisc | what the rung is |
+|---|---|---|
+| flux capture | RF capture | instrument state; several passes, no common frame |
+| flux medium | corrected signal | what a player would read; declared timebase and frame |
+| CHS sectors | fields and frames | addressed units, reached only by decoding |
+| files | program, EFM audio, LV-ROM blocks | the several things one disc carries at once |
+
+The lower two rungs correspond closely, which is what makes the split above
+transferable. The upper two do not, and the differences are the family's own.
+
+## What the program layer addresses
+
+A frame is addressed by the picture number or timecode carried in the disc's
+own vertical-blanking data: CAV discs number frames, CLV discs carry a timecode
+and chapter. Three things distinguish that from a CHS address, and each is a
+claim the family has to make honestly rather than borrow.
+
+**The address is wholly self-described.** CHS takes cylinder and head from the
+mechanism and only the sector number from recorded data; a frame address exists
+only inside the signal. The library must decode before it knows where it is, so
+a capture whose blanking data is unreadable has no addressing at all rather
+than a default one, and says so.
+
+**The addressed unit is a window, not a record.** A sector is discrete and
+checksummed and either reads or does not; a frame is a bounded segment of a
+continuous signal with no bit-exact ground truth to compare against. Frames are
+not reported as records that verified.
+
+**One family carries two address spaces.** CAV gives one frame per revolution;
+CLV gives time, with frames per revolution varying by radius. Which applies is
+a fact about how the disc was mastered rather than about the player, so it is
+read from the disc and reported, never configured.
+
+The digital payloads riding the same signal keep their own addressing: EFM
+audio decodes to bit-exact PCM, and an LV-ROM mapping presents blocks under the
+rule below. One capture, several decode targets, only some of them exact —
+which is precisely why the family cannot serve them all through one addressing
+vocabulary.
 
 ## Program-active state
 
@@ -141,6 +222,8 @@ F22 is architecturally complete when:
 
 - one raw RF adapter and one decoded program adapter feed the same LaserDisc
   family without orchestration branching;
+- a signal-active report names which of the seam's two models it speaks about,
+  and a corrected signal names the decoder policy that produced it;
 - the raw source remains independently re-decodable with its capture evidence;
 - the decoded source works without invented RF or physical-surface claims;
 - one player presentation advances commands, playback, and outputs through
@@ -158,4 +241,8 @@ F22 is architecturally complete when:
 - A universal player command protocol.
 - A whole-disc block view or a partition invented from a program mapping.
 - Promotion of a decode cache into a second mutable durable representation.
+- A third optical active representation for the corrected signal; it is a model
+  within the signal seam, not a layer beside it.
+- An addressing nature for signal or corrected-signal state, which is reached
+  by position and time rather than by address (the proposed P32 amendment).
 - Claims that raw RF and decoded A/V sources have equal preservation fidelity.
