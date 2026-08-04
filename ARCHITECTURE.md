@@ -21,7 +21,11 @@ One core, two bindings:
   commit-point session cache that keeps every write bufferable and
   revocable until committed — reads stream through a bounded working
   set, and altered extents hold in memory or spill to private session
-  storage, never the image. The magnetic family sits beside that stack
+  storage, never the image. Above that stack sits the one namespace
+  composer that derives rather than consumes a mapping: the DOS
+  drive-letter composer, which takes the machine facts a caller asserts
+  and the reports it already holds, applies one named assignment rule,
+  and answers with the volume each letter names. The magnetic family sits beside that stack
   and never crosses into it: the flux-capture model and its KryoFlux
   capture-set adapter, the flux-medium model above it, the drive-profile
   seam that recognizes a capture as a family's, the C1541 mastering
@@ -50,7 +54,8 @@ never reused.
   `Disk` — reached through a device, never opened directly —
   `Identification` and the container/layout types,
   `Archive` and `ArchiveEntry`,
-  `list_hdos_files` and `HdosFile`, `Error`/`ErrorCategory`/`Result`, and
+  `list_hdos_files` and `HdosFile`, `Error`/`ErrorCategory`/`Result`,
+  `DosMachine` and the drive-letter mapping it composes, and
   the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo
   doc` output is a representation of it.
 - **S2 — The C ABI.** Every `remanence_*` symbol exported by
@@ -421,6 +426,45 @@ expose another file container. Composition preserves the identity and
 provenance of its sources rather than flattening or copying them. A file
 container may therefore be backed by a whole volume, by part of a storage
 graph, by no volume at all, or by several mounted filesystem containers.
+
+A **namespace-mapping composer** is the third form at this seam, and it
+*derives* the mapping the two above consume. It takes composed volumes with
+their identities, plus the machine facts its caller asserts, applies one
+named assignment rule, and returns the mapping it establishes. Producing a
+mapping and composing a file container over it are separate acts: the
+mapping answers on its own, and a composer that can establish only part of
+one still answers with that part. The form exists because a system may
+persist no mapping at all — a DOS machine's drive letters were assigned at
+boot by a rule over its own configuration, and nothing on the disks records
+the result — which leaves the caller as the only remaining home for a rule
+the library already has to know.
+
+Three constraints keep the derivation from becoming a guess:
+
+- **The rule is an enumerated claim (P3).** The composer names the
+  assignment rule it applied. Where variants of one system assign
+  differently, it claims the variants it implements and refuses the rest by
+  name; it does not average them or pick the most common. Where the caller
+  states no variant, a mapping the claimed variants disagree on is reported
+  undetermined rather than settled by the more common rule.
+- **Evidence outranks a rule.** Where a system persists its own mapping,
+  that mapping governs and no rule may stand in for it. This form is for
+  systems which persist nothing, and it never becomes a fallback for a
+  persisted mapping that could not be read.
+- **A derived mapping is not evidence.** The asserted machine facts and the
+  applied rule travel with the result as provenance, under the discipline
+  that keeps a caller-selected fact out of the evidence a seam carries (P4).
+  Whatever the rule cannot settle is reported undetermined, at the
+  granularity of the mapping it failed to establish, and is never filled
+  from position, size, order, label, or which volume happened to read
+  cleanly.
+
+The composer takes reports the caller already holds and opens nothing. It
+reads the machine facts — medium, slot, attachment order — from the caller,
+because a session's device set holds only the block family and cannot
+express a floppy slot, a CD-ROM drive, or DOS attachment order; when those
+families are claimed, a composer may take the same facts from a session's
+devices, and nothing else about it changes.
 
 The common file-container view is not a disk representation and declares
 no image layer, media, geometry, partition layout, or volume semantics.

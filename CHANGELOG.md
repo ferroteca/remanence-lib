@@ -18,6 +18,51 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **A stopped DOS machine's drive letters are now the library's answer.**
+  `DosMachine` takes the machine facts a caller asserts — which medium
+  occupies which floppy slot, which disks are attached in what order,
+  whether a CD-ROM is present and where its resident driver was declared
+  to be — plus the inspection reports the caller already holds, applies
+  one named assignment rule, and answers with the volume each letter
+  names. It opens no artifact and composes no file container over the
+  result: the letter is what a consumer shows a user, and the volume
+  identity is what it passes back into a file verb. `remanence_dos_*`
+  and `remanence_drive_map_*` are the C ABI's, and `DosMachine`,
+  `DriveMap`, `DriveMapping` and `dos_assignment_rules()` Python's.
+
+  The assignment rule is the substance, and it is an enumerated claim
+  (P3). Two variants are claimed by name — `ms-dos-4` and `ms-dos-5` —
+  differing in exactly the place DOS variants differ: what becomes of a
+  primary DOS partition past the first on one disk, which `ms-dos-5`
+  letters after every logical drive and `ms-dos-4` letters not at all.
+  Where the caller states the variant its rule settles the map; where it
+  states none, both are applied and a letter they disagree on comes back
+  undetermined with each rule's answer in the reason, never averaged into
+  a mapping that is neither variant's. A DOS outside the claim —
+  2.x through 3.3 — is refused by name rather than served by the nearest
+  rule.
+
+  What no claimed rule models is undetermined rather than approximated: a
+  declared `LASTDRIVE` ceiling unsettles the letters above it, and
+  `SUBST`, `JOIN`, `ASSIGN`, a resident block-device driver or a network
+  redirector unsettles every letter, each saying which condition did it. A
+  partition type no claimed variant letters takes none, an
+  LBA-addressed extended container's logical drives take none, an
+  undeclared CD-ROM takes none, and a declared CD-ROM letter that the
+  rule also assigns is a refusal rather than a silent winner. A
+  single-floppy machine still has two floppy letters, the second being
+  DOS's phantom drive rather than a second volume. The asserted facts and
+  the applied rules travel with the answer as provenance, which the map
+  states is **not** evidence: nothing in it was read off a disk (P4, P19).
+
+  P19 is amended and in force with it: a namespace composer may now
+  *derive* a mapping and not only consume one, under the three constraints
+  above. The composer reads its machine facts from the caller, because a
+  session's device set holds only the block family and cannot express a
+  floppy slot, a CD-ROM drive, or DOS attachment order.
+
 ### Changed
 
 - **A refusal may now name the rule it broke, beside its category.**

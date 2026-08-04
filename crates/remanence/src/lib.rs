@@ -19,6 +19,7 @@ mod cache;
 mod checksum;
 mod device;
 mod disk;
+mod dos_letters;
 mod dos_name;
 mod drive_profile;
 mod error;
@@ -54,6 +55,10 @@ pub use c1541_mastering::{
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
 pub use disk::{Disk, DiskFormat};
+pub use dos_letters::{
+    DosAssignmentRule, DosMachine, DriveMap, DriveMapping, LetterOutcome, MachineDevice,
+    ResidentCondition,
+};
 pub use dos_name::DosNameRule;
 pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim};
 pub use error::{Error, ErrorCategory, Result, RuleIdentity};

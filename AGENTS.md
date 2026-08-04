@@ -79,7 +79,12 @@ ABI, or Python module.
   pinned types; `fat.rs` FAT12/16 volume read/write, with `dos_name.rs`
   owning every 8.3 name decision it makes — reading a stored name,
   matching one without regard to case, storing a caller's, and the
-  seven-rule set a refusal names; `machine.rs` the
+  seven-rule set a refusal names; `dos_letters.rs` the DOS drive-letter
+  composer — P19's namespace-mapping form, which derives a mapping
+  rather than consuming one: the caller-asserted machine facts, the
+  variant-by-variant assignment rules it claims, the conditions it
+  refuses to model, and the mapping it answers with, undetermined
+  letters included; `machine.rs` the
   session — the machine scope holding a dynamic set of family-typed
   storage devices (P32) — with `storage_device.rs` the device itself: a
   durable slot, its attachment identity (`hdd0`), and the medium
@@ -123,7 +128,7 @@ ABI, or Python module.
   handle. `planning/TASKS.md` is the pre-approved task queue: **agents
   do not add tasks on their own initiative, and ask before editing that
   file at all**; anyone may pick up what is already there.
-- **The vision is in force.** Use cases U1–U6 and U23 (root
+- **The vision is in force.** Use cases U1–U6, U22 and U23 (root
   [USE-CASES.md](USE-CASES.md)) and architectural principles
   (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage

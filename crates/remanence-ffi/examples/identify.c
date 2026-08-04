@@ -58,6 +58,88 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
     printf("\n");
 }
 
+static const char *outcome_name(RemanenceLetterOutcome outcome) {
+    switch (outcome) {
+        case REMANENCE_LETTER_OUTCOME_VOLUME: return "volume";
+        case REMANENCE_LETTER_OUTCOME_DECLARED_DEVICE: return "declared-device";
+        case REMANENCE_LETTER_OUTCOME_PHANTOM: return "phantom";
+        case REMANENCE_LETTER_OUTCOME_UNDETERMINED: return "undetermined";
+    }
+    return "undetermined";
+}
+
+/* Composes the drive letters a DOS machine holding this one disk would
+ * have presented. The machine facts are ours to assert — this disk is the
+ * first fixed disk attached — and the assignment rule is the library's.
+ * No variant is stated here, so a letter the claimed rules disagree on
+ * comes back undetermined rather than guessed. */
+static void show_drive_letters(RemanenceDisk *disk) {
+    RemanenceErrorCategory error_category;
+    char *error = NULL;
+    char *error_rule = NULL;
+
+    RemanenceDiskReport *report =
+        remanence_disk_inspect(disk, &error_category, &error, &error_rule);
+    if (report == NULL) {
+        report_error("\nerror inspecting disk", error_category, error, error_rule);
+        return;
+    }
+
+    RemanenceDosMachine *machine = remanence_dos_machine_new();
+    if (!remanence_dos_machine_assert_fixed_disk(machine, 0, report, &error_category,
+                                                 &error, &error_rule)) {
+        report_error("\nerror asserting the machine", error_category, error, error_rule);
+        remanence_dos_machine_free(machine);
+        remanence_disk_report_free(report);
+        return;
+    }
+
+    RemanenceDriveMap *map =
+        remanence_dos_machine_compose(machine, NULL, &error_category, &error, &error_rule);
+    if (map == NULL) {
+        report_error("\nerror composing drive letters", error_category, error, error_rule);
+        remanence_dos_machine_free(machine);
+        remanence_disk_report_free(report);
+        return;
+    }
+
+    size_t letters = remanence_drive_map_count(map);
+    printf("\nDOS drive letters (%zu, %zu established) under:\n", letters,
+           remanence_drive_map_established_count(map));
+    for (size_t i = 0; i < remanence_drive_map_applied_rule_count(map); ++i) {
+        printf("  rule %s\n", remanence_drive_map_applied_rule(map, i));
+    }
+    for (size_t i = 0; i < letters; ++i) {
+        uint64_t volume = 0;
+        uint32_t device_index = 0;
+        RemanenceLetterOutcome outcome = remanence_drive_map_outcome(map, i);
+        printf("  %c: %s", remanence_drive_map_letter(map, i), outcome_name(outcome));
+        if (remanence_drive_map_device_index(map, i, &device_index)) {
+            printf(" (%s %" PRIu32 ")", remanence_drive_map_device_kind(map, i), device_index);
+        }
+        if (remanence_drive_map_volume(map, i, &volume)) {
+            printf(" volume %" PRIu64, volume);
+        }
+        if (outcome == REMANENCE_LETTER_OUTCOME_PHANTOM) {
+            printf(" of %c:", remanence_drive_map_phantom_of(map, i));
+        }
+        const char *reason = remanence_drive_map_reason(map, i);
+        if (reason != NULL) {
+            printf(" -- %s", reason);
+        }
+        printf("\n");
+    }
+
+    printf("Provenance (not evidence):\n");
+    for (size_t i = 0; i < remanence_drive_map_provenance_count(map); ++i) {
+        printf("  * %s\n", remanence_drive_map_provenance(map, i));
+    }
+
+    remanence_drive_map_free(map);
+    remanence_dos_machine_free(machine);
+    remanence_disk_report_free(report);
+}
+
 /* Lists what an archive holds, without reading any entry's data. */
 static int list_archive(const char *path) {
     RemanenceErrorCategory error_category;
@@ -177,6 +259,8 @@ int main(int argc, char **argv) {
             remanence_hdos_file_list_free(files);
         }
     }
+
+    show_drive_letters(disk);
 
     remanence_identification_free(identification);
     remanence_string_free(attachment);

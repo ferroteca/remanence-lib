@@ -417,12 +417,14 @@ impl DiskReport {
         self.volumes.len()
     }
 
-    /// How many volumes carry a filesystem the host actually read. This is
-    /// the count a caller assigning one drive letter per readable volume
-    /// wants, and it is deliberately distinct from
+    /// How many volumes carry a filesystem the host actually read. It is
+    /// deliberately distinct from
     /// [`composed_volume_count`](Self::composed_volume_count): an
     /// unrecognized volume stays in the report rather than vanishing to
-    /// keep one number correct.
+    /// keep one number correct. It is a count and not a drive-letter
+    /// rule — which volume a guest's letter named is
+    /// [`DosMachine`](crate::DosMachine)'s answer, over a rule this
+    /// library owns.
     pub fn readable_filesystem_volume_count(&self) -> usize {
         self.filesystems
             .iter()

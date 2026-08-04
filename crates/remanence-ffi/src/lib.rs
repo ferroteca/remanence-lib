@@ -4058,6 +4058,10 @@ pub unsafe extern "C" fn remanence_p64_evidence(
 /// released with `remanence_disk_report_free`; every string and record
 /// reached through it is borrowed from it and dies with it.
 pub struct RemanenceDiskReport {
+    /// The report as the core issued it, kept so a drive-letter machine
+    /// can be asserted over the report a caller already holds rather than
+    /// over a flattened copy of it.
+    source: remanence::DiskReport,
     device_id: u64,
     device_image_format: CString,
     device_length_bytes: u64,
@@ -4289,6 +4293,7 @@ pub unsafe extern "C" fn remanence_disk_inspect(
                 regions,
                 volumes,
                 filesystems,
+                source: report,
             }))
         }
         Err(error) => {
@@ -4955,6 +4960,583 @@ pub unsafe extern "C" fn remanence_report_filesystem_issue(
             .issues
             .get(issue_index)
             .map_or(ptr::null(), |issue| issue.message.as_ptr())
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The DOS drive-letter composer: machine facts asserted by the caller, one
+// named assignment rule, and the mapping it establishes. The machine keeps
+// its own copy of every report asserted over it, so a report handle may be
+// freed while the machine still stands.
+
+use remanence::{DosAssignmentRule, DosMachine, LetterOutcome, ResidentCondition};
+
+/// What one letter turned out to name.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceLetterOutcome {
+    /// A volume on an asserted device, named by its report's identity.
+    Volume = 0,
+    /// A device the caller declared a resident driver placed here. The
+    /// library composes no volume for it and invents no identity.
+    DeclaredDevice = 1,
+    /// DOS's phantom second floppy: the same drive as the letter before
+    /// it, not a second volume.
+    Phantom = 2,
+    /// The claimed rules could not settle this letter.
+    Undetermined = 3,
+}
+
+enum AssertedDevice {
+    Floppy {
+        slot: u32,
+        report: remanence::DiskReport,
+    },
+    FixedDisk {
+        order: u32,
+        report: remanence::DiskReport,
+    },
+    CdRom {
+        order: u32,
+        driver_letter: Option<char>,
+    },
+}
+
+/// The machine facts a caller asserts, in the order they were asserted.
+pub struct RemanenceDosMachine {
+    devices: Vec<AssertedDevice>,
+    conditions: Vec<ResidentCondition>,
+}
+
+impl RemanenceDosMachine {
+    /// Rebuilds the core machine over the stored facts. Every rule about
+    /// what may be asserted lives in the core, so the assertions are
+    /// replayed through it rather than re-checked here.
+    fn build(&self) -> remanence::Result<DosMachine<'_>> {
+        let mut machine = DosMachine::new();
+        for device in &self.devices {
+            match device {
+                AssertedDevice::Floppy { slot, report } => machine.assert_floppy(*slot, report)?,
+                AssertedDevice::FixedDisk { order, report } => {
+                    machine.assert_fixed_disk(*order, report)?
+                }
+                AssertedDevice::CdRom {
+                    order,
+                    driver_letter,
+                } => machine.assert_cdrom(*order, *driver_letter)?,
+            }
+        }
+        for condition in &self.conditions {
+            machine.declare(*condition);
+        }
+        Ok(machine)
+    }
+}
+
+struct MappingView {
+    letter: c_char,
+    outcome: RemanenceLetterOutcome,
+    device_kind: Option<CString>,
+    device_index: Option<u32>,
+    volume: Option<u64>,
+    phantom_of: c_char,
+    reason: Option<CString>,
+}
+
+/// A composed drive-letter mapping. Owned by the caller and released with
+/// `remanence_drive_map_free`; every string reached through it is borrowed
+/// from it and dies with it.
+pub struct RemanenceDriveMap {
+    applied_rules: Vec<CString>,
+    mappings: Vec<MappingView>,
+    provenance: Vec<CString>,
+    established_count: usize,
+}
+
+fn ascii_letter(letter: char) -> c_char {
+    c_char::try_from(u32::from(letter) as u8 as i8).unwrap_or(0)
+}
+
+/// Applies the assertion held in `machine`, rolling the fact back when the
+/// core refuses it, so a refused assertion never half-lands.
+unsafe fn assert_device(
+    machine: *mut RemanenceDosMachine,
+    device: AssertedDevice,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(machine) = (unsafe { machine.as_mut() }) else {
+        return false;
+    };
+    machine.devices.push(device);
+    match machine.build() {
+        Ok(_) => true,
+        Err(error) => {
+            machine.devices.pop();
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// How many DOS assignment rules this release claims (P3).
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_dos_rule_count() -> usize {
+    DosAssignmentRule::CLAIMED.len()
+}
+
+/// One claimed rule's stable name — the value passed to
+/// `remanence_dos_machine_compose`. Null when the index is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_dos_rule_name(index: usize) -> *const c_char {
+    match DosAssignmentRule::CLAIMED.get(index) {
+        Some(DosAssignmentRule::MsDos4) => c"ms-dos-4".as_ptr(),
+        Some(DosAssignmentRule::MsDos5) => c"ms-dos-5".as_ptr(),
+        None => ptr::null(),
+    }
+}
+
+/// What that rule says, in a sentence fit to show a user beside the
+/// mapping it produced.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_dos_rule_reading(index: usize) -> *const c_char {
+    match DosAssignmentRule::CLAIMED.get(index) {
+        Some(DosAssignmentRule::MsDos4) => {
+            c"MS-DOS 4.0 and 4.01: the first primary DOS partition of each disk in attachment order, then the logical drives of each disk's extended partition in the same order; a further primary DOS partition receives no letter".as_ptr()
+        }
+        Some(DosAssignmentRule::MsDos5) => {
+            c"MS-DOS 5.0 through 6.22: the first primary DOS partition of each disk in attachment order, then the logical drives of each disk's extended partition in the same order, then each remaining primary DOS partition by disk in that order".as_ptr()
+        }
+        None => ptr::null(),
+    }
+}
+
+/// A machine with nothing asserted about it yet. Free with
+/// `remanence_dos_machine_free`.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_dos_machine_new() -> *mut RemanenceDosMachine {
+    Box::into_raw(Box::new(RemanenceDosMachine {
+        devices: Vec::new(),
+        conditions: Vec::new(),
+    }))
+}
+
+/// Frees a machine and the reports it copied.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_dos_machine_free(machine: *mut RemanenceDosMachine) {
+    if !machine.is_null() {
+        drop(unsafe { Box::from_raw(machine) });
+    }
+}
+
+/// Asserts that the medium `report` inspects occupies floppy slot `slot` —
+/// 0 being `A:`. A slot above 1 and a slot already asserted are refused by
+/// name. The report is copied; the handle may be freed afterwards.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_dos_machine_assert_floppy(
+    machine: *mut RemanenceDosMachine,
+    slot: u32,
+    report: *const RemanenceDiskReport,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    let Some(report) = (unsafe { report.as_ref() }) else {
+        return false;
+    };
+    unsafe {
+        assert_device(
+            machine,
+            AssertedDevice::Floppy {
+                slot,
+                report: report.source.clone(),
+            },
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// Asserts that the medium `report` inspects is the fixed disk attached at
+/// `order` — 0 being the first attached, which is the order DOS assigned
+/// letters in.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_dos_machine_assert_fixed_disk(
+    machine: *mut RemanenceDosMachine,
+    order: u32,
+    report: *const RemanenceDiskReport,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    let Some(report) = (unsafe { report.as_ref() }) else {
+        return false;
+    };
+    unsafe {
+        assert_device(
+            machine,
+            AssertedDevice::FixedDisk {
+                order,
+                report: report.source.clone(),
+            },
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// Asserts a CD-ROM drive at attachment order `order`. `driver_letter` is
+/// where the caller declares the resident driver placed it; `0` declares
+/// no placement, and an undeclared CD-ROM takes no letter rather than a
+/// guessed one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_dos_machine_assert_cdrom(
+    machine: *mut RemanenceDosMachine,
+    order: u32,
+    driver_letter: c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    let driver_letter = if driver_letter == 0 {
+        None
+    } else {
+        Some(char::from(driver_letter as u8))
+    };
+    unsafe {
+        assert_device(
+            machine,
+            AssertedDevice::CdRom {
+                order,
+                driver_letter,
+            },
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// Declares a runtime condition outside every claimed rule, by its stable
+/// spelling: `lastdrive=<letter>`, `subst`, `join`, `assign`,
+/// `block-device-driver`, `network-redirector`. Anything else is refused by
+/// name. The letters the condition could have changed come back
+/// undetermined.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_dos_machine_declare_condition(
+    machine: *mut RemanenceDosMachine,
+    condition: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(machine) = (unsafe { machine.as_mut() }) else {
+        return false;
+    };
+    let Some(condition) = (unsafe { utf8_arg(condition) }) else {
+        let error = remanence::Error::io("null condition");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match ResidentCondition::parse(condition.as_ref()) {
+        Ok(condition) => {
+            if !machine.conditions.contains(&condition) {
+                machine.conditions.push(condition);
+            }
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Composes the mapping. `rule` names the variant the machine ran — one of
+/// `remanence_dos_rule_name` — or is null where the caller states none, in
+/// which case every claimed rule is applied and a letter they disagree on
+/// comes back undetermined. Null on failure, with the category and message
+/// written to the out-parameters.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_dos_machine_compose(
+    machine: *const RemanenceDosMachine,
+    rule: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceDriveMap {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(machine) = (unsafe { machine.as_ref() }) else {
+        return ptr::null_mut();
+    };
+
+    let rule = if rule.is_null() {
+        None
+    } else {
+        let Some(name) = (unsafe { utf8_arg(rule) }) else {
+            return ptr::null_mut();
+        };
+        match DosAssignmentRule::from_name(name.as_ref()) {
+            Ok(rule) => Some(rule),
+            Err(error) => {
+                unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+                return ptr::null_mut();
+            }
+        }
+    };
+
+    let composed = machine.build().and_then(|machine| machine.compose(rule));
+    match composed {
+        Ok(map) => {
+            let mappings = map
+                .mappings
+                .iter()
+                .map(|mapping| {
+                    let (outcome, device, volume, phantom_of, reason) = match &mapping.outcome {
+                        LetterOutcome::Volume { device, volume } => (
+                            RemanenceLetterOutcome::Volume,
+                            Some(*device),
+                            Some(volume.value()),
+                            0,
+                            None,
+                        ),
+                        LetterOutcome::DeclaredDevice { device } => (
+                            RemanenceLetterOutcome::DeclaredDevice,
+                            Some(*device),
+                            None,
+                            0,
+                            None,
+                        ),
+                        LetterOutcome::Phantom { of } => (
+                            RemanenceLetterOutcome::Phantom,
+                            None,
+                            None,
+                            ascii_letter(*of),
+                            None,
+                        ),
+                        LetterOutcome::Undetermined { reason } => (
+                            RemanenceLetterOutcome::Undetermined,
+                            None,
+                            None,
+                            0,
+                            Some(to_cstring(reason)),
+                        ),
+                    };
+                    MappingView {
+                        letter: ascii_letter(mapping.letter),
+                        outcome,
+                        device_kind: device.map(|device| to_cstring(device.kind())),
+                        device_index: device.map(remanence::MachineDevice::index),
+                        volume,
+                        phantom_of,
+                        reason,
+                    }
+                })
+                .collect();
+            Box::into_raw(Box::new(RemanenceDriveMap {
+                applied_rules: map
+                    .applied_rules
+                    .iter()
+                    .map(|rule| to_cstring(rule.name()))
+                    .collect(),
+                established_count: map.established_count(),
+                mappings,
+                provenance: map.provenance.iter().map(|line| to_cstring(line)).collect(),
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a composed mapping and everything borrowed from it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_free(map: *mut RemanenceDriveMap) {
+    if !map.is_null() {
+        drop(unsafe { Box::from_raw(map) });
+    }
+}
+
+unsafe fn mapping_view<'a>(map: *const RemanenceDriveMap, index: usize) -> Option<&'a MappingView> {
+    unsafe { map.as_ref() }?.mappings.get(index)
+}
+
+/// How many rules were applied: one where the caller stated the variant,
+/// and every claimed rule where it did not.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_applied_rule_count(
+    map: *const RemanenceDriveMap,
+) -> usize {
+    unsafe { map.as_ref() }.map_or(0, |map| map.applied_rules.len())
+}
+
+/// One applied rule's stable name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_applied_rule(
+    map: *const RemanenceDriveMap,
+    index: usize,
+) -> *const c_char {
+    unsafe { map.as_ref() }.map_or(ptr::null(), |map| {
+        map.applied_rules
+            .get(index)
+            .map_or(ptr::null(), |rule| rule.as_ptr())
+    })
+}
+
+/// How many letters the machine had a drive at. A letter absent from the
+/// mapping is a letter the machine had no drive at, which is different from
+/// one that exists and could not be settled.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_count(map: *const RemanenceDriveMap) -> usize {
+    unsafe { map.as_ref() }.map_or(0, |map| map.mappings.len())
+}
+
+/// How many letters the rules established — the count that excludes every
+/// undetermined one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_established_count(
+    map: *const RemanenceDriveMap,
+) -> usize {
+    unsafe { map.as_ref() }.map_or(0, |map| map.established_count)
+}
+
+/// The letter at `index`, without its colon. `0` when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_letter(
+    map: *const RemanenceDriveMap,
+    index: usize,
+) -> c_char {
+    unsafe { mapping_view(map, index) }.map_or(0, |mapping| mapping.letter)
+}
+
+/// Finds the entry for one letter, writing its index. False where the
+/// machine had no drive at that letter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_find(
+    map: *const RemanenceDriveMap,
+    letter: c_char,
+    index_out: *mut usize,
+) -> bool {
+    let Some(map) = (unsafe { map.as_ref() }) else {
+        return false;
+    };
+    let wanted = (letter as u8).to_ascii_uppercase() as c_char;
+    let Some(index) = map
+        .mappings
+        .iter()
+        .position(|mapping| mapping.letter == wanted)
+    else {
+        return false;
+    };
+    if let Some(out) = unsafe { index_out.as_mut() } {
+        *out = index;
+    }
+    true
+}
+
+/// What the letter at `index` turned out to name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_outcome(
+    map: *const RemanenceDriveMap,
+    index: usize,
+) -> RemanenceLetterOutcome {
+    unsafe { mapping_view(map, index) }
+        .map_or(RemanenceLetterOutcome::Undetermined, |mapping| {
+            mapping.outcome
+        })
+}
+
+/// The asserted device this letter names — `floppy`, `fixed-disk` or
+/// `cd-rom` — or null where the outcome names no device.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_device_kind(
+    map: *const RemanenceDriveMap,
+    index: usize,
+) -> *const c_char {
+    unsafe { mapping_view(map, index) }.map_or(ptr::null(), |mapping| {
+        mapping
+            .device_kind
+            .as_ref()
+            .map_or(ptr::null(), |kind| kind.as_ptr())
+    })
+}
+
+/// The slot or attachment order the caller asserted for that device.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_device_index(
+    map: *const RemanenceDriveMap,
+    index: usize,
+    value_out: *mut u32,
+) -> bool {
+    let value = unsafe { mapping_view(map, index) }.and_then(|mapping| mapping.device_index);
+    unsafe { write_opt_u32(value, value_out) }
+}
+
+/// The volume this letter names, by the identity its own inspection report
+/// issued — the value passed back into a file verb. False where the
+/// outcome names no volume.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_volume(
+    map: *const RemanenceDriveMap,
+    index: usize,
+    value_out: *mut u64,
+) -> bool {
+    let value = unsafe { mapping_view(map, index) }.and_then(|mapping| mapping.volume);
+    unsafe { write_opt_u64(value, value_out) }
+}
+
+/// The letter a phantom drive stands for, or `0` where this outcome is not
+/// a phantom.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_phantom_of(
+    map: *const RemanenceDriveMap,
+    index: usize,
+) -> c_char {
+    unsafe { mapping_view(map, index) }.map_or(0, |mapping| mapping.phantom_of)
+}
+
+/// Why the claimed rules could not settle this letter, or null where they
+/// did.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_reason(
+    map: *const RemanenceDriveMap,
+    index: usize,
+) -> *const c_char {
+    unsafe { mapping_view(map, index) }.map_or(ptr::null(), |mapping| {
+        mapping
+            .reason
+            .as_ref()
+            .map_or(ptr::null(), |reason| reason.as_ptr())
+    })
+}
+
+/// How many provenance lines the mapping carries.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_provenance_count(
+    map: *const RemanenceDriveMap,
+) -> usize {
+    unsafe { map.as_ref() }.map_or(0, |map| map.provenance.len())
+}
+
+/// One provenance line: the asserted facts and the applied rules,
+/// travelling with the answer. **This is not evidence** — nothing in it was
+/// read off a disk.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_drive_map_provenance(
+    map: *const RemanenceDriveMap,
+    index: usize,
+) -> *const c_char {
+    unsafe { map.as_ref() }.map_or(ptr::null(), |map| {
+        map.provenance
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
     })
 }
 

@@ -97,6 +97,22 @@ disk, every backing member claimed immutable for the session's life.
 Writes allocate copy-on-write into the top image only and preserve the
 backing relationship; a missing member, a cycle, or a chain past the
 claimed depth is refused by name.
+Where the stopped machine ran DOS, it also answers which drive letter
+named which volume. A DOS machine persisted no such map — its letters
+were assigned at boot by a rule over the machine's own configuration, and
+nothing on the disks records the result — so the mapping is derived: the
+caller asserts the machine facts it owns (which medium is in which floppy
+slot, which disks are attached in what order, where a CD-ROM driver was
+declared), the library applies one named assignment rule over the reports
+already inspected, and the answer says which volume each letter names.
+The rule is a claim like any other: two MS-DOS variants are claimed by
+name, stating the variant settles the map, and stating none leaves a
+letter the variants disagree on undetermined with each rule's answer
+rather than averaged into one that is neither. `LASTDRIVE`, `SUBST`,
+`JOIN`, `ASSIGN`, a resident block-device driver and a network redirector
+are outside every claimed rule, and a letter one of them could have
+changed is reported undetermined rather than approximated.
+
 The in-force vision — what the library is for (U-numbers) and the rules
 it holds itself to (P-numbers) — is in [USE-CASES.md](USE-CASES.md) and
 [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -157,6 +173,15 @@ for entry in archive.entries() {
 }
 let member = session.attach("captures.7z/track00.raw", remanence::AccessIntent::Read)?;
 
+// The drive letters a DOS machine would have presented: the machine
+// facts are the caller's, the assignment rule is the library's.
+let report = session.medium(hdd0)?.inspect()?;
+let mut machine = remanence::DosMachine::new();
+machine.assert_fixed_disk(0, &report)?;
+for mapping in &machine.compose(Some(remanence::DosAssignmentRule::MsDos5))?.mappings {
+    println!("{}: {:?}", mapping.letter, mapping.outcome);
+}
+
 let capture = remanence::CaptureSet::open("captures.7z")?;
 for member in &capture.inspect().members {
     let run = &member.runs[0];
@@ -179,6 +204,12 @@ for c in disk.identify().containers:
     print(c.kind, c.id, c.confidence)
 for f in disk.list_hdos_files():
     print(f.display_name, f.size_sectors, f.modified_date_string)
+
+machine = remanence.DosMachine()
+machine.assert_fixed_disk(0, disk.inspect())
+drives = machine.compose()          # no variant stated: disagreement is reported
+for mapping in drives.mappings:
+    print(mapping.letter, mapping.outcome, mapping.volume, mapping.reason)
 
 with remanence.Archive("captures.7z") as archive:
     for entry in archive.entries:

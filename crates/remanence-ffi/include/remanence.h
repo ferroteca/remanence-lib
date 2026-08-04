@@ -135,6 +135,20 @@ typedef enum {
   REMANENCE_VOLUME_ORIGIN_REGIONS,
 } RemanenceVolumeOrigin;
 
+// What one letter turned out to name.
+typedef enum {
+  // A volume on an asserted device, named by its report's identity.
+  REMANENCE_LETTER_OUTCOME_VOLUME = 0,
+  // A device the caller declared a resident driver placed here. The
+  // library composes no volume for it and invents no identity.
+  REMANENCE_LETTER_OUTCOME_DECLARED_DEVICE = 1,
+  // DOS's phantom second floppy: the same drive as the letter before
+  // it, not a second volume.
+  REMANENCE_LETTER_OUTCOME_PHANTOM = 2,
+  // The claimed rules could not settle this letter.
+  REMANENCE_LETTER_OUTCOME_UNDETERMINED = 3,
+} RemanenceLetterOutcome;
+
 // An open archive listing, holding the claim on its file.
 typedef struct RemanenceArchive RemanenceArchive;
 
@@ -156,6 +170,14 @@ typedef struct RemanenceDisk RemanenceDisk;
 // released with `remanence_disk_report_free`; every string and record
 // reached through it is borrowed from it and dies with it.
 typedef struct RemanenceDiskReport RemanenceDiskReport;
+
+// The machine facts a caller asserts, in the order they were asserted.
+typedef struct RemanenceDosMachine RemanenceDosMachine;
+
+// A composed drive-letter mapping. Owned by the caller and released with
+// `remanence_drive_map_free`; every string reached through it is borrowed
+// from it and dies with it.
+typedef struct RemanenceDriveMap RemanenceDriveMap;
 
 // A directory listing.
 typedef struct RemanenceFatEntryList RemanenceFatEntryList;
@@ -1502,6 +1524,136 @@ bool remanence_report_filesystem_issue_category(const RemanenceDiskReport *repor
 const char *remanence_report_filesystem_issue(const RemanenceDiskReport *report,
                                               size_t index,
                                               size_t issue_index);
+
+// How many DOS assignment rules this release claims (P3).
+size_t remanence_dos_rule_count(void);
+
+// One claimed rule's stable name — the value passed to
+// `remanence_dos_machine_compose`. Null when the index is out of range.
+const char *remanence_dos_rule_name(size_t index);
+
+// What that rule says, in a sentence fit to show a user beside the
+// mapping it produced.
+const char *remanence_dos_rule_reading(size_t index);
+
+// A machine with nothing asserted about it yet. Free with
+// `remanence_dos_machine_free`.
+RemanenceDosMachine *remanence_dos_machine_new(void);
+
+// Frees a machine and the reports it copied.
+void remanence_dos_machine_free(RemanenceDosMachine *machine);
+
+// Asserts that the medium `report` inspects occupies floppy slot `slot` —
+// 0 being `A:`. A slot above 1 and a slot already asserted are refused by
+// name. The report is copied; the handle may be freed afterwards.
+bool remanence_dos_machine_assert_floppy(RemanenceDosMachine *machine,
+                                         uint32_t slot,
+                                         const RemanenceDiskReport *report,
+                                         RemanenceErrorCategory *error_category_out,
+                                         char **error_out,
+                                         char **error_rule_out);
+
+// Asserts that the medium `report` inspects is the fixed disk attached at
+// `order` — 0 being the first attached, which is the order DOS assigned
+// letters in.
+bool remanence_dos_machine_assert_fixed_disk(RemanenceDosMachine *machine,
+                                             uint32_t order,
+                                             const RemanenceDiskReport *report,
+                                             RemanenceErrorCategory *error_category_out,
+                                             char **error_out,
+                                             char **error_rule_out);
+
+// Asserts a CD-ROM drive at attachment order `order`. `driver_letter` is
+// where the caller declares the resident driver placed it; `0` declares
+// no placement, and an undeclared CD-ROM takes no letter rather than a
+// guessed one.
+bool remanence_dos_machine_assert_cdrom(RemanenceDosMachine *machine,
+                                        uint32_t order,
+                                        char driver_letter,
+                                        RemanenceErrorCategory *error_category_out,
+                                        char **error_out,
+                                        char **error_rule_out);
+
+// Declares a runtime condition outside every claimed rule, by its stable
+// spelling: `lastdrive=<letter>`, `subst`, `join`, `assign`,
+// `block-device-driver`, `network-redirector`. Anything else is refused by
+// name. The letters the condition could have changed come back
+// undetermined.
+bool remanence_dos_machine_declare_condition(RemanenceDosMachine *machine,
+                                             const char *condition,
+                                             RemanenceErrorCategory *error_category_out,
+                                             char **error_out,
+                                             char **error_rule_out);
+
+// Composes the mapping. `rule` names the variant the machine ran — one of
+// `remanence_dos_rule_name` — or is null where the caller states none, in
+// which case every claimed rule is applied and a letter they disagree on
+// comes back undetermined. Null on failure, with the category and message
+// written to the out-parameters.
+RemanenceDriveMap *remanence_dos_machine_compose(const RemanenceDosMachine *machine,
+                                                 const char *rule,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
+
+// Frees a composed mapping and everything borrowed from it.
+void remanence_drive_map_free(RemanenceDriveMap *map);
+
+// How many rules were applied: one where the caller stated the variant,
+// and every claimed rule where it did not.
+size_t remanence_drive_map_applied_rule_count(const RemanenceDriveMap *map);
+
+// One applied rule's stable name.
+const char *remanence_drive_map_applied_rule(const RemanenceDriveMap *map, size_t index);
+
+// How many letters the machine had a drive at. A letter absent from the
+// mapping is a letter the machine had no drive at, which is different from
+// one that exists and could not be settled.
+size_t remanence_drive_map_count(const RemanenceDriveMap *map);
+
+// How many letters the rules established — the count that excludes every
+// undetermined one.
+size_t remanence_drive_map_established_count(const RemanenceDriveMap *map);
+
+// The letter at `index`, without its colon. `0` when out of range.
+char remanence_drive_map_letter(const RemanenceDriveMap *map, size_t index);
+
+// Finds the entry for one letter, writing its index. False where the
+// machine had no drive at that letter.
+bool remanence_drive_map_find(const RemanenceDriveMap *map, char letter, size_t *index_out);
+
+// What the letter at `index` turned out to name.
+RemanenceLetterOutcome remanence_drive_map_outcome(const RemanenceDriveMap *map, size_t index);
+
+// The asserted device this letter names — `floppy`, `fixed-disk` or
+// `cd-rom` — or null where the outcome names no device.
+const char *remanence_drive_map_device_kind(const RemanenceDriveMap *map, size_t index);
+
+// The slot or attachment order the caller asserted for that device.
+bool remanence_drive_map_device_index(const RemanenceDriveMap *map,
+                                      size_t index,
+                                      uint32_t *value_out);
+
+// The volume this letter names, by the identity its own inspection report
+// issued — the value passed back into a file verb. False where the
+// outcome names no volume.
+bool remanence_drive_map_volume(const RemanenceDriveMap *map, size_t index, uint64_t *value_out);
+
+// The letter a phantom drive stands for, or `0` where this outcome is not
+// a phantom.
+char remanence_drive_map_phantom_of(const RemanenceDriveMap *map, size_t index);
+
+// Why the claimed rules could not settle this letter, or null where they
+// did.
+const char *remanence_drive_map_reason(const RemanenceDriveMap *map, size_t index);
+
+// How many provenance lines the mapping carries.
+size_t remanence_drive_map_provenance_count(const RemanenceDriveMap *map);
+
+// One provenance line: the asserted facts and the applied rules,
+// travelling with the answer. **This is not evidence** — nothing in it was
+// read off a disk.
+const char *remanence_drive_map_provenance(const RemanenceDriveMap *map, size_t index);
 
 #ifdef __cplusplus
 }  // extern "C"
