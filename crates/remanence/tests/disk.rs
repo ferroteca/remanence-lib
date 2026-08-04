@@ -192,6 +192,17 @@ fn synthetic_extended_disk(volume: &[u8], corrupt_second_ebr: bool) -> Vec<u8> {
 }
 
 
+/// The label a recognized filesystem answered with, or `None` where the
+/// volume has none.
+fn label_of(filesystem: &remanence::FilesystemInfo) -> Option<&str> {
+    filesystem
+        .label
+        .as_ref()
+        .expect("a recognized filesystem answers the label question")
+        .name
+        .as_deref()
+}
+
 /// The volume a caller works in, named the only way a caller can name
 /// one: by asking the library what it reported. Nothing here builds an
 /// identity or parses one.
@@ -222,7 +233,7 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     let volume = report.volumes[0].id;
     let filesystem = report.filesystem_on(volume).expect("FAT recognized");
     assert_eq!(filesystem.kind.as_deref(), Some(FatKind::Fat16.name()));
-    assert_eq!(filesystem.label.as_deref(), Some("REMANENCE"));
+    assert_eq!(label_of(filesystem), Some("REMANENCE"));
     assert_eq!(filesystem.declared_geometry.sectors_per_track, Some(18));
     assert_eq!(filesystem.declared_geometry.heads, Some(2));
     // 8000 sectors do not divide into 18x2 tracks: omitted, not invented.
@@ -329,8 +340,8 @@ fn fat16_behind_an_mbr_partition() {
     assert_eq!(
         report
             .filesystem_on(report.volumes[0].id)
-            .and_then(|fs| fs.label.clone()),
-        Some("REMANENCE".to_owned())
+            .and_then(label_of),
+        Some("REMANENCE")
     );
 
     disk.write_file(volume, "ROOT.TXT", b"in the partition")
@@ -1106,6 +1117,165 @@ fn a_structural_container_is_reported_and_is_not_a_volume() {
 
 /// A valid schema with no data regions is the schema outcome with zero
 /// volumes — not blank, and not an unknown payload.
+// The FAT label answer. FAT records a label in two places and a volume
+// may carry either, both, or disagreeing values; these fix the policy the
+// filesystem seam owns, and the evidence it keeps beside the answer.
+
+/// The root directory of `synthetic_fat16`: 1 reserved sector plus two
+/// 32-sector FATs.
+const FAT16_ROOT_OFFSET: usize = (1 + 2 * 32) * 512;
+
+/// Writes an 11-byte fixed-width name field, space padded as FAT does.
+fn write_field(image: &mut [u8], at: usize, text: &str) {
+    image[at..at + 11].fill(b' ');
+    image[at..at + text.len()].copy_from_slice(text.as_bytes());
+}
+
+/// Sets the root directory's volume-ID entry, or removes it entirely.
+fn set_root_label(image: &mut [u8], label: Option<&str>) {
+    match label {
+        Some(text) => {
+            write_field(image, FAT16_ROOT_OFFSET, text);
+            image[FAT16_ROOT_OFFSET + 11] = 0x08; // volume-id attribute
+        }
+        None => image[FAT16_ROOT_OFFSET..FAT16_ROOT_OFFSET + 32].fill(0),
+    }
+}
+
+/// Gives the volume an extended boot record under `signature`, with
+/// `text` at the label field's offset. `synthetic_fat16` carries no
+/// extended boot record at all, which is the third state.
+fn set_boot_record(image: &mut [u8], signature: u8, text: &str) {
+    image[38] = signature;
+    write_field(image, 43, text);
+}
+
+/// Inspects `image` and returns the one volume's label answer.
+fn label_answer(tag: &str, image: &[u8]) -> remanence::VolumeLabel {
+    let path = image_at(tag, image);
+    let (mut session, attachment) = attach(&path, AccessIntent::Read).expect("image opens");
+    let disk = session.medium(attachment).expect("the medium is attached");
+    let report = disk.inspect().expect("inspection reads");
+    let answer = report
+        .filesystem_on(report.volumes[0].id)
+        .expect("FAT recognized")
+        .label
+        .clone()
+        .expect("a recognized filesystem answers the label question");
+    drop(session);
+    std::fs::remove_file(&path).ok();
+    answer
+}
+
+/// One source's reading, found by the name the seam gave it.
+fn reading<'a>(label: &'a remanence::VolumeLabel, source: &str) -> Option<&'a str> {
+    label
+        .readings
+        .iter()
+        .find(|reading| reading.source == source)
+        .expect("the source was read")
+        .stored
+        .as_deref()
+}
+
+#[test]
+fn the_root_directory_entry_answers_and_both_readings_stay_beside_it() {
+    // Only a root-directory entry: it answers, and the boot record's
+    // field is absent rather than blank — the third state.
+    let answer = label_answer("label-root-only", &synthetic_fat16());
+    assert_eq!(answer.name.as_deref(), Some("REMANENCE"));
+    assert_eq!(answer.answered_by.as_deref(), Some("root-directory-entry"));
+    assert_eq!(reading(&answer, "root-directory-entry"), Some("REMANENCE"));
+    assert_eq!(
+        reading(&answer, "boot-record-field"),
+        None,
+        "no extended boot record means no such field, not a blank one"
+    );
+
+    // Both sources, disagreeing: the root entry is what DOS displays, so
+    // it answers — and the boot record's own reading is still there for a
+    // caller that wants it, without opening a sector.
+    let mut image = synthetic_fat16();
+    set_root_label(&mut image, Some("ROOTNAME"));
+    set_boot_record(&mut image, 0x29, "BOOTNAME");
+    let answer = label_answer("label-disagreeing", &image);
+    assert_eq!(answer.name.as_deref(), Some("ROOTNAME"));
+    assert_eq!(answer.answered_by.as_deref(), Some("root-directory-entry"));
+    assert_eq!(reading(&answer, "root-directory-entry"), Some("ROOTNAME"));
+    assert_eq!(reading(&answer, "boot-record-field"), Some("BOOTNAME"));
+
+    // No root entry: the boot record's field answers.
+    let mut image = synthetic_fat16();
+    set_root_label(&mut image, None);
+    set_boot_record(&mut image, 0x29, "BOOTNAME");
+    let answer = label_answer("label-boot-only", &image);
+    assert_eq!(answer.name.as_deref(), Some("BOOTNAME"));
+    assert_eq!(answer.answered_by.as_deref(), Some("boot-record-field"));
+    assert_eq!(reading(&answer, "root-directory-entry"), None);
+}
+
+#[test]
+fn no_name_is_absence_and_absence_is_reported_as_absence() {
+    // `NO NAME` is the format's own spelling of unlabeled, so the source
+    // that holds it answers "none" rather than falling through to the
+    // other one.
+    let mut image = synthetic_fat16();
+    set_root_label(&mut image, Some("NO NAME"));
+    set_boot_record(&mut image, 0x29, "BOOTNAME");
+    let answer = label_answer("label-no-name-root", &image);
+    assert_eq!(answer.name, None, "the volume has no label");
+    assert_eq!(
+        answer.answered_by.as_deref(),
+        Some("root-directory-entry"),
+        "the source that decided is still named"
+    );
+    assert_eq!(reading(&answer, "root-directory-entry"), Some("NO NAME"));
+
+    // The same at the other source.
+    let mut image = synthetic_fat16();
+    set_root_label(&mut image, None);
+    set_boot_record(&mut image, 0x29, "NO NAME");
+    let answer = label_answer("label-no-name-boot", &image);
+    assert_eq!(answer.name, None);
+    assert_eq!(answer.answered_by.as_deref(), Some("boot-record-field"));
+
+    // An entry that exists and is blank is present, and answers absence.
+    let mut image = synthetic_fat16();
+    set_root_label(&mut image, Some(""));
+    let answer = label_answer("label-blank-entry", &image);
+    assert_eq!(answer.name, None);
+    assert_eq!(answer.answered_by.as_deref(), Some("root-directory-entry"));
+    assert_eq!(
+        reading(&answer, "root-directory-entry"),
+        Some(""),
+        "present and blank, which is not the same as no such field"
+    );
+
+    // Neither source exists: nothing answered, and nothing was invented.
+    let mut image = synthetic_fat16();
+    set_root_label(&mut image, None);
+    let answer = label_answer("label-neither", &image);
+    assert_eq!(answer.name, None);
+    assert_eq!(answer.answered_by, None);
+    assert_eq!(reading(&answer, "root-directory-entry"), None);
+    assert_eq!(reading(&answer, "boot-record-field"), None);
+}
+
+/// The boot record's field is only a field where the format says it is.
+/// Signature 0x28 declares the shorter extended boot record, which stops
+/// at the volume serial: reading the label offset regardless would
+/// manufacture a label out of whatever bytes happen to sit there.
+#[test]
+fn the_boot_record_field_exists_only_under_its_own_signature() {
+    let mut image = synthetic_fat16();
+    set_root_label(&mut image, None);
+    set_boot_record(&mut image, 0x28, "NOTALABEL");
+    let answer = label_answer("label-short-ebr", &image);
+    assert_eq!(answer.name, None, "nothing was manufactured from the bytes");
+    assert_eq!(answer.answered_by, None, "no source existed to answer");
+    assert_eq!(reading(&answer, "boot-record-field"), None);
+}
+
 #[test]
 fn an_empty_partition_table_inspects_as_a_schema_with_no_volumes() {
     let mut bytes = vec![0u8; 4096];

@@ -4072,11 +4072,26 @@ struct VolumeRecordView {
     evidence: Vec<CString>,
 }
 
+/// One source's reading of a volume label. `stored` is null where the
+/// format gives this volume no such field at all, which is distinct from
+/// a field that is present and blank.
+struct LabelReadingView {
+    source: CString,
+    stored: Option<CString>,
+}
+
+/// A recognized volume's label answer, with every reading beside it.
+struct VolumeLabelView {
+    name: Option<CString>,
+    answered_by: Option<CString>,
+    readings: Vec<LabelReadingView>,
+}
+
 struct FilesystemView {
     id: u64,
     volume: u64,
     kind: Option<CString>,
-    label: Option<CString>,
+    label: Option<VolumeLabelView>,
     cluster_bytes: Option<u64>,
     cluster_count: Option<u64>,
     sectors_per_track: Option<u16>,
@@ -4094,6 +4109,21 @@ fn issue_view(issue: &remanence::Error) -> IssueView {
 
 fn evidence_views(evidence: &[String]) -> Vec<CString> {
     evidence.iter().map(|line| to_cstring(line)).collect()
+}
+
+fn label_view(label: &remanence::VolumeLabel) -> VolumeLabelView {
+    VolumeLabelView {
+        name: label.name.as_deref().map(to_cstring),
+        answered_by: label.answered_by.as_deref().map(to_cstring),
+        readings: label
+            .readings
+            .iter()
+            .map(|reading| LabelReadingView {
+                source: to_cstring(&reading.source),
+                stored: reading.stored.as_deref().map(to_cstring),
+            })
+            .collect(),
+    }
 }
 
 /// Inspects an open disk and returns its layered report. Null on failure,
@@ -4174,7 +4204,7 @@ pub unsafe extern "C" fn remanence_disk_inspect(
                     id: filesystem.id.value(),
                     volume: filesystem.volume.value(),
                     kind: filesystem.kind.as_deref().map(to_cstring),
-                    label: filesystem.label.as_deref().map(to_cstring),
+                    label: filesystem.label.as_ref().map(label_view),
                     cluster_bytes: filesystem.cluster_bytes,
                     cluster_count: filesystem.cluster_count,
                     sectors_per_track: filesystem.declared_geometry.sectors_per_track,
@@ -4619,7 +4649,21 @@ pub unsafe extern "C" fn remanence_report_filesystem_kind(
     })
 }
 
-/// The volume label, or null where the filesystem records none.
+/// Whether a filesystem answered the label question at all. False where
+/// recognition was refused — there is then no filesystem to answer, which
+/// is not the same as a volume that answered "unlabeled".
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_filesystem_label_answered(
+    report: *const RemanenceDiskReport,
+    index: usize,
+) -> bool {
+    unsafe { filesystem_view(report, index) }.is_some_and(|filesystem| filesystem.label.is_some())
+}
+
+/// The volume label, or null where the volume has none — the format's own
+/// spelling of unlabeled already resolved, so no caller compares strings
+/// to find that out. Null also where nothing answered;
+/// `remanence_report_filesystem_label_answered` tells the two apart.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_report_filesystem_label(
     report: *const RemanenceDiskReport,
@@ -4629,7 +4673,93 @@ pub unsafe extern "C" fn remanence_report_filesystem_label(
         filesystem
             .label
             .as_ref()
-            .map_or(ptr::null(), |label| label.as_ptr())
+            .and_then(|label| label.name.as_ref())
+            .map_or(ptr::null(), |name| name.as_ptr())
+    })
+}
+
+/// Which source decided the answer, or null where the volume carries no
+/// such source at all. A source that exists and says unlabeled is named
+/// here beside a null label.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_filesystem_label_answered_by(
+    report: *const RemanenceDiskReport,
+    index: usize,
+) -> *const c_char {
+    unsafe { filesystem_view(report, index) }.map_or(ptr::null(), |filesystem| {
+        filesystem
+            .label
+            .as_ref()
+            .and_then(|label| label.answered_by.as_ref())
+            .map_or(ptr::null(), |source| source.as_ptr())
+    })
+}
+
+/// How many sources this filesystem read for the label, kept beside the
+/// answer as evidence (P4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_filesystem_label_reading_count(
+    report: *const RemanenceDiskReport,
+    index: usize,
+) -> usize {
+    unsafe { filesystem_view(report, index) }.map_or(0, |filesystem| {
+        filesystem
+            .label
+            .as_ref()
+            .map_or(0, |label| label.readings.len())
+    })
+}
+
+unsafe fn label_reading_view<'a>(
+    report: *const RemanenceDiskReport,
+    index: usize,
+    reading_index: usize,
+) -> Option<&'a LabelReadingView> {
+    unsafe { filesystem_view(report, index) }?
+        .label
+        .as_ref()?
+        .readings
+        .get(reading_index)
+}
+
+/// One source's name, in the recognizing filesystem's own vocabulary.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_filesystem_label_reading_source(
+    report: *const RemanenceDiskReport,
+    index: usize,
+    reading_index: usize,
+) -> *const c_char {
+    unsafe { label_reading_view(report, index, reading_index) }
+        .map_or(ptr::null(), |reading| reading.source.as_ptr())
+}
+
+/// Whether the format gives this volume that field at all. False is the
+/// third state — no such field — and is distinct from a field that is
+/// present and blank.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_filesystem_label_reading_present(
+    report: *const RemanenceDiskReport,
+    index: usize,
+    reading_index: usize,
+) -> bool {
+    unsafe { label_reading_view(report, index, reading_index) }
+        .is_some_and(|reading| reading.stored.is_some())
+}
+
+/// What that source holds, as stored and less the format's own
+/// fixed-width padding: the empty string where it is present and blank,
+/// and null where there is no such field.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_filesystem_label_reading_stored(
+    report: *const RemanenceDiskReport,
+    index: usize,
+    reading_index: usize,
+) -> *const c_char {
+    unsafe { label_reading_view(report, index, reading_index) }.map_or(ptr::null(), |reading| {
+        reading
+            .stored
+            .as_ref()
+            .map_or(ptr::null(), |stored| stored.as_ptr())
     })
 }
 

@@ -65,7 +65,8 @@ pub use kryoflux::{
 };
 pub use report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
-    PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
+    LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,
+    VolumeLabel, VolumeOrigin,
 };
 pub use p64::{P64HalfTrack, P64Image, P64Report};
 pub use storage_device::{AttachmentId, DeviceFamily, StorageDevice};

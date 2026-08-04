@@ -201,7 +201,10 @@ fn reads_compose_through_a_raw_backing_file() {
     assert_eq!(report.volumes.len(), 1);
     let volume = report.volumes[0].id;
     assert_eq!(
-        report.filesystem_on(volume).and_then(|fs| fs.label.clone()),
+        report
+            .filesystem_on(volume)
+            .and_then(|fs| fs.label.as_ref())
+            .and_then(|label| label.name.clone()),
         Some("REMANENCE".to_owned())
     );
     assert_eq!(

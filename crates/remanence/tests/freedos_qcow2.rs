@@ -86,7 +86,7 @@ fn inspection_reports_primaries_extended_and_logicals() {
     let labels: Vec<_> = report
         .filesystems
         .iter()
-        .filter_map(|filesystem| filesystem.label.clone())
+        .filter_map(|filesystem| filesystem.label.as_ref().and_then(|label| label.name.clone()))
         .collect();
     for expected in ["RMNPRI1", "RMNPRI2", "RMNLOG1", "RMNLOG2"] {
         assert!(

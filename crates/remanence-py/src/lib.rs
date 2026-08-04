@@ -383,6 +383,52 @@ pub struct VolumeInfo {
     pub issues: Vec<String>,
 }
 
+/// One source's own reading of a volume label, kept beside the answer as
+/// evidence (P4). `stored` is `None` where the format gives this volume no
+/// such field at all — a third state distinct from a field that is present
+/// and blank (`""`).
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct LabelReading {
+    /// The source, in the recognizing filesystem's own vocabulary:
+    /// `"root-directory-entry"` or `"boot-record-field"` for FAT.
+    pub source: String,
+    pub stored: Option<String>,
+}
+
+/// A recognized volume's label, answered whole: `name` is the label, or
+/// `None` for a volume that has none. The format's own spelling of
+/// unlabeled is resolved where the format is known, so no consumer that
+/// displays a drive compares strings to find that out, and nothing outside
+/// `readings` may become a label.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct VolumeLabel {
+    pub name: Option<String>,
+    /// Which source decided the answer, `None` only where the volume
+    /// carries no such source at all. A source that exists and says
+    /// unlabeled is named here beside a `name` of `None`.
+    pub answered_by: Option<String>,
+    /// Every source read, in the order the filesystem's policy consults
+    /// them.
+    pub readings: Vec<LabelReading>,
+}
+
+fn volume_label(label: &remanence::VolumeLabel) -> VolumeLabel {
+    VolumeLabel {
+        name: label.name.clone(),
+        answered_by: label.answered_by.clone(),
+        readings: label
+            .readings
+            .iter()
+            .map(|reading| LabelReading {
+                source: reading.source.clone(),
+                stored: reading.stored.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// What filesystem recognition found on one volume (P18). A record exists
 /// wherever recognition was attempted, so a refusal has a home at the seam
 /// that owns it: a refused attempt carries `kind = None` and says why in
@@ -398,7 +444,9 @@ pub struct FilesystemInfo {
     /// The identity of the volume this recognition was attempted on.
     pub volume: u64,
     pub kind: Option<String>,
-    pub label: Option<String>,
+    /// The label answer, or `None` where recognition was refused — the
+    /// absence of a *filesystem*, never of a label.
+    pub label: Option<VolumeLabel>,
     pub cluster_bytes: Option<u64>,
     pub cluster_count: Option<u64>,
     pub sectors_per_track: Option<u16>,
@@ -870,7 +918,7 @@ impl Disk {
                     id: filesystem.id.value(),
                     volume: filesystem.volume.value(),
                     kind: filesystem.kind.clone(),
-                    label: filesystem.label.clone(),
+                    label: filesystem.label.as_ref().map(volume_label),
                     cluster_bytes: filesystem.cluster_bytes,
                     cluster_count: filesystem.cluster_count,
                     sectors_per_track: filesystem.declared_geometry.sectors_per_track,
@@ -2322,6 +2370,8 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RegionInfo>()?;
     m.add_class::<VolumeInfo>()?;
     m.add_class::<FilesystemInfo>()?;
+    m.add_class::<VolumeLabel>()?;
+    m.add_class::<LabelReading>()?;
     m.add_class::<FatEntry>()?;
     m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
     m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;

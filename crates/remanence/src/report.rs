@@ -297,6 +297,45 @@ pub struct DeclaredGeometry {
     pub cylinders: Option<u64>,
 }
 
+/// One source's own reading of a volume label, kept beside the answer as
+/// evidence (P4): a caller that needs what a particular structure holds
+/// has it without opening a sector, and no caller has to know which of
+/// the sources it should have looked at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelReading {
+    /// The source, in the recognizing filesystem's own vocabulary and its
+    /// stable cross-language spelling.
+    pub source: String,
+    /// What that source holds, as stored and less the format's own
+    /// fixed-width padding — or `None` where the format gives this volume
+    /// no such field at all, which is a third state distinct from a field
+    /// that is present and blank.
+    pub stored: Option<String>,
+}
+
+/// A recognized volume's label, answered whole.
+///
+/// The answer is [`name`](Self::name): the label, or `None` for a volume
+/// that has none. A format's own spelling of unlabeled is resolved here,
+/// where the format is known, rather than by a string comparison in every
+/// consumer that displays a drive. Nothing outside the readings below may
+/// become a label — not a directory name, not the filesystem kind, not a
+/// file inside the volume, and not the image's own filename — and an
+/// unlabeled volume is reported unlabeled rather than given a
+/// placeholder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeLabel {
+    /// The label, or `None` where the volume has none.
+    pub name: Option<String>,
+    /// Which source decided the answer. `None` only where the volume
+    /// carries no such source at all: a source that exists and says
+    /// unlabeled is named here beside a [`name`](Self::name) of `None`.
+    pub answered_by: Option<String>,
+    /// Every source read, in the order the recognizing filesystem's own
+    /// policy consults them.
+    pub readings: Vec<LabelReading>,
+}
+
 /// What filesystem recognition found on one volume (P18).
 ///
 /// A record exists wherever recognition was *attempted*, so a refusal has
@@ -313,8 +352,10 @@ pub struct FilesystemInfo {
     /// The filesystem kind in its stable cross-language spelling, or
     /// `None` where recognition was refused.
     pub kind: Option<String>,
-    /// The volume label, where the filesystem records one.
-    pub label: Option<String>,
+    /// The label answer, where a filesystem was recognized. `None` here is
+    /// the absence of a *filesystem*, never of a label: a recognized
+    /// volume's answer is always present and states absence itself.
+    pub label: Option<VolumeLabel>,
     /// The allocation unit size, where the filesystem states one.
     pub cluster_bytes: Option<u64>,
     /// The allocation unit count, where the filesystem states one.

@@ -18,6 +18,43 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Changed
+
+- **A recognized FAT volume's label is one complete answer.**
+  `FilesystemInfo.label` is a `VolumeLabel` rather than a bare string:
+  `name` is the label or `None` for a volume that has none, `answered_by`
+  names the source that decided, and `readings` carries what each source
+  held. FAT records a label in two places — the boot record's field and
+  the root directory's volume-ID entry — and a volume may carry either,
+  both, or disagreeing values, so the filesystem adapter holds that policy
+  and states it (P18): the root-directory entry is the label DOS itself
+  displays and answers wherever it exists, the boot-record field answers
+  where it does not, and `NO NAME` at either source is the format's own
+  spelling of unlabeled. That comparison now happens once, where the
+  format is known, instead of in every consumer that displays a drive.
+  Both readings stay beside the answer as evidence (P4), so a caller that
+  needs a particular structure's bytes has them without opening a sector.
+  Nothing else may become a label: not a directory name, not the
+  filesystem kind, not a file inside the volume, and not the image's own
+  filename.
+- **The boot record's label field is only a field where the format says
+  it is.** It belongs to the extended boot record and is read only under
+  signature `0x29`, the form that carries one. Where that signature is
+  absent the reading is *no such field* — a third state distinct from a
+  field that is present and blank — and the shorter `0x28` form stops at
+  the volume serial, so reading the label offset there would manufacture a
+  label out of whatever bytes happen to sit at it.
+- **`FilesystemInfo.label` is `None` only where recognition was refused**,
+  which is the absence of a *filesystem* rather than of a label. Reflected
+  on the C ABI as `remanence_report_filesystem_label_answered`,
+  `remanence_report_filesystem_label_answered_by`,
+  `remanence_report_filesystem_label_reading_count`,
+  `remanence_report_filesystem_label_reading_source`,
+  `remanence_report_filesystem_label_reading_present` and
+  `remanence_report_filesystem_label_reading_stored` beside the existing
+  `remanence_report_filesystem_label`, and in Python as the `VolumeLabel`
+  and `LabelReading` classes.
+
 ### Added
 
 - **A session holds storage devices, and a medium is reached through

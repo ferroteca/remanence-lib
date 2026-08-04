@@ -66,7 +66,13 @@ skipped, and it keeps its place: skipping renumbers every volume behind
 it. I need each volume that actually composed, and each filesystem
 actually recognized on one — its kind, its label, and the geometry its
 boot record states where it states one — with a failed filesystem
-neither erasing its volume nor renumbering what follows.
+neither erasing its volume nor renumbering what follows. The label is
+one whole answer, decided where the format is known: the label itself,
+or the fact that the volume has none, with the format's own spelling of
+unlabeled already resolved so I never compare a string to find that out
+and an unlabeled drive is never given a placeholder. Whatever the
+filesystem read to decide it comes back beside the answer, so I have the
+literal bytes of any structure I care about without opening a sector.
 
 I need two counts, not one: how many volumes composed, and how many
 carry a filesystem the host read. Letters are assigned one per volume

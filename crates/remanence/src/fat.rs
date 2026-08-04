@@ -8,6 +8,7 @@
 
 use crate::device::Device;
 use crate::error::{Error, ErrorCategory, Result};
+use crate::report::{LabelReading, VolumeLabel};
 
 /// The FAT width of a recognized volume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +80,26 @@ const ATTR_LONG_NAME: u8 = 0x0f;
 const ATTR_DIRECTORY: u8 = 0x10;
 const ATTR_VOLUME_ID: u8 = 0x08;
 
+/// The extended boot record form that carries a label field. The claim is
+/// this value alone (P3): 0x28 declares the shorter form, which stops at
+/// the volume serial and has no label field at all.
+const EXTENDED_BOOT_SIGNATURE_WITH_LABEL: u8 = 0x29;
+
+/// The two places FAT records a label, in their stable cross-language
+/// spellings.
+const ROOT_DIRECTORY_ENTRY: &str = "root-directory-entry";
+const BOOT_RECORD_FIELD: &str = "boot-record-field";
+
+/// The format's own spelling of unlabeled, which DOS writes where a
+/// volume has no name.
+const UNLABELED: &str = "NO NAME";
+
+/// A fixed-width name field's content: what it holds, with the format's
+/// own space padding removed.
+fn field_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim_end().to_string()
+}
+
 struct Bpb {
     bytes_per_sector: u64,
     sectors_per_cluster: u64,
@@ -90,6 +111,9 @@ struct Bpb {
     // Geometry the BPB states, where it states one.
     sectors_per_track: u16,
     heads: u16,
+    // The extended boot record's label field, where the format says there
+    // is one at all. `None` means this volume has no such field.
+    boot_label: Option<String>,
 }
 
 fn le16(bytes: &[u8], offset: usize) -> u64 {
@@ -147,6 +171,15 @@ impl Bpb {
             sectors_per_fat,
             sectors_per_track: le16(sector, 24) as u16,
             heads: le16(sector, 26) as u16,
+            // The label field is only a field where the format says it
+            // is: it belongs to the extended boot record and exists only
+            // under that structure's own signature. Where the signature
+            // is absent this volume has no such field — a state distinct
+            // from the field being present and blank — and reading the
+            // offset regardless would manufacture a label out of whatever
+            // bytes happen to sit there.
+            boot_label: (sector[38] == EXTENDED_BOOT_SIGNATURE_WITH_LABEL)
+                .then(|| field_text(&sector[43..54])),
         })
     }
 
@@ -192,7 +225,7 @@ impl Bpb {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FatRecognition {
     pub(crate) kind: FatKind,
-    pub(crate) label: Option<String>,
+    pub(crate) label: VolumeLabel,
     pub(crate) cluster_bytes: u64,
     pub(crate) cluster_count: u64,
     pub(crate) sectors_per_track: Option<u16>,
@@ -244,7 +277,7 @@ impl FatVolume {
     pub(crate) fn recognized(&self, device: &mut dyn Device) -> Result<FatRecognition> {
         Ok(FatRecognition {
             kind: self.kind,
-            label: self.volume_label(device)?,
+            label: self.label(device)?,
             cluster_bytes: self.bpb.cluster_bytes(),
             cluster_count: self.bpb.cluster_count(),
             sectors_per_track: (self.bpb.sectors_per_track != 0)
@@ -440,7 +473,11 @@ impl FatVolume {
         Ok(out)
     }
 
-    pub fn volume_label(&self, device: &mut dyn Device) -> Result<Option<String>> {
+    /// The root directory's volume-ID entry as it stands, or `None` where
+    /// the directory holds no such entry. An entry that exists and is
+    /// blank reads as `Some("")`: it is present, and being present is
+    /// what decides which source answers.
+    fn root_directory_label(&self, device: &mut dyn Device) -> Result<Option<String>> {
         for (_, record) in self.read_records(device, 0)? {
             if record[0] == FREE {
                 break;
@@ -450,13 +487,49 @@ impl FatVolume {
             }
             let attributes = record[11];
             if attributes & ATTR_LONG_NAME != ATTR_LONG_NAME && attributes & ATTR_VOLUME_ID != 0 {
-                let label = String::from_utf8_lossy(&record[..11])
-                    .trim_end()
-                    .to_string();
-                return Ok((!label.is_empty()).then_some(label));
+                return Ok(Some(field_text(&record[..11])));
             }
         }
         Ok(None)
+    }
+
+    /// This volume's label, answered whole: the label, or the fact that
+    /// the volume has none.
+    ///
+    /// FAT records a label in two places and a volume may carry either,
+    /// both, or disagreeing values, so choosing between them is a policy
+    /// about FAT and this seam owns it (P18). The root directory's
+    /// volume-ID entry is the label DOS itself displays and answers
+    /// wherever it exists; the boot record's field answers where it does
+    /// not; and `NO NAME` at either source is the format's own spelling
+    /// of unlabeled, decided here rather than by a string comparison in
+    /// every consumer that displays a drive. Both readings come back
+    /// beside the answer as evidence (P4).
+    pub(crate) fn label(&self, device: &mut dyn Device) -> Result<VolumeLabel> {
+        let root = self.root_directory_label(device)?;
+        let boot = self.bpb.boot_label.clone();
+        let named = |stored: &str| {
+            (!stored.is_empty() && stored != UNLABELED).then(|| stored.to_owned())
+        };
+        let (name, answered_by) = match (&root, &boot) {
+            (Some(stored), _) => (named(stored), Some(ROOT_DIRECTORY_ENTRY.to_owned())),
+            (None, Some(stored)) => (named(stored), Some(BOOT_RECORD_FIELD.to_owned())),
+            (None, None) => (None, None),
+        };
+        Ok(VolumeLabel {
+            name,
+            answered_by,
+            readings: vec![
+                LabelReading {
+                    source: ROOT_DIRECTORY_ENTRY.to_owned(),
+                    stored: root,
+                },
+                LabelReading {
+                    source: BOOT_RECORD_FIELD.to_owned(),
+                    stored: boot,
+                },
+            ],
+        })
     }
 
     /// Walks `segments` to the directory holding the last segment,

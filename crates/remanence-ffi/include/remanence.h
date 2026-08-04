@@ -1380,8 +1380,46 @@ uint64_t remanence_report_filesystem_volume_id(const RemanenceDiskReport *report
 // the issue then says why, and the volume still stands.
 const char *remanence_report_filesystem_kind(const RemanenceDiskReport *report, size_t index);
 
-// The volume label, or null where the filesystem records none.
+// Whether a filesystem answered the label question at all. False where
+// recognition was refused — there is then no filesystem to answer, which
+// is not the same as a volume that answered "unlabeled".
+bool remanence_report_filesystem_label_answered(const RemanenceDiskReport *report, size_t index);
+
+// The volume label, or null where the volume has none — the format's own
+// spelling of unlabeled already resolved, so no caller compares strings
+// to find that out. Null also where nothing answered;
+// `remanence_report_filesystem_label_answered` tells the two apart.
 const char *remanence_report_filesystem_label(const RemanenceDiskReport *report, size_t index);
+
+// Which source decided the answer, or null where the volume carries no
+// such source at all. A source that exists and says unlabeled is named
+// here beside a null label.
+const char *remanence_report_filesystem_label_answered_by(const RemanenceDiskReport *report,
+                                                          size_t index);
+
+// How many sources this filesystem read for the label, kept beside the
+// answer as evidence (P4).
+size_t remanence_report_filesystem_label_reading_count(const RemanenceDiskReport *report,
+                                                       size_t index);
+
+// One source's name, in the recognizing filesystem's own vocabulary.
+const char *remanence_report_filesystem_label_reading_source(const RemanenceDiskReport *report,
+                                                             size_t index,
+                                                             size_t reading_index);
+
+// Whether the format gives this volume that field at all. False is the
+// third state — no such field — and is distinct from a field that is
+// present and blank.
+bool remanence_report_filesystem_label_reading_present(const RemanenceDiskReport *report,
+                                                       size_t index,
+                                                       size_t reading_index);
+
+// What that source holds, as stored and less the format's own
+// fixed-width padding: the empty string where it is present and blank,
+// and null where there is no such field.
+const char *remanence_report_filesystem_label_reading_stored(const RemanenceDiskReport *report,
+                                                             size_t index,
+                                                             size_t reading_index);
 
 // The allocation unit size, where the filesystem states one.
 bool remanence_report_filesystem_cluster_bytes(const RemanenceDiskReport *report,

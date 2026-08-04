@@ -466,7 +466,7 @@ impl Disk {
                     id: FilesystemId::on_volume(volume),
                     volume,
                     kind: Some(facts.kind.name().to_owned()),
-                    label: facts.label,
+                    label: Some(facts.label),
                     cluster_bytes: Some(facts.cluster_bytes),
                     cluster_count: Some(facts.cluster_count),
                     declared_geometry: DeclaredGeometry {
@@ -811,7 +811,10 @@ mod tests {
         assert_eq!(report.volumes.len(), 1);
         let volume = report.volumes[0].id;
         assert_eq!(
-            report.filesystem_on(volume).and_then(|fs| fs.label.clone()),
+            report
+                .filesystem_on(volume)
+                .and_then(|fs| fs.label.as_ref())
+                .and_then(|label| label.name.clone()),
             Some("REMANENCE".to_owned())
         );
 

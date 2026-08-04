@@ -599,11 +599,11 @@ impl ImageFormatAdapter for Qcow2Adapter {
             };
             let info = volume.recognized(&mut qcow2)?;
             let kind = info.kind.name();
-            let name = match &info.label {
+            let name = match &info.label.name {
                 Some(label) => format!("{kind} volume '{label}'"),
                 None => format!("{kind} volume"),
             };
-            let observation = match (&info.label, partition) {
+            let observation = match (&info.label.name, partition) {
                 (Some(label), Some(number)) => {
                     format!("{kind} volume '{label}' in partition {number}")
                 }
