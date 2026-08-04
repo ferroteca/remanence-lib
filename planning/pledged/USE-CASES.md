@@ -244,11 +244,12 @@ The facts I own are machine configuration: medium, slot, and attachment
 order. Every other fact in that sentence is a rule of the format or of DOS
 — whether a volume has a label at all, what a file may be called, and which
 letter a volume takes — and each is read from the disk by the same library
-that reads the disk. Today I re-derive all three beside it: I read a boot
-sector myself to find a label, I uppercase names before handing them over
-and get a generic rejection when one is not a DOS name, and I assign the
-letters from my own copy of the assignment order. Each of those is a rule
-this library already has to know to do its own job.
+that reads the disk. Two of the three have since become the library's: I
+ask a volume for its label and get one answer, and I hand over the name I
+have and get back the rule any refusal broke. The letter is the one I still
+re-derive beside it, assigning it from my own copy of the assignment
+order — the last of three rules this library already has to know to do its
+own job.
 
 ### The label is the filesystem's own reading
 
