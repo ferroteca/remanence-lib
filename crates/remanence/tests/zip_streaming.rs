@@ -7,7 +7,7 @@
 //! reads without the entry resident whole. These tests build their zip
 //! by hand, so they run without fixtures.
 
-use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind};
+use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ContainerKind};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -17,7 +17,9 @@ fn attach(
     intent: AccessIntent,
 ) -> remanence::Result<(Session, AttachmentId)> {
     let mut session = Session::new();
-    let attachment = session.attach(path, intent)?;
+    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
+    let attachment = device.attachment();
+    device.load_media(path, intent)?;
     Ok((session, attachment))
 }
 
@@ -244,10 +246,12 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
     std::fs::write(&path, vec![0u8; 9 * 1024 * 1024]).expect("oversized image writes");
 
     let mut session = Session::new();
-    let id = session
-        .attach(&path, AccessIntent::Read)
+    let medium = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added");
+    medium
+        .load_media(&path, AccessIntent::Read)
         .expect("the image itself opens; only the HDOS reader is bounded");
-    let medium = session.require_device(id).expect("the medium is attached");
 
     let error = medium
         .list_hdos_files()

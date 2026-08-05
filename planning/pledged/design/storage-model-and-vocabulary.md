@@ -10,8 +10,9 @@ their cardinalities, and the rule for which of them a caller ever holds —
 argued in the owner's design discussion of 2026-08-04. It serves the U2
 amendment ([../USE-CASES.md](../USE-CASES.md)) and the P14, P19 and P32
 amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md), delivered
-by F48–F51 in [../FEATURES.md](../FEATURES.md), the machine scope and
-the one storage handle having landed already. Pledged, not
+by F48, F49 and F51 in [../FEATURES.md](../FEATURES.md), the machine
+scope, the one storage handle, and the two-act access path over a
+lineage-bearing family catalog (F50) having landed already. Pledged, not
 implementation approval: this is guidance toward work the project owes,
 each piece landing through its own gate, and the document is swept when
 its features deliver — a design does not outlive delivery.
@@ -406,12 +407,14 @@ lives in the report.
 
 The set is pledged beside this document: the P14, P19, and P32
 amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md),
-delivered by F48–F51 in [../FEATURES.md](../FEATURES.md) — the
-`Filesystem` node, the uniform archive open, the two-act access path,
-and discovery with declared defaults. The renames are delivered: the
-session gained machines beneath it and `Disk` merged into
-`StorageDevice`. This document serves those entries and the U2
-amendment, and is swept when they deliver.
+delivered by F48, F49 and F51 in [../FEATURES.md](../FEATURES.md) — the
+`Filesystem` node, the uniform archive open, and discovery with declared
+defaults. What is delivered: the session gained machines beneath it,
+`Disk` merged into `StorageDevice`, and the access path became the two
+acts over a family catalog carrying its lineage, with an empty device
+first-class and a medium in the wrong drive refused naming both sides.
+This document serves the entries that remain and the U2 amendment, and
+is swept when they deliver.
 
 **Principles.**
 
@@ -444,16 +447,17 @@ amendment, and is swept when they deliver.
   state, so the two delivered types become one handle and the medium
   survives as model node and as data. D2's "disk stack" prose naming
   follows.
-- The access path `machine → device → content`: `add_device` then
-  `load_media`, each returning its verb's noun. Today's `attach(path)`
-  is the one-step shape; the model keeps it as one convenience over
-  `discover_media` — `add_device(path)`, adding a fresh device of the
-  format-declared default family and returning it — with the canonical
-  two-step beneath it. The media-first machine-level spelling is dropped
-  rather than kept as a synonym: with one handle both spellings would
-  return the same device. `discover_media` itself is new library-level surface,
-  the format adapters' default-device declaration is a new catalog fact,
-  and a device that exists empty is new surface.
+- The access path `machine → device → content` is delivered:
+  `add_device` then `load_media`, each returning its verb's noun, over a
+  family catalog carrying its lineage, with a device that exists empty
+  and a family mismatch refused naming both sides. One convenience is
+  still owed over `discover_media` — `add_device(path)`, adding a fresh
+  device of the format-declared default family and returning it — with
+  the canonical two-step beneath it. The media-first machine-level
+  spelling is dropped rather than kept as a synonym: with one handle
+  both spellings would return the same device. `discover_media` itself
+  is new library-level surface, and the format adapters'
+  default-device declaration is a new catalog fact.
 - Uniform open: archives enter through the same add-device-and-load
   journey; the
   separate `archive[/entry]` path syntax and the `Archive` type's

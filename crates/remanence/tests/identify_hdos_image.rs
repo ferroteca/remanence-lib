@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, ArchiveLayout, AttachmentId, ContainerKind, ContainerLayout, StorageDevice,
+    AccessIntent, ArchiveLayout, AttachmentId, ContainerKind, ContainerLayout, DeviceFamily,
     Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, Session,
 };
 
@@ -18,7 +18,9 @@ fn attach(
     intent: AccessIntent,
 ) -> remanence::Result<(Session, AttachmentId)> {
     let mut session = Session::new();
-    let attachment = session.attach(path, intent)?;
+    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
+    let attachment = device.attachment();
+    device.load_media(path, intent)?;
     Ok((session, attachment))
 }
 

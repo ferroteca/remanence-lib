@@ -401,6 +401,229 @@ pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
 
 
 
+/// This device's attachment identity — `hdd0` and the like. Owned by the
+/// view; do not free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_device_attachment(
+    device: *const RemanenceDevice,
+) -> *const c_char {
+    match unsafe { device.as_ref() } {
+        Some(handle) => handle.attachment_c.as_ptr(),
+        None => ptr::null(),
+    }
+}
+
+/// This device's family, by its stable spelling (`hard-disk`). Owned by
+/// the view; do not free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_device_family(device: *const RemanenceDevice) -> *const c_char {
+    match unsafe { device.as_ref() } {
+        Some(handle) => handle.family_c.as_ptr(),
+        None => ptr::null(),
+    }
+}
+
+/// Whether a medium currently occupies this device's slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_device_is_occupied(device: *const RemanenceDevice) -> bool {
+    match unsafe { device.as_ref() } {
+        Some(handle) => handle.device().is_some_and(|device| device.is_occupied()),
+        None => false,
+    }
+}
+
+/// Loads the medium at `path` (UTF-8) — a disk image, or
+/// `archive[/entry]` — into this device, and hands back nothing to hold:
+/// the device is the one storage handle.
+///
+/// A device accepts only the media its family is served (P14), and a
+/// mismatch is refused naming both sides. A `Write` intent claims the
+/// medium exclusively and fails here when the claim cannot be secured,
+/// never by falling back. An occupied slot is refused rather than
+/// displaced. Returns false on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_device_load_media(
+    device: *mut RemanenceDevice,
+    path: *const c_char,
+    intent: RemanenceAccessIntent,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { device.as_mut() }) else {
+        let error = remanence::Error::io("null device");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(target) = handle.device() else {
+        let error = remanence::Error::io("the device holding this medium was removed");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match target.load_media(path.as_ref(), access_intent(intent)) {
+        Ok(()) => {
+            handle.refresh();
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Ejects the medium, releasing its P7 claim, and leaves the device in
+/// place. Every view taken through it stops answering, and the content
+/// verbs refuse by name until another medium is loaded. Returns false
+/// when the slot was already empty.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_device_eject(
+    device: *mut RemanenceDevice,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { device.as_mut() }) else {
+        let error = remanence::Error::io("null device");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(target) = handle.device() else {
+        let error = remanence::Error::io("the device holding this medium was removed");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match target.eject() {
+        Ok(()) => {
+            handle.refresh();
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// One family's strings, built once so every reader below answers with a
+/// pointer the library owns and the caller never frees.
+struct FamilyView {
+    id: CString,
+    name: CString,
+    provenance: CString,
+    kind_of: Option<CString>,
+    slot_prefix: Option<CString>,
+    media: Vec<CString>,
+    flux_path: Option<CString>,
+}
+
+fn families() -> &'static [FamilyView] {
+    static FAMILIES: std::sync::OnceLock<Vec<FamilyView>> = std::sync::OnceLock::new();
+    FAMILIES.get_or_init(|| {
+        DeviceFamily::enrolled()
+            .into_iter()
+            .map(|family| FamilyView {
+                id: to_cstring(family.id()),
+                name: to_cstring(family.name()),
+                provenance: to_cstring(family.provenance()),
+                kind_of: family.kind_of().map(|parent| to_cstring(parent.id())),
+                slot_prefix: family.slot_prefix().map(to_cstring),
+                media: family.accepted_media().into_iter().map(to_cstring).collect(),
+                flux_path: family.flux_path().map(to_cstring),
+            })
+            .collect()
+    })
+}
+
+fn family_string(index: usize, read: fn(&FamilyView) -> Option<&CString>) -> *const c_char {
+    families()
+        .get(index)
+        .and_then(read)
+        .map_or(ptr::null(), |value| value.as_ptr())
+}
+
+/// How many device families this release enrols, interior names of the
+/// lineage among them (P32).
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_count() -> usize {
+    families().len()
+}
+
+/// The stable spelling of family `index` — the value
+/// `remanence_session_add_device` takes. Null when out of range; owned by
+/// the library and never freed.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_id(index: usize) -> *const c_char {
+    family_string(index, |family| Some(&family.id))
+}
+
+/// Family `index`'s name, fit to show a user beside the slot it fills.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_name(index: usize) -> *const c_char {
+    family_string(index, |family| Some(&family.name))
+}
+
+/// Where family `index`'s declaration came from.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_provenance(index: usize) -> *const c_char {
+    family_string(index, |family| Some(&family.provenance))
+}
+
+/// What family `index` is a kind of, by stable spelling — null for the
+/// root of the lineage.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_kind_of(index: usize) -> *const c_char {
+    family_string(index, |family| family.kind_of.as_ref())
+}
+
+/// Whether family `index` can be added to a machine. An interior name of
+/// the lineage classifies and instantiates nothing.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_is_concrete(index: usize) -> bool {
+    families()
+        .get(index)
+        .is_some_and(|family| family.slot_prefix.is_some())
+}
+
+/// The family half of every attachment identity in family `index` —
+/// `hdd` for `hdd0`. Null for an interior name, which names no slot.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_slot_prefix(index: usize) -> *const c_char {
+    family_string(index, |family| family.slot_prefix.as_ref())
+}
+
+/// How many media types family `index` accepts (P14). Zero for an
+/// interior name.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_media_count(index: usize) -> usize {
+    families().get(index).map_or(0, |family| family.media.len())
+}
+
+/// The stable spelling of the `media`th media type family `index`
+/// accepts. Null when either index is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_media(index: usize, media: usize) -> *const c_char {
+    families()
+        .get(index)
+        .and_then(|family| family.media.get(media))
+        .map_or(ptr::null(), |id| id.as_ptr())
+}
+
+/// The drive profile family `index` claims as its recording path (P22),
+/// by stable spelling. Null where the family claims none, which is
+/// ordinary rather than deficient.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_family_flux_path(index: usize) -> *const c_char {
+    family_string(index, |family| family.flux_path.as_ref())
+}
+
 /// The artifact the medium was opened from (the archive path for archive
 /// inputs). Null while the device's slot is empty.
 #[unsafe(no_mangle)]
@@ -465,7 +688,7 @@ pub unsafe extern "C" fn remanence_device_read_at(
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
         let Some(medium) = handle.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -930,7 +1153,7 @@ pub unsafe extern "C" fn remanence_device_list_hdos_files(
         return ptr::null_mut();
     };
         let Some(medium) = handle.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
@@ -1044,8 +1267,8 @@ pub unsafe extern "C" fn remanence_hdos_file_modified_date(
 // files with a commit point.
 
 use remanence::{
-    AccessIntent, AccessMode, DiskContent, DiskFormat, FatEntry, FatEntryKind, RegionRole,
-    StorageDevice, VolumeId, VolumeOrigin, read_hdos_file,
+    AccessIntent, AccessMode, DeviceFamily, DiskContent, DiskFormat, FatEntry, FatEntryKind,
+    RegionRole, StorageDevice, VolumeId, VolumeOrigin, read_hdos_file,
 };
 
 /// The caller's declared intent when opening a disk (P7).
@@ -1137,7 +1360,7 @@ impl RemanenceMachine {
 /// state of the medium in it.
 ///
 /// **The session owns this; never free it.** It stays valid until the
-/// device is detached or the session is freed.
+/// device is removed or the session is freed.
 ///
 /// It names the device by session, machine and attachment identity
 /// rather than by pointer, and re-resolves on every call. That is
@@ -1149,12 +1372,17 @@ pub struct RemanenceDevice {
     /// Null for the session's anonymous machine.
     machine: Option<String>,
     attachment: AttachmentId,
+    /// The slot-side facts, which do not change while the device exists.
+    attachment_c: CString,
+    family_c: CString,
+    /// The content-side strings, which change every time a medium is
+    /// loaded or ejected.
     path: Option<CString>,
     image_path: Option<CString>,
 }
 
 impl RemanenceDevice {
-    /// The device this view names, or `None` once it is detached.
+    /// The device this view names, or `None` once it is removed.
     #[allow(clippy::mut_from_ref)]
     fn device(&self) -> Option<&mut StorageDevice> {
         let session = unsafe { &mut (*self.session).session };
@@ -1163,6 +1391,25 @@ impl RemanenceDevice {
             None => session.anonymous_mut(),
         };
         machine.device_mut(self.attachment)
+    }
+
+    /// Restates the content-side strings from whatever occupies the slot
+    /// now. Loading and ejecting both change what they are strings *of*,
+    /// so a view that did not restate them would answer for a medium
+    /// that has left.
+    fn refresh(&mut self) {
+        let (path, image_path) = match self.device() {
+            Some(device) => (
+                device.path().ok().map(to_cstring),
+                device
+                    .image_path()
+                    .ok()
+                    .map(|image_path| to_cstring(&image_path.display().to_string())),
+            ),
+            None => (None, None),
+        };
+        self.path = path;
+        self.image_path = image_path;
     }
 }
 
@@ -1217,7 +1464,7 @@ pub unsafe extern "C" fn remanence_session_new() -> *mut RemanenceSession {
     }))
 }
 
-/// Frees a session, detaching every device and releasing every P7 claim.
+/// Frees a session, dropping every device and releasing every P7 claim.
 /// Every borrowed machine and device view obtained from it becomes
 /// invalid.
 #[unsafe(no_mangle)]
@@ -1227,141 +1474,83 @@ pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) 
     }
 }
 
-/// Attaches the medium at `path` (UTF-8) — a raw disk image, or
-/// `archive[/entry]` — to a new device in the session's **anonymous
-/// machine**, taking the lowest free slot of its family and writing the
-/// attachment identity it took (such as `hdd0`) to `attachment_out`;
-/// free that string with `remanence_string_free`.
-/// `remanence_machine_attach` does the same in a named machine. A
-/// `Write` intent claims the medium exclusively and fails at the open
-/// when the claim cannot be secured, never by falling back. Returns
-/// false on failure.
+/// Adds a device of `family` (UTF-8, a family's stable spelling such as
+/// `hard-disk`) to the session's **anonymous machine**, taking the lowest
+/// free slot of that family, and returns a **borrowed** view of it —
+/// empty, until `remanence_device_load_media` puts a medium in it.
+///
+/// The session owns the view; never free it.
+/// `remanence_machine_add_device` does the same in a named machine. A
+/// family this release does not claim, and an interior name of the
+/// lineage which classifies rather than instantiates, are both refused by
+/// name (P3). Returns null on failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_attach(
+pub unsafe extern "C" fn remanence_session_add_device(
     session: *mut RemanenceSession,
-    path: *const c_char,
-    intent: RemanenceAccessIntent,
-    attachment_out: *mut *mut c_char,
+    family: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { session.as_mut() }) else {
-        let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let intent = access_intent(intent);
-    match handle.session.attach(path.as_ref(), intent) {
-        Ok(attachment) => {
-            if !attachment_out.is_null() {
-                unsafe { *attachment_out = to_owned_c_char(&attachment.to_string()) };
-            }
-            true
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
+) -> *mut RemanenceDevice {
+    unsafe {
+        add_device(
+            session,
+            None,
+            family,
+            None,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
     }
 }
 
-/// Attaches the medium at `path` to the slot `attachment` names (such as
-/// `hdd1`) in the session's anonymous machine. The caller chooses the
-/// slot, never the name. A slot already occupied is refused rather than
-/// displaced, and a family this release does not claim is refused by
-/// name (P3).
+/// Adds a device of `family` at slot `index` of the session's anonymous
+/// machine — `hdd1` being family `hard-disk` at index 1. The caller
+/// chooses the slot, never the name; a slot already taken is refused
+/// rather than displaced.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_attach_at(
+pub unsafe extern "C" fn remanence_session_add_device_at(
     session: *mut RemanenceSession,
-    attachment: *const c_char,
-    path: *const c_char,
-    intent: RemanenceAccessIntent,
+    family: *const c_char,
+    index: u32,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { session.as_mut() }) else {
-        let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let (Some(attachment), Some(path)) =
-        (unsafe { utf8_arg(attachment) }, unsafe { utf8_arg(path) })
-    else {
-        let error = remanence::Error::io("null attachment or path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let attachment = match AttachmentId::parse(attachment.as_ref()) {
-        Ok(attachment) => attachment,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            return false;
-        }
-    };
-    let intent = access_intent(intent);
-    match handle.session.attach_at(
-        attachment.family(),
-        attachment.index(),
-        path.as_ref(),
-        intent,
-    ) {
-        Ok(_) => true,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
+) -> *mut RemanenceDevice {
+    unsafe {
+        add_device(
+            session,
+            None,
+            family,
+            Some(index),
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
     }
 }
 
-/// Detaches the device at `attachment` from the session's anonymous
-/// machine, releasing its medium's P7 claim and freeing the slot.
+/// Removes the device at `attachment` from the session's anonymous
+/// machine, releasing any medium's P7 claim with it and freeing the slot.
 /// Borrowed device views for that device become invalid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_detach(
+pub unsafe extern "C" fn remanence_session_remove_device(
     session: *mut RemanenceSession,
     attachment: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { session.as_mut() }) else {
-        let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let Some(attachment) = (unsafe { utf8_arg(attachment) }) else {
-        let error = remanence::Error::io("null attachment");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let attachment = match AttachmentId::parse(attachment.as_ref()) {
-        Ok(attachment) => attachment,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            return false;
-        }
-    };
-    match handle.session.detach(attachment) {
-        Ok(()) => {
-            handle
-                .views
-                .retain(|view| view.machine.is_some() || view.attachment != attachment);
-            true
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
+    unsafe {
+        remove_device(
+            session,
+            None,
+            attachment,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
     }
 }
 
@@ -1501,139 +1690,140 @@ pub unsafe extern "C" fn remanence_machine_identity(
     }
 }
 
-/// Attaches the medium at `path` (UTF-8) to a new device in this
-/// machine, taking the lowest free slot of its family and writing the
-/// attachment identity it took to `attachment_out`. Free that string
-/// with `remanence_string_free`.
+/// Adds a device of `family` (UTF-8) to this machine, taking the lowest
+/// free slot of that family, and returns a **borrowed** view of it. The
+/// session owns the view; never free it. Returns null on failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_attach(
+pub unsafe extern "C" fn remanence_machine_add_device(
     machine: *mut RemanenceMachine,
-    path: *const c_char,
-    intent: RemanenceAccessIntent,
-    attachment_out: *mut *mut c_char,
+    family: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(target) = (unsafe { machine.as_ref() }).and_then(RemanenceMachine::machine) else {
-        let error = remanence::Error::io("null or retired machine");
+) -> *mut RemanenceDevice {
+    let Some(handle) = (unsafe { machine.as_ref() }) else {
+        let error = remanence::Error::io("null machine");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
+        return ptr::null_mut();
     };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match target.attach(path.as_ref(), access_intent(intent)) {
-        Ok(attachment) => {
-            if !attachment_out.is_null() {
-                unsafe { *attachment_out = to_owned_c_char(&attachment.to_string()) };
-            }
-            true
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
+    let (session, identity) = (handle.session, handle.identity.clone());
+    unsafe {
+        add_device(
+            session,
+            identity,
+            family,
+            None,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
     }
 }
 
-/// Attaches the medium at `path` to the slot `attachment` names in this
-/// machine. The caller chooses the slot, never the name; an occupied
-/// slot is refused rather than displaced, and a family this release does
-/// not claim is refused by name (P3).
+/// Adds a device of `family` at slot `index` in this machine. The caller
+/// chooses the slot, never the name; a slot already taken is refused
+/// rather than displaced.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_attach_at(
+pub unsafe extern "C" fn remanence_machine_add_device_at(
     machine: *mut RemanenceMachine,
-    attachment: *const c_char,
-    path: *const c_char,
-    intent: RemanenceAccessIntent,
+    family: *const c_char,
+    index: u32,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(target) = (unsafe { machine.as_ref() }).and_then(RemanenceMachine::machine) else {
-        let error = remanence::Error::io("null or retired machine");
+) -> *mut RemanenceDevice {
+    let Some(handle) = (unsafe { machine.as_ref() }) else {
+        let error = remanence::Error::io("null machine");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
+        return ptr::null_mut();
     };
-    let (Some(attachment), Some(path)) =
-        (unsafe { utf8_arg(attachment) }, unsafe { utf8_arg(path) })
-    else {
-        let error = remanence::Error::io("null attachment or path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let attachment = match AttachmentId::parse(attachment.as_ref()) {
-        Ok(attachment) => attachment,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            return false;
-        }
-    };
-    match target.attach_at(
-        attachment.family(),
-        attachment.index(),
-        path.as_ref(),
-        access_intent(intent),
-    ) {
-        Ok(_) => true,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
+    let (session, identity) = (handle.session, handle.identity.clone());
+    unsafe {
+        add_device(
+            session,
+            identity,
+            family,
+            Some(index),
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
     }
 }
 
-/// Detaches the device at `attachment` from this machine, releasing its
-/// medium's P7 claim and freeing the slot. Borrowed device views for
-/// that device become invalid.
+/// Removes the device at `attachment` from this machine, releasing any
+/// medium's P7 claim with it and freeing the slot. Borrowed device views
+/// for that device become invalid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_detach(
+pub unsafe extern "C" fn remanence_machine_remove_device(
     machine: *mut RemanenceMachine,
     attachment: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { machine.as_ref() }) else {
         let error = remanence::Error::io("null machine");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
-    let Some(target) = handle.machine() else {
+    let (session, identity) = (handle.session, handle.identity.clone());
+    unsafe {
+        remove_device(
+            session,
+            identity,
+            attachment,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// Composes this machine's DOS drive-letter mapping from its **own device
+/// set** (P32, P35), reading attachment order from the order its devices
+/// were added rather than from an assertion.
+///
+/// `rule` is a claimed rule's name, or null to apply every claimed rule
+/// and leave a letter they disagree on undetermined. Families no claimed
+/// rule letters are passed over by family, and the mapping's provenance
+/// says which. Free the result with `remanence_drive_map_free`; returns
+/// null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_compose_dos_letters(
+    machine: *mut RemanenceMachine,
+    rule: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceDriveMap {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(target) = (unsafe { machine.as_ref() }).and_then(RemanenceMachine::machine) else {
         let error = remanence::Error::io("null or retired machine");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
+        return ptr::null_mut();
     };
-    let Some(attachment) = (unsafe { utf8_arg(attachment) }) else {
-        let error = remanence::Error::io("null attachment");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let attachment = match AttachmentId::parse(attachment.as_ref()) {
-        Ok(attachment) => attachment,
-        Err(error) => {
+    let rule = if rule.is_null() {
+        None
+    } else {
+        let Some(name) = (unsafe { utf8_arg(rule) }) else {
+            let error = remanence::Error::io("null rule");
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            return false;
+            return ptr::null_mut();
+        };
+        match DosAssignmentRule::from_name(name.as_ref()) {
+            Ok(rule) => Some(rule),
+            Err(error) => {
+                unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+                return ptr::null_mut();
+            }
         }
     };
-    match target.detach(attachment) {
-        Ok(()) => {
-            let identity = handle.identity.clone();
-            let session = unsafe { &mut *handle.session };
-            session
-                .views
-                .retain(|view| view.machine != identity || view.attachment != attachment);
-            true
-        }
+    match target.compose_dos_letters(rule, &[]) {
+        Ok(map) => Box::into_raw(Box::new(drive_map_view(&map))),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
+            ptr::null_mut()
         }
     }
 }
@@ -1672,7 +1862,7 @@ pub unsafe extern "C" fn remanence_machine_device_attachment(
 /// A **borrowed** view of the device at `attachment` in this machine.
 ///
 /// The session owns it; never free it. It stays valid until that device
-/// is detached or the session is freed. Returns null when this machine
+/// is removed or the session is freed. Returns null when this machine
 /// has no device there.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_machine_device(
@@ -1692,7 +1882,7 @@ pub unsafe extern "C" fn remanence_machine_device(
 /// machine's.
 ///
 /// The session owns it; never free it. It stays valid until that device
-/// is detached or the session is freed. Returns null when nothing is
+/// is removed or the session is freed. Returns null when nothing is
 /// attached there.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_device(
@@ -1700,6 +1890,113 @@ pub unsafe extern "C" fn remanence_session_device(
     attachment: *const c_char,
 ) -> *mut RemanenceDevice {
     unsafe { device_view(session, None, attachment) }
+}
+
+/// Adds a device in one machine of one session, and answers with the
+/// borrowed view of it. Both spellings — the session's anonymous machine
+/// and a named one — land here, because the act is the machine's either
+/// way.
+#[allow(clippy::too_many_arguments)]
+unsafe fn add_device(
+    session: *mut RemanenceSession,
+    machine: Option<String>,
+    family: *const c_char,
+    index: Option<u32>,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceDevice {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let Some(family) = (unsafe { utf8_arg(family) }) else {
+        let error = remanence::Error::io("null device family");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let family = match DeviceFamily::from_id(family.as_ref()) {
+        Ok(family) => family,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    let target = match &machine {
+        Some(identity) => handle.session.machine_mut(identity),
+        None => Some(handle.session.anonymous_mut()),
+    };
+    let Some(target) = target else {
+        let error = remanence::Error::io("null or retired machine");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let added = match index {
+        Some(index) => target.add_device_at(family, index),
+        None => target.add_device(family),
+    };
+    let attachment = match added {
+        Ok(device) => device.attachment(),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    let attachment = to_cstring(&attachment.to_string());
+    unsafe { device_view(session, machine, attachment.as_ptr()) }
+}
+
+/// Removes a device from one machine of one session and invalidates every
+/// borrowed view of it.
+unsafe fn remove_device(
+    session: *mut RemanenceSession,
+    machine: Option<String>,
+    attachment: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(attachment) = (unsafe { utf8_arg(attachment) }) else {
+        let error = remanence::Error::io("null attachment");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let attachment = match AttachmentId::parse(attachment.as_ref()) {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return false;
+        }
+    };
+    let target = match &machine {
+        Some(identity) => handle.session.machine_mut(identity),
+        None => Some(handle.session.anonymous_mut()),
+    };
+    let Some(target) = target else {
+        let error = remanence::Error::io("null or retired machine");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match target.remove_device(attachment) {
+        Ok(()) => {
+            handle
+                .views
+                .retain(|view| view.machine != machine || view.attachment != attachment);
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
 }
 
 /// The borrowed machine view for `identity`, reusing the one already
@@ -1766,6 +2063,8 @@ unsafe fn device_view(
         session,
         machine,
         attachment,
+        attachment_c: to_cstring(&attachment.to_string()),
+        family_c: to_cstring(attachment.family().id()),
         path,
         image_path,
     }));
@@ -1820,7 +2119,7 @@ pub struct RemanenceAssurance {
 ///
 /// It is available before anything is read, so a caller meets a deficiency
 /// by being told rather than by an operation failing halfway. Null only
-/// when the device holding this medium was detached.
+/// when the device holding this medium was removed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_device_assurance(
     device: *const RemanenceDevice,
@@ -2078,7 +2377,7 @@ pub unsafe extern "C" fn remanence_device_entries(
     };
     let path = unsafe { utf8_arg(path) }.unwrap_or_default();
         let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
@@ -2118,7 +2417,7 @@ pub unsafe extern "C" fn remanence_device_stat(
         return ptr::null_mut();
     };
         let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
@@ -2203,7 +2502,7 @@ pub unsafe extern "C" fn remanence_device_read_file(
         return ptr::null_mut();
     };
         let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
@@ -2247,7 +2546,7 @@ pub unsafe extern "C" fn remanence_device_read_file_at(
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
     let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -2283,7 +2582,7 @@ pub unsafe extern "C" fn remanence_device_resize_file(
         return false;
     };
         let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -2331,7 +2630,7 @@ pub unsafe extern "C" fn remanence_device_write_file_at(
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
     let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -2408,7 +2707,7 @@ pub unsafe extern "C" fn remanence_device_write_file(
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
     let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -2443,7 +2742,7 @@ pub unsafe extern "C" fn remanence_device_make_directory(
         return false;
     };
         let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -2474,7 +2773,7 @@ pub unsafe extern "C" fn remanence_device_commit(
         return false;
     };
         let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -2551,7 +2850,7 @@ pub unsafe extern "C" fn remanence_device_read_hdos_file(
         return ptr::null_mut();
     };
         let Some(medium) = handle.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
@@ -5522,7 +5821,7 @@ pub unsafe extern "C" fn remanence_device_inspect(
         return ptr::null_mut();
     };
         let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was detached");
+        let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
@@ -6617,67 +6916,72 @@ pub unsafe extern "C" fn remanence_dos_machine_compose(
 
     let composed = machine.build().and_then(|machine| machine.compose(rule));
     match composed {
-        Ok(map) => {
-            let mappings = map
-                .mappings
-                .iter()
-                .map(|mapping| {
-                    let (outcome, device, volume, phantom_of, reason) = match &mapping.outcome {
-                        LetterOutcome::Volume { device, volume } => (
-                            RemanenceLetterOutcome::Volume,
-                            Some(*device),
-                            Some(volume.value()),
-                            0,
-                            None,
-                        ),
-                        LetterOutcome::DeclaredDevice { device } => (
-                            RemanenceLetterOutcome::DeclaredDevice,
-                            Some(*device),
-                            None,
-                            0,
-                            None,
-                        ),
-                        LetterOutcome::Phantom { of } => (
-                            RemanenceLetterOutcome::Phantom,
-                            None,
-                            None,
-                            ascii_letter(*of),
-                            None,
-                        ),
-                        LetterOutcome::Undetermined { reason } => (
-                            RemanenceLetterOutcome::Undetermined,
-                            None,
-                            None,
-                            0,
-                            Some(to_cstring(reason)),
-                        ),
-                    };
-                    MappingView {
-                        letter: ascii_letter(mapping.letter),
-                        outcome,
-                        device_kind: device.map(|device| to_cstring(device.kind())),
-                        device_index: device.map(remanence::MachineDevice::index),
-                        volume,
-                        phantom_of,
-                        reason,
-                    }
-                })
-                .collect();
-            Box::into_raw(Box::new(RemanenceDriveMap {
-                applied_rules: map
-                    .applied_rules
-                    .iter()
-                    .map(|rule| to_cstring(rule.name()))
-                    .collect(),
-                established_count: map.established_count(),
-                mappings,
-                provenance: map.provenance.iter().map(|line| to_cstring(line)).collect(),
-            }))
-        }
+        Ok(map) => Box::into_raw(Box::new(drive_map_view(&map))),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
         }
+    }
+}
+
+/// The C-side view of one composed mapping. Both composers — the asserted
+/// machine and the machine that reads its own device set — answer with
+/// the same records, because they answered with the same core type.
+fn drive_map_view(map: &remanence::DriveMap) -> RemanenceDriveMap {
+    let mappings = map
+        .mappings
+        .iter()
+        .map(|mapping| {
+            let (outcome, device, volume, phantom_of, reason) = match &mapping.outcome {
+                LetterOutcome::Volume { device, volume } => (
+                    RemanenceLetterOutcome::Volume,
+                    Some(*device),
+                    Some(volume.value()),
+                    0,
+                    None,
+                ),
+                LetterOutcome::DeclaredDevice { device } => (
+                    RemanenceLetterOutcome::DeclaredDevice,
+                    Some(*device),
+                    None,
+                    0,
+                    None,
+                ),
+                LetterOutcome::Phantom { of } => (
+                    RemanenceLetterOutcome::Phantom,
+                    None,
+                    None,
+                    ascii_letter(*of),
+                    None,
+                ),
+                LetterOutcome::Undetermined { reason } => (
+                    RemanenceLetterOutcome::Undetermined,
+                    None,
+                    None,
+                    0,
+                    Some(to_cstring(reason)),
+                ),
+            };
+            MappingView {
+                letter: ascii_letter(mapping.letter),
+                outcome,
+                device_kind: device.map(|device| to_cstring(device.kind())),
+                device_index: device.map(remanence::MachineDevice::index),
+                volume,
+                phantom_of,
+                reason,
+            }
+        })
+        .collect();
+    RemanenceDriveMap {
+        applied_rules: map
+            .applied_rules
+            .iter()
+            .map(|rule| to_cstring(rule.name()))
+            .collect(),
+        established_count: map.established_count(),
+        mappings,
+        provenance: map.provenance.iter().map(|line| to_cstring(line)).collect(),
     }
 }
 
@@ -6922,12 +7226,12 @@ mod tests {
         // The file is written through the library's own writer, so the
         // chain the truncation cuts is a real one.
         let mut session = remanence::Session::new();
-        let attachment = session
-            .attach(path, AccessIntent::Write)
-            .expect("the whole image attaches");
         let medium = session
-            .require_device(attachment)
-            .expect("the medium is attached");
+            .add_device(DeviceFamily::HARD_DISK)
+            .expect("the drive is added");
+        medium
+            .load_media(path, AccessIntent::Write)
+            .expect("the whole image loads");
         let volume = medium.inspect().expect("inspects").volumes[0].id;
         let content: Vec<u8> = (0..1_200_000u32).map(|n| (n % 241) as u8).collect();
         medium.write_file(volume, "FAR.BIN", &content).expect("writes");
@@ -6956,26 +7260,33 @@ mod tests {
 
         let session = unsafe { remanence_session_new() };
         let path_arg = to_cstring(&path.display().to_string());
-        let mut attachment = ptr::null_mut();
+        let family = to_cstring("hard-disk");
         let mut category = RemanenceErrorCategory::Io;
         let mut message = ptr::null_mut();
         let mut rule = ptr::null_mut();
+        let device = unsafe {
+            remanence_session_add_device(
+                session,
+                family.as_ptr(),
+                &mut category,
+                &mut message,
+                &mut rule,
+            )
+        };
+        assert!(!device.is_null(), "the drive is added");
         assert!(
             unsafe {
-                remanence_session_attach(
-                    session,
+                remanence_device_load_media(
+                    device,
                     path_arg.as_ptr(),
                     RemanenceAccessIntent::Write,
-                    &mut attachment,
                     &mut category,
                     &mut message,
                     &mut rule,
                 )
             },
-            "a truncated source still attaches, degraded"
+            "a truncated source still loads, degraded"
         );
-        let device = unsafe { remanence_session_device(session, attachment) };
-        assert!(!device.is_null());
 
         let assurance = unsafe { remanence_device_assurance(device) };
         assert_eq!(
@@ -7049,7 +7360,6 @@ mod tests {
         );
         assert!(remanence_assurance_condition_name(2).is_null());
 
-        unsafe { remanence_string_free(attachment) };
         unsafe { remanence_session_free(session) };
         std::fs::remove_file(&path).ok();
     }

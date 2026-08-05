@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind, ErrorCategory};
+use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ContainerKind, ErrorCategory};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -19,7 +19,9 @@ fn attach(
     intent: AccessIntent,
 ) -> remanence::Result<(Session, AttachmentId)> {
     let mut session = Session::new();
-    let attachment = session.attach(path, intent)?;
+    let device = session.add_device(DeviceFamily::HARD_DISK)?;
+    let attachment = device.attachment();
+    device.load_media(path, intent)?;
     Ok((session, attachment))
 }
 

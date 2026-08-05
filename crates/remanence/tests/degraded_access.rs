@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use remanence::{
     AccessIntent, AccessMode, AssuranceCondition, AssuranceOutcome, AttachmentId, ByteRange,
+    DeviceFamily,
     ErrorCategory, Session, VolumeId,
 };
 
@@ -103,10 +104,12 @@ fn far_content() -> Vec<u8> {
 fn build_floppy(path: &Path) {
     std::fs::write(path, floppy_1440()).expect("image writes");
     let mut session = Session::new();
-    let attachment = session
-        .attach(path, AccessIntent::Write)
-        .expect("the whole image attaches");
-    let medium = session.require_device(attachment).expect("medium");
+    let medium = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added");
+    medium
+        .load_media(path, AccessIntent::Write)
+        .expect("the whole image loads");
     let volume = only_volume_of(medium);
     medium
         .write_file(volume, NEAR, &near_content())
@@ -139,9 +142,13 @@ fn truncated(tag: &str, intent: AccessIntent) -> (PathBuf, Session, AttachmentId
     build_floppy(&path);
     truncate(&path, OBSERVED);
     let mut session = Session::new();
-    let attachment = session
-        .attach(&path, intent)
-        .expect("a truncated source still attaches, degraded");
+    let device = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added");
+    let attachment = device.attachment();
+    device
+        .load_media(&path, intent)
+        .expect("a truncated source still loads, degraded");
     (path, session, attachment)
 }
 
@@ -151,8 +158,12 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
     build_floppy(&path);
 
     let mut session = Session::new();
-    let attachment = session.attach(&path, AccessIntent::Write).expect("attaches");
-    let medium = session.require_device(attachment).expect("medium");
+    let medium = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added");
+    medium
+        .load_media(&path, AccessIntent::Write)
+        .expect("the whole image loads");
     let assurance = medium.assurance().expect("a medium is attached").clone();
 
     assert_eq!(assurance.outcome, AssuranceOutcome::Verified);
@@ -378,8 +389,12 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
     truncate(&path, 4_096);
 
     let mut session = Session::new();
-    let attachment = session.attach(&path, AccessIntent::Read).expect("attaches");
-    let medium = session.require_device(attachment).expect("medium");
+    let medium = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added");
+    medium
+        .load_media(&path, AccessIntent::Read)
+        .expect("what is left still loads");
     let assurance = medium.assurance().expect("a medium is attached").clone();
     assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
     assert_eq!(assurance.observed_bytes, Some(4_096));
@@ -430,8 +445,10 @@ fn contradictory_metadata_beneath_a_shortfall_is_refused_not_degraded() {
 
     let mut session = Session::new();
     let refusal = session
-        .attach(&path, AccessIntent::Read)
-        .expect_err("an unbounded shortfall is refused at the open");
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added")
+        .load_media(&path, AccessIntent::Read)
+        .expect_err("an unbounded shortfall is refused at the load");
     assert_eq!(refusal.category(), ErrorCategory::InvalidImage);
     assert_eq!(
         refusal.rule(),
@@ -457,8 +474,12 @@ fn the_gate_is_narrow_and_claims_no_rule_beyond_the_raw_direct_volume() {
     truncate(&path, 1_100_000);
 
     let mut session = Session::new();
-    let attachment = session.attach(&path, AccessIntent::Write).expect("attaches");
-    let medium = session.require_device(attachment).expect("medium");
+    let medium = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added");
+    medium
+        .load_media(&path, AccessIntent::Write)
+        .expect("the image loads");
     assert_eq!(medium.assurance().expect("a medium is attached").outcome, AssuranceOutcome::Verified);
     assert_eq!(medium.assurance().expect("a medium is attached").condition, None);
     assert_eq!(

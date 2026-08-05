@@ -276,6 +276,71 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **Devices are added and media are loaded, as two acts, and a device
+  family is a concrete drive.** One-act `attach` is gone. A machine takes
+  a device — `machine.add_device(family)`, or `add_device_at` for a
+  chosen slot — and answers with the device; the device takes a medium —
+  `device.load_media(path, intent)` — and answers with nothing to hold,
+  because the device is the one storage handle. `device.eject()` takes
+  the medium out and leaves the device where it was, and
+  `remove_device` retires the slot. `Session::attach`, `attach_at`,
+  `attach_with_cache`, `attach_at_with_cache` and `detach` are deleted
+  along with their `Machine` counterparts, with no shim; in C,
+  `remanence_{session,machine}_{attach,attach_at,detach}` become
+  `_add_device`, `_add_device_at` and `_remove_device`, beside new
+  `remanence_device_load_media`, `remanence_device_eject`,
+  `remanence_device_attachment`, `remanence_device_family` and
+  `remanence_device_is_occupied`; in Python, `Session.add_device` and
+  `Machine.add_device` (with a `slot=` keyword), `remove_device`, and
+  `StorageDevice.load_media` and `.eject`.
+
+  **An empty device is first-class configuration**, which is what the
+  split buys: the drive U22 letters whether or not a disk is in it now
+  exists in the model, "insert the disk" no longer hangs off the disk,
+  and a handle survives eject and reload while every view taken through
+  it stops answering when the medium leaves.
+
+  **The device-family catalog gains its lineage.** `DeviceFamily` stops
+  being a one-variant enum and becomes an entry in a declarative catalog
+  beside the media-type and drive-profile catalogs: each entry states
+  what it is a kind of, and a concrete entry declares its slot prefix,
+  the media types it accepts, and the drive profile it claims as its
+  flux path (P22). Six are enrolled — `storage-device`, `floppy-drive`
+  and `cbm-floppy-drive` classify; `commodore-1541` (`cbmfloppy0`),
+  `heathkit-h17` (`heathfloppy0`) and `hard-disk` (`hdd0`) instantiate.
+  **Interior names classify and instantiate nothing**: a device added as
+  "some floppy" would declare no media a load could be checked against
+  and no drive a machine ever had, so it is refused by name (P3). A
+  family's stable spelling and its slot prefix are separate namespaces —
+  `commodore-1541` is the family, `cbmfloppy0` the slot. In C the
+  catalog reads through `remanence_device_family_*`; in Python through
+  `device_families()`.
+
+  **A medium belonging in another drive is refused naming both sides**,
+  which is the check a concrete family exists to make possible (P14).
+  An `.h8d` holds ten-sector hard-sectored 5.25-inch media, so it loads
+  into a Heathkit H-17 and a hard disk refuses it, naming what the
+  medium is and what the family is served. A flux artifact is refused by
+  every device and says where it is read instead.
+
+  The example C consumer takes the family as an optional second argument
+  and lists the claimed families with `--families`.
+
+- **The DOS drive-letter composer reads a machine's own device set.**
+  `Machine::compose_dos_letters(rule, conditions)` — in C
+  `remanence_machine_compose_dos_letters`, in Python
+  `Machine.compose_dos_letters` — derives the mapping from the machine's
+  devices in the order they were added, which is P32's other half: the
+  attachment order is now an explicit machine fact rather than something
+  only a caller could assert. Families no claimed rule letters are
+  passed over **by family** — an attached `cbmfloppy0` legitimately
+  receives no DOS letter — and the mapping's provenance names the
+  machine, the fixed disks lettered in attachment order, the devices
+  holding no medium, and the devices passed over. `DosMachine` and its
+  assertions are unchanged and remain the only way to state a PC floppy
+  slot or a CD-ROM drive, neither of which this release claims a device
+  family for.
+
 - **A session holds machines; a machine holds devices; and `Disk` merges
   into `StorageDevice`.** Two structural changes to the delivered types,
   no behavior change at all.
@@ -289,7 +354,7 @@ rather than bridged. Read every entry below in that light.
   hold an `hdd0` and neither can reach the other's. **The session's
   anonymous machine is the one whose identity is null**, every session
   has exactly one of it, and it behaves as any other machine in every
-  respect; `Session::attach` and its kin land there, which is why
+  respect; the session's own device verbs land there, which is why
   nothing a caller did before changes meaning. New surface: `Machine`,
   `Session::add_machine` (a duplicate identity refused by name, the
   empty one refused as the anonymous machine's), `machines`, `machine`,

@@ -4,10 +4,14 @@
 
 A self-contained disk image analysis library in Rust. A `Session` holds
 machines, a machine holds family-typed storage devices, and a
-`StorageDevice` is the one handle for a slot and the medium in it;
-attaching a disk image — raw, or an entry inside a `.zip` or `.7z`
-archive — opens it under a single claim
-and identifies its container
+`StorageDevice` is the one handle for a slot and the medium in it.
+Devices are added and media are loaded, as two acts: a machine takes a
+drive as concrete as the one it actually had — a Commodore 1541, a
+Heathkit H-17, a hard disk — and a disk image, raw or an entry inside a
+`.zip` or `.7z` archive, is loaded into it under a single claim. A
+medium belonging in another drive is refused naming both sides, an empty
+drive is configuration in its own right, and the load identifies the
+image's container
 layers: the archive wrapper, image format, physical media geometry, and
 probable filesystem, each with comparable confidence and human-readable
 evidence. Executable, role-specific adapters recognize and validate formats;
@@ -92,12 +96,12 @@ The library is dependency-free at runtime, including its own ZIP
 central-directory reader, 7z header reader, RFC 1951 (DEFLATE) and
 LZMA/LZMA2 decompressors, and native qcow2 v2/v3 and VDI drivers.
 
-Beyond identification, attaching a raw, qcow2 or VDI disk image to a storage
-device takes a claim under a declared intent: a read session denies
-writes to every other process while admitting other readers; a writable
-session admits no observers at all; and an image whose claim cannot be
-secured — one held by a running VM, say — is refused outright at the
-attach. It
+Beyond identification, loading a raw, qcow2 or VDI disk image into a
+storage device takes a claim under a declared intent: a read session
+denies writes to every other process while admitting other readers; a
+writable session admits no observers at all; and an image whose claim
+cannot be secured — one held by a running VM, say — is refused outright
+at the load. It
 inspects the disk as a layered report — the block-active device, what
 its leading structure turned out to be, any recognized partition
 schema, every region that schema declares, every volume composed, and
@@ -137,9 +141,11 @@ Where the stopped machine ran DOS, it also answers which drive letter
 named which volume. A DOS machine persisted no such map — its letters
 were assigned at boot by a rule over the machine's own configuration, and
 nothing on the disks records the result — so the mapping is derived: the
-caller asserts the machine facts it owns (which medium is in which floppy
-slot, which disks are attached in what order, where a CD-ROM driver was
-declared), the library applies one named assignment rule over the reports
+machine facts are the caller's, either asserted (which medium is in which
+floppy slot, which disks are attached in what order, where a CD-ROM
+driver was declared) or read from a machine's own device set in the order
+its devices were added, with families no claimed rule letters passed over
+by family; the library applies one named assignment rule over the reports
 already inspected, and the answer says which volume each letter names.
 The rule is a claim like any other: two MS-DOS variants are claimed by
 name, stating the variant settles the map, and stating none leaves a
@@ -211,9 +217,11 @@ with build instructions in its header comment.
 // A session holds machines; a machine holds devices; a device is the
 // one handle for its slot and whatever medium occupies it. These verbs
 // are the session's anonymous machine, the one whose identity is null.
+// Devices are added and media are loaded, as two acts.
 let mut session = remanence::Session::new();
-let hdd0 = session.attach("disk.h8d", remanence::AccessIntent::Read)?;
-let device = session.require_device(hdd0)?;
+let device = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
+println!("{}", device.attachment());      // heathfloppy0
+device.load_media("disk.h8d", remanence::AccessIntent::Read)?;
 let identification = device.identify()?;
 for container in &identification.containers {
     println!("{:?} {} ({}%)", container.kind, container.id, container.confidence);
@@ -232,14 +240,16 @@ let archive = remanence::Archive::open("captures.7z")?;
 for entry in archive.entries() {
     println!("{} ({} bytes)", entry.name, entry.uncompressed_size);
 }
-let member = session.attach("captures.7z/track00.raw", remanence::AccessIntent::Read)?;
+let hdd0 = session.add_device(remanence::DeviceFamily::HARD_DISK)?;
+hdd0.load_media("captures.7z/track00.raw", remanence::AccessIntent::Read)?;
 
 // The drive letters a DOS machine would have presented: the machine
-// facts are the caller's, the assignment rule is the library's.
-let report = session.require_device(hdd0)?.inspect()?;
-let mut machine = remanence::DosMachine::new();
-machine.assert_fixed_disk(0, &report)?;
-for mapping in &machine.compose(Some(remanence::DosAssignmentRule::MsDos5))?.mappings {
+// facts are the caller's — here its own device set, in attachment
+// order — and the assignment rule is the library's.
+let letters = session
+    .anonymous_mut()
+    .compose_dos_letters(Some(remanence::DosAssignmentRule::MsDos5), &[])?;
+for mapping in &letters.mappings {
     println!("{}: {:?}", mapping.letter, mapping.outcome);
 }
 
@@ -258,19 +268,24 @@ for member in &capture.inspect().members {
 
 ```python
 import remanence
+for family in remanence.device_families():
+    print(family.id, family.name, family.is_concrete, family.accepted_media)
+
 session = remanence.Session()
-hdd0 = session.attach("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
-device = session.device(hdd0)
+device = session.add_device("heathkit-h17")
+print(device.attachment)            # heathfloppy0
+device.load_media("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
 print(device.assurance.outcome, device.assurance.condition, device.mode)
 for c in device.identify().containers:
     print(c.kind, c.id, c.confidence)
 for f in device.list_hdos_files():
     print(f.display_name, f.size_sectors, f.modified_date_string)
+device.eject()                      # the drive stays; the disk goes
 
-machine = remanence.DosMachine()
-machine.assert_fixed_disk(0, device.inspect())
-drives = machine.compose()          # no variant stated: disagreement is reported
-for mapping in drives.mappings:
+# The letters, from the machine's own device set — or from asserted
+# facts, where the caller holds them instead.
+drives = session.machine().compose_dos_letters()  # no variant stated:
+for mapping in drives.mappings:                   # disagreement is reported
     print(mapping.letter, mapping.outcome, mapping.volume, mapping.reason)
 
 with remanence.Archive("captures.7z") as archive:

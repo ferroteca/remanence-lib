@@ -116,31 +116,6 @@ Touches: S1, S2, S3. Supports: the U2 amendment; the P14 amendment;
 P35; the P19 amendment; in-force P7, P12, P27. Needs F48, whose
 `Filesystem` node is what an archive's content is reached through.
 
-## F50 — The two-act access path and concrete device families
-
-Replace one-act `attach` with the two acts the P32 amendment names:
-`add_device`, taking a device family that is a concrete leaf of the
-lineage-bearing catalog — interior names classify but never
-instantiate — and `load_media` on the device, plus eject, with an empty
-device as first-class configuration. `add_device` returns the device,
-which is the delivered one storage handle; `load_media` places a medium in
-it and hands back nothing to hold. A family mismatch at `load_media`
-refuses naming both sides, which is the check a concrete family exists
-to make possible. Content verbs on an empty device refuse by name, and
-views taken through a device invalidate when its medium is ejected.
-Attachment order becomes an explicit machine fact the DOS composer reads
-from the device set.
-
-The device-family catalog gains its lineage: entries as concrete as the
-machine fact they assert, each stating what it is a kind of, as data
-rather than as a type hierarchy. Enrolling the families the claimed
-media need is part of this feature; enrolling one for a family the
-project does not claim is not.
-
-Touches: S1, S2, S3. Supports: the U2 amendment; the P32 amendment;
-in-force P14, P21, P22 (a claimed flux path is a family declaration).
-The archive slot arrives with F49, not here.
-
 ## F51 — Discovery, declared defaults, and the one-step conveniences
 
 `discover_media(path)` lands as a first-class library function on no

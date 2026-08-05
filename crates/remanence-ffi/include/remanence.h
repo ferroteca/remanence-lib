@@ -14,6 +14,12 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// The caller's declared intent when opening a disk (P7).
+typedef enum {
+  REMANENCE_ACCESS_INTENT_READ,
+  REMANENCE_ACCESS_INTENT_WRITE,
+} RemanenceAccessIntent;
+
 // Stable, machine-readable classification of a library refusal. A fallible
 // call writes one beside its error message; the output is untouched on success.
 typedef enum {
@@ -56,12 +62,6 @@ typedef enum {
   REMANENCE_SECTOR_LAYOUT_KIND_FIXED,
   REMANENCE_SECTOR_LAYOUT_KIND_VARIABLE,
 } RemanenceSectorLayoutKind;
-
-// The caller's declared intent when opening a disk (P7).
-typedef enum {
-  REMANENCE_ACCESS_INTENT_READ,
-  REMANENCE_ACCESS_INTENT_WRITE,
-} RemanenceAccessIntent;
 
 // A medium's effective access mode: the declared intent's echo
 // (P7) where the evidence supports it, read-only where it does not (P28).
@@ -228,7 +228,7 @@ typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 // state of the medium in it.
 //
 // **The session owns this; never free it.** It stays valid until the
-// device is detached or the session is freed.
+// device is removed or the session is freed.
 //
 // It names the device by session, machine and attachment identity
 // rather than by pointer, and re-resolves on every call. That is
@@ -473,6 +473,82 @@ uint64_t remanence_default_cache_bytes(void);
 // `surrounding-space`.
 void remanence_string_free(char *string);
 
+// This device's attachment identity — `hdd0` and the like. Owned by the
+// view; do not free.
+const char *remanence_device_attachment(const RemanenceDevice *device);
+
+// This device's family, by its stable spelling (`hard-disk`). Owned by
+// the view; do not free.
+const char *remanence_device_family(const RemanenceDevice *device);
+
+// Whether a medium currently occupies this device's slot.
+bool remanence_device_is_occupied(const RemanenceDevice *device);
+
+// Loads the medium at `path` (UTF-8) — a disk image, or
+// `archive[/entry]` — into this device, and hands back nothing to hold:
+// the device is the one storage handle.
+//
+// A device accepts only the media its family is served (P14), and a
+// mismatch is refused naming both sides. A `Write` intent claims the
+// medium exclusively and fails here when the claim cannot be secured,
+// never by falling back. An occupied slot is refused rather than
+// displaced. Returns false on failure.
+bool remanence_device_load_media(RemanenceDevice *device,
+                                 const char *path,
+                                 RemanenceAccessIntent intent,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
+
+// Ejects the medium, releasing its P7 claim, and leaves the device in
+// place. Every view taken through it stops answering, and the content
+// verbs refuse by name until another medium is loaded. Returns false
+// when the slot was already empty.
+bool remanence_device_eject(RemanenceDevice *device,
+                            RemanenceErrorCategory *error_category_out,
+                            char **error_out,
+                            char **error_rule_out);
+
+// How many device families this release enrols, interior names of the
+// lineage among them (P32).
+size_t remanence_device_family_count(void);
+
+// The stable spelling of family `index` — the value
+// `remanence_session_add_device` takes. Null when out of range; owned by
+// the library and never freed.
+const char *remanence_device_family_id(size_t index);
+
+// Family `index`'s name, fit to show a user beside the slot it fills.
+const char *remanence_device_family_name(size_t index);
+
+// Where family `index`'s declaration came from.
+const char *remanence_device_family_provenance(size_t index);
+
+// What family `index` is a kind of, by stable spelling — null for the
+// root of the lineage.
+const char *remanence_device_family_kind_of(size_t index);
+
+// Whether family `index` can be added to a machine. An interior name of
+// the lineage classifies and instantiates nothing.
+bool remanence_device_family_is_concrete(size_t index);
+
+// The family half of every attachment identity in family `index` —
+// `hdd` for `hdd0`. Null for an interior name, which names no slot.
+const char *remanence_device_family_slot_prefix(size_t index);
+
+// How many media types family `index` accepts (P14). Zero for an
+// interior name.
+size_t remanence_device_family_media_count(size_t index);
+
+// The stable spelling of the `media`th media type family `index`
+// accepts. Null when either index is out of range.
+const char *remanence_device_family_media(size_t index, size_t media);
+
+// The drive profile family `index` claims as its recording path (P22),
+// by stable spelling. Null where the family claims none, which is
+// ordinary rather than deficient.
+const char *remanence_device_family_flux_path(size_t index);
+
 // The artifact the medium was opened from (the archive path for archive
 // inputs). Null while the device's slot is empty.
 const char *remanence_device_path(const RemanenceDevice *device);
@@ -691,49 +767,46 @@ const char *remanence_hdos_file_modified_date(const RemanenceHdosFileList *list,
 // `remanence_session_free`.
 RemanenceSession *remanence_session_new(void);
 
-// Frees a session, detaching every device and releasing every P7 claim.
+// Frees a session, dropping every device and releasing every P7 claim.
 // Every borrowed machine and device view obtained from it becomes
 // invalid.
 void remanence_session_free(RemanenceSession *session);
 
-// Attaches the medium at `path` (UTF-8) — a raw disk image, or
-// `archive[/entry]` — to a new device in the session's **anonymous
-// machine**, taking the lowest free slot of its family and writing the
-// attachment identity it took (such as `hdd0`) to `attachment_out`;
-// free that string with `remanence_string_free`.
-// `remanence_machine_attach` does the same in a named machine. A
-// `Write` intent claims the medium exclusively and fails at the open
-// when the claim cannot be secured, never by falling back. Returns
-// false on failure.
-bool remanence_session_attach(RemanenceSession *session,
-                              const char *path,
-                              RemanenceAccessIntent intent,
-                              char **attachment_out,
-                              RemanenceErrorCategory *error_category_out,
-                              char **error_out,
-                              char **error_rule_out);
+// Adds a device of `family` (UTF-8, a family's stable spelling such as
+// `hard-disk`) to the session's **anonymous machine**, taking the lowest
+// free slot of that family, and returns a **borrowed** view of it —
+// empty, until `remanence_device_load_media` puts a medium in it.
+//
+// The session owns the view; never free it.
+// `remanence_machine_add_device` does the same in a named machine. A
+// family this release does not claim, and an interior name of the
+// lineage which classifies rather than instantiates, are both refused by
+// name (P3). Returns null on failure.
+RemanenceDevice *remanence_session_add_device(RemanenceSession *session,
+                                              const char *family,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
 
-// Attaches the medium at `path` to the slot `attachment` names (such as
-// `hdd1`) in the session's anonymous machine. The caller chooses the
-// slot, never the name. A slot already occupied is refused rather than
-// displaced, and a family this release does not claim is refused by
-// name (P3).
-bool remanence_session_attach_at(RemanenceSession *session,
-                                 const char *attachment,
-                                 const char *path,
-                                 RemanenceAccessIntent intent,
-                                 RemanenceErrorCategory *error_category_out,
-                                 char **error_out,
-                                 char **error_rule_out);
+// Adds a device of `family` at slot `index` of the session's anonymous
+// machine — `hdd1` being family `hard-disk` at index 1. The caller
+// chooses the slot, never the name; a slot already taken is refused
+// rather than displaced.
+RemanenceDevice *remanence_session_add_device_at(RemanenceSession *session,
+                                                 const char *family,
+                                                 uint32_t index,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
 
-// Detaches the device at `attachment` from the session's anonymous
-// machine, releasing its medium's P7 claim and freeing the slot.
+// Removes the device at `attachment` from the session's anonymous
+// machine, releasing any medium's P7 claim with it and freeing the slot.
 // Borrowed device views for that device become invalid.
-bool remanence_session_detach(RemanenceSession *session,
-                              const char *attachment,
-                              RemanenceErrorCategory *error_category_out,
-                              char **error_out,
-                              char **error_rule_out);
+bool remanence_session_remove_device(RemanenceSession *session,
+                                     const char *attachment,
+                                     RemanenceErrorCategory *error_category_out,
+                                     char **error_out,
+                                     char **error_rule_out);
 
 // How many devices the session's anonymous machine holds.
 size_t remanence_session_device_count(const RemanenceSession *session);
@@ -781,38 +854,48 @@ RemanenceMachine *remanence_session_machine(RemanenceSession *session, const cha
 // machine. Owned by the view; do not free.
 const char *remanence_machine_identity(const RemanenceMachine *machine);
 
-// Attaches the medium at `path` (UTF-8) to a new device in this
-// machine, taking the lowest free slot of its family and writing the
-// attachment identity it took to `attachment_out`. Free that string
-// with `remanence_string_free`.
-bool remanence_machine_attach(RemanenceMachine *machine,
-                              const char *path,
-                              RemanenceAccessIntent intent,
-                              char **attachment_out,
-                              RemanenceErrorCategory *error_category_out,
-                              char **error_out,
-                              char **error_rule_out);
+// Adds a device of `family` (UTF-8) to this machine, taking the lowest
+// free slot of that family, and returns a **borrowed** view of it. The
+// session owns the view; never free it. Returns null on failure.
+RemanenceDevice *remanence_machine_add_device(RemanenceMachine *machine,
+                                              const char *family,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
 
-// Attaches the medium at `path` to the slot `attachment` names in this
-// machine. The caller chooses the slot, never the name; an occupied
-// slot is refused rather than displaced, and a family this release does
-// not claim is refused by name (P3).
-bool remanence_machine_attach_at(RemanenceMachine *machine,
-                                 const char *attachment,
-                                 const char *path,
-                                 RemanenceAccessIntent intent,
-                                 RemanenceErrorCategory *error_category_out,
-                                 char **error_out,
-                                 char **error_rule_out);
+// Adds a device of `family` at slot `index` in this machine. The caller
+// chooses the slot, never the name; a slot already taken is refused
+// rather than displaced.
+RemanenceDevice *remanence_machine_add_device_at(RemanenceMachine *machine,
+                                                 const char *family,
+                                                 uint32_t index,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
 
-// Detaches the device at `attachment` from this machine, releasing its
-// medium's P7 claim and freeing the slot. Borrowed device views for
-// that device become invalid.
-bool remanence_machine_detach(RemanenceMachine *machine,
-                              const char *attachment,
-                              RemanenceErrorCategory *error_category_out,
-                              char **error_out,
-                              char **error_rule_out);
+// Removes the device at `attachment` from this machine, releasing any
+// medium's P7 claim with it and freeing the slot. Borrowed device views
+// for that device become invalid.
+bool remanence_machine_remove_device(RemanenceMachine *machine,
+                                     const char *attachment,
+                                     RemanenceErrorCategory *error_category_out,
+                                     char **error_out,
+                                     char **error_rule_out);
+
+// Composes this machine's DOS drive-letter mapping from its **own device
+// set** (P32, P35), reading attachment order from the order its devices
+// were added rather than from an assertion.
+//
+// `rule` is a claimed rule's name, or null to apply every claimed rule
+// and leave a letter they disagree on undetermined. Families no claimed
+// rule letters are passed over by family, and the mapping's provenance
+// says which. Free the result with `remanence_drive_map_free`; returns
+// null on failure.
+RemanenceDriveMap *remanence_machine_compose_dos_letters(RemanenceMachine *machine,
+                                                         const char *rule,
+                                                         RemanenceErrorCategory *error_category_out,
+                                                         char **error_out,
+                                                         char **error_rule_out);
 
 // How many devices this machine holds.
 size_t remanence_machine_device_count(const RemanenceMachine *machine);
@@ -827,7 +910,7 @@ bool remanence_machine_device_attachment(const RemanenceMachine *machine,
 // A **borrowed** view of the device at `attachment` in this machine.
 //
 // The session owns it; never free it. It stays valid until that device
-// is detached or the session is freed. Returns null when this machine
+// is removed or the session is freed. Returns null when this machine
 // has no device there.
 RemanenceDevice *remanence_machine_device(RemanenceMachine *machine, const char *attachment);
 
@@ -836,7 +919,7 @@ RemanenceDevice *remanence_machine_device(RemanenceMachine *machine, const char 
 // machine's.
 //
 // The session owns it; never free it. It stays valid until that device
-// is detached or the session is freed. Returns null when nothing is
+// is removed or the session is freed. Returns null when nothing is
 // attached there.
 RemanenceDevice *remanence_session_device(RemanenceSession *session, const char *attachment);
 
@@ -851,7 +934,7 @@ RemanenceAccessMode remanence_device_mode(const RemanenceDevice *device);
 //
 // It is available before anything is read, so a caller meets a deficiency
 // by being told rather than by an operation failing halfway. Null only
-// when the device holding this medium was detached.
+// when the device holding this medium was removed.
 RemanenceAssurance *remanence_device_assurance(const RemanenceDevice *device);
 
 // Frees an assurance record and everything borrowed from it.

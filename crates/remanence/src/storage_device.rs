@@ -5,9 +5,16 @@
 //! devices, and a device is a durable slot distinct from whatever medium
 //! currently occupies it.
 //!
-//! The device is the slot, not the disk. Ejecting a medium and attaching
+//! The device is the slot, not the disk. Ejecting a medium and loading
 //! another leaves the device where it was, which is what makes this a tier
 //! rather than a rename of the medium surface F43 delivered.
+//!
+//! **Devices are added; media are loaded — as two acts.** A machine adds
+//! the device and the device loads the medium, which is what makes an
+//! *empty* device first-class configuration: the drive U22 letters
+//! whether or not a disk is in it, and "insert the disk" cannot hang off
+//! the disk. A device accepts only the media its family is served (P14),
+//! and a mismatch is refused naming both sides.
 //!
 //! **It is also the one storage handle.** A caller never holds a medium
 //! outside a device, so the two model nodes are exposed as one object:
@@ -22,56 +29,14 @@ use std::fmt;
 use std::path::Path;
 
 use crate::assurance::Assurance;
-use crate::device::AccessMode;
+use crate::device::{AccessIntent, AccessMode};
+use crate::device_family::DeviceFamily;
 use crate::disk::{DiskFormat, MediaState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
 use crate::hdos::HdosFile;
 use crate::report::{DiskReport, VolumeId};
 use crate::session::Identification;
-
-/// The family a storage device belongs to.
-///
-/// A family is an enumerated claim (P3). Only the block family is claimed
-/// today, so `hdd0` is real and `floppy0` is not yet; a name outside the
-/// claim is refused by name rather than guessed at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DeviceFamily {
-    /// Block-addressed fixed storage — the family the library already
-    /// reads.
-    Hdd,
-}
-
-impl DeviceFamily {
-    /// The family's stable name, and the prefix of every attachment
-    /// identity in it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Hdd => "hdd",
-        }
-    }
-
-    /// Resolves a family name, refusing one the library does not claim.
-    ///
-    /// Rust callers hold the enum and cannot express an unclaimed family;
-    /// this exists for the C and Python surfaces, where a family arrives
-    /// as text and the P3 refusal has to happen at that boundary.
-    pub fn from_name(name: &str) -> Result<Self> {
-        match name {
-            "hdd" => Ok(Self::Hdd),
-            other => Err(Error::unsupported(format!(
-                "no storage-device family named '{other}' is claimed; \
-                 this release claims 'hdd'"
-            ))),
-        }
-    }
-}
-
-impl fmt::Display for DeviceFamily {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
-    }
-}
 
 /// A device's attachment identity: its family and the slot it occupies.
 ///
@@ -88,7 +53,14 @@ pub struct AttachmentId {
 }
 
 impl AttachmentId {
+    /// The identity of slot `index` in `family`, which must be concrete —
+    /// an interior name owns no slot, and every caller of this has
+    /// already refused one.
     pub(crate) fn new(family: DeviceFamily, index: u32) -> Self {
+        debug_assert!(
+            family.is_concrete(),
+            "an interior family name owns no slot to identify"
+        );
         Self { family, index }
     }
 
@@ -105,14 +77,20 @@ impl AttachmentId {
     /// Parses an identity such as `hdd0`, refusing an unclaimed family or
     /// a malformed slot by name. For the C and Python surfaces, where an
     /// identity arrives as text.
+    ///
+    /// The family half is a **slot prefix**, not a family's stable
+    /// spelling: `cbmfloppy0` is the Commodore 1541's slot, as
+    /// `commodore-1541` is its name. The two namespaces are separate
+    /// deliberately — a slot reads like device enumeration, and a family
+    /// reads like the machine fact it asserts.
     pub fn parse(text: &str) -> Result<Self> {
         let split = text
             .find(|c: char| c.is_ascii_digit())
             .ok_or_else(|| Error::unsupported(format!(
                 "'{text}' is not an attachment identity; one reads like 'hdd0'"
             )))?;
-        let (family, index) = text.split_at(split);
-        let family = DeviceFamily::from_name(family)?;
+        let (prefix, index) = text.split_at(split);
+        let family = DeviceFamily::by_slot_prefix(prefix)?;
         let index = index.parse::<u32>().map_err(|_| {
             Error::unsupported(format!(
                 "'{text}' is not an attachment identity; '{index}' is not a slot"
@@ -124,7 +102,14 @@ impl AttachmentId {
 
 impl fmt::Display for AttachmentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.family.name(), self.index)
+        write!(
+            f,
+            "{}{}",
+            self.family
+                .slot_prefix()
+                .expect("a device's family is concrete and names a slot"),
+            self.index
+        )
     }
 }
 
@@ -140,8 +125,15 @@ pub struct StorageDevice {
 }
 
 impl StorageDevice {
-    pub(crate) fn new(attachment: AttachmentId, medium: Option<MediaState>) -> Self {
-        Self { attachment, medium }
+    /// A device in its slot, empty. **An empty device is first-class
+    /// configuration** — the drive U22 letters whether or not a disk is
+    /// in it — so this is the only way one is made, and loading is the
+    /// second act.
+    pub(crate) fn new(attachment: AttachmentId) -> Self {
+        Self {
+            attachment,
+            medium: None,
+        }
     }
 
     /// This device's attachment identity — `hdd0` and the like.
@@ -153,15 +145,97 @@ impl StorageDevice {
         self.attachment.family()
     }
 
-    /// Whether a medium is currently attached.
+    /// Whether a medium currently occupies the slot.
     pub fn is_occupied(&self) -> bool {
         self.medium.is_some()
     }
 
-    /// Removes the attached medium, releasing its P7 claim, and leaves the
-    /// device in place.
-    pub(crate) fn eject(&mut self) -> Option<MediaState> {
-        self.medium.take()
+    /// Loads the medium at `path` — a disk image, or `archive[/entry]` —
+    /// into this device under the caller's declared intent (P7), and
+    /// hands back nothing to hold: the device is the one storage handle,
+    /// and the medium's facts answer on it.
+    ///
+    /// **A device accepts only the media its family is served** (P14).
+    /// The image-format adapter that loads the state names the medium,
+    /// and a medium belonging in another drive is refused naming both
+    /// sides rather than read as something it is not — which is the check
+    /// a concrete family exists to make possible.
+    ///
+    /// An occupied slot is refused rather than displaced: ejecting is
+    /// [`StorageDevice::eject`] and it is a separate act.
+    pub fn load_media(&mut self, path: impl AsRef<Path>, intent: AccessIntent) -> Result<()> {
+        self.load_media_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// [`StorageDevice::load_media`] under a caller-declared session
+    /// cache bound (P27).
+    pub fn load_media_with_cache(
+        &mut self,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+        cache_bytes: u64,
+    ) -> Result<()> {
+        let attachment = self.attachment;
+        if self.medium.is_some() {
+            return Err(Error::unsupported(format!(
+                "{attachment} already holds a medium; eject it before loading \
+                 another"
+            )));
+        }
+        let path = path.as_ref();
+        let medium = MediaState::open_with_cache(path, intent, cache_bytes)?;
+
+        // A flux artifact is refused whatever the device. A P64 records
+        // timed pulses, and the block catalog opens anything it cannot
+        // identify at the raw adapter — so without this the block layer
+        // would be declared authoritative where the artifact's own
+        // adapter declares flux, which in-force P13 forbids. It is
+        // reached through its own type, as the capture-set adapter is.
+        if let Some(foreign) = foreign_family(&medium) {
+            return Err(Error::unsupported(format!(
+                "'{}' is a {foreign}-family artifact and no device in this \
+                 release holds a {foreign} medium; a {foreign} container is \
+                 read through its own type",
+                path.display()
+            )));
+        }
+
+        let media = medium.media();
+        if !self.family().accepts(media) {
+            return Err(Error::unsupported(format!(
+                "'{}' holds {} and {attachment} is a {}, which is {}",
+                path.display(),
+                media.name,
+                self.family().name(),
+                self.family().served_reading()
+            )));
+        }
+
+        self.medium = Some(medium);
+        Ok(())
+    }
+
+    /// Removes the medium, releasing its P7 claim, and leaves the device
+    /// in place — the device is the slot, not the disk.
+    ///
+    /// Every view taken through this device stops answering: the state
+    /// they were views of has left, and the content verbs refuse by name
+    /// until another medium is loaded. Buffered changes are discarded
+    /// with it, as they are on `remove_device`; the commit point is
+    /// explicit (P2), and ejecting is not it.
+    pub fn eject(&mut self) -> Result<()> {
+        self.take_medium().map(drop)
+    }
+
+    /// The medium, taken out of the slot, or a refusal naming the empty
+    /// one.
+    pub(crate) fn take_medium(&mut self) -> Result<MediaState> {
+        let attachment = self.attachment;
+        self.medium.take().ok_or_else(|| {
+            Error::not_found(format!(
+                "no medium is attached to {attachment}; there is nothing to eject"
+            ))
+        })
     }
 
     /// The medium's state for a content verb, or that verb's refusal
@@ -395,13 +469,29 @@ impl StorageDevice {
     }
 }
 
+/// The family an artifact belongs to, when it is one this release
+/// recognizes and it is not the block family.
+///
+/// The library can only refuse what it can recognize. An artifact it
+/// cannot place at all still opens at the block catalog's raw fallback,
+/// which is the honest limit of this check rather than a hole in it: NIB
+/// and NBZ, for instance, have no recognizer until the principle that
+/// places them at the flux rung is delivered.
+fn foreign_family(medium: &MediaState) -> Option<&'static str> {
+    let mut prefix = [0u8; 8];
+    if medium.read_at(0, &mut prefix).is_err() {
+        return None;
+    }
+    crate::p64::has_signature(&prefix).then_some("flux")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn an_attachment_identity_reads_as_family_and_slot() {
-        let id = AttachmentId::new(DeviceFamily::Hdd, 0);
+    fn an_attachment_identity_reads_as_slot_prefix_and_slot() {
+        let id = AttachmentId::new(DeviceFamily::HARD_DISK, 0);
         assert_eq!(id.to_string(), "hdd0");
         assert_eq!(AttachmentId::parse("hdd0").expect("parses"), id);
         assert_eq!(
@@ -409,20 +499,44 @@ mod tests {
             12,
             "a slot is not a single digit"
         );
+
+        // Every concrete family's slot round-trips, which is what makes
+        // the prefix an identity rather than a label.
+        for family in DeviceFamily::concrete() {
+            let id = AttachmentId::new(family, 3);
+            let parsed = AttachmentId::parse(&id.to_string()).expect("parses");
+            assert_eq!(parsed, id, "{} does not round-trip", family.id());
+            assert_eq!(parsed.family(), family);
+        }
     }
 
     #[test]
-    fn an_unclaimed_family_is_refused_by_name() {
-        // P3: the family set is an enumerated claim. `floppy` is the
-        // family P32 names next, and naming it here must refuse rather
-        // than pretend, because no floppy medium can be attached yet.
-        let error = DeviceFamily::from_name("floppy").expect_err("refused");
+    fn an_unclaimed_slot_is_refused_by_name() {
+        // P3: the family set is an enumerated claim. An optical drive is
+        // the obvious next entry and naming its slot must refuse rather
+        // than pretend.
+        let error = AttachmentId::parse("cdrom0").expect_err("refused");
         let message = error.to_string();
-        assert!(message.contains("floppy"), "names what was asked: {message}");
+        assert!(message.contains("cdrom"), "names what was asked: {message}");
         assert!(message.contains("hdd"), "names what is claimed: {message}");
+    }
 
-        let error = AttachmentId::parse("floppy0").expect_err("refused");
-        assert!(error.to_string().contains("floppy"), "refuses through parse too");
+    #[test]
+    fn a_family_name_is_not_a_slot_prefix() {
+        // The two namespaces are separate deliberately, so neither
+        // resolves the other's spelling.
+        assert!(
+            AttachmentId::parse("commodore-15410").is_err(),
+            "a family's stable spelling is not a slot prefix"
+        );
+        assert!(
+            DeviceFamily::from_id("cbmfloppy").is_err(),
+            "a slot prefix is not a family's stable spelling"
+        );
+        assert_eq!(
+            AttachmentId::parse("cbmfloppy0").expect("parses").family(),
+            DeviceFamily::COMMODORE_1541
+        );
     }
 
     #[test]

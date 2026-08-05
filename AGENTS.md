@@ -114,16 +114,25 @@ ABI, or Python module.
   matching one without regard to case, storing a caller's, and the
   seven-rule set a refusal names; `dos_letters.rs` the DOS drive-letter
   composer — P19's namespace-mapping form, which derives a mapping
-  rather than consuming one: the caller-asserted machine facts, the
+  rather than consuming one: the machine facts, asserted by the caller
+  or read from a machine's own device set in attachment order, the
   variant-by-variant assignment rules it claims, the conditions it
   refuses to model, and the mapping it answers with, undetermined
-  letters included; `machine.rs` the
+  letters included; `device_family.rs` the device-family catalog (P32) —
+  declarative like the two catalogs above it, each entry stating what it
+  is a kind of, with interior names classifying and only concrete
+  entries instantiating, and a concrete entry declaring its slot prefix,
+  the media types it accepts and the drive profile it claims as its flux
+  path; `machine.rs` the
   session and the machines within it (P32) — the session being the claim
   and cache scope, a machine being one device set with its own
   attachment identities and attachment order, and the anonymous machine
   being the one whose identity is null — with `storage_device.rs` the
   **one storage handle**: a durable slot, its attachment identity
-  (`hdd0`), and every content verb of the medium occupying it
+  (`hdd0`), the two acts that fill it (`add_device` on the machine, then
+  `load_media`/`eject` on the device, with an empty device first-class
+  configuration and a medium in the wrong drive refused naming both
+  sides), and every content verb of the medium occupying it
   (identify/inspect/entries/stat/read/write/mkdir/commit/rollback),
   refusing by name while the slot is empty; `disk.rs` the private
   `MediaState` that handle homes — a caller never holds a medium outside
@@ -425,7 +434,11 @@ gcc crates/remanence-ffi/examples/identify.c target/debug/remanence_ffi.dll `
 
 Then run it beside a copy of `target/debug/remanence_ffi.dll`, against
 both a plain image and one inside an archive — the archive path is a
-distinct composition, not the same code with a longer path.
+distinct composition, not the same code with a longer path. The example
+takes the device family as an optional second argument and assumes
+`hard-disk` without one, so an `.h8d` is run as
+`identify <path> heathkit-h17`; `identify --families` lists the claimed
+families.
 
 **Without that `PATH` entry gcc exits 1 and prints nothing at all**: it
 is gcc's own runtime DLLs failing to resolve, so the compiler never

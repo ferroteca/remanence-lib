@@ -569,6 +569,65 @@ impl DosAssignmentRule {
     }
 }
 
+/// One entry in the device-family catalog: what a machine's slots can be
+/// (P32).
+///
+/// A family entry is as concrete as the machine fact it asserts, and
+/// states what it is a kind of. **Interior names classify; only concrete
+/// entries instantiate** — `Session.add_device` refuses the rest by name.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct DeviceFamily {
+    /// The stable spelling, and what `Session.add_device` takes.
+    pub id: String,
+    /// The name, fit to show a user beside the slot it fills.
+    pub name: String,
+    /// Where this entry's declaration came from.
+    pub provenance: String,
+    /// What this family is a kind of; `None` for the root of the lineage.
+    pub kind_of: Option<String>,
+    /// Whether a device of this family can exist in a machine.
+    pub is_concrete: bool,
+    /// The family half of every attachment identity in it — `"hdd"` for
+    /// `"hdd0"`. `None` for an interior name, which names no slot.
+    pub slot_prefix: Option<String>,
+    /// The media types a device of this family accepts.
+    pub accepted_media: Vec<String>,
+    /// The drive profile this family claims as its recording path, or
+    /// `None` where it claims none — ordinary, not deficient.
+    pub flux_path: Option<String>,
+}
+
+#[pymethods]
+impl DeviceFamily {
+    fn __repr__(&self) -> String {
+        format!("DeviceFamily(id={:?})", self.id)
+    }
+}
+
+/// Every storage-device family this release enrols, interior names of the
+/// lineage among them.
+#[pyfunction]
+fn device_families() -> Vec<DeviceFamily> {
+    remanence::DeviceFamily::enrolled()
+        .into_iter()
+        .map(|family| DeviceFamily {
+            id: family.id().to_owned(),
+            name: family.name().to_owned(),
+            provenance: family.provenance().to_owned(),
+            kind_of: family.kind_of().map(|parent| parent.id().to_owned()),
+            is_concrete: family.is_concrete(),
+            slot_prefix: family.slot_prefix().map(str::to_owned),
+            accepted_media: family
+                .accepted_media()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            flux_path: family.flux_path().map(str::to_owned),
+        })
+        .collect()
+}
+
 /// Every DOS drive-letter assignment rule this release claims.
 #[pyfunction]
 fn dos_assignment_rules() -> Vec<DosAssignmentRule> {
@@ -630,6 +689,52 @@ pub struct DriveMap {
     /// The asserted facts and the applied rules, travelling with the
     /// answer. **This is not evidence**: nothing here was read off a disk.
     pub provenance: Vec<String>,
+}
+
+impl DriveMap {
+    /// Mirrors one composed mapping. Both composers — the asserted
+    /// machine and the machine that reads its own device set — answer
+    /// with the same records, because they answered with the same core
+    /// type.
+    fn new(map: &remanence::DriveMap) -> Self {
+        Self {
+            applied_rules: map
+                .applied_rules
+                .iter()
+                .map(|rule| rule.name().to_owned())
+                .collect(),
+            mappings: map
+                .mappings
+                .iter()
+                .map(|mapping| {
+                    let (device, volume, phantom_of, reason) = match &mapping.outcome {
+                        remanence::LetterOutcome::Volume { device, volume } => {
+                            (Some(*device), Some(volume.value()), None, None)
+                        }
+                        remanence::LetterOutcome::DeclaredDevice { device } => {
+                            (Some(*device), None, None, None)
+                        }
+                        remanence::LetterOutcome::Phantom { of } => {
+                            (None, None, Some(of.to_string()), None)
+                        }
+                        remanence::LetterOutcome::Undetermined { reason } => {
+                            (None, None, None, Some(reason.clone()))
+                        }
+                    };
+                    DriveMapping {
+                        letter: mapping.letter.to_string(),
+                        outcome: mapping.outcome.name().to_owned(),
+                        device_kind: device.map(|device| device.kind().to_owned()),
+                        device_index: device.map(remanence::MachineDevice::index),
+                        volume,
+                        phantom_of,
+                        reason,
+                    }
+                })
+                .collect(),
+            provenance: map.provenance.clone(),
+        }
+    }
 }
 
 #[pymethods]
@@ -818,44 +923,7 @@ impl DosMachine {
             .build()
             .and_then(|machine| machine.compose(rule))
             .map_err(to_py_err)?;
-
-        Ok(DriveMap {
-            applied_rules: map
-                .applied_rules
-                .iter()
-                .map(|rule| rule.name().to_owned())
-                .collect(),
-            mappings: map
-                .mappings
-                .iter()
-                .map(|mapping| {
-                    let (device, volume, phantom_of, reason) = match &mapping.outcome {
-                        remanence::LetterOutcome::Volume { device, volume } => {
-                            (Some(*device), Some(volume.value()), None, None)
-                        }
-                        remanence::LetterOutcome::DeclaredDevice { device } => {
-                            (Some(*device), None, None, None)
-                        }
-                        remanence::LetterOutcome::Phantom { of } => {
-                            (None, None, Some(of.to_string()), None)
-                        }
-                        remanence::LetterOutcome::Undetermined { reason } => {
-                            (None, None, None, Some(reason.clone()))
-                        }
-                    };
-                    DriveMapping {
-                        letter: mapping.letter.to_string(),
-                        outcome: mapping.outcome.name().to_owned(),
-                        device_kind: device.map(|device| device.kind().to_owned()),
-                        device_index: device.map(remanence::MachineDevice::index),
-                        volume,
-                        phantom_of,
-                        reason,
-                    }
-                })
-                .collect(),
-            provenance: map.provenance.clone(),
-        })
+        Ok(DriveMap::new(&map))
     }
 
     fn __repr__(&self) -> String {
@@ -1036,64 +1104,37 @@ impl Session {
         })
     }
 
-    /// Attaches the medium at `path` — a raw disk image, or
-    /// `archive[/entry]` — to a new device in the session's anonymous
-    /// machine, taking the lowest free slot of its family and returning
-    /// the attachment identity it took (`"hdd0"`). `writable=True`
-    /// claims the medium exclusively and fails at the open when that
-    /// claim cannot be secured, never by falling back.
-    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
-    fn attach(
-        &self,
-        path: PathBuf,
-        writable: bool,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<String> {
-        let intent = access_intent(writable);
+    /// Adds a device of `family` (a family's stable spelling, such as
+    /// `"hard-disk"`) to the session's anonymous machine, taking the
+    /// lowest free slot of that family, and returns it — empty, until
+    /// `StorageDevice.load_media` puts a medium in it.
+    ///
+    /// `slot` chooses the slot, never the name; a slot already taken is
+    /// refused rather than displaced. A family this release does not
+    /// claim, and an interior name of the lineage which classifies rather
+    /// than instantiates, are both refused by name.
+    #[pyo3(signature = (family, *, slot = None))]
+    fn add_device(&self, family: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
+        let family = remanence::DeviceFamily::from_id(family).map_err(to_py_err)?;
         let mut session = self.lock();
-        let attachment = match cache_bytes {
-            Some(cache_bytes) => session.attach_with_cache(path, intent, cache_bytes),
-            None => session.attach(path, intent),
-        }
-        .map_err(to_py_err)?;
-        Ok(attachment.to_string())
+        let added = match slot {
+            Some(slot) => session.add_device_at(family, slot),
+            None => session.add_device(family),
+        };
+        let attachment = added.map_err(to_py_err)?.attachment();
+        drop(session);
+        Ok(StorageDevice {
+            session: Arc::clone(&self.inner),
+            machine: None,
+            attachment,
+        })
     }
 
-    /// Attaches the medium at `path` to the slot `attachment` names
-    /// (such as `"hdd1"`) in the session's anonymous machine. The caller
-    /// chooses the slot, never the name. An occupied slot is refused
-    /// rather than displaced, and a family this release does not claim
-    /// is refused by name.
-    #[pyo3(signature = (attachment, path, *, writable, cache_bytes = None))]
-    fn attach_at(
-        &self,
-        attachment: &str,
-        path: PathBuf,
-        writable: bool,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<String> {
-        let intent = access_intent(writable);
+    /// Removes the device at `attachment` from the anonymous machine,
+    /// releasing any medium's claim with it and freeing the slot.
+    fn remove_device(&self, attachment: &str) -> PyResult<()> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
-        let mut session = self.lock();
-        match cache_bytes {
-            Some(cache_bytes) => session.attach_at_with_cache(
-                attachment.family(),
-                attachment.index(),
-                path,
-                intent,
-                cache_bytes,
-            ),
-            None => session.attach_at(attachment.family(), attachment.index(), path, intent),
-        }
-        .map_err(to_py_err)?;
-        Ok(attachment.to_string())
-    }
-
-    /// Detaches the device at `attachment` from the anonymous machine,
-    /// releasing its medium's claim and freeing the slot.
-    fn detach(&self, attachment: &str) -> PyResult<()> {
-        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
-        self.lock().detach(attachment).map_err(to_py_err)
+        self.lock().remove_device(attachment).map_err(to_py_err)
     }
 
     /// The anonymous machine's attachment identities, in slot-fill
@@ -1109,7 +1150,7 @@ impl Session {
 
     /// The device at `attachment` in the session's anonymous machine —
     /// `Machine.device` reaches a named machine's. The session owns it;
-    /// the returned object stays valid until that device is detached.
+    /// the returned object stays valid until that device is removed.
     fn device(&self, attachment: &str) -> PyResult<StorageDevice> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         self.lock().require_device(attachment).map_err(to_py_err)?;
@@ -1184,61 +1225,57 @@ impl Machine {
         self.identity.clone()
     }
 
-    /// Attaches the medium at `path` to a new device in this machine,
-    /// taking the lowest free slot of its family and returning the
-    /// attachment identity it took.
-    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
-    fn attach(
-        &self,
-        path: PathBuf,
-        writable: bool,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<String> {
-        let intent = access_intent(writable);
+    /// Adds a device of `family` to this machine, taking the lowest free
+    /// slot of that family — or `slot`, where the caller chooses one —
+    /// and returns it, empty.
+    #[pyo3(signature = (family, *, slot = None))]
+    fn add_device(&self, family: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
+        let family = remanence::DeviceFamily::from_id(family).map_err(to_py_err)?;
         let mut session = self.lock();
         let machine = self.get(&mut session)?;
-        let attachment = match cache_bytes {
-            Some(cache_bytes) => machine.attach_with_cache(path, intent, cache_bytes),
-            None => machine.attach(path, intent),
-        }
-        .map_err(to_py_err)?;
-        Ok(attachment.to_string())
+        let added = match slot {
+            Some(slot) => machine.add_device_at(family, slot),
+            None => machine.add_device(family),
+        };
+        let attachment = added.map_err(to_py_err)?.attachment();
+        drop(session);
+        Ok(StorageDevice {
+            session: Arc::clone(&self.session),
+            machine: self.identity.clone(),
+            attachment,
+        })
     }
 
-    /// Attaches the medium at `path` to the slot `attachment` names in
-    /// this machine. The caller chooses the slot, never the name.
-    #[pyo3(signature = (attachment, path, *, writable, cache_bytes = None))]
-    fn attach_at(
-        &self,
-        attachment: &str,
-        path: PathBuf,
-        writable: bool,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<String> {
-        let intent = access_intent(writable);
+    /// Removes the device at `attachment` from this machine, releasing
+    /// any medium's claim with it and freeing the slot.
+    fn remove_device(&self, attachment: &str) -> PyResult<()> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         let mut session = self.lock();
-        let machine = self.get(&mut session)?;
-        match cache_bytes {
-            Some(cache_bytes) => machine.attach_at_with_cache(
-                attachment.family(),
-                attachment.index(),
-                path,
-                intent,
-                cache_bytes,
-            ),
-            None => machine.attach_at(attachment.family(), attachment.index(), path, intent),
-        }
-        .map_err(to_py_err)?;
-        Ok(attachment.to_string())
+        self.get(&mut session)?
+            .remove_device(attachment)
+            .map_err(to_py_err)
     }
 
-    /// Detaches the device at `attachment` from this machine, releasing
-    /// its medium's claim and freeing the slot.
-    fn detach(&self, attachment: &str) -> PyResult<()> {
-        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
+    /// Composes this machine's DOS drive-letter mapping from its **own
+    /// device set**, reading attachment order from the order its devices
+    /// were added rather than from an assertion (P32, P35).
+    ///
+    /// `rule` is a claimed rule's name, or `None` to apply every claimed
+    /// rule and leave a letter they disagree on undetermined. Families no
+    /// claimed rule letters are passed over by family, and the mapping's
+    /// provenance says which.
+    #[pyo3(signature = (rule = None))]
+    fn compose_dos_letters(&self, rule: Option<&str>) -> PyResult<DriveMap> {
+        let rule = rule
+            .map(remanence::DosAssignmentRule::from_name)
+            .transpose()
+            .map_err(to_py_err)?;
         let mut session = self.lock();
-        self.get(&mut session)?.detach(attachment).map_err(to_py_err)
+        let map = self
+            .get(&mut session)?
+            .compose_dos_letters(rule, &[])
+            .map_err(to_py_err)?;
+        Ok(DriveMap::new(&map))
     }
 
     /// This machine's attachment identities, in slot-fill order — the
@@ -1255,7 +1292,7 @@ impl Machine {
     }
 
     /// The device at `attachment` in this machine. The session owns it;
-    /// the returned object stays valid until that device is detached.
+    /// the returned object stays valid until that device is removed.
     fn device(&self, attachment: &str) -> PyResult<StorageDevice> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         let mut session = self.lock();
@@ -1286,7 +1323,7 @@ pub struct StorageDevice {
 ///
 /// It dereferences to the device, so every verb below reads as though it
 /// held the device directly while the session stays the owner. The
-/// device is re-resolved on each borrow, so a detached one refuses
+/// device is re-resolved on each borrow, so a removed one refuses
 /// rather than reaching freed state.
 struct DeviceGuard<'a> {
     session: MutexGuard<'a, remanence::Session>,
@@ -1335,7 +1372,7 @@ impl StorageDevice {
         if !present {
             return Err(categorized_py_err(
                 remanence::ErrorCategory::NotFound,
-                "this device was detached",
+                "this device was removed",
             ));
         }
         Ok(DeviceGuard {
@@ -1354,16 +1391,48 @@ impl StorageDevice {
         self.attachment.to_string()
     }
 
-    /// The device family this slot belongs to.
+    /// The device family this slot belongs to, by its stable spelling.
     #[getter]
     fn family(&self) -> String {
-        self.attachment.family().name().to_owned()
+        self.attachment.family().id().to_owned()
     }
 
     /// Whether a medium currently occupies the slot.
     #[getter]
     fn is_occupied(&mut self) -> PyResult<bool> {
         Ok(self.get()?.is_occupied())
+    }
+
+    /// Loads the medium at `path` — a disk image, or `archive[/entry]` —
+    /// into this device, and hands back nothing to hold: the device is
+    /// the one storage handle, and the medium's facts answer on it.
+    ///
+    /// A device accepts only the media its family is served, and a
+    /// mismatch is refused naming both sides. `writable=True` claims the
+    /// medium exclusively and fails here when that claim cannot be
+    /// secured, never by falling back. An occupied slot is refused rather
+    /// than displaced.
+    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
+    fn load_media(
+        &mut self,
+        path: PathBuf,
+        writable: bool,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<()> {
+        let intent = access_intent(writable);
+        let mut device = self.get()?;
+        match cache_bytes {
+            Some(cache_bytes) => device.load_media_with_cache(path, intent, cache_bytes),
+            None => device.load_media(path, intent),
+        }
+        .map_err(to_py_err)
+    }
+
+    /// Ejects the medium, releasing its claim, and leaves the device in
+    /// place. Every view taken through it stops answering, and the
+    /// content verbs refuse by name until another medium is loaded.
+    fn eject(&mut self) -> PyResult<()> {
+        self.get()?.eject().map_err(to_py_err)
     }
 
     /// The artifact the medium was opened from (the archive path for
@@ -3509,6 +3578,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Session>()?;
     m.add_class::<Machine>()?;
     m.add_class::<StorageDevice>()?;
+    m.add_class::<DeviceFamily>()?;
     m.add_class::<Assurance>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;
@@ -3524,6 +3594,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DriveMapping>()?;
     m.add_class::<DosAssignmentRule>()?;
     m.add_function(wrap_pyfunction!(assurance_conditions, m)?)?;
+    m.add_function(wrap_pyfunction!(device_families, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
     m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
     m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;

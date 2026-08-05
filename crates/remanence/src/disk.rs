@@ -206,9 +206,9 @@ impl MediaState {
     /// Opens `path` at the stated default cache bound.
     ///
     /// Test-only. A medium reaches a caller through
-    /// [`crate::Machine::attach`] and nothing else (P32), so this exists
-    /// for the unit tests in this module, which exercise the device
-    /// stack below the device tier.
+    /// [`crate::StorageDevice::load_media`] and nothing else (P32), so
+    /// this exists for the unit tests in this module, which exercise the
+    /// device stack below the device tier.
     #[cfg(test)]
     pub(crate) fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
         Self::open_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
@@ -377,6 +377,13 @@ impl MediaState {
     /// settled before anything was read.
     pub(crate) fn assurance(&self) -> &Assurance {
         &self.assurance
+    }
+
+    /// The media type this medium is (P14) — named by the image-format
+    /// adapter that loaded its state, and what a device's family is
+    /// checked against when the medium is loaded into it.
+    pub(crate) fn media(&self) -> &'static MediaProfile {
+        self.media
     }
 
     pub(crate) fn format(&self) -> DiskFormat {

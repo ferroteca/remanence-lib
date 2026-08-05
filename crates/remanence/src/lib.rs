@@ -6,8 +6,12 @@
 //! A [`Session`] is the claim and cache scope; the [`Machine`]s within it
 //! are the device sets, and a [`StorageDevice`] is the one storage
 //! handle — the slot, its family, and the state of whatever medium
-//! occupies it. Attaching a disk image, optionally naming an entry
-//! inside a supported archive, takes one P7 claim and serves both of the
+//! occupies it. **Devices are added and media are loaded, as two acts**:
+//! [`Machine::add_device`] takes a [`DeviceFamily`] as concrete as the
+//! drive the machine actually had, and [`StorageDevice::load_media`]
+//! loads a disk image into it, optionally naming an entry inside a
+//! supported archive. That load takes one P7 claim — refusing a medium
+//! the family is not served, naming both sides — and serves both of the
 //! medium's planes through that handle:
 //! [`StorageDevice::identify`] reports the container layers (archive,
 //! image, physical media, filesystem) recognized by built-in executable
@@ -29,6 +33,7 @@ mod c1541_presentation;
 mod cache;
 mod checksum;
 mod device;
+mod device_family;
 mod disk;
 mod dos_letters;
 mod dos_name;
@@ -75,6 +80,7 @@ pub use c1541_presentation::{
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
+pub use device_family::DeviceFamily;
 pub use disk::DiskFormat;
 pub use dos_letters::{
     DosAssignmentRule, DosMachine, DriveMap, DriveMapping, LetterOutcome, MachineDevice,
@@ -97,7 +103,7 @@ pub use report::{
     VolumeLabel, VolumeOrigin,
 };
 pub use p64::{P64HalfTrack, P64Image, P64Report};
-pub use storage_device::{AttachmentId, DeviceFamily, StorageDevice};
+pub use storage_device::{AttachmentId, StorageDevice};
 pub use session::{
     ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout, FilesystemLayout,
     Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, SizeInformation,

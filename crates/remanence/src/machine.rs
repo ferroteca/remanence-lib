@@ -23,19 +23,16 @@
 //! meaningful than any other's. It serves the caller who is opening
 //! artifacts rather than reconstructing a machine.
 
-use std::path::Path;
-
-use crate::device::AccessIntent;
-use crate::disk::MediaState;
+use crate::device_family::DeviceFamily;
 use crate::error::{Error, Result};
-use crate::storage_device::{AttachmentId, DeviceFamily, StorageDevice};
+use crate::storage_device::{AttachmentId, StorageDevice};
 
 /// An open session: the claim scope, the cache budget, and the machines
 /// within it.
 ///
-/// Every medium attached anywhere in the session holds its own P7 claim
-/// for as long as it stays attached. Dropping the session drops every
-/// machine, detaching everything and releasing every claim.
+/// Every medium loaded anywhere in the session holds its own P7 claim for
+/// as long as it stays in its device. Dropping the session drops every
+/// machine, and every medium and claim with them.
 #[derive(Debug)]
 pub struct Session {
     machines: Vec<Machine>,
@@ -124,53 +121,25 @@ impl Session {
             .expect("a session always holds its anonymous machine")
     }
 
-    /// Attaches the medium at `path` to a new device in the session's
-    /// anonymous machine, as [`Machine::attach`] does there.
-    pub fn attach(&mut self, path: impl AsRef<Path>, intent: AccessIntent) -> Result<AttachmentId> {
-        self.anonymous_mut().attach(path, intent)
+    /// Adds a device of `family` to the session's anonymous machine, as
+    /// [`Machine::add_device`] does there.
+    pub fn add_device(&mut self, family: DeviceFamily) -> Result<&mut StorageDevice> {
+        self.anonymous_mut().add_device(family)
     }
 
-    /// Attaches the medium at `path` to the named slot of the anonymous
-    /// machine, as [`Machine::attach_at`] does there.
-    pub fn attach_at(
+    /// Adds a device of `family` at the named slot of the anonymous
+    /// machine, as [`Machine::add_device_at`] does there.
+    pub fn add_device_at(
         &mut self,
         family: DeviceFamily,
         index: u32,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-    ) -> Result<AttachmentId> {
-        self.anonymous_mut().attach_at(family, index, path, intent)
+    ) -> Result<&mut StorageDevice> {
+        self.anonymous_mut().add_device_at(family, index)
     }
 
-    /// [`Session::attach`] under a caller-declared session cache bound
-    /// (P27).
-    pub fn attach_with_cache(
-        &mut self,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-        cache_bytes: u64,
-    ) -> Result<AttachmentId> {
-        self.anonymous_mut()
-            .attach_with_cache(path, intent, cache_bytes)
-    }
-
-    /// [`Session::attach_at`] under a caller-declared session cache bound
-    /// (P27).
-    pub fn attach_at_with_cache(
-        &mut self,
-        family: DeviceFamily,
-        index: u32,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-        cache_bytes: u64,
-    ) -> Result<AttachmentId> {
-        self.anonymous_mut()
-            .attach_at_with_cache(family, index, path, intent, cache_bytes)
-    }
-
-    /// Detaches the device at `attachment` from the anonymous machine.
-    pub fn detach(&mut self, attachment: AttachmentId) -> Result<()> {
-        self.anonymous_mut().detach(attachment)
+    /// Removes the device at `attachment` from the anonymous machine.
+    pub fn remove_device(&mut self, attachment: AttachmentId) -> Result<()> {
+        self.anonymous_mut().remove_device(attachment)
     }
 
     /// The anonymous machine's devices, in the order its slots were
@@ -233,105 +202,73 @@ impl Machine {
         self.identity.as_deref()
     }
 
-    /// Attaches the medium at `path` to a new device, taking the lowest
-    /// free slot in its family, and returns the attachment identity the
-    /// device took.
+    /// Adds a device of `family` in the lowest free slot of that family,
+    /// and answers with the device — empty, until something is loaded
+    /// into it.
     ///
-    /// The family is settled by what the medium turns out to be. Only the
-    /// block family is claimed today, so this is always an `hdd` slot.
-    pub fn attach(&mut self, path: impl AsRef<Path>, intent: AccessIntent) -> Result<AttachmentId> {
-        self.attach_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
+    /// **The family must be concrete.** An interior name of the lineage
+    /// classifies and never instantiates: a device added as "some floppy"
+    /// declares no media a load could be checked against and no mechanism
+    /// a machine ever had, so it is refused by name (P3).
+    pub fn add_device(&mut self, family: DeviceFamily) -> Result<&mut StorageDevice> {
+        let index = self.lowest_free_index(family);
+        self.add_device_at(family, index)
     }
 
-    /// Attaches the medium at `path` to the named slot.
+    /// Adds a device of `family` at the named slot.
     ///
     /// The caller chooses the **slot**, never the name: an attachment
-    /// identity is always its family plus its index. A slot already
-    /// occupied is refused by name rather than displacing what is there —
-    /// ejecting is [`Machine::detach`], and it is a separate act.
-    pub fn attach_at(
+    /// identity is always its family's slot prefix plus its index. A slot
+    /// already taken is refused by name rather than displacing what is
+    /// there — removing a device is [`Machine::remove_device`], and it is
+    /// a separate act.
+    pub fn add_device_at(
         &mut self,
         family: DeviceFamily,
         index: u32,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-    ) -> Result<AttachmentId> {
-        self.attach_at_with_cache(family, index, path, intent, crate::DEFAULT_CACHE_BYTES)
-    }
-
-    /// Attaches to the lowest free slot under a caller-declared session
-    /// cache bound (P27), as [`Machine::attach`] otherwise does.
-    pub fn attach_with_cache(
-        &mut self,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-        cache_bytes: u64,
-    ) -> Result<AttachmentId> {
-        let family = DeviceFamily::Hdd;
-        let index = self.lowest_free_index(family);
-        self.attach_at_with_cache(family, index, path, intent, cache_bytes)
-    }
-
-    /// Attaches to a named slot under a caller-declared session cache
-    /// bound (P27), as [`Machine::attach_at`] otherwise does.
-    pub fn attach_at_with_cache(
-        &mut self,
-        family: DeviceFamily,
-        index: u32,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-        cache_bytes: u64,
-    ) -> Result<AttachmentId> {
-        let attachment = AttachmentId::new(family, index);
-        if self.position(attachment).is_some() {
+    ) -> Result<&mut StorageDevice> {
+        if !family.is_concrete() {
             return Err(Error::unsupported(format!(
-                "{attachment} is already occupied; detach it before attaching another medium"
-            )));
-        }
-
-        let medium = MediaState::open_with_cache(path.as_ref(), intent, cache_bytes)?;
-
-        // A device accepts only its own family's media (P14). This is
-        // where that bites, and it is not idle even with one family
-        // claimed: the block catalog opens anything it cannot identify at
-        // the raw adapter, so without this a flux container would be
-        // admitted to a block device and read as raw — declaring the
-        // block layer authoritative when its own adapter declares flux,
-        // which in-force P13 forbids.
-        if let Some(foreign) = foreign_family(&medium) {
-            return Err(Error::unsupported(format!(
-                "'{}' is a {foreign}-family artifact and {attachment} is a {} device; \
-                 no {foreign} device family is claimed by this release",
-                path.as_ref().display(),
+                "'{}' classifies device families and instantiates none; a \
+                 machine holds a drive it actually had, and {} names a kind \
+                 rather than one",
+                family.id(),
                 family.name()
             )));
         }
 
-        self.devices
-            .push(StorageDevice::new(attachment, Some(medium)));
-        Ok(attachment)
+        let attachment = AttachmentId::new(family, index);
+        if self.position(attachment).is_some() {
+            return Err(Error::unsupported(format!(
+                "{attachment} is already taken; remove that device before \
+                 adding another there"
+            )));
+        }
+
+        self.devices.push(StorageDevice::new(attachment));
+        Ok(self.devices.last_mut().expect("just pushed"))
     }
 
-    /// Detaches the device, releasing its medium's P7 claim and freeing
-    /// its slot.
+    /// Removes the device, releasing any medium's P7 claim with it and
+    /// freeing its slot.
     ///
-    /// Attach and detach are **machine-down operations**. Nothing may be
-    /// running over a device while it is reconfigured, which is exactly
-    /// why the freed slot can be reused: no live state refers to the old
-    /// occupant. This is not the renumbering U4 refuses for
-    /// evidence-bearing lists — a slot is caller-supplied configuration,
-    /// not evidence.
-    pub fn detach(&mut self, attachment: AttachmentId) -> Result<()> {
+    /// Adding and removing a device are **machine-down operations**.
+    /// Nothing may be running over a device while it is reconfigured,
+    /// which is exactly why the freed slot can be reused: no live state
+    /// refers to the old occupant. This is not the renumbering U4 refuses
+    /// for evidence-bearing lists — a slot is caller-supplied
+    /// configuration, not evidence.
+    pub fn remove_device(&mut self, attachment: AttachmentId) -> Result<()> {
         let position = self
             .position(attachment)
             .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))?;
         let mut device = self.devices.remove(position);
-        drop(device.eject());
+        drop(device.take_medium());
         Ok(())
     }
 
-    /// Every device in this machine, in the order the slots were filled —
-    /// the attachment order a namespace composer reads.
+    /// Every device in this machine, in the order they were added — the
+    /// attachment order a namespace composer reads.
     pub fn devices(&self) -> &[StorageDevice] {
         &self.devices
     }
@@ -380,20 +317,4 @@ impl Machine {
         }
         next
     }
-}
-
-/// The family an artifact belongs to, when it is one this release
-/// recognizes and it is not the block family.
-///
-/// The library can only refuse what it can recognize. An artifact it
-/// cannot place at all still opens at the block catalog's raw fallback,
-/// which is the honest limit of this check rather than a hole in it: NIB
-/// and NBZ, for instance, have no recognizer until the principle that
-/// places them at the flux rung is delivered.
-fn foreign_family(medium: &MediaState) -> Option<&'static str> {
-    let mut prefix = [0u8; 8];
-    if medium.read_at(0, &mut prefix).is_err() {
-        return None;
-    }
-    crate::p64::has_signature(&prefix).then_some("flux")
 }

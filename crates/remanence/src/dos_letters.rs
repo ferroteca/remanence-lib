@@ -11,13 +11,17 @@
 //! the machine facts the caller asserts, and everything below exists to
 //! keep that derivation from becoming a guess.
 //!
-//! The facts are the caller's, and they are read from the caller. A
-//! session's device set holds only the block family, which cannot express
-//! a floppy slot, a CD-ROM drive, or DOS attachment order; when those
-//! families are claimed, this composer may take the same facts from a
-//! session's devices instead of from an assertion. Nothing else about it
-//! changes with that: it still opens no artifact, still names the rule it
-//! applied, and still reports what the rule cannot settle as undetermined.
+//! The facts are the caller's, and they are read from wherever the caller
+//! holds them. [`DosMachine`] takes them as assertions, which is the only
+//! way to state a PC floppy slot or a CD-ROM drive this release claims no
+//! device family for. [`Machine::compose_dos_letters`] takes them from a
+//! machine's own device set instead — attachment order being the order
+//! its devices were added — and passes over the families no claimed rule
+//! understands. Nothing else about the composer changes with that: it
+//! still opens no artifact, still names the rules it applied, and still
+//! reports what they cannot settle as undetermined.
+//!
+//! [`Machine::compose_dos_letters`]: crate::Machine::compose_dos_letters
 //!
 //! Three constraints govern the derivation:
 //!
@@ -905,6 +909,114 @@ fn occupied(device: MachineDevice) -> Error {
     Error::unsupported(format!(
         "{device} was already asserted; a machine fact is stated once"
     ))
+}
+
+impl crate::machine::Machine {
+    /// Composes this machine's DOS drive-letter mapping, reading the
+    /// machine facts from its **own device set** rather than from an
+    /// assertion.
+    ///
+    /// This is P32's other half. In-force P19 has the caller assert
+    /// medium, slot and attachment order because before the device tier
+    /// nothing in a session held them; now a machine does, and the order
+    /// its devices were added in *is* the attachment order the rule
+    /// reasons over. Nothing else about the composer changes: it names
+    /// the rules it applied, it opens no artifact beyond inspecting the
+    /// media already loaded, and what the rules cannot settle comes back
+    /// undetermined.
+    ///
+    /// **Families a claimed rule does not understand are passed over by
+    /// family**, not refused and not omitted silently: a `cbmfloppy0` in
+    /// this machine legitimately receives no DOS letter, and the
+    /// provenance says so. An empty device contributes no volume for the
+    /// same reason a drive with no disk in it lettered nothing past its
+    /// slot. No PC floppy drive family is claimed by this release, so
+    /// the floppy slots are stated through [`DosMachine::assert_floppy`]
+    /// and nowhere else.
+    pub fn compose_dos_letters(
+        &mut self,
+        rule: Option<DosAssignmentRule>,
+        conditions: &[ResidentCondition],
+    ) -> Result<DriveMap> {
+        let mut fixed = Vec::new();
+        let mut passed_over = Vec::new();
+        let mut empty = Vec::new();
+        for attachment in self.attachments() {
+            let device = self
+                .device(attachment)
+                .expect("an attachment this machine just listed");
+            if !device.family().is_a(crate::DeviceFamily::HARD_DISK) {
+                passed_over.push(format!("{attachment} ({})", device.family().name()));
+                continue;
+            }
+            if !device.is_occupied() {
+                empty.push(attachment.to_string());
+                continue;
+            }
+            fixed.push(attachment);
+        }
+
+        let reports: Vec<DiskReport> = fixed
+            .iter()
+            .map(|attachment| {
+                self.require_device(*attachment)
+                    .expect("a device this machine just listed")
+                    .inspect()
+            })
+            .collect::<Result<_>>()?;
+
+        let mut machine = DosMachine::new();
+        for (order, report) in reports.iter().enumerate() {
+            machine.assert_fixed_disk(order as u32, report)?;
+        }
+        for condition in conditions {
+            machine.declare(*condition);
+        }
+
+        let mut map = machine.compose(rule)?;
+        let identity = match self.identity() {
+            Some(identity) => format!("the machine identified '{identity}'"),
+            None => "the session's anonymous machine".to_owned(),
+        };
+        // The facts came from a device set rather than an assertion, so
+        // the line that says where they came from is restated rather
+        // than contradicted by a second one below it.
+        for line in map.provenance.iter_mut() {
+            if line.contains("caller-asserted machine facts") {
+                *line = format!(
+                    "this mapping is derived from an assignment rule applied to \
+                     the machine facts {identity} holds — its device set, in the \
+                     order its devices were added, rather than an assertion; it \
+                     is provenance, not evidence read off a disk"
+                );
+            }
+        }
+        map.provenance.push(match fixed.is_empty() {
+            true => "no device in it is a hard disk, so no fixed disk was lettered".to_owned(),
+            false => format!(
+                "the fixed disks lettered, in attachment order: {}",
+                fixed
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        });
+        if !empty.is_empty() {
+            map.provenance.push(format!(
+                "these devices hold no medium and contributed no volume: {}",
+                empty.join(", ")
+            ));
+        }
+        if !passed_over.is_empty() {
+            map.provenance.push(format!(
+                "these devices were passed over by family, no claimed DOS rule \
+                 lettering them: {}",
+                passed_over.join(", ")
+            ));
+        }
+        Ok(map)
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{AttachmentId, Session, AccessIntent, Error, list_hdos_files};
+use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Error, list_hdos_files};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -15,7 +15,9 @@ fn attach(
     intent: AccessIntent,
 ) -> remanence::Result<(Session, AttachmentId)> {
     let mut session = Session::new();
-    let attachment = session.attach(path, intent)?;
+    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
+    let attachment = device.attachment();
+    device.load_media(path, intent)?;
     Ok((session, attachment))
 }
 

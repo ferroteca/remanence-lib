@@ -241,40 +241,66 @@ static int list_archive(const char *path) {
     return EXIT_SUCCESS;
 }
 
+/* Lists the device families this release claims, so a caller can see what
+ * a machine's slots may be. Interior names of the lineage classify and
+ * instantiate nothing, and the listing says which is which. */
+static void list_families(void) {
+    size_t count = remanence_device_family_count();
+    printf("Device families (%zu):\n", count);
+    for (size_t i = 0; i < count; ++i) {
+        const char *kind_of = remanence_device_family_kind_of(i);
+        printf("  %-16s %s%s%s%s\n",
+               remanence_device_family_id(i),
+               remanence_device_family_name(i),
+               kind_of == NULL ? "" : ", a kind of ",
+               kind_of == NULL ? "" : kind_of,
+               remanence_device_family_is_concrete(i) ? "" : " [classifies only]");
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--list") == 0) {
         return list_archive(argv[2]);
     }
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <path-to-image>\n", argv[0]);
+    if (argc == 2 && strcmp(argv[1], "--families") == 0) {
+        list_families();
+        return EXIT_SUCCESS;
+    }
+    if (argc < 2 || argc > 3) {
+        fprintf(stderr, "Usage: %s <path-to-image> [device-family]\n", argv[0]);
         fprintf(stderr, "       %s --list <path-to-archive>\n", argv[0]);
+        fprintf(stderr, "       %s --families\n", argv[0]);
         return EXIT_FAILURE;
     }
+    /* Which drive serves a medium is machine configuration, so it is this
+     * caller's to state; `hard-disk` is what this example assumes when it
+     * is not told, and an `.h8d` wants `heathkit-h17`. */
+    const char *family = argc == 3 ? argv[2] : "hard-disk";
 
     RemanenceErrorCategory error_category;
     char *error = NULL;
     char *error_rule = NULL;
-    /* Nothing is reachable except through a device (P32): attach the
-     * medium to a session's anonymous machine, then borrow the device
-     * holding it -- the one handle for the slot and its medium alike. */
+    /* Nothing is reachable except through a device (P32), and it takes two
+     * acts: add the drive to a session's anonymous machine, then load the
+     * medium into it. The device is borrowed -- the session owns it, so we
+     * never free it -- and it is the one handle for the slot and its
+     * medium alike. */
     RemanenceSession *session = remanence_session_new();
-    char *attachment = NULL;
-    if (!remanence_session_attach(session, argv[1], REMANENCE_ACCESS_INTENT_READ,
-                                  &attachment, &error_category, &error, &error_rule)) {
+    RemanenceDevice *device = remanence_session_add_device(
+        session, family, &error_category, &error, &error_rule);
+    if (device == NULL) {
+        report_error("error adding the device", error_category, error, error_rule);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
+    if (!remanence_device_load_media(device, argv[1], REMANENCE_ACCESS_INTENT_READ,
+                                     &error_category, &error, &error_rule)) {
         report_error("error", error_category, error, error_rule);
         remanence_session_free(session);
         return EXIT_FAILURE;
     }
-
-    /* Borrowed: the session owns this, so we never free it. */
-    RemanenceDevice *device = remanence_session_device(session, attachment);
-    if (device == NULL) {
-        fprintf(stderr, "no medium attached at %s\n", attachment);
-        remanence_string_free(attachment);
-        remanence_session_free(session);
-        return EXIT_FAILURE;
-    }
-    printf("Device:  %s\n", attachment);
+    printf("Device:  %s (%s)\n", remanence_device_attachment(device),
+           remanence_device_family(device));
 
     RemanenceIdentification *identification = remanence_device_identify(device);
 
@@ -332,7 +358,6 @@ int main(int argc, char **argv) {
     show_drive_letters(device);
 
     remanence_identification_free(identification);
-    remanence_string_free(attachment);
     remanence_session_free(session);
     return status;
 }

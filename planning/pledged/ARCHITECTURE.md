@@ -971,16 +971,19 @@ no separate account.
 
 ### What arming it will require
 
-The delivered library opens a single `Disk` per session and has no device
-tier above it, so nothing here is honored today. Arming it requires a
-session-level device collection with id issuance and machine-down attach and
-detach; a family-typed capability obtained from a device rather than a
-shared `StorageDevice` method set; family-declared region enumeration at a
-device's root, which the delivered inspection report already supplies for
-block devices and which optical and floppy families must answer in the same
-shape; the P19 file-access capability on a region rather than on a device;
-and the 1541 family's device capability presenting (or wrapping)
-`Hardware<C>`.
+Part of this is delivered and part is not, so the principle stays here
+until all of it is. **Delivered**: the device collection with its
+attachment identities and its machine-down add and remove, held by a
+machine within the session rather than by the session itself (the
+amendment below); the two acts that fill a slot; and a family catalog
+whose entries are as concrete as the machine fact they assert, carrying
+their lineage as data. **Not delivered**: a family-typed capability
+obtained from a device rather than a shared `StorageDevice` method set;
+family-declared region enumeration at a device's root, which the
+delivered inspection report already supplies for block devices and which
+optical and floppy families must answer in the same shape; the P19
+file-access capability on a region rather than on a device; and the 1541
+family's device capability presenting (or wrapping) `Hardware<C>`.
 
 ## P32 amendment — A device declares an addressing nature, and no family owns one
 

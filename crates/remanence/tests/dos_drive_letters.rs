@@ -12,7 +12,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AttachmentId, DiskReport, DosAssignmentRule, DosMachine, LetterOutcome,
+    AccessIntent, AttachmentId, DeviceFamily, DiskReport, DosAssignmentRule, DosMachine,
+    LetterOutcome,
     MachineDevice, RegionRole, ResidentCondition, Session, VolumeId,
 };
 
@@ -20,9 +21,13 @@ mod common;
 
 fn attach(path: impl AsRef<std::path::Path>) -> (Session, AttachmentId) {
     let mut session = Session::new();
-    let attachment = session
-        .attach(path, AccessIntent::Read)
-        .expect("the image attaches");
+    let device = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("the drive is added");
+    let attachment = device.attachment();
+    device
+        .load_media(path, AccessIntent::Read)
+        .expect("the image loads");
     (session, attachment)
 }
 
@@ -624,3 +629,106 @@ fn the_map_carries_the_asserted_facts_and_the_rule_it_applied() {
     std::fs::remove_file(&path).ok();
 }
 
+
+/// P32's other half: with a device tier holding the machine facts, the
+/// composer reads them from a machine's own device set instead of from an
+/// assertion — attachment order being the order its devices were added.
+#[test]
+fn a_machine_letters_its_own_device_set_in_attachment_order() {
+    let fat = synthetic_fat16();
+    let first = write_image("set-0", synthetic_multi_mbr(&[(0x06, &fat)]));
+    let second = write_image("set-1", synthetic_multi_mbr(&[(0x06, &fat)]));
+
+    let mut session = Session::new();
+    session.add_machine("pc").expect("the machine is added");
+    let machine = session.require_machine("pc").expect("is there");
+    for path in [&first, &second] {
+        machine
+            .add_device(DeviceFamily::HARD_DISK)
+            .expect("a hard disk is added")
+            .load_media(path, AccessIntent::Read)
+            .expect("the disk loads");
+    }
+
+    let map = machine
+        .compose_dos_letters(Some(DosAssignmentRule::MsDos5), &[])
+        .expect("composes");
+
+    assert_eq!(device_at(&map, 'C'), MachineDevice::FixedDisk(0));
+    assert_eq!(device_at(&map, 'D'), MachineDevice::FixedDisk(1));
+    assert!(map.letter('A').is_none(), "no floppy family is claimed");
+
+    // The provenance says where the facts came from, which is the whole
+    // difference between this form and the asserted one (P35).
+    assert!(
+        map.provenance
+            .iter()
+            .any(|line| line.contains("device set") && line.contains("'pc'")),
+        "names the machine it read: {:?}",
+        map.provenance
+    );
+    assert!(
+        map.provenance
+            .iter()
+            .any(|line| line.contains("hdd0, hdd1")),
+        "and the devices, in attachment order: {:?}",
+        map.provenance
+    );
+
+    drop(session);
+    std::fs::remove_file(&first).ok();
+    std::fs::remove_file(&second).ok();
+}
+
+/// A family no claimed rule letters is passed over by family — never an
+/// error, never a silent omission — and an empty drive contributes no
+/// volume. P32 names the case: an attached `cbmfloppy0` legitimately
+/// receives no DOS letter.
+#[test]
+fn a_family_no_rule_letters_is_passed_over_and_said_so() {
+    let path = write_image("passed-over", synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]));
+
+    let mut session = Session::new();
+    session
+        .add_device(DeviceFamily::COMMODORE_1541)
+        .expect("a 1541 is a device like any other");
+    session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("added")
+        .load_media(&path, AccessIntent::Read)
+        .expect("the disk loads");
+    session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("an empty second drive is configuration in its own right");
+
+    let map = session
+        .anonymous_mut()
+        .compose_dos_letters(Some(DosAssignmentRule::MsDos5), &[])
+        .expect("composes");
+
+    assert_eq!(device_at(&map, 'C'), MachineDevice::FixedDisk(0));
+    assert!(map.letter('D').is_none(), "the empty drive holds no volume");
+    assert!(
+        map.provenance
+            .iter()
+            .any(|line| line.contains("passed over by family") && line.contains("cbmfloppy0")),
+        "the 1541 is passed over, and the map says so: {:?}",
+        map.provenance
+    );
+    assert!(
+        map.provenance
+            .iter()
+            .any(|line| line.contains("no medium") && line.contains("hdd1")),
+        "and the empty drive is accounted for rather than dropped: {:?}",
+        map.provenance
+    );
+    assert!(
+        map.provenance
+            .iter()
+            .any(|line| line.contains("anonymous machine")),
+        "the anonymous machine composes like any other (D23)"
+    );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}

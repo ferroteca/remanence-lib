@@ -13,7 +13,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, AttachmentId, ContainerKind, DiskFormat, ErrorCategory, Session,
+    AccessIntent, AccessMode, AttachmentId, ContainerKind, DeviceFamily, DiskFormat, ErrorCategory,
+    Session,
     VolumeId,
 };
 
@@ -24,7 +25,9 @@ fn attach(
     intent: AccessIntent,
 ) -> remanence::Result<(Session, AttachmentId)> {
     let mut session = Session::new();
-    let attachment = session.attach(path, intent)?;
+    let device = session.add_device(DeviceFamily::HARD_DISK)?;
+    let attachment = device.attachment();
+    device.load_media(path, intent)?;
     Ok((session, attachment))
 }
 
