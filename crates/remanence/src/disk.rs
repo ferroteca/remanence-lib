@@ -152,7 +152,7 @@ fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> 
 pub struct Disk {
     virtual_disk: Box<dyn OpenedImage>,
     /// The raw plane over the shared claim: the session cache and the
-    /// predictive reader (P27).
+    /// predictive reader (P27, P34).
     source: ImageSource,
     /// The archive wrappers unwrapped on the way in, if any.
     containers: Vec<Container>,

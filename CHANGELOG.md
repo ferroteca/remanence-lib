@@ -276,6 +276,16 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **P27 splits: the resource rule keeps the title, thread invisibility
+  becomes P34.** No rule changed and no surface moved — the two halves
+  fail independently, so they are two principles. P27 keeps what its
+  title describes: sessions stream, memory holds a bounded working set,
+  and peak memory bounded independently of source size is its testable
+  claim. New **P34** takes the four rules that keep threads
+  undetectable — clean-only speculation, no-gap offload, demand over
+  prediction, silent speculation — with its own testable claim: results,
+  evidence, and refusals identical at any thread count, including none.
+  The budget P34's threads spend remains P27's (D22).
 - **P23 splits: what an active layer is stays P23, how it changes becomes
   P33.** No rule changed and no surface moved — the two halves fail
   independently, so they are two principles. P23 keeps the closed

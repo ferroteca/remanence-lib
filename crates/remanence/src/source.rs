@@ -54,7 +54,7 @@ enum Backing {
     Spool { spool: Arc<File>, offset: u64 },
 }
 
-/// The predictive reader (P27): a worker that follows a sequential
+/// The predictive reader (P34): a worker that follows a sequential
 /// access pattern and loads extents from the backing before they are
 /// asked for. Speculation is silent and clean-only — a failed read
 /// caches nothing and reports nothing, results are identical with the

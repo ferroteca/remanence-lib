@@ -69,7 +69,7 @@ struct OffloadDone {
     ok: bool,
 }
 
-/// The background offload worker (P27): spills altered extents
+/// The background offload worker (P34): spills altered extents
 /// ahead of memory pressure so eviction rarely stalls on I/O. An extent
 /// leaves memory only once its spill write has completed — the no-gap
 /// rule — and a failed speculative write reports nothing: the extent
@@ -120,8 +120,8 @@ impl Drop for Offloader {
 }
 
 /// How many offload jobs may be in flight at once: each carries one
-/// cloned extent, so this bounds the speculation's own memory (P27's
-/// budget rule).
+/// cloned extent, so this bounds the speculation's own memory (P34's
+/// demand rule, spending P27's budget).
 const OFFLOAD_IN_FLIGHT: usize = 4;
 
 /// The private spill file altered extents move to when evicted. Slots
@@ -511,7 +511,7 @@ impl SessionCache {
         self.resident.contains_key(&extent_offset)
     }
 
-    /// Installs a speculatively loaded clean extent (P27 prefetch).
+    /// Installs a speculatively loaded clean extent (P34 speculation).
     /// Speculation never replaces present state and never causes spill
     /// I/O: it fills free room, or takes the place of one evictable
     /// clean extent, or is discarded.

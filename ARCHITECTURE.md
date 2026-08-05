@@ -617,14 +617,9 @@ complete into the layer below in the same act or alter nothing, a write
 landing in a lower layer invalidates the overlapping derived extents above
 it, and eviction regenerates from below.
 
-The library may use threads to predict, prefetch, and offload, with the
-standard library's threads alone. Four rules keep the concurrency
-observationally invisible: speculation produces only clean state; offload
-never gaps the truth, so an altered extent leaves memory only once its
-spill write has completed and every act consuming the altered set joins
-the offloads in flight; the work spends the declared budget with demand
-outranking prediction; and speculation is silent, so a failed speculative
-read caches nothing and reports nothing.
+The library may thread its work — prediction, prefetch, offload — and
+P34 governs that concurrency: the budget its threads spend is this
+principle's, and nothing they do is observable.
 
 Commit, materialization, and recovery stream through bounded buffers;
 identification probes read the bounded evidence their claims name; private
@@ -845,3 +840,26 @@ A descent changes where writes land, never what the artifact records.
 P13's authoritative layer is unchanged by it, and a writable composition
 whose lowered state would acquire a change that layer cannot represent is
 refused in advance rather than silently flattened.
+
+### P34 — Concurrency is observationally invisible
+
+The library may use threads to predict, prefetch, and offload —
+speculatively reading ahead of an access pattern, deriving ahead of
+demand, spilling ahead of pressure — with the standard library's threads
+alone. Four rules keep every thread undetectable:
+
+- **Speculation produces only clean state.** A speculative read installs
+  evictable state or nothing; dirty truth is never created ahead of a
+  caller's act.
+- **Offload never gaps the truth.** An altered extent leaves memory only
+  once its spill write has completed, and every act that consumes the
+  altered set joins the offloads in flight.
+- **Demand outranks prediction.** The threads spend P27's declared
+  budget, and a caller's read is never starved by a guess.
+- **Speculation is silent.** A failed speculative read caches nothing
+  and reports nothing.
+
+The testable claim: results, evidence, and refusals are identical with
+any number of threads, including none. Concurrency is a resource
+strategy, never a semantic one — a caller cannot learn the thread count
+from anything the library says or does.

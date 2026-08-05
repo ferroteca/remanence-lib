@@ -58,6 +58,70 @@ removes it is the record either way.
 
 ## Decisions
 
+### D22 — P27 splits: the resource rule keeps the title, thread invisibility becomes P34
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-04. **Supports** P2, P23, P27, P34.
+
+The last of the three principles D20 reported as resisting compression,
+and the same test D21 applied: two rules under one heading that fail
+independently are two principles.
+
+**The two rules, and the test.** The resource rule — sized by the
+operation, the bounded working set, source-backed and session-backed
+state, the residency classes, streaming everywhere — makes the testable
+claim *peak memory bounded independently of source size*. The
+concurrency rule — threads may predict, prefetch, and offload under four
+invisibility rules — makes the testable claim *results, evidence, and
+refusals identical at any thread count, including none*. A whole image
+loaded resident with zero threads violates the first and honors the
+second; a failed speculative read that reports its error violates the
+second while memory stays bounded. Neither implies the other.
+
+**The second rule is a determinism claim, not a memory claim.** It is
+the rule any future concurrency must obey — parallel decode, deriving
+layer extents ahead of demand — and P23's cache tie already cited it as
+a distinct thing ("under P27's speculation rules"). Keeping it inside a
+principle titled "memory holds a bounded working set" made the
+determinism obligation citable only through a resource principle whose
+title says nothing about it.
+
+**P27 keeps the resource rule and its number; the concurrency rule is
+P34.** The title match settled the direction: "sessions stream; memory
+holds a bounded working set" describes the resource rule exactly. Of the
+84 code citations of P27, nearly all are resource-half; the concurrency
+sites are concentrated — the offload worker and speculative install in
+`cache.rs`, the predictive reader in `source.rs` and `disk.rs` — and
+were widened to P34 in the same change. The budget stays P27's, and
+P34's demand rule spends it: a cross-reference, exactly as P23's caches
+sit under P27's budget.
+
+**Corrected in passing:** D21 stated that three P23 citations sat "in
+released CHANGELOG entries". Every P-number citation in the changelog
+sits under `Unreleased` today — the released headings hold none — so
+that leg of D21's numbering argument was factually wrong. The ruling
+stands on its other legs (77 citations across 21 files, the code's
+citations being the state half), and per this record's own rule the D21
+entry keeps its spelling; this note is the discovery.
+
+**Weighed and declined:** leaving P27 whole (defensible as "the threads
+exist only to spend the budget", but that reading makes the
+determinism claim a sub-clause of a resource principle, and the two
+claims are independently violable and independently testable); the
+subsection compromise — one number, two subheadings — (cheaper, but
+leaves two independently violable claims citable only as one number,
+which is the ambiguity the P-sequence exists to prevent).
+
+**Landed as:** P27 515 → ~370 words with a two-line pointer to P34; new
+P34 at ~200 words in root [ARCHITECTURE.md](../ARCHITECTURE.md); four
+comment citations widened in `cache.rs`, `source.rs`, and `disk.rs`; a
+CHANGELOG entry under Unreleased beside the P23 one. SEQUENCES advances
+P to 35 and D to 23. No S1–S3 surface is touched: the split renumbers
+rules without changing what any of them claims.
+
+**Reopens if:** either half is found to have lost a binding clause — the
+clause returns, since this ruling moved rules without changing them.
+
 ### D21 — P23 splits into what an active layer is and how it changes; generate-flux was P29 all along
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
