@@ -188,16 +188,30 @@ F47–F49 read better after it but do not require it.
 ## F47 — The access path: add_device, load_media, and empty devices
 
 Replace one-act `attach` with the two acts the P32 amendment names:
-`add_device` — family stated from the lineage-bearing catalog, or the
-device-first one-step with a path, refusing an ambiguous family by
-name — and `load_media` on the device, plus eject, with an empty device
-as first-class configuration. Each verb returns its noun. A family
+`add_device` — the family a concrete leaf of the lineage-bearing
+catalog, interior names classifying but never instantiating — and
+`load_media` on the device, plus eject, with an empty device as
+first-class configuration. Each verb returns its noun, and a family
 mismatch at `load_media` refuses naming both sides. Attachment order
 becomes an explicit machine fact the DOS composer reads from the device
 set.
 
+`discover_media(path)` lands as a first-class library function on no
+handle: the claim for the read, identification, and a report of the
+exact medium, the device families that accept it (derived from the
+families' own declarations), and the image format's declared default
+device. The discovery is a consumable claim-scope handle carrying the
+work done — parsed capture state, probe verdicts — and `load_media`
+accepts a path, a file view, or a discovery, consuming the last so
+nothing expensive runs twice and the claim never lapses between
+question and load (P7). The machine's dual one-step conveniences sit
+over it — `add_device(path)` returning the device, `load_media(path)`
+returning the medium, each adding a fresh device of the declared
+default family, refusing by name where a format declares none.
+
 Touches: S1, S2, S3. Supports: the U2 amendment; the P32 amendment;
-in-force P14, P21. The archive slot arrives with F49, not here.
+in-force P12 (the default is a format adapter's declaration), P14, P21.
+The archive slot arrives with F49, not here.
 
 ## F48 — The Filesystem node
 

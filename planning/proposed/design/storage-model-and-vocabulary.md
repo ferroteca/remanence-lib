@@ -207,19 +207,36 @@ Applied:
   a format adapter does to media state. **The return follows the verb's
   noun**: `add_device` returns the device handle, `load_media` returns
   the media handle. The order of `add_device` calls is the
-  attachment-order fact U22's composer consumes. One convenience composes
-  the pair, and only one: `machine.add_device(path)` — device-first, the
-  wording that fits fixed storage (`add_device("myhdd.vhdx")`), returning
-  the device handle as the verb's noun demands. It is admissible where
-  its media-first mirror is not because device creation is the verb's
-  own stated act: a second call self-evidently adds a second device, so
-  nothing accumulates by side effect and nothing is silently reused. The
-  device family comes from recognition only where exactly one claimed
-  family fits the medium; several candidates refuse by name, and the
-  explicit form — `add_device(family, path)`, or `add_device(family)`
-  for an empty device — states the choice. That is the transparency rule
-  applied to machine configuration, and the CHS/LBA ruling surviving as
-  exactly that refusal.
+  attachment-order fact U22's composer consumes.
+  **`discover_media(path)` is a first-class library function, on no
+  handle at all**: it claims the artifact for the read, identifies it,
+  and answers with a report — the exact medium, the concrete device
+  families that accept it, and the image format's declared default —
+  mutating nothing and needing no machine, since it consults catalogs
+  and evidence, never configuration. **The discovery it returns is a
+  consumable handle — a claim scope holding expensive work.**
+  Discovering a flux capture parses streams and probes drive profiles;
+  `load_media` accepts a discovery as it accepts a path and consumes
+  it, the parsed state moving into the loaded medium so nothing is done
+  twice — P29's plan-and-execute shape one seam over. The claim taken
+  at discovery holds until consumption or drop, so no window exists
+  between the question and the load in which the artifact could change
+  (P7 continuity). Over discovery sit the machine's two dual one-step
+  conveniences:
+  `machine.add_device(path)` returning the device, the wording that
+  fits fixed storage, and `machine.load_media(path)` returning the
+  medium, the wording that fits removable media. Each adds a fresh
+  device of the **format-declared default family** and loads into it —
+  stated, never a silent reuse — and a format declaring no default (a
+  raw image says nothing about its machine) refuses by name toward the
+  explicit acts: `add_device(family)`, then `load_media(path)` on the
+  device. The default lives on the format because it is ecosystem
+  knowledge the media type cannot honestly hold — a ten-sector
+  hard-sectored 5.25-inch disk is the article of both a Heathkit H-17
+  and a North Star MDS, but an H8D records a Heathkit disk — while the
+  supported-device list is derived by asking the families, which
+  declare the media they accept (D19's direction, unchanged). A
+  declaration nobody makes is a refusal, not a guess (P3).
 - The medium — handle: the mutable state instance. Device content-verbs
   **delegate to the occupied medium**; an empty slot is a named refusal;
   the device handle survives eject and load. On the flux side the same
@@ -273,21 +290,25 @@ is medium API.
 ## Transparency, and the simple case
 
 **`machine → device → media` is the access path** — the one route to
-content. The device-first convenience composes the first two moves
-without changing the path: its return is still the device, and the
-medium is still reached through it. The acceptance test for the model is
-five plain moves:
+content. Either one-step convenience composes the first two moves
+without changing the path — each returns its verb's noun, and the
+medium is still reached through the device the call added. The
+acceptance test for the model is five plain moves:
 
 ```
 machine = Machine()
-drive   = machine.add_device(floppy)
-medium  = drive.load_media("myfloppyimage.raw")
+drive   = machine.add_device(heathkit_h17)
+medium  = drive.load_media("myfloppyimage.h8d")
 fs      = medium.filesystem()
 file    = fs.get_file("myfile.txt")
 ```
 
 The device is the caller's to state, because which device serves a medium
-is machine configuration, not image content. The filesystem is resolved,
+is machine configuration, not image content — and it is stated
+concretely, the drive the machine actually had. Lineage interior names
+("floppy drive") classify entries and answer queries; only a concrete
+entry instantiates, since only a concrete drive declares the facts
+`load_media` checks a medium against. The filesystem is resolved,
 never named: `medium.filesystem()` walks volume → filesystem because
 every seam there has exactly one supported answer — in-force P19's
 transparency clause as a method. Degradation is explicit: two volumes and
@@ -359,12 +380,14 @@ those drafts and the U2 amendment, and is swept when they deliver.
   node; D2's "disk stack" prose naming follows the type it was named
   for).
 - The access path `machine → device → media`: `add_device` then
-  `load_media`, each returning its verb's noun. Today's `attach(path)` is
-  the one-step shape; the model keeps it as the device-first
-  `add_device(path)` convenience — returning the device, refusing an
-  ambiguous family by name — and adds the canonical two-step beneath it.
-  A device that exists empty is new surface, and no media-first
-  machine-level verb exists.
+  `load_media`, each returning its verb's noun. Today's `attach(path)`
+  is the one-step shape; the model keeps it as the two dual conveniences
+  over `discover_media` — `add_device(path)` returning the device,
+  `load_media(path)` returning the medium, each adding a fresh device of
+  the format-declared default family — with the canonical two-step
+  beneath them. `discover_media` itself is new library-level surface,
+  the format adapters' default-device declaration is a new catalog fact,
+  and a device that exists empty is new surface.
 - Uniform open: archives enter through the same add-device-and-load
   journey; the
   separate `archive[/entry]` path syntax and the `Archive` type's
@@ -400,12 +423,11 @@ never off `Medium` in general — the symmetric placement to file verbs
 living only on `Filesystem`. No new format, family, or catalog claim is
 made anywhere in this document.
 
-**The media-first machine-level convenience is rejected.**
-`machine.load_media(path)` autocreating a device has no clean answer to
-its second call: mint another device every time — devices accumulating
-as a side effect of opening files — or silently reuse an existing empty
-slot, a guess about machine configuration either way. Its device-first
-mirror does not share the problem, because there device creation is the
-verb's explicit act, and it stands (see "Handles and values").
-Media-first loading exists only on a device the caller already holds:
-`device.load_media(path)`.
+**The one-step conveniences were rejected once and reinstated by
+declaration.** The original objection stands against the *undeclared*
+form: autocreation with no stated answer to the second call, and a
+family chosen by guess. The reinstated forms (see "Handles and values")
+answer both in the contract — `discover_media`, a format-declared
+default family, a fresh device per call — and refuse where no
+declaration exists. What stays rejected is any silent reuse of an
+existing slot, and a default declared anywhere but the image format.

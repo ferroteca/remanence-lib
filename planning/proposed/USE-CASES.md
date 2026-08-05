@@ -24,15 +24,23 @@ path, and the filesystem is the one thing that hands out files.
 
 ```
 machine = Machine()
-drive   = machine.add_device(floppy)
+drive   = machine.add_device(heathkit_h17)
 medium  = drive.load_media("games.h8d")
 fs      = medium.filesystem()
 file    = fs.get_file("CHESS.ABS")
 ```
 
-The drive is mine to state, because which device serves a medium is a
-fact about my machine, not about the image — and stating it is also how a
-drive exists empty. The filesystem is resolved, never guessed:
+The drive is mine to state, and I state the one my machine had — the
+H-17, the hard-sectored Heathkit drive — not "some floppy". Which device
+serves a medium is a fact about my machine, not about the image, and
+stating it concretely is what gives `load_media` something to check: an
+H8D is a ten-sector hard-sectored 5.25-inch disk, and a drive family
+that spins soft-sectored media refuses it by name rather than reading it
+wrongly. There is no "generic floppy" to add: the lineage's interior
+names classify drives and answer questions, but only a concrete entry
+instantiates, because only a concrete drive declares anything. Stating
+the drive is also how one exists empty. The filesystem is resolved,
+never guessed:
 `medium.filesystem()` walks down to the one filesystem when every layer
 between has exactly one supported answer, and that is why I name no
 volume here. Past that, nothing asks me to hold a handle that does not

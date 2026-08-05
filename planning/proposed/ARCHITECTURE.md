@@ -219,12 +219,47 @@ disk is in it — and a medium is **loaded** into it, which is P14's own
 verb for what a format adapter does to media state. Each verb returns
 its noun. Attach-as-one-act becomes the device-first convenience,
 `add_device(path)`, admissible because device creation is its stated
-act: a second call plainly adds a second device, and an ambiguous
-family refuses by name rather than being recognized into a guess. No
-media-first machine-level verb exists — a one-step
-`machine.load_media(path)` would either mint devices as a side effect
-of opening files or silently reuse an empty slot, a guess about machine
-configuration either way.
+act: a second call plainly adds a second device.
+
+**Discovery is first-class, and machine-free.** `discover_media(path)`
+claims the artifact for the read, identifies it, and answers with a
+report — the exact medium, the concrete device families that accept it,
+and the declared default, each carrying its evidence (P4) — mutating
+nothing (P2). It is a library-level function on no handle at all,
+because it consults catalogs and evidence, never machine configuration;
+the machine's one-step conveniences use it beneath them, and a caller
+uses it directly as the question asked before deciding what to add.
+
+**Discovery is consumable, because it is expensive and because the
+claim must not lapse.** Discovering a flux capture parses streams and
+probes drive profiles; that work is held in the discovery, and
+`load_media` accepts a discovery as it accepts a path, consuming it —
+the parsed state moves into the loaded medium and nothing is done
+twice. This is P29's plan-and-execute shape one seam over: the plan
+computes, the execution consumes the plan. The claim taken at discovery
+is held until the discovery is consumed or dropped, so there is no
+window between the question and the load in which the artifact could
+change — P7 continuity, not merely economy. A discovery is a claim
+scope, which is exactly what the storage model's handle rule says earns
+a handle; dropped unconsumed, it releases its claim and discards its
+work.
+
+**The one-step conveniences are dual, and both are declaration, not
+guess.** `machine.add_device(path)` returns the device;
+`machine.load_media(path)` returns the medium; underneath each is
+`discover_media` plus two declarations. Discovery recognizes the
+artifact (P12) and reports the exact medium, the concrete device
+families that accept it — derived by asking the families, which declare
+the media they accept, D19's direction unchanged — and the **default
+device the image format declares**, a recording-side fact the media
+type cannot honestly hold: a ten-sector hard-sectored 5.25-inch disk is
+the article of both a Heathkit H-17 and a North Star MDS, but an H8D
+records a Heathkit disk. Each one-step call adds a fresh device of the
+declared default family and loads into it — stated in the contract,
+never a silent reuse of an existing slot — and a format that declares
+no default, as a raw image declares nothing about its machine, refuses
+by name toward the two explicit acts. A declaration nobody makes is a
+refusal, not a guess (P3).
 
 **Device families form a stated lineage.** A family entry is as
 concrete as the machine fact it asserts — a Commodore 1541, not "some
@@ -232,12 +267,14 @@ floppy" — and the catalog states each entry's lineage: a Commodore 1541
 is a CBM floppy drive where shared characteristics warrant the
 grouping, which is a floppy drive. The lineage is data in the family
 catalog, never a type hierarchy, mirroring P30's profile catalog one
-seam down and P14's media-type catalog beside it. A caller may add a
-general family where nothing requested depends on the difference —
-identification and file access need no drive mechanics, as this
-principle already states — and a service needing what only a concrete
-family declares refuses by name from a slot too general to have
-declared it.
+seam down and P14's media-type catalog beside it. **Interior names
+classify; only concrete entries instantiate.** A device added as "some
+floppy" exists in no machine, declares nothing `load_media` could check
+a medium against, and letters nothing U22 could reason over — vagueness
+in a machine fact is the refusal the CHS/LBA split below already makes,
+one rung up the lineage. What P32 already states is unchanged by this:
+identification and file access need none of a concrete device's
+mechanics — the device must be real, not exercised.
 
 **CHS and LBA hard drives are separate partitionable families.** One
 device type exposing both vantages would carry a CHS⇄LBA translation
