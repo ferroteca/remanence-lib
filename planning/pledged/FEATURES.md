@@ -25,14 +25,14 @@ claims no capability the C ABI does not already provide — C++ programs
 consume `remanence.h` today, and this adds ergonomics, not reach.
 
 Shape: one move-only RAII class per node kind — the storage model's
-`Machine`, `StorageDevice`, `Medium`, `Volume`, `Filesystem`, and `File`
-— each owning its handle's lifetime through the ABI's free functions,
-with families as enum values and every refusal surfacing as a typed
-error carrying the delivered category and rule identity (P10). No
+`Session`, `Machine`, `StorageDevice`, `Volume`, `Filesystem`, and
+`File` — each owning its handle's lifetime through the ABI's free
+functions, with families as enum values and every refusal surfacing as a
+typed error carrying the delivered category and rule identity (P10). No
 compiled C++ artifact exists — C++ has no stable cross-compiler ABI,
 which is why the boundary stays C — so the deliverable is a header, its
 tests, and a C++ example consumer beside the C one. The wrapper
-documents view lifetimes — a filesystem borrowed from its medium, a
+documents view lifetimes — a filesystem borrowed from its device, a
 file from its filesystem — under the ABI's existing "borrowed, owned by
 their handle" discipline; C++'s inability to enforce them is documented
 rather than papered over.
@@ -57,7 +57,9 @@ Two structural changes to the delivered types, no behavior change.
 stays what the principles already call it — the P7 claims, the P27 cache
 budget and private session storage — and a machine becomes the device set
 within it, owning attachment identities and attachment order. A session
-holds machines; a machine holds devices. The `machine.rs` module's
+holds machines; a machine holds devices. A machine carries an identity,
+and the session's anonymous machine is the one whose identity is null
+(D23), behaving as any other in every respect. The `machine.rs` module's
 contents split accordingly.
 
 **`Disk` merges into `StorageDevice`.** A caller never holds a medium
@@ -100,14 +102,15 @@ through the `Filesystem` that device resolves. The `archive[/entry]` path syntax
 `Archive` journey fold into the model; the archive catalog itself is
 unchanged, becoming the family's adapters at the namespace seam.
 Recursion is the same journey again from a file, **in a machine of its
-own**: an entry recognized as an image is loaded into a device in a
-separate scope, so reaching `games.zip/boot.h8d` is an archive device in
-one machine and a drive in another. That is the honest shape twice over —
-a disk needs a drive to be served, and the host's archive was never part
-of the machine the disk belonged to. It also keeps each device set
-holding only that machine's own configuration, which is why P35's
-composer cannot letter an archive slot: the archive is not in the machine
-being reasoned about.
+own** where a machine is being reconstructed: an entry recognized as an
+image is loaded into a device of its own, and reaching
+`games.zip/boot.h8d` while modelling the disk's machine means an archive
+device in one machine and a drive in another, because the host's archive
+was never part of the machine that disk belonged to. Where nothing is
+being reconstructed, both may sit in the session's anonymous machine; a
+composer passes over an archive device either way, by family rather than
+by scope, since an archive has no partitions or volumes for an assignment
+rule to reach (D23).
 
 Two things this feature settles. Whether an archive slot is visible in
 its machine's attachment namespace or stays behind the report. And the

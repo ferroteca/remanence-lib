@@ -145,7 +145,7 @@ vantage and what lies below it, and does so in its own principle.
 | **volume** | The space vantage of the volume/filesystem node. Only this sense: a rar "volume" (`.part2.rar`) is an artifact member here, and a tape-set "volume" is a medium. |
 | **filesystem** | The namespace-vantage word generally — a volume-backed filesystem (FAT), an archive's namespace, and the machine-composed namespace are its kinds, distinguished by qualifier, not by the word. As a type, the one node that carries file verbs. |
 | **Session** | The outermost scope, keeping the name and the meaning the principles already give it: the P7 claims, the P27 cache budget and private session storage, and the set of machines within it. |
-| **Machine** | One device set inside a session — attachment identities, attachment order, the configuration U22 and P35 reason over. A reconstructed computer is one; a scope holding a single archive device is a degenerate but legitimate one. Machines in a session do not know about each other. |
+| **Machine** | One device set inside a session, carrying an identity — attachment identities, attachment order, the configuration U22 and P35 reason over. A reconstructed computer is one; the session's anonymous machine is the one whose identity is null, and behaves as any other. Machines in a session do not know about each other. |
 | **MachineFilesystem** | The machine-level composed namespace — drive letters, mount trees — one navigable whole over several child filesystems. |
 
 ## Vantage capabilities are traits, not a tower
@@ -238,20 +238,23 @@ becoming the other.
   devices and no others, which is why an archive slot in one machine can
   never be lettered by another's composer.
 
-  **A session has one anonymous machine, and it composes no namespace.**
+  **A machine carries an identity, and the anonymous machine is the one
+  whose identity is null.** A session has one of those, and
   `session.add_device(…)` places a device there — deterministically, the
-  same machine every time, so this is not autocreation by guess — and it
+  same machine every time, so this is not autocreation by guess. It
   serves the caller who is opening artifacts rather than reconstructing
-  a machine. Asking it for a `MachineFilesystem` is a named refusal
-  pointing at `add_machine`, because a namespace over devices nobody
-  grouped would derive a mapping from an accidental grouping, which is
-  the unstated evidence P35's third constraint exists to refuse. That
-  one restriction draws the real line: **the anonymous machine is for
-  artifact access; a named machine is for machine reconstruction**, and
-  wanting drive letters means saying which machine you mean. It is not
-  "machine zero": it has no attachment order anyone should reason over,
-  and moving a device from it to a named machine is a reconfiguration,
-  not a rename.
+  a machine, and it composes a namespace exactly as a named machine
+  does: **provenance is the guard, not a refusal** (D23). A derived
+  mapping travels with the machine facts and the rule that produced it
+  and is never evidence, so a caller who adds two unrelated floppies and
+  asks for letters gets a deterministic answer stating what it came
+  from — surprising perhaps, never dishonest. An archive device is
+  passed over one level down by family, having no partitions or volumes
+  for an assignment rule to reach. It is not "machine zero": no
+  attachment order it carries is more meaningful than any other's, and
+  moving a device from it into a named machine is a reconfiguration, not
+  a rename.
+
 - `StorageDevice` — the one storage handle: the slot, its family, and
   the state of the medium in it. **Devices are added; media are loaded —
   as two acts.** The pair is `machine.add_device(family)` then

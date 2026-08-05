@@ -111,32 +111,44 @@ handles rather than of the model.
 
 **A session holds machines; a machine holds devices.** Pledged P32 made
 the session the device set. Nesting broke that: an archive on the host
-was never part of the machine whose disk it contains, so
-`games.zip/boot.h8d` is an archive device in one machine and a drive in
-another. Inserting the machine keeps each device set holding only its own
-machine's configuration — which is why a P35 composer cannot letter an
-archive slot, structurally rather than by a rule — while the session
-keeps the meaning the principles already give it (P7 claims, P27 budget
-and private storage) and owns both machines' lifetimes, so a stored
-archive entry may back a drive elsewhere in the same session without a
-lifetime question. P32's "nothing groups sessions into a machine" is
+was never part of the machine whose disk it contains, so reconstructing
+that machine from `games.zip/boot.h8d` wants an archive device in one
+machine and a drive in another. Inserting the machine lets each device
+set hold only its own machine's configuration, while the session keeps
+the meaning the principles already give it (P7 claims, P27 budget and
+private storage) and owns every machine's lifetime, so a stored archive
+entry may back a drive elsewhere in the same session without a lifetime
+question. P32's "nothing groups sessions into a machine" is
 untouched: the containment runs the other way.
 
-**A session has one anonymous machine, and it composes no namespace.**
-Devices may be added to a session directly, landing in it — one machine,
-not one conjured per call, so the unanswerable "which device?" that
-killed the media-first one-step does not arise. What it may not do is
-compose a namespace: devices nobody grouped are not a machine's
-configuration, and lettering them would derive a mapping from an
-accidental grouping, which is exactly the unstated evidence P35's third
-constraint refuses. That single restriction states the distinction the
-session/machine layering was reaching for — **the anonymous machine is
-for artifact access, a named machine for machine reconstruction** — and
-it subsumes the nested-artifact answer, since a composer cannot be
-confused by an archive slot it can never reach. It is not "machine
-zero": no attachment order it carries should be reasoned over, and
-moving a device from it into a named machine is a reconfiguration, not a
-rename.
+**A session has one anonymous machine, and a machine carries an
+identity.** Devices may be added to a session directly, landing in that
+machine — one machine, not one conjured per call, so the unanswerable
+"which device?" that killed the media-first one-step does not arise. The
+anonymous machine is the one whose identity is **null**: the same kind of
+thing as every other machine rather than one distinguished by a
+behavior, which is also what U16's installation selection and P35's
+provenance need in order to name a machine at all. It holds no
+privileged position — it is not "machine zero", no attachment order it
+carries is more meaningful than any other's, and moving a device from it
+into a named machine is a reconfiguration rather than a rename.
+
+**Every machine composes a namespace, the anonymous one included, and
+provenance is the guard rather than a refusal.** Restricting the
+anonymous machine from composing was weighed and rejected: it buys
+nothing P35 does not already provide, since a derived mapping travels
+with the machine facts and the applied rule and is never evidence. A
+caller who adds two unrelated floppies and asks for letters gets a
+deterministic answer stating exactly what produced it — surprising to a
+naive caller, perhaps, and never dishonest. The archive case such a
+restriction would have been written for is handled one level down by
+family: an archive device has no partitions or volumes, so an assignment
+rule never reaches it, and no machine-level rule was ever doing that
+work. Uniformity is the other half — a restriction would have made the
+anonymous machine behave unlike every other, a special case paid for at
+each seam that touches machines. What survives as description rather
+than rule is the usage: **the anonymous machine is where artifacts are
+opened, a named machine where one is reconstructed.**
 
 **Further conveniences are deliberately not pledged.** The explicit walk
 is what the model owes past the anonymous machine, which is a structural
@@ -157,9 +169,12 @@ ceremony); renaming `Session` to `Machine` as the earlier draft had it
 in P7, P27, U22 and P35); loading a nested entry into a named machine
 that also holds the host's archive (it would put a host-side wrapper in
 an emulated machine's configuration and hand its composer a slot to
-letter); and an anonymous machine with no restriction on it (the
-restriction is the whole of what makes it safe — without refusing to
-compose, it would assert a grouping the caller never declared).
+letter); an anonymous machine forbidden to compose a namespace
+(provenance already states what a mapping was derived from, and the
+restriction would have made one machine behave unlike the rest); and
+giving the anonymous machine a reserved identity rather than a null one
+(a name nobody chose, citable in provenance as though it had been
+declared).
 
 **Reopens if:** a claimed family needs a medium handle no device holds —
 the mastering path is the candidate, since a `MasteredMedium` is a medium

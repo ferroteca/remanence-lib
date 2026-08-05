@@ -1081,76 +1081,24 @@ lifetime question between them. A machine's namespace composes over its
 own devices and no others, so a composer never letters a slot that
 belongs elsewhere.
 
-**A session has one anonymous machine, and it composes no namespace.**
-Devices may be added to it directly, deterministically — it is one
-machine, not one conjured per call — and it serves the caller who is
-opening artifacts rather than reconstructing a machine. Asking it for a
-namespace is a named refusal, because devices nobody grouped are not a
-machine's configuration, and composing over them would derive a mapping
-from an accidental grouping — the unstated evidence P35 refuses. **The
-anonymous machine is for artifact access; a named machine is for machine
-reconstruction**, so wanting drive letters means declaring which machine
-is meant, which U22 already requires of the caller. It is not "machine
-zero": it carries no attachment order anyone should reason over, and
-moving a device from it into a named machine is a reconfiguration rather
-than a rename.
+**A machine carries an identity, and the anonymous one is null.** A
+session has one anonymous machine; devices may be added to it directly,
+deterministically — it is one machine, not one conjured per call — and
+it serves the caller who is opening artifacts rather than reconstructing
+a machine. It is the same kind of thing as a named machine, holding no
+privileged position: it is not "machine zero", no attachment order it
+carries is more meaningful than any other's, and moving a device from it
+into a named machine is a reconfiguration rather than a rename.
 
-**The two acts get their verbs, and one handle carries both.** A device
-is **added** — machine configuration, possibly empty, the drive U22
-letters whether or not a disk is in it — and a medium is **loaded** into
-it, which is P14's own verb for what a format adapter does to media
-state. The device homes that media state: a caller never holds a medium
-outside a device, so the storage handle is the device, and the medium
-remains a model node whose facts are attributed on that handle rather
-than a second object to hold. Slot-side facts — attachment identity,
-family, occupancy, `load_media` and `eject` — answer for the device;
-content-side facts — media type and profile, active layer, assurance,
-identification, volumes, dirty state, commit and rollback — answer for
-the medium in it, and refuse by name when the slot is empty. Keeping the
-nodes distinct in the data is what preserves D19's pair, where the
-medium states an index hole and the drive states no sensor for it. The
-handle survives eject and reload; views taken through it invalidate when
-the medium beneath them leaves.
-
-**Discovery is first-class, and machine-free.** `discover_media(path)`
-claims the artifact for the read, identifies it, and answers with a
-report — the exact medium, the concrete device families that accept it,
-and the declared default, each carrying its evidence (P4) — mutating
-nothing (P2). It is a library-level function on no handle at all,
-because it consults catalogs and evidence, never machine configuration;
-the machine's one-step conveniences use it beneath them, and a caller
-uses it directly as the question asked before deciding what to add.
-
-**Discovery is consumable, because it is expensive and because the
-claim must not lapse.** Discovering a flux capture parses streams and
-probes drive profiles; that work is held in the discovery, and
-`load_media` accepts a discovery as it accepts a path, consuming it —
-the parsed state moves into the loaded medium and nothing is done
-twice. This is P29's plan-and-execute shape one seam over: the plan
-computes, the execution consumes the plan. The claim taken at discovery
-is held until the discovery is consumed or dropped, so there is no
-window between the question and the load in which the artifact could
-change — P7 continuity, not merely economy. A discovery is a claim
-scope, which is exactly what the storage model's handle rule says earns
-a handle; dropped unconsumed, it releases its claim and discards its
-work.
-
-**The one-step convenience is declaration, not guess.**
-`machine.add_device(path)` is `discover_media` plus two declarations:
-discovery recognizes the artifact (P12) and reports the exact medium,
-the concrete device families that accept it — derived by asking the
-families, which declare the media they accept, D19's direction
-unchanged — and the **default device the image format declares**, a
-recording-side fact the media type cannot honestly hold: a ten-sector
-hard-sectored 5.25-inch disk is the article of both a Heathkit H-17 and
-a North Star MDS, but an H8D records a Heathkit disk. The call adds a
-fresh device of the declared default family and loads into it, returning
-that device — stated in the contract, never a silent reuse of an
-existing slot — and a format that declares no default, as a raw image
-declares nothing about its machine, refuses by name toward the two
-explicit acts. A declaration nobody makes is a refusal, not a guess
-(P3). There is no media-first machine-level spelling: with one storage
-handle it would return the same device this one does.
+**Every machine composes a namespace, the anonymous one included, and
+provenance is the guard rather than a refusal** (D23). A derived mapping
+travels with the machine facts and the applied rule and is never
+evidence (P35), so composing over devices a caller assembled without
+declaring a machine yields a deterministic answer which states exactly
+what produced it. That may surprise a naive caller; it cannot mislead a
+careful one, and a refusal would buy nothing the provenance does not
+already carry while making the anonymous machine behave unlike every
+other.
 
 **Device families form a stated lineage.** A family entry is as
 concrete as the machine fact it asserts — a Commodore 1541, not "some

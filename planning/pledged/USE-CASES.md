@@ -30,11 +30,13 @@ file    = fs.get_file("CHESS.ABS")
 
 I never named a machine, and that is the point: I am opening an
 artifact, not reconstructing a computer. My drive went into the
-session's anonymous machine, which holds devices and composes no
-namespace — if I asked it for drive letters it would refuse and tell me
-to declare the machine I mean, because devices I never grouped are not a
-machine's configuration. When I *am* reconstructing a machine, I say so
-and add one (U22).
+session's anonymous machine — the one whose identity is null — which is
+a machine like any other and behaves like one. If I asked it for drive
+letters I would get them, derived from the devices I happen to have
+added and carrying that fact as provenance; it would be a strange thing
+to ask, and the answer would still say exactly what it came from. When I
+*am* reconstructing a machine I name one and configure it (U22), which
+is what makes the letters mean something.
 
 The drive is mine to state, and I state the one my machine had — the
 H-17, the hard-sectored Heathkit drive — not "some floppy". Which device
