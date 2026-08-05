@@ -128,7 +128,7 @@ sector image never stored. Image capability therefore constrains which
 adapters can make a faithful claim, but the image format does not silently
 select a seam.
 
-The P19 file-container interface is a separate **file-access
+The P19 namespace interface is a separate **file-access
 presentation**, not another emulated-drive seam. A filesystem adapter may
 interpret the same media state and expose directories and files for tools
 that copy files into or out of an image. It neither emulates Commodore DOS
@@ -414,42 +414,63 @@ The separation is therefore:
 | family presentation | the controls, signals, or programmed interface at the selected real hardware cut | nothing directly |
 | hardware emulation | timed-causal execution, below-seam electronics, read-channel/mechanism behavior, and ephemeral continuation state | nothing |
 | media | durable disk state plus evidence/provenance | media state and representable changes |
-| file container | durable named entries, byte streams, and container metadata | container state and representable changes |
+| filesystem | a namespace of named entries with their byte streams and claimed metadata | namespace state and representable changes |
 | image adapter | parsing and encoding one named artifact format | bytes of that format |
 
-#### The natural integration seams are file containers, durable media, and hardware emulation
+#### The natural integration seams are namespaces, durable media, and hardware emulation
 
 Remanence has three foundational kinds of external integration seam:
 
-1. A **file-container seam** joins archive and package adapters to durable
-   collections of named entries, byte streams, and container metadata. An
-   entry may in turn be opened as a separate disk instance, but the
-   container is not disk media.
+1. A **namespace seam** joins a caller to a filesystem: a rooted namespace
+   of named entries with their byte streams and claimed metadata,
+   independently of what backs it (P19). An entry may in turn be
+   recognized and opened as a separate instance, but a namespace is not
+   disk media.
 2. A **durable-media seam** joins a disk-image adapter, transformation,
    analysis, or higher semantic presentation to the active flux, CHS, or
    block representation. Its interface uses the native vocabulary and
    evidence limits of that durable media layer.
-3. A **hardware-emulation seam** joins a machine emulator, controller or I/O
-   chip implementation, or hardware test harness to a family presentation.
-   Its interface exposes the controls and signals at the selected real
-   hardware cut under the timed-causality contract.
+3. A **hardware-emulation seam** joins a machine emulator, controller or
+   I/O chip implementation, or hardware test harness to a family
+   presentation. Its interface exposes the controls and signals at the
+   selected real hardware cut under the timed-causality contract.
+
+**An archive is media, not a fourth seam.** An earlier reading of this
+section gave archives a seam of their own, joining "archive and package
+adapters" to durable collections of named entries as though a container
+sat beside media. The storage model settles it the other way: an archive
+is a medium whose native vantage is a namespace rather than a space (the
+P14 amendment), its grammar is a P12 adapter like any other, and its
+content is reached through the same namespace seam a filesystem on a disk
+is reached through. So a zip integrates at seams 1 and 2 exactly as a
+floppy image does, and nothing here needs a container concept.
 
 The architectural join between durable media and hardware emulation is
 direct: one hardware-emulation composition consumes zero or more typed
 media slots and, when writable, mutates the active durable-media instance
-in the selected occupied slot. Every inserted disk remains an independently
-mutable P23 instance with exactly one active layer. The join remains an
-internal deep seam; it does not require a universal public byte, bit, pulse,
-or generic-event stream. A file-container entry can supply an attachment,
-while the container and every disk retain separate active states under P23.
+in the selected occupied slot. Every loaded medium remains an
+independently mutable P23 instance with exactly one active layer. The
+join remains an internal deep seam; it does not require a universal
+public byte, bit, pulse, or generic-event stream. A namespace entry can
+supply the source a device loads, while that device and the one holding
+the namespace retain separate active states under P23.
+
+**Where the seam attaches is the device.** Pledged P32 already routes a
+family's hardware contract through the device's own family capability
+rather than through a raw media interface, and P33 keeps mechanism state
+— head position, motor speed, rotational phase, settling, read-channel
+history — out of the active layer entirely. So hardware emulation is a
+device capability operating over the state of whatever medium is loaded:
+the drive supplies the mechanism and the timed causality, the medium
+supplies what is read and written, and an empty device is a drive that
+answers not-ready rather than a seam with nothing behind it.
 
 Filesystem and DOS/IEC conveniences do not create a fourth foundational
 kind of integration seam; they are semantic presentations over durable
-media. Archive-entry access is a presentation over a file container.
-Likewise, the family presentation is the public face of hardware emulation,
-not another layer between the caller and it. This classification says where
-integrations attach; it does not require every container, durable media
-layer, or family to expose the same interface.
+media. Likewise, the family presentation is the public face of hardware
+emulation, not another layer between the caller and it. This
+classification says where integrations attach; it does not require every
+namespace, durable media layer, or family to expose the same interface.
 
 An emulator save state, deterministic interaction trace, or hardware logic
 analyzer capture could legitimately preserve hardware-emulation state or

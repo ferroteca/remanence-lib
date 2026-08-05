@@ -90,6 +90,18 @@ partitionable medium and bearing `get_file` would be a category error,
 not a refusal waiting to happen. A device may be asked what it resolves
 to; it may not be told to act as something it isn't.
 
+**This feature pays the container retirement in the code and on the
+surfaces.** The vocabulary ruling retired "container" and nothing had
+been made responsible for delivering it: `file_container.rs` becomes the
+filesystem module, the `remanence_container_*` C symbols and their Python
+mirrors take the namespace vocabulary, and the doc comments follow. The
+in-force P19 and P23 text — P19's title and P23's active-layer row both
+carry the retired word — lands with the P19 amendment in the same change,
+since the norm and its implementation move together. What is *not* purged
+is the word where it is somebody else's: an image container format is the
+industry's term for qcow2 and VDI, and D2-style retirement reaches this
+project's own vocabulary, not quotations of the world's.
+
 Touches: S1, S2, S3. Supports: the U2 amendment; the P19 amendment;
 P35; in-force P10 (the resolver's refusals are categorized and
 rule-identified).
@@ -122,6 +134,12 @@ source to avoid saying so.
 
 Read-only, as archives are today; a write claim is its own future
 feature.
+
+This feature finishes the container retirement F48 begins: the archive
+journey is where "container" survived most thickly — the `archive[/entry]`
+path resolution, the archive catalog's own prose, and the S1 `Container`
+records — and folding that journey into the model is what removes the
+last of it from this project's vocabulary.
 
 Touches: S1, S2, S3. Supports: the U2 amendment; the P14 amendment;
 P35; the P19 amendment; in-force P7, P12, P27. Needs F48, whose
