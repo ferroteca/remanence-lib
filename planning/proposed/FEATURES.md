@@ -169,3 +169,60 @@ stating the C++ consumer's journey. Depends sideways on the storage
 model's node-kind rule
 ([design/storage-model-and-vocabulary.md](design/storage-model-and-vocabulary.md));
 if that model is not pledged, the wrapper wraps S2 as it stands.
+
+## F46 — The vocabulary renames: Machine and Medium
+
+Rename `Session` to `Machine` and `Disk` to `Medium` across S1, S2, and
+S3 — the type names catching up with the model and with the code's own
+accessors (`machine.rs` already holds the type; `session.medium()`
+already names its return). The C symbols and Python classes move in the
+same change, and the "disk stack" prose naming (D2) follows the type it
+was named for. Mechanical and complete, no behavior change; pre-1.0,
+the old names are deleted, never aliased.
+
+Touches: S1, S2, S3. Supports: the U2 amendment; the P32 amendment's
+rename clause; the storage model design
+([design/storage-model-and-vocabulary.md](design/storage-model-and-vocabulary.md)).
+F47–F49 read better after it but do not require it.
+
+## F47 — The access path: add_device, load_media, and empty devices
+
+Replace one-act `attach` with the two acts the P32 amendment names:
+`add_device` — family stated from the lineage-bearing catalog, or the
+device-first one-step with a path, refusing an ambiguous family by
+name — and `load_media` on the device, plus eject, with an empty device
+as first-class configuration. Each verb returns its noun. A family
+mismatch at `load_media` refuses naming both sides. Attachment order
+becomes an explicit machine fact the DOS composer reads from the device
+set.
+
+Touches: S1, S2, S3. Supports: the U2 amendment; the P32 amendment;
+in-force P14, P21. The archive slot arrives with F49, not here.
+
+## F48 — The Filesystem node
+
+Move file verbs off the medium onto the one namespace node:
+`Filesystem`, with `get_file` and its kin living there and nowhere
+else. `medium.filesystem()` is the resolve-or-refuse transparency
+method; `medium.volume(id).filesystem()` selects where several
+candidates exist; `list_hdos_files` is regularized as the resolver's
+transparent form. `Medium` exposes no file access — a partitionable
+medium bearing `get_file` would be a category error, not a refusal
+waiting to happen.
+
+Touches: S1, S2, S3. Supports: the U2 amendment; the P19 amendment;
+P35; in-force P10 (the resolver's refusals are categorized and
+rule-identified).
+
+## F49 — Uniform archive open
+
+An archive enters the machine as every medium does: an archive-family
+virtual device, `load_media("games.zip")`, content walked through
+`Filesystem`. The `archive[/entry]` path syntax and the standalone
+`Archive` journey fold into the model; the archive catalog itself is
+unchanged, becoming the family's adapters at the namespace seam.
+Recursion is the same journey again from a file. Read-only, as archives
+are today; a write claim is its own future feature.
+
+Touches: S1, S2, S3. Supports: the U2 amendment; the P14 amendment;
+P35; the P19 amendment; in-force P7, P12, P27.

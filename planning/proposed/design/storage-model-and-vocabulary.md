@@ -324,6 +324,12 @@ lives in the report.
 
 ## What this maps onto
 
+The set below is drafted: the P14, P19, and P32 amendments and P35 in
+[../ARCHITECTURE.md](../ARCHITECTURE.md), delivered by F46–F49 in
+[../FEATURES.md](../FEATURES.md) — the renames, the access path, the
+`Filesystem` node, and the uniform archive open. This document serves
+those drafts and the U2 amendment, and is swept when they deliver.
+
 **Principles.**
 
 - **P19** slims to the namespace convergence it always claimed: one
