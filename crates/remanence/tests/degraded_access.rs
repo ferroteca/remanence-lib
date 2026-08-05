@@ -19,16 +19,17 @@ use remanence::{
     ErrorCategory, Session, VolumeId,
 };
 
-/// The filesystem on one volume of `device`, selected by the identity the
-/// inspection report issued — the walk `device.volume(id).filesystem()`
-/// spelled once, because the file verbs live on the namespace node and
-/// nowhere else (P19).
-fn fs(device: &mut remanence::StorageDevice, volume: remanence::VolumeId) -> remanence::Filesystem<'_> {
+/// The space on one volume of `device`, selected by the identity the
+/// inspection report issued. One node, both vantages: `device.volume(id)`
+/// answers with the addressable extent and the namespace together, and
+/// the file verbs live on it and nowhere else (P19).
+fn fs(
+    device: &mut remanence::StorageDevice,
+    volume: remanence::VolumeId,
+) -> remanence::StorageSpace<'_> {
     device
         .volume(volume)
         .expect("the report issued this volume")
-        .filesystem()
-        .expect("the volume bears a filesystem")
 }
 
 /// The 1.44 MiB floppy's declared size: 2880 sectors of 512 bytes.
@@ -430,16 +431,19 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
         Some(AssuranceCondition::SourceTruncated.as_str())
     );
 
-    // And the node answers the same way one seam up: resolving to the
-    // filesystem hands back the recognition seam's own refusal, category
-    // and rule intact, rather than a coarser absence of this seam's own.
+    // And the node answers the same way one seam up: the space composed
+    // for that volume carries the recognition seam's own refusal,
+    // category and rule intact, rather than a coarser absence of this
+    // seam's own. The volume itself is still there — an absent namespace
+    // is not a failure to select the space.
     let volume = report.volumes[0].id;
-    let refusal = medium
-        .volume(volume)
-        .expect("the volume composed")
-        .filesystem()
-        .expect_err("no namespace is addressable");
+    let mut space = medium.volume(volume).expect("the volume composed");
+    assert!(space.is_addressable(), "the volume composed an extent");
+    assert!(!space.has_namespace(), "nothing was recognized on it");
+    let refusal = space.kind().expect_err("no namespace is addressable");
     assert_eq!(refusal.category(), ErrorCategory::Unavailable);
+    let listing = space.entries("").expect_err("and the verbs answer alike");
+    assert_eq!(listing.category(), ErrorCategory::Unavailable);
 
     drop(session);
     std::fs::remove_file(&path).ok();

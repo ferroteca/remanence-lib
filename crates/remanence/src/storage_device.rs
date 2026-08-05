@@ -43,7 +43,7 @@ use crate::discovery::Discovery;
 use crate::disk::{DiskFormat, MediaState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
-use crate::filesystem::{Catalog, Filesystem, Volume};
+use crate::filesystem::{Catalog, StorageSpace};
 use crate::filesystem_catalog::{CatalogRecognition, FilesystemAdapter};
 use crate::report::{DiskReport, VolumeId};
 use crate::session::Identification;
@@ -414,20 +414,36 @@ impl StorageDevice {
     /// **The device carries no file access of its own.** This is a query
     /// about what it resolves to, whose answer set already includes
     /// *refuse* and *absent*; the file verbs live on the
-    /// [`Filesystem`] it answers with and nowhere else. Where several
+    /// [`StorageSpace`] it answers with and nowhere else. Where several
     /// volumes bear one, select with [`StorageDevice::volume`] rather
     /// than being guessed for.
-    pub fn filesystem(&mut self) -> Result<Filesystem<'_>> {
+    pub fn filesystem(&mut self) -> Result<StorageSpace<'_>> {
         self.media("filesystem")?;
-        Filesystem::resolve(self)
+        StorageSpace::resolve(self)
     }
 
-    /// One volume of the attached medium, by the identity the inspection
-    /// report issued for it — the selector where several namespaces
-    /// exist.
-    pub fn volume(&mut self, id: VolumeId) -> Result<Volume<'_>> {
+    /// One space of the attached medium, by the identity the inspection
+    /// report issued for its volume — the selector where several
+    /// namespaces exist, and the way to reach a volume bearing none.
+    ///
+    /// It answers with the same [`StorageSpace`] the resolver does:
+    /// addressable because a volume composed it, and bearing a namespace
+    /// only where one was recognized on it.
+    pub fn volume(&mut self, id: VolumeId) -> Result<StorageSpace<'_>> {
         self.media("volume")?;
-        Volume::select(self, id)
+        StorageSpace::select(self, id)
+    }
+
+    /// Reads within a space's extent, the offset already resolved against
+    /// the presented disk by the space that owns the bound.
+    pub(crate) fn read_space_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.media_mut("read_at")?.read_space_at(offset, buf)
+    }
+
+    /// Writes within a space's extent, buffered until commit like every
+    /// other write (P2).
+    pub(crate) fn write_space_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        self.media_mut("write_at")?.write_space_at(offset, data)
     }
 
     /// Which enrolled adapter claims the namespace this medium bears

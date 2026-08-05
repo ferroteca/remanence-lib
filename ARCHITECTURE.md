@@ -47,8 +47,9 @@ never reused.
   `Session`, `Machine`, `StorageDevice`, `AttachmentId` and
   `DeviceFamily` — the device being the one storage handle, carrying the
   content verbs of the medium in its slot —
-  `Volume`, `Filesystem`, `File` and the `Entry` vocabulary, the
-  namespace node being the one type that carries file verbs,
+  `StorageSpace`, `File` and the `Entry` vocabulary — the volume and
+  filesystem being two vantage traits on one node, addressable I/O and
+  namespace I/O, with the file verbs living there and nowhere else —
   `Identification` and the layer/layout types,
   `Assurance` and the outcome, condition and byte-range types beside it,
   `Archive` and `ArchiveEntry`,

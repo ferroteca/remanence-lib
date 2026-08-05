@@ -94,15 +94,20 @@ use crate::storage_device::StorageDevice;
 /// locating.
 const MEDIUM_NAMESPACE_BOUND: u64 = 8 * 1024 * 1024;
 
-/// Which rule of the namespace seam's enumerated set a refusal broke
+/// Which rule of the storage-space seam's enumerated set a refusal broke
 /// (P10).
 ///
 /// The set answers *which rule did this input break* where the category
 /// answers *how should the caller behave*, and it belongs to this seam
 /// rather than to a second library-wide enum — [`crate::DosNameRule`] is
 /// the same shape at the DOS 8.3 namespace.
+///
+/// A [`StorageSpace`] carries two vantages, so the set covers both: the
+/// absences are what a space answers when asked for a vantage it does not
+/// have, which is trait presence stated as a refusal rather than a
+/// failure to read something.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NamespaceRule {
+pub enum SpaceRule {
     /// A seam the resolver walks has more than one supported answer, so
     /// there is nothing to be transparent about. Select by the identity
     /// the inspection report issued.
@@ -114,15 +119,26 @@ pub enum NamespaceRule {
     RecognizedNotRead,
     /// A namespace this release reads and does not write.
     NotWritable,
+    /// The space has no addressable vantage: it is a namespace composed
+    /// over something that is not one addressed extent, so there is no
+    /// position to read or write by. An archive's namespace is the case
+    /// this release reaches.
+    NotAddressable,
+    /// A read or write named a position outside the space's own extent.
+    /// The bound is the space's, not the medium's, which is the point of
+    /// addressing within one.
+    OutsideExtent,
 }
 
-impl NamespaceRule {
+impl SpaceRule {
     /// Every rule in the set.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::SeveralCandidates,
         Self::NoNamespace,
         Self::RecognizedNotRead,
         Self::NotWritable,
+        Self::NotAddressable,
+        Self::OutsideExtent,
     ];
 
     /// The stable cross-language spelling of this rule, which is what a
@@ -133,6 +149,8 @@ impl NamespaceRule {
             Self::NoNamespace => "no-namespace",
             Self::RecognizedNotRead => "recognized-not-read",
             Self::NotWritable => "namespace-not-writable",
+            Self::NotAddressable => "not-addressable",
+            Self::OutsideExtent => "outside-extent",
         }
     }
 
@@ -144,19 +162,20 @@ impl NamespaceRule {
     }
 }
 
-impl std::fmt::Display for NamespaceRule {
+impl std::fmt::Display for SpaceRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-fn refuse(rule: NamespaceRule, reason: impl Into<String>) -> Error {
+fn refuse(rule: SpaceRule, reason: impl Into<String>) -> Error {
     let category = match rule {
-        NamespaceRule::SeveralCandidates | NamespaceRule::RecognizedNotRead => {
-            ErrorCategory::Unsupported
-        }
-        NamespaceRule::NoNamespace => ErrorCategory::NotFound,
-        NamespaceRule::NotWritable => ErrorCategory::ReadOnly,
+        SpaceRule::SeveralCandidates
+        | SpaceRule::RecognizedNotRead
+        | SpaceRule::NotAddressable => ErrorCategory::Unsupported,
+        SpaceRule::NoNamespace => ErrorCategory::NotFound,
+        SpaceRule::NotWritable => ErrorCategory::ReadOnly,
+        SpaceRule::OutsideExtent => ErrorCategory::Io,
     };
     Error::categorized_io(category, reason).broke_rule(rule.as_str())
 }
@@ -340,63 +359,25 @@ enum Namespace {
     },
 }
 
-/// One volume of a medium, selected by the identity the inspection
-/// report issued.
-///
-/// A volume is not held: this is the selector between several namespaces,
-/// borrowed from the device for exactly as long as it takes to reach one.
-/// It carries no ordinal, because no format defines one for a volume.
-#[derive(Debug)]
-pub struct Volume<'a> {
-    device: &'a mut StorageDevice,
+/// The addressable vantage's extent: where a space sits in the presented
+/// disk, and how far it runs.
+#[derive(Debug, Clone, Copy)]
+struct Extent {
     id: VolumeId,
     start_bytes: u64,
     length_bytes: u64,
 }
 
-impl<'a> Volume<'a> {
-    pub(crate) fn select(device: &'a mut StorageDevice, id: VolumeId) -> Result<Self> {
-        let report = device.inspect()?;
-        let volume = report.volume(id).ok_or_else(|| {
-            Error::not_found("this medium reports no such volume".to_owned())
-        })?;
-        let (start_bytes, length_bytes) = (volume.start_bytes, volume.length_bytes);
-        Ok(Self {
-            device,
-            id,
-            start_bytes,
-            length_bytes,
-        })
-    }
-
-    /// The identity the inspection report issued for this volume.
-    pub fn id(&self) -> VolumeId {
-        self.id
-    }
-
-    /// Where the volume starts in the presented disk.
-    pub fn start_bytes(&self) -> u64 {
-        self.start_bytes
-    }
-
-    pub fn length_bytes(&self) -> u64 {
-        self.length_bytes
-    }
-
-    /// The filesystem this volume bears, or the named absence of one.
-    ///
-    /// A volume with no filesystem is an ordinary volume — swap, boot
-    /// code, unformatted space — so the absence is answered rather than
-    /// treated as a failure to read one (P19).
-    pub fn filesystem(self) -> Result<Filesystem<'a>> {
-        let id = self.id;
-        let report = self.device.inspect()?;
-        let kind = recognized_kind(&report, id)?;
-        Ok(Filesystem {
-            device: self.device,
-            namespace: Namespace::Volume { id, kind },
-        })
-    }
+/// Whether a space bears a namespace, and where the answer came from when
+/// it does not.
+///
+/// An absence keeps the refusal the seam that attempted recognition
+/// produced, rather than a coarser one of this seam's own: that refusal
+/// already carries the category and rule identity explaining it (P4, P10).
+#[derive(Debug)]
+enum NamespaceState {
+    Present(Namespace),
+    Absent(Error),
 }
 
 /// The filesystem kind recognized on one volume, or the refusal that
@@ -410,7 +391,7 @@ impl<'a> Volume<'a> {
 fn recognized_kind(report: &crate::report::DiskReport, id: VolumeId) -> Result<String> {
     let Some(filesystem) = report.filesystem_on(id) else {
         return Err(refuse(
-            NamespaceRule::NoNamespace,
+            SpaceRule::NoNamespace,
             "no filesystem recognition was attempted on this volume",
         ));
     };
@@ -419,13 +400,23 @@ fn recognized_kind(report: &crate::report::DiskReport, id: VolumeId) -> Result<S
     }
     Err(filesystem.issues.first().cloned().unwrap_or_else(|| {
         refuse(
-            NamespaceRule::NoNamespace,
+            SpaceRule::NoNamespace,
             "this volume bears no filesystem this release recognizes",
         )
     }))
 }
 
-/// The namespace node: the one type that carries file verbs.
+/// The volume/filesystem node: **one object carrying two vantage
+/// traits**.
+///
+/// *Volume* is the addressable vantage — reads and writes by position
+/// within the extent this space names. *Filesystem* is the namespace
+/// vantage — the file verbs, which live here and nowhere else. They are
+/// two words for one node, and an object implements what it has: a FAT
+/// volume both, swap and unformatted space the addressable one alone, an
+/// archive's namespace the namespace one alone. That is the 0..1 carried
+/// by the type rather than asserted beside it, and it is why no phantom
+/// volume is invented for a namespace with no space beneath it (D26).
 ///
 /// It is a **view over its provider's state, never an instance** (P23).
 /// Every verb reads or writes the state beneath it, mutations project
@@ -433,12 +424,41 @@ fn recognized_kind(report: &crate::report::DiskReport, id: VolumeId) -> Result<S
 /// listing that could go stale. The view stops answering when the medium
 /// beneath it leaves, because the borrow it holds ends with the device.
 #[derive(Debug)]
-pub struct Filesystem<'a> {
+pub struct StorageSpace<'a> {
     device: &'a mut StorageDevice,
-    namespace: Namespace,
+    extent: Option<Extent>,
+    namespace: NamespaceState,
 }
 
-impl<'a> Filesystem<'a> {
+impl<'a> StorageSpace<'a> {
+    /// Selects one space of a medium by the identity the inspection
+    /// report issued.
+    ///
+    /// The space is addressable because a volume composed it, and bears a
+    /// namespace only where one was recognized on it — a volume with none
+    /// is an ordinary volume (swap, boot code, unformatted space), so the
+    /// absence travels with the space rather than failing the selection
+    /// (P19).
+    pub(crate) fn select(device: &'a mut StorageDevice, id: VolumeId) -> Result<Self> {
+        let report = device.inspect()?;
+        let volume = report
+            .volume(id)
+            .ok_or_else(|| Error::not_found("this medium reports no such volume".to_owned()))?;
+        let extent = Extent {
+            id,
+            start_bytes: volume.start_bytes,
+            length_bytes: volume.length_bytes,
+        };
+        let namespace = match recognized_kind(&report, id) {
+            Ok(kind) => NamespaceState::Present(Namespace::Volume { id, kind }),
+            Err(absence) => NamespaceState::Absent(absence),
+        };
+        Ok(Self {
+            device,
+            extent: Some(extent),
+            namespace,
+        })
+    }
     /// Walks device → volume → filesystem where every seam has exactly
     /// one supported answer, and refuses naming the candidates where one
     /// does not — in-force P19's transparency clause as a method.
@@ -467,7 +487,7 @@ impl<'a> Filesystem<'a> {
                 .map(|(volume, kind)| format!("{kind} on volume {}", volume.value()))
                 .collect();
             return Err(refuse(
-                NamespaceRule::SeveralCandidates,
+                SpaceRule::SeveralCandidates,
                 format!(
                     "this medium bears {} filesystems — {} — so there is no \
                      one namespace to resolve to; select one by the identity \
@@ -478,9 +498,18 @@ impl<'a> Filesystem<'a> {
             ));
         }
         if let Some((id, kind)) = recognized.pop() {
+            // The resolved space carries its volume's extent as well as
+            // its namespace: one node, both vantages, whichever finder
+            // reached it.
+            let extent = report.volume(id).map(|volume| Extent {
+                id,
+                start_bytes: volume.start_bytes,
+                length_bytes: volume.length_bytes,
+            });
             return Ok(Self {
                 device,
-                namespace: Namespace::Volume { id, kind },
+                extent,
+                namespace: NamespaceState::Present(Namespace::Volume { id, kind }),
             });
         }
         match report.volumes.as_slice() {
@@ -494,7 +523,7 @@ impl<'a> Filesystem<'a> {
             [] => {}
             volumes => {
                 return Err(refuse(
-                    NamespaceRule::NoNamespace,
+                    SpaceRule::NoNamespace,
                     format!(
                         "this medium composes {} volumes and none of them bears \
                          a filesystem this release recognizes",
@@ -513,7 +542,7 @@ impl<'a> Filesystem<'a> {
         let length = device.size()?;
         if length > MEDIUM_NAMESPACE_BOUND {
             return Err(refuse(
-                NamespaceRule::NoNamespace,
+                SpaceRule::NoNamespace,
                 format!(
                     "this medium composes no volume, and at {length} bytes it \
                      is past the {MEDIUM_NAMESPACE_BOUND}-byte bound within \
@@ -523,12 +552,12 @@ impl<'a> Filesystem<'a> {
         }
         match device.recognize_namespace()? {
             CatalogRecognition::None => Err(refuse(
-                NamespaceRule::NoNamespace,
+                SpaceRule::NoNamespace,
                 "this medium composes no volume and bears no namespace this \
                  release recognizes",
             )),
             CatalogRecognition::Several(candidates) => Err(refuse(
-                NamespaceRule::SeveralCandidates,
+                SpaceRule::SeveralCandidates,
                 format!(
                     "this medium's namespace is claimed by {} — {} — at equal \
                      strength, and nothing here breaks that tie",
@@ -539,43 +568,140 @@ impl<'a> Filesystem<'a> {
             CatalogRecognition::One(adapter) => {
                 let kind = adapter.id();
                 let catalog = device.open_namespace(adapter)?;
+                // A medium bearing its namespace directly composed no
+                // volume, so this space has the namespace vantage and not
+                // the addressable one.
                 Ok(Self {
                     device,
-                    namespace: Namespace::Medium { kind, catalog },
+                    extent: None,
+                    namespace: NamespaceState::Present(Namespace::Medium { kind, catalog }),
                 })
             }
         }
     }
 
-    /// The filesystem kind, in its stable cross-language spelling —
-    /// `"FAT12"`, `"hdos"`. It is data on the handle, never a type of its
-    /// own.
-    pub fn kind(&self) -> &str {
-        match &self.namespace {
-            Namespace::Volume { kind, .. } => kind,
-            Namespace::Medium { kind, .. } => kind,
-        }
+    // ------------------------------------------- the addressable vantage
+
+    /// Whether this space has the addressable vantage — an extent to read
+    /// and write by position.
+    pub fn is_addressable(&self) -> bool {
+        self.extent.is_some()
     }
 
-    /// The volume this filesystem is borne by, or `None` where the
-    /// medium bears the namespace directly and composed no volume.
+    /// The identity the inspection report issued for the volume that
+    /// composed this space, or `None` where the medium bears its
+    /// namespace directly and composed no volume.
     pub fn volume_id(&self) -> Option<VolumeId> {
+        self.extent.map(|extent| extent.id)
+    }
+
+    /// Where this space starts in the presented disk, where it is
+    /// addressable.
+    pub fn start_bytes(&self) -> Option<u64> {
+        self.extent.map(|extent| extent.start_bytes)
+    }
+
+    /// How far this space runs, where it is addressable.
+    pub fn length_bytes(&self) -> Option<u64> {
+        self.extent.map(|extent| extent.length_bytes)
+    }
+
+    /// Reads `buf` at `offset` **within this space**, not within the
+    /// medium.
+    ///
+    /// This is the vantage that reaches what a namespace does not name: a
+    /// boot record, allocation metadata, the extents a filesystem calls
+    /// free, or the bytes behind a file just listed — without the caller
+    /// computing offsets against the medium by hand. The bound is the
+    /// space's own, so a read past its end is refused rather than
+    /// wandering into whatever follows.
+    pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let extent = self.addressable(offset, buf.len() as u64)?;
+        self.device
+            .read_space_at(extent.start_bytes + offset, buf)
+    }
+
+    /// Writes `data` at `offset` within this space, buffered until
+    /// [`StorageDevice::commit`](crate::StorageDevice::commit) like every
+    /// other write (P2), landing in the active layer (P23).
+    ///
+    /// The bytes are taken as given: this vantage names positions, and
+    /// nothing here reinterprets what a filesystem above may make of
+    /// them.
+    pub fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        let extent = self.addressable(offset, data.len() as u64)?;
+        self.device
+            .write_space_at(extent.start_bytes + offset, data)
+    }
+
+    /// The extent a positioned access runs in, or the refusal naming
+    /// which of the two rules it broke.
+    fn addressable(&self, offset: u64, length: u64) -> Result<Extent> {
+        let Some(extent) = self.extent else {
+            return Err(refuse(
+                SpaceRule::NotAddressable,
+                "this space is a namespace with no addressed extent beneath \
+                 it, so there is no position to read or write by",
+            ));
+        };
+        let end = offset.checked_add(length).ok_or_else(|| {
+            refuse(
+                SpaceRule::OutsideExtent,
+                "the requested span overflows past the end of addressing",
+            )
+        })?;
+        if end > extent.length_bytes {
+            return Err(refuse(
+                SpaceRule::OutsideExtent,
+                format!(
+                    "this space runs {} bytes and the request reaches {end}",
+                    extent.length_bytes
+                ),
+            ));
+        }
+        Ok(extent)
+    }
+
+    // --------------------------------------------- the namespace vantage
+
+    /// Whether this space has the namespace vantage — files to name.
+    pub fn has_namespace(&self) -> bool {
+        matches!(self.namespace, NamespaceState::Present(_))
+    }
+
+    /// The filesystem kind, in its stable cross-language spelling —
+    /// `"FAT12"`, `"hdos"` — or the named absence of a namespace. It is
+    /// data on the handle, never a type of its own.
+    pub fn kind(&self) -> Result<&str> {
+        Ok(match self.present()? {
+            Namespace::Volume { kind, .. } => kind,
+            Namespace::Medium { kind, .. } => kind,
+        })
+    }
+
+    /// The namespace this space bears, or the absence the recognizing
+    /// seam stated.
+    fn present(&self) -> Result<&Namespace> {
         match &self.namespace {
-            Namespace::Volume { id, .. } => Some(*id),
-            Namespace::Medium { .. } => None,
+            NamespaceState::Present(namespace) => Ok(namespace),
+            NamespaceState::Absent(absence) => Err(absence.clone()),
         }
     }
 
     /// Lists a directory (`""` is the root; `"A/B"` descends).
     pub fn entries(&mut self, path: &str) -> Result<Vec<Entry>> {
         match &self.namespace {
-            Namespace::Volume { id, .. } => Ok(self
-                .device
-                .entries(*id, path)?
-                .iter()
-                .map(Entry::from_fat)
-                .collect()),
-            Namespace::Medium { catalog, .. } => catalog.entries(path),
+            NamespaceState::Absent(absence) => Err(absence.clone()),
+            NamespaceState::Present(Namespace::Volume { id, .. }) => {
+                let id = *id;
+                Ok(self
+                    .device
+                    .entries(id, path)?
+                    .iter()
+                    .map(Entry::from_fat)
+                    .collect())
+            }
+            NamespaceState::Present(Namespace::Medium { catalog, .. }) => catalog.entries(path),
         }
     }
 
@@ -585,12 +711,12 @@ impl<'a> Filesystem<'a> {
     /// read the namespace (U3).
     pub fn stat(&mut self, path: &str) -> Result<Option<Entry>> {
         match &self.namespace {
-            Namespace::Volume { id, .. } => Ok(self
-                .device
-                .stat(*id, path)?
-                .as_ref()
-                .map(Entry::from_fat)),
-            Namespace::Medium { catalog, .. } => catalog.stat(path),
+            NamespaceState::Absent(absence) => Err(absence.clone()),
+            NamespaceState::Present(Namespace::Volume { id, .. }) => {
+                let id = *id;
+                Ok(self.device.stat(id, path)?.as_ref().map(Entry::from_fat))
+            }
+            NamespaceState::Present(Namespace::Medium { catalog, .. }) => catalog.stat(path),
         }
     }
 
@@ -612,9 +738,14 @@ impl<'a> Filesystem<'a> {
                 format!("'{path}' names a directory, which holds no bytes"),
             ));
         }
+        // The presence was established by the `stat` above, which refuses
+        // on an absent namespace before anything here can borrow one.
+        let NamespaceState::Present(namespace) = &self.namespace else {
+            unreachable!("stat answered, so a namespace is present")
+        };
         Ok(File {
             device: &mut *self.device,
-            namespace: &self.namespace,
+            namespace,
             path: path.to_owned(),
             entry,
         })
@@ -624,8 +755,12 @@ impl<'a> Filesystem<'a> {
     /// [`File::read_at`].
     pub fn read_file(&mut self, path: &str) -> Result<Vec<u8>> {
         match &self.namespace {
-            Namespace::Volume { id, .. } => self.device.read_file(*id, path),
-            Namespace::Medium { catalog, .. } => catalog.read_file(path),
+            NamespaceState::Absent(absence) => Err(absence.clone()),
+            NamespaceState::Present(Namespace::Volume { id, .. }) => {
+                let id = *id;
+                self.device.read_file(id, path)
+            }
+            NamespaceState::Present(Namespace::Medium { catalog, .. }) => catalog.read_file(path),
         }
     }
 
@@ -656,10 +791,10 @@ impl<'a> Filesystem<'a> {
     /// The volume a write projects into, or the refusal naming a
     /// namespace this release reads and does not write.
     fn writable(&self) -> Result<VolumeId> {
-        match &self.namespace {
+        match self.present()? {
             Namespace::Volume { id, .. } => Ok(*id),
             Namespace::Medium { kind, .. } => Err(refuse(
-                NamespaceRule::NotWritable,
+                SpaceRule::NotWritable,
                 format!("this release reads the {kind} namespace and does not write it"),
             )),
         }
@@ -752,7 +887,7 @@ impl File<'_> {
                 self.device.write_file_at(*id, &self.path, offset, data)
             }
             Namespace::Medium { kind, .. } => Err(refuse(
-                NamespaceRule::NotWritable,
+                SpaceRule::NotWritable,
                 format!("this release reads the {kind} namespace and does not write it"),
             )),
         }

@@ -12,16 +12,17 @@ use std::process::Command;
 
 use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, StorageDevice, DiskFormat, ErrorCategory};
 
-/// The filesystem on one volume of `device`, selected by the identity the
-/// inspection report issued — the walk `device.volume(id).filesystem()`
-/// spelled once, because the file verbs live on the namespace node and
-/// nowhere else (P19).
-fn fs(device: &mut remanence::StorageDevice, volume: remanence::VolumeId) -> remanence::Filesystem<'_> {
+/// The space on one volume of `device`, selected by the identity the
+/// inspection report issued. One node, both vantages: `device.volume(id)`
+/// answers with the addressable extent and the namespace together, and
+/// the file verbs live on it and nowhere else (P19).
+fn fs(
+    device: &mut remanence::StorageDevice,
+    volume: remanence::VolumeId,
+) -> remanence::StorageSpace<'_> {
     device
         .volume(volume)
         .expect("the report issued this volume")
-        .filesystem()
-        .expect("the volume bears a filesystem")
 }
 
 /// Attaches `path` to a fresh session and returns both, because a medium

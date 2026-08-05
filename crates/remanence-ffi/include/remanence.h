@@ -271,10 +271,6 @@ typedef struct RemanenceFile RemanenceFile;
 // Bytes read out of a volume or catalog.
 typedef struct RemanenceFileData RemanenceFileData;
 
-// The namespace node: the one handle that carries file verbs. Free with
-// `remanence_filesystem_free`.
-typedef struct RemanenceFilesystem RemanenceFilesystem;
-
 // The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
 
@@ -305,8 +301,8 @@ typedef struct RemanenceRecognition RemanenceRecognition;
 typedef struct RemanenceSession RemanenceSession;
 
 // One volume of a device's medium, selected by the identity the
-// inspection report issued. Free with `remanence_volume_free`.
-typedef struct RemanenceVolume RemanenceVolume;
+// inspection report issued. Free with `remanence_space_free`.
+typedef struct RemanenceSpace RemanenceSpace;
 
 // One zone as a profile declares it, and what the capture recovered of
 // it.
@@ -1120,65 +1116,81 @@ uint64_t remanence_device_size(const RemanenceDevice *device);
 // Whether uncommitted changes exist.
 bool remanence_device_is_modified(const RemanenceDevice *device);
 
-// The filesystem this device resolves to, or null with the refusal set.
+// The space this device resolves to, or null with the refusal set.
 //
-// The walk device to volume to filesystem is transparent where every
+// The walk device to volume to namespace is transparent where every
 // seam has exactly one supported answer, and refuses naming the
 // candidates where one does not. A volume bearing no filesystem is a
 // named absence, not an empty listing. Free with
-// `remanence_filesystem_free`.
-RemanenceFilesystem *remanence_device_filesystem(RemanenceDevice *device,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+// `remanence_space_free`.
+RemanenceSpace *remanence_device_filesystem(RemanenceDevice *device,
+                                            RemanenceErrorCategory *error_category_out,
+                                            char **error_out,
+                                            char **error_rule_out);
 
-// One volume of this device's medium, by the identity the inspection
-// report issued for it — the selector where several namespaces exist.
-// Free with `remanence_volume_free`.
-RemanenceVolume *remanence_device_volume(RemanenceDevice *device,
-                                         uint64_t volume_id,
-                                         RemanenceErrorCategory *error_category_out,
-                                         char **error_out,
-                                         char **error_rule_out);
+// One space of this device's medium, by the identity the inspection
+// report issued for its volume — the selector where several namespaces
+// exist, and the way to reach a volume bearing none. Free with
+// `remanence_space_free`.
+RemanenceSpace *remanence_device_volume(RemanenceDevice *device,
+                                        uint64_t volume_id,
+                                        RemanenceErrorCategory *error_category_out,
+                                        char **error_out,
+                                        char **error_rule_out);
 
-// Frees a volume handle. The device and its medium are untouched.
-void remanence_volume_free(RemanenceVolume *volume);
+// Frees a space handle. The device and its medium are untouched.
+void remanence_space_free(RemanenceSpace *space);
 
-// This volume's opaque identity, as the inspection report issued it.
-uint64_t remanence_volume_id(const RemanenceVolume *volume);
+// Whether this space has the addressable vantage — an extent to read and
+// write by position. False where the medium bears its namespace directly
+// and composed no volume.
+bool remanence_volume_is_addressable(const RemanenceSpace *space);
 
-// Where the volume starts in the presented disk.
-uint64_t remanence_volume_start_bytes(const RemanenceVolume *volume);
+// This space's opaque volume identity, as the inspection report issued
+// it, or 0 where it has no addressable vantage —
+// `remanence_volume_is_addressable` distinguishes the two.
+uint64_t remanence_volume_id(const RemanenceSpace *space);
 
-// The volume's length in bytes.
-uint64_t remanence_volume_length_bytes(const RemanenceVolume *volume);
+// Where this space starts in the presented disk, or 0 where it has no
+// addressable vantage.
+uint64_t remanence_volume_start_bytes(const RemanenceSpace *space);
 
-// The filesystem this volume bears, or null with the named absence set:
-// a volume with no filesystem is an ordinary volume, not a failure.
-// Free with `remanence_filesystem_free`.
-RemanenceFilesystem *remanence_volume_filesystem(const RemanenceVolume *volume,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+// How far this space runs, or 0 where it has no addressable vantage.
+uint64_t remanence_volume_length_bytes(const RemanenceSpace *space);
 
-// Frees a filesystem handle. The medium it was a view of is untouched.
-void remanence_filesystem_free(RemanenceFilesystem *filesystem);
+// Reads `len` bytes at `offset` **within this space**, not within the
+// medium: the vantage that reaches a boot record, allocation metadata,
+// the extents a filesystem calls free, or the bytes behind a listed
+// file. A read past the space's own end is refused by name.
+bool remanence_volume_read_at(RemanenceSpace *space,
+                              uint64_t offset,
+                              uint8_t *buffer,
+                              size_t len,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out,
+                              char **error_rule_out);
 
-// The filesystem kind in its stable spelling, `"FAT12"` or `"hdos"`.
-const char *remanence_filesystem_kind(const RemanenceFilesystem *filesystem);
+// Writes `len` bytes at `offset` within this space, buffered until
+// `remanence_device_commit` like every other write.
+bool remanence_volume_write_at(RemanenceSpace *space,
+                               uint64_t offset,
+                               const uint8_t *data,
+                               size_t len,
+                               RemanenceErrorCategory *error_category_out,
+                               char **error_out,
+                               char **error_rule_out);
 
-// Whether this filesystem is borne by a volume. False where the medium
-// bears the namespace itself and composed none.
-bool remanence_filesystem_has_volume(const RemanenceFilesystem *filesystem);
+// Whether this space has the namespace vantage — files to name. False
+// for a volume bearing no filesystem, which is an ordinary volume.
+bool remanence_filesystem_has_namespace(const RemanenceSpace *space);
 
-// The identity of the volume this filesystem is borne by, or 0 where it
-// is borne by none — `remanence_filesystem_has_volume` distinguishes the
-// two.
-uint64_t remanence_filesystem_volume_id(const RemanenceFilesystem *filesystem);
+// The filesystem kind in its stable spelling, `"FAT12"` or `"hdos"`, or
+// null where this space bears no namespace.
+const char *remanence_filesystem_kind(const RemanenceSpace *space);
 
 // Lists a directory ("" = root, "A/B" descends). Free with
 // `remanence_entry_list_free`.
-RemanenceEntryList *remanence_filesystem_entries(const RemanenceFilesystem *filesystem,
+RemanenceEntryList *remanence_filesystem_entries(const RemanenceSpace *filesystem,
                                                  const char *path,
                                                  RemanenceErrorCategory *error_category_out,
                                                  char **error_out,
@@ -1189,7 +1201,7 @@ RemanenceEntryList *remanence_filesystem_entries(const RemanenceFilesystem *file
 // parent that is a file alike. Absence is an answer, distinguished from
 // failure, which returns null with the error set. Free with
 // `remanence_entry_list_free`.
-RemanenceEntryList *remanence_filesystem_stat(const RemanenceFilesystem *filesystem,
+RemanenceEntryList *remanence_filesystem_stat(const RemanenceSpace *filesystem,
                                               const char *path,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
@@ -1229,7 +1241,7 @@ const char *remanence_entry_declared_value(const RemanenceEntryList *list,
 // asks whether something is there, and this asks for the file, so nothing
 // and a directory are both refused by name. Free with
 // `remanence_file_free`.
-RemanenceFile *remanence_filesystem_get_file(const RemanenceFilesystem *filesystem,
+RemanenceFile *remanence_filesystem_get_file(const RemanenceSpace *filesystem,
                                              const char *path,
                                              RemanenceErrorCategory *error_category_out,
                                              char **error_out,
@@ -1237,7 +1249,7 @@ RemanenceFile *remanence_filesystem_get_file(const RemanenceFilesystem *filesyst
 
 // Copies a file's bytes out — the whole-value convenience beside
 // `remanence_file_read_at`. Free with `remanence_file_data_free`.
-RemanenceFileData *remanence_filesystem_read_file(const RemanenceFilesystem *filesystem,
+RemanenceFileData *remanence_filesystem_read_file(const RemanenceSpace *filesystem,
                                                   const char *path,
                                                   RemanenceErrorCategory *error_category_out,
                                                   char **error_out,
@@ -1245,7 +1257,7 @@ RemanenceFileData *remanence_filesystem_read_file(const RemanenceFilesystem *fil
 
 // Sets a file's size, creating it when absent: kept bytes preserved in
 // place, a grown region reads as zeros. Buffered until commit.
-bool remanence_filesystem_resize_file(const RemanenceFilesystem *filesystem,
+bool remanence_filesystem_resize_file(const RemanenceSpace *filesystem,
                                       const char *path,
                                       uint64_t size,
                                       RemanenceErrorCategory *error_category_out,
@@ -1255,7 +1267,7 @@ bool remanence_filesystem_resize_file(const RemanenceFilesystem *filesystem,
 // Writes a file. An existing file is overwritten — shorter or longer,
 // its old clusters released and reclaimed — while an existing directory
 // is refused. Buffered until `remanence_device_commit`.
-bool remanence_filesystem_write_file(const RemanenceFilesystem *filesystem,
+bool remanence_filesystem_write_file(const RemanenceSpace *filesystem,
                                      const char *path,
                                      const uint8_t *bytes,
                                      size_t length,
@@ -1265,7 +1277,7 @@ bool remanence_filesystem_write_file(const RemanenceFilesystem *filesystem,
 
 // Ensures a directory exists: missing parents are created, and a path
 // that already leads to one succeeds unchanged. Buffered until commit.
-bool remanence_filesystem_make_directory(const RemanenceFilesystem *filesystem,
+bool remanence_filesystem_make_directory(const RemanenceSpace *filesystem,
                                          const char *path,
                                          RemanenceErrorCategory *error_category_out,
                                          char **error_out,

@@ -7,7 +7,7 @@
 //! reads without the entry resident whole. These tests build their zip
 //! by hand, so they run without fixtures.
 
-use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ErrorCategory, LayerKind, NamespaceRule};
+use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ErrorCategory, LayerKind, SpaceRule};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -263,7 +263,7 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
     assert_eq!(error.category(), ErrorCategory::NotFound);
     assert_eq!(
         error.rule(),
-        Some(NamespaceRule::NoNamespace.as_str()),
+        Some(SpaceRule::NoNamespace.as_str()),
         "the resolver's refusals carry their rule identity (P10)"
     );
     let message = error.to_string();

@@ -394,7 +394,7 @@ int main(int argc, char **argv) {
      * answers with; a medium bearing no namespace is a named absence
      * here rather than a failure of the identification above. */
     int status = EXIT_SUCCESS;
-    RemanenceFilesystem *filesystem =
+    RemanenceSpace *filesystem =
         remanence_device_filesystem(device, &error_category, &error, &error_rule);
     if (filesystem == NULL) {
         printf("\nFiles:   ");
@@ -425,7 +425,26 @@ int main(int argc, char **argv) {
             }
             remanence_entry_list_free(entries);
         }
-        remanence_filesystem_free(filesystem);
+        /* The same handle carries the addressable vantage: one node, two
+         * ways in. This reaches what the namespace above does not name. */
+        if (remanence_volume_is_addressable(filesystem)) {
+            unsigned char head[16];
+            if (remanence_volume_read_at(filesystem, 0, head, sizeof head, &error_category,
+                                         &error, &error_rule)) {
+                printf("\nVolume:  %" PRIu64 " bytes at %" PRIu64 ", first bytes",
+                       remanence_volume_length_bytes(filesystem),
+                       remanence_volume_start_bytes(filesystem));
+                for (size_t i = 0; i < sizeof head; ++i) {
+                    printf(" %02x", head[i]);
+                }
+                printf("\n");
+            } else {
+                report_error("\nerror reading the volume extent", error_category, error,
+                             error_rule);
+                status = EXIT_FAILURE;
+            }
+        }
+        remanence_space_free(filesystem);
     }
 
     show_drive_letters(device);

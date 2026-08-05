@@ -40,13 +40,18 @@ ABI, or Python module.
   image-format adapter that loaded its state and a flux medium from the
   drive profile's declaration of what its family is served;
   `partition.rs` the partition-layout catalog;
-  `filesystem.rs` the P19 namespace node and the presentation contract
-  beneath it — the public `Filesystem`, the `Volume` selector, the `File`
-  view, the one `Entry` vocabulary with the facts a filesystem declares
-  in its own spelling, the enumerated `NamespaceRule` set its refusals
-  name, and the resolver that walks device → volume → filesystem where
-  every seam has one supported answer and refuses naming the candidates
-  where it does not; **the file verbs live here and on nothing else**;
+  `filesystem.rs` the P19 volume/filesystem node and the presentation
+  contract beneath it — the public `StorageSpace` carrying **two vantage
+  traits on one object**, addressable I/O within its own extent and
+  namespace I/O over the files it names, so that a FAT volume has both, a
+  volume bearing no filesystem has only the first, and a medium's own
+  namespace only the second (the 0..1 as trait presence rather than
+  prose); the `File` view, the one `Entry` vocabulary with the facts a
+  filesystem declares in its own spelling, the enumerated `SpaceRule` set
+  its refusals name, and the resolver that walks device → volume →
+  namespace where every seam has one supported answer and refuses naming
+  the candidates where it does not; **the file verbs live here and on
+  nothing else**;
   `filesystem_catalog.rs` the streamed filesystem adapters and catalog
   for the namespaces a medium bears directly (crate-private, reached
   through the device's `identify` and through the resolver — the adapter

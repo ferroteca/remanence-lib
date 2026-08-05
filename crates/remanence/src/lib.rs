@@ -112,7 +112,7 @@ pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim}
 pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
 pub use fat::FatKind;
-pub use filesystem::{Entry, EntryFact, EntryKind, File, Filesystem, NamespaceRule, Volume};
+pub use filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
 pub use machine::{Machine, Session};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,

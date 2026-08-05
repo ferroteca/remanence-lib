@@ -20,7 +20,7 @@
 
 use crate::device::Device;
 use crate::error::{Error, ErrorCategory, Result};
-use crate::filesystem::{Catalog, HdosCatalog, NamespaceRule};
+use crate::filesystem::{Catalog, HdosCatalog, SpaceRule};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FilesystemIdentification {
@@ -60,7 +60,7 @@ pub(crate) trait FilesystemAdapter: Sync {
                     self.name()
                 ),
             )
-            .broke_rule(NamespaceRule::RecognizedNotRead.as_str()),
+            .broke_rule(SpaceRule::RecognizedNotRead.as_str()),
         )
     }
 }

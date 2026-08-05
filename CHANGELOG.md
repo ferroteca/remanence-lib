@@ -20,6 +20,52 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **The volume and the filesystem are one node, and it addresses its own
+  extent.** `StorageSpace` replaces the two types F48 delivered, carrying
+  **two vantage traits on one object**: *volume* is addressable I/O —
+  reads and writes by position within the extent the space names — and
+  *filesystem* is namespace I/O, the file verbs. An object implements
+  what it has: a FAT volume both, a volume bearing no filesystem the
+  addressable one alone, a medium's own namespace the namespace one
+  alone. The 0..1 the model asserted in prose is now carried by the type,
+  and no phantom volume is invented for a namespace with no space beneath
+  it.
+
+  **Addressing within a space is the new reach.** Until now the only
+  addressed reads were whole-medium, so a volume's boot record, the
+  extents its filesystem calls free, or the bytes behind a file just
+  listed all meant computing offsets against the medium by hand.
+  `read_at` and `write_at` take positions **within the space**, bounded
+  by the space's own extent — a read past its end names `outside-extent`
+  rather than wandering into whatever follows — and they read through the
+  session cache, so a caller sees the state its own buffered writes
+  produced. Writes are buffered until commit and land in the active layer
+  like every other write (P2, P23).
+
+  **Both finders answer with the same node.** `device.filesystem()`
+  resolves and `device.volume(id)` selects; each hands back a
+  `StorageSpace`, and the hop between a volume and its filesystem is
+  gone. A volume bearing no namespace is no longer a failed selection: it
+  is a space that answers `is_addressable` and not `has_namespace`, with
+  the recognizing seam's own refusal — category and rule intact — kept
+  for whichever namespace verb asks.
+
+  The rule set the seam owns is `SpaceRule`, F48's `NamespaceRule`
+  widened to cover both vantages: `several-candidates`, `no-namespace`,
+  `recognized-not-read`, `namespace-not-writable`, and the new
+  `not-addressable` and `outside-extent`.
+
+  In C, one opaque `RemanenceSpace` with the two vantages keeping their
+  prefixes — `remanence_volume_is_addressable`, `_id`, `_start_bytes`,
+  `_length_bytes`, `_read_at`, `_write_at` beside
+  `remanence_filesystem_has_namespace`, `_kind`, `_entries`, `_stat`,
+  `_get_file`, `_read_file`, `_write_file`, `_resize_file`,
+  `_make_directory` — freed by `remanence_space_free`. In Python, one
+  `StorageSpace` class with `is_addressable`, `has_namespace`,
+  `start_bytes`, `length_bytes`, `read_at` and `write_at` beside the file
+  verbs. The example C consumer prints a volume's extent and first bytes
+  beside its listing.
+
 - **File access lives on one node.** `Filesystem` is the namespace, and
   it is the only type that carries file verbs: `entries`, `stat`,
   `get_file`, `read_file`, `write_file`, `resize_file` and

@@ -1925,39 +1925,54 @@ impl StorageDevice {
     /// named absence, not an empty listing. **The device carries no file
     /// verbs of its own** — it may be asked what it resolves to, and may
     /// not be told to act as something it isn't.
-    fn filesystem(&mut self) -> PyResult<Filesystem> {
-        let (kind, volume) = {
+    fn filesystem(&mut self) -> PyResult<StorageSpace> {
+        let (kind, volume, start_bytes, length_bytes) = {
             let mut device = self.get()?;
-            let filesystem = device.filesystem().map_err(to_py_err)?;
-            (filesystem.kind().to_owned(), filesystem.volume_id())
+            let space = device.filesystem().map_err(to_py_err)?;
+            (
+                space.kind().map_err(to_py_err)?.to_owned(),
+                space.volume_id(),
+                space.start_bytes().unwrap_or(0),
+                space.length_bytes().unwrap_or(0),
+            )
         };
-        Ok(Filesystem {
+        Ok(StorageSpace {
             session: Arc::clone(&self.session),
             machine: self.machine.clone(),
             attachment: self.attachment,
             volume: volume.map(remanence::VolumeId::value),
-            kind,
+            start_bytes,
+            length_bytes,
+            kind: Some(kind),
         })
     }
 
     /// One volume of this device's medium, by the identity the inspection
     /// report issued for it — the selector where several namespaces
     /// exist.
-    fn volume(&mut self, volume_id: u64) -> PyResult<Volume> {
-        let (start_bytes, length_bytes) = {
+    fn volume(&mut self, volume_id: u64) -> PyResult<StorageSpace> {
+        let (start_bytes, length_bytes, kind) = {
             let mut device = self.get()?;
-            let volume = device
+            let space = device
                 .volume(remanence::VolumeId::from_value(volume_id))
                 .map_err(to_py_err)?;
-            (volume.start_bytes(), volume.length_bytes())
+            // A volume bearing no namespace is an ordinary volume, so the
+            // absence travels on the space rather than failing here.
+            let kind = space.kind().ok().map(str::to_owned);
+            (
+                space.start_bytes().unwrap_or(0),
+                space.length_bytes().unwrap_or(0),
+                kind,
+            )
         };
-        Ok(Volume {
+        Ok(StorageSpace {
             session: Arc::clone(&self.session),
             machine: self.machine.clone(),
             attachment: self.attachment,
-            id: volume_id,
+            volume: Some(volume_id),
             start_bytes,
             length_bytes,
+            kind,
         })
     }
 
@@ -1976,67 +1991,6 @@ impl StorageDevice {
     }
 }
 
-/// One volume of a device's medium, selected by the identity the
-/// inspection report issued.
-///
-/// A volume is not held: this is the selector between several namespaces,
-/// and it carries no ordinal because no format defines one for a volume.
-#[pyclass(module = "remanence")]
-pub struct Volume {
-    session: Arc<Mutex<remanence::Session>>,
-    machine: Option<String>,
-    attachment: remanence::AttachmentId,
-    id: u64,
-    start_bytes: u64,
-    length_bytes: u64,
-}
-
-#[pymethods]
-impl Volume {
-    /// This volume's opaque identity, as the inspection report issued it.
-    #[getter]
-    fn id(&self) -> u64 {
-        self.id
-    }
-
-    /// Where the volume starts in the presented disk.
-    #[getter]
-    fn start_bytes(&self) -> u64 {
-        self.start_bytes
-    }
-
-    #[getter]
-    fn length_bytes(&self) -> u64 {
-        self.length_bytes
-    }
-
-    /// The filesystem this volume bears.
-    ///
-    /// A volume with no filesystem is an ordinary volume — swap, boot
-    /// code, unformatted space — so the absence is raised as a named
-    /// absence rather than treated as a failure to read one.
-    fn filesystem(&self) -> PyResult<Filesystem> {
-        let kind = with_filesystem(
-            &self.session,
-            &self.machine,
-            self.attachment,
-            Some(self.id),
-            |filesystem| Ok(filesystem.kind().to_owned()),
-        )?;
-        Ok(Filesystem {
-            session: Arc::clone(&self.session),
-            machine: self.machine.clone(),
-            attachment: self.attachment,
-            volume: Some(self.id),
-            kind,
-        })
-    }
-
-    fn __repr__(&self) -> String {
-        format!("Volume(id={}, length_bytes={})", self.id, self.length_bytes)
-    }
-}
-
 /// Resolves the named filesystem and runs `action` over it.
 ///
 /// Every verb below passes through here, so the refusals a caller meets
@@ -2048,7 +2002,7 @@ fn with_filesystem<T>(
     machine: &Option<String>,
     attachment: remanence::AttachmentId,
     volume: Option<u64>,
-    action: impl FnOnce(&mut remanence::Filesystem<'_>) -> remanence::Result<T>,
+    action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
 ) -> PyResult<T> {
     let mut guard = session
         .lock()
@@ -2063,15 +2017,13 @@ fn with_filesystem<T>(
             "this device was removed",
         ));
     };
-    let mut filesystem = match volume {
+    let mut space = match volume {
         Some(id) => device
             .volume(remanence::VolumeId::from_value(id))
-            .map_err(to_py_err)?
-            .filesystem()
             .map_err(to_py_err)?,
         None => device.filesystem().map_err(to_py_err)?,
     };
-    action(&mut filesystem).map_err(to_py_err)
+    action(&mut space).map_err(to_py_err)
 }
 
 /// The namespace node: the one type that carries file verbs.
@@ -2080,30 +2032,91 @@ fn with_filesystem<T>(
 /// reads or writes the state beneath it, mutations project into the
 /// active layer, and nothing here holds a listing that could go stale.
 #[pyclass(module = "remanence")]
-pub struct Filesystem {
+pub struct StorageSpace {
     session: Arc<Mutex<remanence::Session>>,
     machine: Option<String>,
     attachment: remanence::AttachmentId,
-    /// The volume it is borne by, or `None` where the medium bears the
-    /// namespace itself and composed no volume.
+    /// The volume that composed it, where it has the addressable
+    /// vantage. `None` where the medium bears its namespace directly.
     volume: Option<u64>,
-    kind: String,
+    start_bytes: u64,
+    length_bytes: u64,
+    /// The namespace kind, where it has the namespace vantage.
+    kind: Option<String>,
 }
 
 #[pymethods]
-impl Filesystem {
-    /// The filesystem kind in its stable spelling — `"FAT12"`, `"hdos"`.
-    /// It is data on the handle, never a type of its own.
+impl StorageSpace {
+    /// Whether this space has the addressable vantage — an extent to
+    /// read and write by position.
     #[getter]
-    fn kind(&self) -> String {
-        self.kind.clone()
+    fn is_addressable(&self) -> bool {
+        self.volume.is_some()
     }
 
-    /// The identity of the volume this filesystem is borne by, or `None`
-    /// where the medium bears the namespace itself.
+    /// The identity of the volume that composed this space, or `None`
+    /// where the medium bears its namespace directly.
     #[getter]
     fn volume_id(&self) -> Option<u64> {
         self.volume
+    }
+
+    /// Where this space starts in the presented disk, or `None` where it
+    /// has no addressable vantage.
+    #[getter]
+    fn start_bytes(&self) -> Option<u64> {
+        self.volume.map(|_| self.start_bytes)
+    }
+
+    /// How far this space runs, or `None` where it has no addressable
+    /// vantage.
+    #[getter]
+    fn length_bytes(&self) -> Option<u64> {
+        self.volume.map(|_| self.length_bytes)
+    }
+
+    /// Reads `length` bytes at `offset` **within this space**, not within
+    /// the medium — the vantage that reaches a boot record, allocation
+    /// metadata, or the extents a filesystem calls free. A read past this
+    /// space's own end is refused by name.
+    fn read_at(&self, py: Python<'_>, offset: u64, length: usize) -> PyResult<Py<PyBytes>> {
+        let mut buf = vec![0_u8; length];
+        with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |space| space.read_at(offset, &mut buf),
+        )?;
+        Ok(PyBytes::new(py, &buf).unbind())
+    }
+
+    /// Writes `data` at `offset` within this space, buffered until
+    /// `commit` like every other write.
+    fn write_at(&self, offset: u64, data: &[u8]) -> PyResult<()> {
+        with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |space| space.write_at(offset, data),
+        )
+    }
+
+    /// Whether this space has the namespace vantage — files to name.
+    /// False for a volume bearing no filesystem, which is an ordinary
+    /// volume.
+    #[getter]
+    fn has_namespace(&self) -> bool {
+        self.kind.is_some()
+    }
+
+    /// The filesystem kind in its stable spelling — `"FAT12"`, `"hdos"` —
+    /// or `None` where this space bears no namespace. It is data on the
+    /// handle, never a type of its own.
+    #[getter]
+    fn kind(&self) -> Option<String> {
+        self.kind.clone()
     }
 
     /// Lists a directory (`""` is the root, `"A/B"` descends).
@@ -4116,8 +4129,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LabelReading>()?;
     m.add_class::<Entry>()?;
     m.add_class::<EntryFact>()?;
-    m.add_class::<Volume>()?;
-    m.add_class::<Filesystem>()?;
+    m.add_class::<StorageSpace>()?;
     m.add_class::<File>()?;
     m.add_class::<DosMachine>()?;
     m.add_class::<DriveMap>()?;

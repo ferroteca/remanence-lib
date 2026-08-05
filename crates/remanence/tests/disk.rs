@@ -10,20 +10,21 @@ use std::path::PathBuf;
 
 use remanence::{
     AccessIntent, AccessMode, AttachmentId, DeviceFamily, StorageDevice, DiskContent, DiskFormat, DosNameRule,
-    ErrorCategory, EntryKind, FatKind, NamespaceRule, RegionRole, Session, VolumeId,
+    ErrorCategory, EntryKind, FatKind, SpaceRule, RegionRole, Session, VolumeId,
     VolumeOrigin,
 };
 
-/// The filesystem on one volume of `device`, selected by the identity the
-/// inspection report issued — the walk `device.volume(id).filesystem()`
-/// spelled once, because the file verbs live on the namespace node and
-/// nowhere else (P19).
-fn fs(device: &mut remanence::StorageDevice, volume: remanence::VolumeId) -> remanence::Filesystem<'_> {
+/// The space on one volume of `device`, selected by the identity the
+/// inspection report issued. One node, both vantages: `device.volume(id)`
+/// answers with the addressable extent and the namespace together, and
+/// the file verbs live on it and nowhere else (P19).
+fn fs(
+    device: &mut remanence::StorageDevice,
+    volume: remanence::VolumeId,
+) -> remanence::StorageSpace<'_> {
     device
         .volume(volume)
         .expect("the report issued this volume")
-        .filesystem()
-        .expect("the volume bears a filesystem")
 }
 
 /// Attaches `path` to a fresh session and returns both, because a medium
@@ -1448,7 +1449,10 @@ fn the_resolver_is_transparent_where_every_seam_has_one_answer() {
 
     let expected = only_volume(disk);
     let mut filesystem = disk.filesystem().expect("one volume, one filesystem");
-    assert_eq!(filesystem.kind(), FatKind::Fat16.name());
+    assert_eq!(
+        filesystem.kind().expect("the volume bears one"),
+        FatKind::Fat16.name()
+    );
     assert_eq!(
         filesystem.volume_id(),
         Some(expected),
@@ -1489,7 +1493,7 @@ fn several_candidates_are_refused_by_name_and_selected_by_identity() {
     assert_eq!(refusal.category(), ErrorCategory::Unsupported);
     assert_eq!(
         refusal.rule(),
-        Some(NamespaceRule::SeveralCandidates.as_str())
+        Some(SpaceRule::SeveralCandidates.as_str())
     );
     let message = refusal.to_string();
     for volume in &volumes {
@@ -1501,11 +1505,7 @@ fn several_candidates_are_refused_by_name_and_selected_by_identity() {
 
     // Selection is by the identity the report issued, never by position.
     for volume in volumes {
-        let mut filesystem = disk
-            .volume(volume)
-            .expect("the report issued it")
-            .filesystem()
-            .expect("it bears one");
+        let mut filesystem = disk.volume(volume).expect("the report issued it");
         assert_eq!(filesystem.volume_id(), Some(volume));
         assert!(filesystem.entries("").is_ok());
     }
@@ -1535,17 +1535,33 @@ fn a_volume_bearing_no_filesystem_is_a_named_absence() {
     let refusal = disk
         .volume(bare)
         .expect("the volume composed")
-        .filesystem()
+        .kind()
         .expect_err("it bears nothing this release recognizes");
     assert!(
         !refusal.to_string().is_empty(),
         "the absence is named rather than silent"
     );
 
-    // And the volume is still a volume, with its own extent.
-    let volume = disk.volume(bare).expect("the volume composed");
-    assert_eq!(volume.id(), bare);
-    assert_eq!(volume.length_bytes(), report.volumes[1].length_bytes);
+    // And the space is still addressable, with its own extent: the 0..1 is
+    // trait presence, so a volume bearing no namespace is an ordinary
+    // volume rather than a failure to compose one.
+    let mut space = disk.volume(bare).expect("the volume composed");
+    assert_eq!(space.volume_id(), Some(bare));
+    assert!(space.is_addressable());
+    assert!(!space.has_namespace());
+    assert_eq!(
+        space.length_bytes(),
+        Some(report.volumes[1].length_bytes)
+    );
+
+    // The addressable vantage reaches what no namespace names, and the
+    // bound is the space's own rather than the medium's.
+    let mut head = [0_u8; 16];
+    space.read_at(0, &mut head).expect("the extent reads");
+    let past = space
+        .read_at(report.volumes[1].length_bytes, &mut head)
+        .expect_err("a read past the space's end is refused");
+    assert_eq!(past.rule(), Some(remanence::SpaceRule::OutsideExtent.as_str()));
 
     std::fs::remove_file(&path).ok();
 }
@@ -1598,6 +1614,69 @@ fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
             .category(),
         ErrorCategory::IsDirectory
     );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// One node, both vantages: the space a resolver hands back addresses its
+/// own extent *and* names its files, and a write through one vantage is
+/// visible through the other.
+///
+/// This is what the addressable vantage exists for — reaching what a
+/// namespace does not name, without the caller computing offsets against
+/// the medium by hand.
+#[test]
+fn a_space_addresses_its_extent_and_names_its_files() {
+    let path = temp_path("space-vantages");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+
+    let (mut session, attachment) = attach(&path, AccessIntent::Write).expect("image opens");
+    let disk = session.require_device(attachment).expect("attached");
+
+    let mut space = disk.filesystem().expect("the medium resolves to one");
+
+    // Both vantages, on the one object the resolver answered with.
+    assert!(space.has_namespace(), "a FAT volume names files");
+    assert!(space.is_addressable(), "and a volume composed its extent");
+    let length = space.length_bytes().expect("it is addressable");
+
+    // The addressable vantage reads within the space, not the medium: a
+    // FAT volume's first bytes are its own boot record.
+    let mut boot = [0_u8; 11];
+    space.read_at(0, &mut boot).expect("the extent reads");
+    assert_eq!(&boot[0..1], &[0xEB], "the volume's own boot record");
+
+    // The bound is the space's own.
+    let past = space
+        .read_at(length, &mut boot)
+        .expect_err("a read past the space's end is refused");
+    assert_eq!(
+        past.rule(),
+        Some(remanence::SpaceRule::OutsideExtent.as_str())
+    );
+
+    // A namespace write and an addressable read see one state, because
+    // they are two vantages of one node over one active layer (P23).
+    space
+        .write_file("VANTAGE.TXT", b"one node")
+        .expect("the namespace writes");
+    let entry = space
+        .stat("VANTAGE.TXT")
+        .expect("the namespace reads")
+        .expect("the file is there");
+    assert_eq!(entry.size_bytes, 8);
+
+    // And an addressable write lands in the same buffered state, rolled
+    // back with everything else.
+    let mut before = [0_u8; 4];
+    space.read_at(0, &mut before).expect("reads");
+    space.write_at(0, b"\xEB\x3C\x90\x00").expect("writes");
+    let mut after = [0_u8; 4];
+    space.read_at(0, &mut after).expect("reads back");
+    assert_eq!(&after, b"\xEB\x3C\x90\x00", "the write is visible");
+
+    disk.rollback().expect("nothing reached the image");
 
     drop(session);
     std::fs::remove_file(&path).ok();

@@ -490,9 +490,8 @@ they deliver.
   separate `archive[/entry]` path syntax and the `Archive` type's
   standalone journey fold into the model (the archive catalog itself is
   untouched — it becomes the family's adapter).
-- File verbs moved to the namespace node and are delivered (F52 merges
-  that node and the volume into one `StorageSpace` carrying both
-  vantages as traits):
+- File verbs live on the namespace node, and that node and the volume
+  are one delivered `StorageSpace` carrying both vantages as traits:
   `get_file` lives there and
   nowhere else — the device exposes none — with `device.filesystem()`
   resolving-or-refusing and `device.volume(id).filesystem()` selecting

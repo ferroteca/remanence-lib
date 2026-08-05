@@ -591,8 +591,6 @@ fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
         .expect("attached")
         .volume(volume_at(&map, 'C'))
         .expect("the letter's identity names a volume the report issued")
-        .filesystem()
-        .expect("C: bears a filesystem")
         .read_file("RMNMARK.TXT")
         .expect("C: reads through the identity the map returned");
     assert!(marker.starts_with(b"remanence marker:"));

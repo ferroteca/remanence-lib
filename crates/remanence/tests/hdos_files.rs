@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AttachmentId, DeviceFamily, EntryKind, ErrorCategory, NamespaceRule,
+    AccessIntent, AttachmentId, DeviceFamily, EntryKind, ErrorCategory, SpaceRule,
     Session,
 };
 
@@ -55,7 +55,7 @@ fn lists_files_from_hdos_fixture_image() {
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let mut filesystem = disk.filesystem().expect("the resolver walks to one namespace");
-    assert_eq!(filesystem.kind(), "hdos");
+    assert_eq!(filesystem.kind().expect("the medium bears a namespace"), "hdos");
     assert_eq!(
         filesystem.volume_id(),
         None,
@@ -168,7 +168,7 @@ fn reads_a_file_out_through_the_grt_chain() {
         .write_file("NEW.TXT", b"denied")
         .expect_err("this release reads HDOS and does not write it");
     assert_eq!(refusal.category(), ErrorCategory::ReadOnly);
-    assert_eq!(refusal.rule(), Some(NamespaceRule::NotWritable.as_str()));
+    assert_eq!(refusal.rule(), Some(SpaceRule::NotWritable.as_str()));
 
     drop(disk_session);
     std::fs::remove_file(&path).ok();
@@ -189,7 +189,7 @@ fn a_medium_bearing_no_namespace_is_a_named_absence() {
     let disk = session.require_device(attachment).expect("the medium is attached");
     let error = disk.filesystem().expect_err("there is no namespace to resolve to");
     assert_eq!(error.category(), ErrorCategory::NotFound);
-    assert_eq!(error.rule(), Some(NamespaceRule::NoNamespace.as_str()));
+    assert_eq!(error.rule(), Some(SpaceRule::NoNamespace.as_str()));
 
     drop(session);
     std::fs::remove_file(&path).ok();

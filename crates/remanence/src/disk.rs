@@ -749,6 +749,29 @@ impl MediaState {
         fat.write_file_at(&mut composed, &segments, offset, data)
     }
 
+    /// Reads at an absolute offset in the presented disk, for a space that
+    /// resolved the position against its own extent.
+    ///
+    /// It reads through the session cache rather than off the source, so
+    /// a caller sees the state its own buffered writes produced — the
+    /// same truth every other verb in the session reads (P2, P27).
+    pub(crate) fn read_space_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        if let Some(bound) = &self.bound {
+            bound.check(offset, buf.len() as u64)?;
+        }
+        let mut composed = self.composed();
+        composed.read_at(offset, buf)
+    }
+
+    /// Writes at an absolute offset in the presented disk, for a space
+    /// that resolved the position against its own extent. Buffered until
+    /// commit (P2), landing in the active layer (P23).
+    pub(crate) fn write_space_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        self.require_writable()?;
+        let mut composed = self.composed();
+        composed.write_at(offset, data)
+    }
+
     fn require_writable(&self) -> Result<()> {
         // A degraded session answers first and by name: its read-only mode
         // is evidence-driven, and a caller that declared write intent is
