@@ -49,83 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F46 — The Machine scope, and one storage handle
-
-Two structural changes to the delivered types, no behavior change.
-
-**`Session` keeps its name and gains `Machine` beneath it.** The session
-stays what the principles already call it — the P7 claims, the P27 cache
-budget and private session storage — and a machine becomes the device set
-within it, owning attachment identities and attachment order. A session
-holds machines; a machine holds devices. A machine carries an identity,
-and the session's anonymous machine is the one whose identity is null
-(D23), behaving as any other in every respect. The `machine.rs` module's
-contents split accordingly.
-
-**`Disk` merges into `StorageDevice`.** A caller never holds a medium
-outside a device, so the delivered two-type shape
-(`session.medium(attachment) -> &mut Disk`) becomes one handle carrying
-both nodes' data: slot-side facts and content-side facts on the same
-object, content verbs refusing by name when the slot is empty. The medium
-survives as a model node and as data (`media_type` and its profile), not
-as a type. The "disk stack" prose naming (D2) follows.
-
-The C symbols and Python classes move in the same change; pre-1.0, the
-old shapes are deleted, never aliased.
-
-Touches: S1, S2, S3. Supports: the U2 amendment; the P32 amendment; the
-storage model design
-([design/storage-model-and-vocabulary.md](design/storage-model-and-vocabulary.md)).
-F48–F51 read better after it but do not require it.
-
-### The cut
-
-Measured before planning: 8 `remanence_session_*` and 27
-`remanence_disk_*` C symbols; the Python `Session` and `Disk` classes; 11
-integration-test files holding roughly 130 call sites; 20 references in
-`examples/identify.c`; and on the Rust side `machine.rs` (205 lines),
-`storage_device.rs` (206), `disk.rs` (1755).
-
-1. **Insert `Machine` in the core.** `Session` holds machines plus one
-   anonymous machine; `Machine` owns the device vec, the attachment
-   identities and the attachment order, and carries an identity of its
-   own, null for the anonymous one. `Session::attach*` keep their exact
-   signatures and land in the anonymous machine, so this step changes no
-   behavior — which is what makes it provable.
-2. **Merge `Disk` into `StorageDevice`.** `Disk` becomes a **private
-   `MediaState`**, its internals almost untouched, and its public method
-   surface moves onto `StorageDevice`, refusing by name where the slot is
-   empty. `Session::medium(a) -> &mut Disk` is deleted; callers use the
-   already-delivered `require_device(a)`, which makes the test churn a
-   mechanical substitution rather than a rewrite.
-3. **The C ABI.** `remanence_disk_*` becomes `remanence_device_*`,
-   `remanence_session_medium` goes, `remanence_machine_*` arrives.
-   Regenerate the header and recompile the example. No collision with the
-   existing `remanence_report_device_*` family.
-4. **Python.** Mirror it: the `Disk` class becomes the device class,
-   `Machine` is added.
-5. **Prose.** AGENTS.md's module map, D2's "disk stack" naming, and the
-   doc comments that speak the old shape.
-
-Three calls already made, so they are not re-litigated at implementation:
-`Disk` becomes a private `MediaState` rather than being flattened into
-`StorageDevice`, keeping the diff on the public surface; `Session::attach*`
-survives this feature because F50 replaces it, so one interim spelling
-lives for one feature; and Python's `Disk` becomes `StorageDevice` to
-match Rust.
-
-**Verification.** `cargo build` (which regenerates the header), then
-`cargo test` — **424 passing, unchanged**, which is the strongest signal
-available here, since no behavior moves and any delta is therefore a
-defect. Then recompile `identify.c` and run it against both a plain image
-and an archived one, build and smoke-test the Python module, and
-`git diff --check`.
-
-**Not in this feature:** `add_device`/`load_media` and concrete device
-families (F50), discovery and declared defaults (F51), the `Filesystem`
-node and the container purge (F48), archives (F49). `DeviceFamily` stays
-the delivered enum here.
-
 ## F48 — The Filesystem node
 
 Move file verbs onto the one namespace node: `Filesystem`, with
@@ -200,7 +123,7 @@ Replace one-act `attach` with the two acts the P32 amendment names:
 lineage-bearing catalog — interior names classify but never
 instantiate — and `load_media` on the device, plus eject, with an empty
 device as first-class configuration. `add_device` returns the device,
-which is the one storage handle (F46); `load_media` places a medium in
+which is the delivered one storage handle; `load_media` places a medium in
 it and hands back nothing to hold. A family mismatch at `load_media`
 refuses naming both sides, which is the check a concrete family exists
 to make possible. Content verbs on an empty device refuse by name, and

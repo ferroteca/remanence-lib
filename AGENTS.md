@@ -28,13 +28,13 @@ ABI, or Python module.
   (flexible magnetic and logical-block are claimed, with no fact in
   common), and the declarative media-type catalog they are enrolled in,
   which holds no recognition, no grammar and no behavior; every medium
-  the library holds names one entry, a `Disk` from the image-format
-  adapter that loaded its state and a flux medium from the drive
-  profile's declaration of what its family is served;
+  the library holds names one entry, a block medium from the
+  image-format adapter that loaded its state and a flux medium from the
+  drive profile's declaration of what its family is served;
   `partition.rs` the partition-layout catalog;
   `filesystem.rs` the streamed filesystem adapters and catalog (crate-private,
-  reached through `Disk::identify`); `session.rs` the layered
-  identification model, reached through the one medium surface; `hdos.rs` the HDOS directory lister and file
+  reached through the device's `identify`); `session.rs` the layered
+  identification model, reached through the one storage handle; `hdos.rs` the HDOS directory lister and file
   extractor; `archive.rs` the archive-catalog seam — the
   `ArchiveCatalog` trait, the public `Archive` listing, and the
   enrollment each grammar is reached by — with `source.rs` resolving
@@ -85,7 +85,7 @@ ABI, or Python module.
   so a flux container is reached through its own type as the capture-set
   adapter is;
   `device.rs` the block-device seam, the P7 claims
-  (declared intent for the disk stack, the discovery ladder for
+  (declared intent for the device stack, the discovery ladder for
   identification sessions), and the host-write capture a durable
   commit stages into; `cache.rs` the session cache — the P2 commit
   buffer and the bounded working set (P27): unaltered extents
@@ -118,12 +118,16 @@ ABI, or Python module.
   variant-by-variant assignment rules it claims, the conditions it
   refuses to model, and the mapping it answers with, undetermined
   letters included; `machine.rs` the
-  session — the machine scope holding a dynamic set of family-typed
-  storage devices (P32) — with `storage_device.rs` the device itself: a
-  durable slot, its attachment identity (`hdd0`), and the medium
-  occupying it; `disk.rs` the medium API reached through a device
+  session and the machines within it (P32) — the session being the claim
+  and cache scope, a machine being one device set with its own
+  attachment identities and attachment order, and the anonymous machine
+  being the one whose identity is null — with `storage_device.rs` the
+  **one storage handle**: a durable slot, its attachment identity
+  (`hdd0`), and every content verb of the medium occupying it
   (identify/inspect/entries/stat/read/write/mkdir/commit/rollback),
-  with `report.rs` the layered inspection report its
+  refusing by name while the slot is empty; `disk.rs` the private
+  `MediaState` that handle homes — a caller never holds a medium outside
+  a device — with `report.rs` the layered inspection report its
   records are returned in — device, content outcome, partition schema,
   regions, volumes, filesystems, joined by opaque layout-derived
   identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2/VDI

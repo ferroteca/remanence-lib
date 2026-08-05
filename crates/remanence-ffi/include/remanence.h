@@ -63,7 +63,7 @@ typedef enum {
   REMANENCE_ACCESS_INTENT_WRITE,
 } RemanenceAccessIntent;
 
-// A disk session's effective access mode: the declared intent's echo
+// A medium's effective access mode: the declared intent's echo
 // (P7) where the evidence supports it, read-only where it does not (P28).
 typedef enum {
   REMANENCE_ACCESS_MODE_READ_WRITE,
@@ -224,19 +224,21 @@ typedef struct RemanenceC1541Bytestream RemanenceC1541Bytestream;
 // An open capture set, holding the claim on its archive.
 typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 
-// A borrowed view of the medium in one storage device.
+// A borrowed view of one storage device — the slot, its family, and the
+// state of the medium in it.
 //
 // **The session owns this; never free it.** It stays valid until the
 // device is detached or the session is freed.
 //
-// It names the medium by session and attachment identity rather than by
-// pointer, and re-resolves on every call. That is deliberate: a later
-// attach may reallocate the session's device storage, so a cached
-// pointer to the medium itself would dangle silently.
-typedef struct RemanenceDisk RemanenceDisk;
+// It names the device by session, machine and attachment identity
+// rather than by pointer, and re-resolves on every call. That is
+// deliberate: a later attach may reallocate the machine's device
+// storage, so a cached pointer to the device itself would dangle
+// silently.
+typedef struct RemanenceDevice RemanenceDevice;
 
 // A snapshot of one disk's layered inspection. Owned by the caller and
-// released with `remanence_disk_report_free`; every string and record
+// released with `remanence_report_free`; every string and record
 // reached through it is borrowed from it and dies with it.
 typedef struct RemanenceDiskReport RemanenceDiskReport;
 
@@ -257,8 +259,14 @@ typedef struct RemanenceFileData RemanenceFileData;
 // A parsed HDOS directory listing.
 typedef struct RemanenceHdosFileList RemanenceHdosFileList;
 
-// The result of identifying a disk's image.
+// The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
+
+// A borrowed view of one machine in a session.
+//
+// **The session owns this; never free it.** It stays valid until the
+// session is freed.
+typedef struct RemanenceMachine RemanenceMachine;
 
 // A mastered medium, held in the session.
 typedef struct RemanenceMasteredMedium RemanenceMasteredMedium;
@@ -276,8 +284,8 @@ typedef struct RemanenceP64Report RemanenceP64Report;
 // A recognition result, ranked highest confidence first.
 typedef struct RemanenceRecognition RemanenceRecognition;
 
-// An open session: the machine scope, holding a set of family-typed
-// storage devices (P32).
+// An open session: the claim and cache scope, holding the machines
+// within it (P32).
 typedef struct RemanenceSession RemanenceSession;
 
 // One zone as a profile declares it, and what the capture recovered of
@@ -465,35 +473,36 @@ uint64_t remanence_default_cache_bytes(void);
 // `surrounding-space`.
 void remanence_string_free(char *string);
 
-// The artifact the disk was opened from (the archive path for archive inputs).
-const char *remanence_disk_path(const RemanenceDisk *disk);
+// The artifact the medium was opened from (the archive path for archive
+// inputs). Null while the device's slot is empty.
+const char *remanence_device_path(const RemanenceDevice *device);
 
 // The resolved image path (the entry name for archive inputs).
-const char *remanence_disk_image_path(const RemanenceDisk *disk);
+const char *remanence_device_image_path(const RemanenceDevice *device);
 
 // The resolved image's size in bytes.
-uint64_t remanence_disk_image_size_bytes(const RemanenceDisk *disk);
+uint64_t remanence_device_image_size_bytes(const RemanenceDevice *device);
 
 // Reads `length` bytes of the resolved image at `offset` into
 // `buffer_out` — the bounded access form: the image streams from its
 // backing and is never resident whole. Returns false on failure and
 // stores a message in `error_out` (free with `remanence_string_free`).
-bool remanence_disk_read_at(const RemanenceDisk *disk,
-                            uint64_t offset,
-                            uint8_t *buffer_out,
-                            size_t length,
-                            RemanenceErrorCategory *error_category_out,
-                            char **error_out,
-                            char **error_rule_out);
+bool remanence_device_read_at(const RemanenceDevice *device,
+                              uint64_t offset,
+                              uint8_t *buffer_out,
+                              size_t length,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out,
+                              char **error_rule_out);
 
 // Identifies the image's container layers and probable filesystem. Free the
 // result with `remanence_identification_free`.
-RemanenceIdentification *remanence_disk_identify(const RemanenceDisk *disk);
+RemanenceIdentification *remanence_device_identify(const RemanenceDevice *device);
 
 // Frees an identification handle.
 void remanence_identification_free(RemanenceIdentification *identification);
 
-// Whether the disk reported unsaved modifications at identify time.
+// Whether the medium reported unsaved modifications at identify time.
 bool remanence_identification_modified(const RemanenceIdentification *identification);
 
 // Number of detected container layers.
@@ -636,12 +645,12 @@ RemanenceHdosFileList *remanence_list_hdos_files(const uint8_t *bytes,
                                                  char **error_out,
                                                  char **error_rule_out);
 
-// Parses the HDOS directory from the disk's image. Returns null on
+// Parses the HDOS directory from the medium's image. Returns null on
 // failure and stores a message in `error_out` (free with `remanence_string_free`).
-RemanenceHdosFileList *remanence_disk_list_hdos_files(const RemanenceDisk *disk,
-                                                      RemanenceErrorCategory *error_category_out,
-                                                      char **error_out,
-                                                      char **error_rule_out);
+RemanenceHdosFileList *remanence_device_list_hdos_files(const RemanenceDevice *device,
+                                                        RemanenceErrorCategory *error_category_out,
+                                                        char **error_out,
+                                                        char **error_rule_out);
 
 // Frees an HDOS file list handle.
 void remanence_hdos_file_list_free(RemanenceHdosFileList *list);
@@ -676,19 +685,23 @@ const char *remanence_hdos_file_flags(const RemanenceHdosFileList *list, size_t 
 // HDOS catalog date, e.g. "09-May-78", or "No-Date".
 const char *remanence_hdos_file_modified_date(const RemanenceHdosFileList *list, size_t index);
 
-// Opens an empty session — the machine scope. Devices are attached and
-// detached over its life; the set is not fixed at open. Free with
+// Opens an empty session — the claim and cache scope, holding nothing
+// but its anonymous machine. Machines and devices are added over its
+// life; neither set is fixed at open. Free with
 // `remanence_session_free`.
 RemanenceSession *remanence_session_new(void);
 
 // Frees a session, detaching every device and releasing every P7 claim.
-// Every borrowed medium view obtained from it becomes invalid.
+// Every borrowed machine and device view obtained from it becomes
+// invalid.
 void remanence_session_free(RemanenceSession *session);
 
 // Attaches the medium at `path` (UTF-8) — a raw disk image, or
-// `archive[/entry]` — to a new device in the lowest free slot of its
-// family, writing the attachment identity it took (such as `hdd0`) to
-// `attachment_out`. Free that string with `remanence_string_free`. A
+// `archive[/entry]` — to a new device in the session's **anonymous
+// machine**, taking the lowest free slot of its family and writing the
+// attachment identity it took (such as `hdd0`) to `attachment_out`;
+// free that string with `remanence_string_free`.
+// `remanence_machine_attach` does the same in a named machine. A
 // `Write` intent claims the medium exclusively and fails at the open
 // when the claim cannot be secured, never by falling back. Returns
 // false on failure.
@@ -701,9 +714,10 @@ bool remanence_session_attach(RemanenceSession *session,
                               char **error_rule_out);
 
 // Attaches the medium at `path` to the slot `attachment` names (such as
-// `hdd1`). The caller chooses the slot, never the name. A slot already
-// occupied is refused rather than displaced, and a family this release
-// does not claim is refused by name (P3).
+// `hdd1`) in the session's anonymous machine. The caller chooses the
+// slot, never the name. A slot already occupied is refused rather than
+// displaced, and a family this release does not claim is refused by
+// name (P3).
 bool remanence_session_attach_at(RemanenceSession *session,
                                  const char *attachment,
                                  const char *path,
@@ -712,16 +726,16 @@ bool remanence_session_attach_at(RemanenceSession *session,
                                  char **error_out,
                                  char **error_rule_out);
 
-// Detaches the device at `attachment`, releasing its medium's P7 claim
-// and freeing the slot. Borrowed medium views for that device become
-// invalid.
+// Detaches the device at `attachment` from the session's anonymous
+// machine, releasing its medium's P7 claim and freeing the slot.
+// Borrowed device views for that device become invalid.
 bool remanence_session_detach(RemanenceSession *session,
                               const char *attachment,
                               RemanenceErrorCategory *error_category_out,
                               char **error_out,
                               char **error_rule_out);
 
-// How many devices the session holds.
+// How many devices the session's anonymous machine holds.
 size_t remanence_session_device_count(const RemanenceSession *session);
 
 // Writes the attachment identity of device `index` to
@@ -731,18 +745,106 @@ bool remanence_session_device_attachment(const RemanenceSession *session,
                                          size_t index,
                                          char **attachment_out);
 
-// A **borrowed** view of the medium in the device at `attachment`.
+// Adds a machine carrying `identity` (UTF-8) to the session and returns
+// a **borrowed** view of it.
+//
+// The session owns it; never free it. An identity already in use is
+// refused by name rather than resolving to the machine holding it, and
+// the empty identity is refused too — the machine with no identity is
+// the session's anonymous one, and there is exactly one of it. Returns
+// null on failure.
+RemanenceMachine *remanence_session_add_machine(RemanenceSession *session,
+                                                const char *identity,
+                                                RemanenceErrorCategory *error_category_out,
+                                                char **error_out,
+                                                char **error_rule_out);
+
+// How many machines the session holds, the anonymous one among them.
+size_t remanence_session_machine_count(const RemanenceSession *session);
+
+// Writes the identity of machine `index` to `identity_out`, freed with
+// `remanence_string_free`. Returns false when `index` is out of range;
+// writes null for the anonymous machine, whose identity is null.
+bool remanence_session_machine_identity(const RemanenceSession *session,
+                                        size_t index,
+                                        char **identity_out);
+
+// A **borrowed** view of the machine carrying `identity` (UTF-8), or of
+// the session's **anonymous machine** when `identity` is null — the
+// anonymous machine being exactly the one whose identity is null.
+//
+// The session owns it; never free it. Returns null when the session
+// holds no machine of that identity.
+RemanenceMachine *remanence_session_machine(RemanenceSession *session, const char *identity);
+
+// The machine's identity, or null where it is the session's anonymous
+// machine. Owned by the view; do not free.
+const char *remanence_machine_identity(const RemanenceMachine *machine);
+
+// Attaches the medium at `path` (UTF-8) to a new device in this
+// machine, taking the lowest free slot of its family and writing the
+// attachment identity it took to `attachment_out`. Free that string
+// with `remanence_string_free`.
+bool remanence_machine_attach(RemanenceMachine *machine,
+                              const char *path,
+                              RemanenceAccessIntent intent,
+                              char **attachment_out,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out,
+                              char **error_rule_out);
+
+// Attaches the medium at `path` to the slot `attachment` names in this
+// machine. The caller chooses the slot, never the name; an occupied
+// slot is refused rather than displaced, and a family this release does
+// not claim is refused by name (P3).
+bool remanence_machine_attach_at(RemanenceMachine *machine,
+                                 const char *attachment,
+                                 const char *path,
+                                 RemanenceAccessIntent intent,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
+
+// Detaches the device at `attachment` from this machine, releasing its
+// medium's P7 claim and freeing the slot. Borrowed device views for
+// that device become invalid.
+bool remanence_machine_detach(RemanenceMachine *machine,
+                              const char *attachment,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out,
+                              char **error_rule_out);
+
+// How many devices this machine holds.
+size_t remanence_machine_device_count(const RemanenceMachine *machine);
+
+// Writes the attachment identity of device `index` in this machine to
+// `attachment_out`, freed with `remanence_string_free`. Returns false
+// when `index` is out of range.
+bool remanence_machine_device_attachment(const RemanenceMachine *machine,
+                                         size_t index,
+                                         char **attachment_out);
+
+// A **borrowed** view of the device at `attachment` in this machine.
+//
+// The session owns it; never free it. It stays valid until that device
+// is detached or the session is freed. Returns null when this machine
+// has no device there.
+RemanenceDevice *remanence_machine_device(RemanenceMachine *machine, const char *attachment);
+
+// A **borrowed** view of the device at `attachment` in the session's
+// anonymous machine — `remanence_machine_device` reaches a named
+// machine's.
 //
 // The session owns it; never free it. It stays valid until that device
 // is detached or the session is freed. Returns null when nothing is
 // attached there.
-RemanenceDisk *remanence_session_medium(RemanenceSession *session, const char *attachment);
+RemanenceDevice *remanence_session_device(RemanenceSession *session, const char *attachment);
 
-// The disk session's **effective** access mode: the declared intent's
+// The medium's **effective** access mode: the declared intent's
 // echo where the evidence supports it, and read-only where it does not
 // (P28). `remanence_assurance_access_mode` reports the same value beside
 // the reason for it.
-RemanenceAccessMode remanence_disk_mode(const RemanenceDisk *disk);
+RemanenceAccessMode remanence_device_mode(const RemanenceDevice *device);
 
 // The assurance of one open medium: what the open established, why, the
 // exact extents that read, and the access the evidence permits.
@@ -750,7 +852,7 @@ RemanenceAccessMode remanence_disk_mode(const RemanenceDisk *disk);
 // It is available before anything is read, so a caller meets a deficiency
 // by being told rather than by an operation failing halfway. Null only
 // when the device holding this medium was detached.
-RemanenceAssurance *remanence_disk_assurance(const RemanenceDisk *disk);
+RemanenceAssurance *remanence_device_assurance(const RemanenceDevice *device);
 
 // Frees an assurance record and everything borrowed from it.
 void remanence_assurance_free(RemanenceAssurance *assurance);
@@ -802,45 +904,45 @@ size_t remanence_assurance_condition_count(void);
 const char *remanence_assurance_condition_name(size_t index);
 
 // The detected container format.
-RemanenceDiskFormat remanence_disk_format(const RemanenceDisk *disk);
+RemanenceDiskFormat remanence_device_format(const RemanenceDevice *device);
 
 // The qcow2 version, or 0 for an image of any other format.
-uint32_t remanence_disk_qcow2_version(const RemanenceDisk *disk);
+uint32_t remanence_device_qcow2_version(const RemanenceDevice *device);
 
 // The VDI version's major part, or 0 for an image of any other format.
-uint32_t remanence_disk_vdi_version_major(const RemanenceDisk *disk);
+uint32_t remanence_device_vdi_version_major(const RemanenceDevice *device);
 
 // The VDI version's minor part, or 0 for an image of any other format.
 // Read it beside the major part: on its own, 0 is both "minor zero" and
 // "not a VDI".
-uint32_t remanence_disk_vdi_version_minor(const RemanenceDisk *disk);
+uint32_t remanence_device_vdi_version_minor(const RemanenceDevice *device);
 
 // The virtual disk size in bytes.
-uint64_t remanence_disk_size(const RemanenceDisk *disk);
+uint64_t remanence_device_size(const RemanenceDevice *device);
 
 // Whether uncommitted changes exist.
-bool remanence_disk_is_modified(const RemanenceDisk *disk);
+bool remanence_device_is_modified(const RemanenceDevice *device);
 
 // Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
 // with `remanence_fat_entry_list_free`.
-RemanenceFatEntryList *remanence_disk_entries(RemanenceDisk *disk,
-                                              uint64_t volume_id,
-                                              const char *path,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out,
-                                              char **error_rule_out);
+RemanenceFatEntryList *remanence_device_entries(RemanenceDevice *device,
+                                                uint64_t volume_id,
+                                                const char *path,
+                                                RemanenceErrorCategory *error_category_out,
+                                                char **error_out,
+                                                char **error_rule_out);
 
 // Answers one path in `volume_id` (U3): a one-entry listing when
 // something exists there, an empty listing when nothing does — a
 // missing leaf, a missing parent, or a parent that is a file alike.
 // Absence is an answer, distinguished from failure, which returns null
 // with the error set. Free with `remanence_fat_entry_list_free`.
-RemanenceFatEntryList *remanence_disk_stat(RemanenceDisk *disk,
-                                           uint64_t volume_id,
-                                           const char *path,
-                                           RemanenceErrorCategory *error_category_out,
-                                           char **error_out,
-                                           char **error_rule_out);
+RemanenceFatEntryList *remanence_device_stat(RemanenceDevice *device,
+                                             uint64_t volume_id,
+                                             const char *path,
+                                             RemanenceErrorCategory *error_category_out,
+                                             char **error_out,
+                                             char **error_rule_out);
 
 // Frees a directory listing.
 void remanence_fat_entry_list_free(RemanenceFatEntryList *list);
@@ -859,49 +961,49 @@ uint64_t remanence_fat_entry_size_bytes(const RemanenceFatEntryList *list, size_
 
 // Copies a file's bytes out of `volume_id`. Free with
 // `remanence_file_data_free`.
-RemanenceFileData *remanence_disk_read_file(RemanenceDisk *disk,
-                                            uint64_t volume_id,
-                                            const char *path,
-                                            RemanenceErrorCategory *error_category_out,
-                                            char **error_out,
-                                            char **error_rule_out);
+RemanenceFileData *remanence_device_read_file(RemanenceDevice *device,
+                                              uint64_t volume_id,
+                                              const char *path,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
 
 // Reads part of a file into `buffer_out` — the streamed form beside
-// `remanence_disk_read_file`: exactly `length` bytes at `offset`,
+// `remanence_device_read_file`: exactly `length` bytes at `offset`,
 // which must lie within the file.
-bool remanence_disk_read_file_at(RemanenceDisk *disk,
-                                 uint64_t volume_id,
-                                 const char *path,
-                                 uint64_t offset,
-                                 uint8_t *buffer_out,
-                                 size_t length,
-                                 RemanenceErrorCategory *error_category_out,
-                                 char **error_out,
-                                 char **error_rule_out);
+bool remanence_device_read_file_at(RemanenceDevice *device,
+                                   uint64_t volume_id,
+                                   const char *path,
+                                   uint64_t offset,
+                                   uint8_t *buffer_out,
+                                   size_t length,
+                                   RemanenceErrorCategory *error_category_out,
+                                   char **error_out,
+                                   char **error_rule_out);
 
 // Sets a file's size, creating it when absent — with
-// `remanence_disk_write_file_at`, the streamed replacement for
-// `remanence_disk_write_file`. Buffered until commit.
-bool remanence_disk_resize_file(RemanenceDisk *disk,
-                                uint64_t volume_id,
-                                const char *path,
-                                uint64_t size,
-                                RemanenceErrorCategory *error_category_out,
-                                char **error_out,
-                                char **error_rule_out);
-
-// Writes part of a file in place — the streamed form beside
-// `remanence_disk_write_file`: the span must lie within the file's
-// current size. Buffered until commit.
-bool remanence_disk_write_file_at(RemanenceDisk *disk,
+// `remanence_device_write_file_at`, the streamed replacement for
+// `remanence_device_write_file`. Buffered until commit.
+bool remanence_device_resize_file(RemanenceDevice *device,
                                   uint64_t volume_id,
                                   const char *path,
-                                  uint64_t offset,
-                                  const uint8_t *bytes,
-                                  size_t length,
+                                  uint64_t size,
                                   RemanenceErrorCategory *error_category_out,
                                   char **error_out,
                                   char **error_rule_out);
+
+// Writes part of a file in place — the streamed form beside
+// `remanence_device_write_file`: the span must lie within the file's
+// current size. Buffered until commit.
+bool remanence_device_write_file_at(RemanenceDevice *device,
+                                    uint64_t volume_id,
+                                    const char *path,
+                                    uint64_t offset,
+                                    const uint8_t *bytes,
+                                    size_t length,
+                                    RemanenceErrorCategory *error_category_out,
+                                    char **error_out,
+                                    char **error_rule_out);
 
 // The bytes of a read-out file; valid until the handle is freed.
 const uint8_t *remanence_file_data_bytes(const RemanenceFileData *data, size_t *length_out);
@@ -911,25 +1013,25 @@ void remanence_file_data_free(RemanenceFileData *data);
 
 // Writes a file into `volume_id`. An existing file is overwritten —
 // shorter or longer, its old clusters released and reclaimed — while
-// an existing directory is refused. Buffered until `remanence_disk_commit`.
-bool remanence_disk_write_file(RemanenceDisk *disk,
-                               uint64_t volume_id,
-                               const char *path,
-                               const uint8_t *bytes,
-                               size_t length,
-                               RemanenceErrorCategory *error_category_out,
-                               char **error_out,
-                               char **error_rule_out);
+// an existing directory is refused. Buffered until `remanence_device_commit`.
+bool remanence_device_write_file(RemanenceDevice *device,
+                                 uint64_t volume_id,
+                                 const char *path,
+                                 const uint8_t *bytes,
+                                 size_t length,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
 
 // Ensures a directory exists in `volume_id`: missing parents are
 // created, and a path that already leads to a directory succeeds
 // unchanged. Buffered until commit.
-bool remanence_disk_make_directory(RemanenceDisk *disk,
-                                   uint64_t volume_id,
-                                   const char *path,
-                                   RemanenceErrorCategory *error_category_out,
-                                   char **error_out,
-                                   char **error_rule_out);
+bool remanence_device_make_directory(RemanenceDevice *device,
+                                     uint64_t volume_id,
+                                     const char *path,
+                                     RemanenceErrorCategory *error_category_out,
+                                     char **error_out,
+                                     char **error_rule_out);
 
 // The commit point (P2): everything buffered reaches the image, then a
 // flush. Until this call, nothing has touched the file. The commit is
@@ -937,13 +1039,13 @@ bool remanence_disk_make_directory(RemanenceDisk *disk,
 // byte of the file changes, so an interruption at any point leaves
 // state the next open reconciles to wholly the old image or wholly
 // the committed new one.
-bool remanence_disk_commit(RemanenceDisk *disk,
-                           RemanenceErrorCategory *error_category_out,
-                           char **error_out,
-                           char **error_rule_out);
+bool remanence_device_commit(RemanenceDevice *device,
+                             RemanenceErrorCategory *error_category_out,
+                             char **error_out,
+                             char **error_rule_out);
 
 // Discards everything buffered; the image is untouched.
-void remanence_disk_rollback(RemanenceDisk *disk);
+void remanence_device_rollback(RemanenceDevice *device);
 
 // Reads a cataloged HDOS file's contents out of raw image bytes. Free
 // with `remanence_file_data_free`.
@@ -954,13 +1056,13 @@ RemanenceFileData *remanence_read_hdos_file(const uint8_t *bytes,
                                             char **error_out,
                                             char **error_rule_out);
 
-// Reads a cataloged HDOS file out of the disk's image. Free with
+// Reads a cataloged HDOS file out of the medium's image. Free with
 // `remanence_file_data_free`.
-RemanenceFileData *remanence_disk_read_hdos_file(const RemanenceDisk *disk,
-                                                 const char *name,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+RemanenceFileData *remanence_device_read_hdos_file(const RemanenceDevice *device,
+                                                   const char *name,
+                                                   RemanenceErrorCategory *error_category_out,
+                                                   char **error_out,
+                                                   char **error_rule_out);
 
 // Opens the archive at `path` (UTF-8) and reads its entry list. A path
 // naming no archive format this library reads is refused by name.
@@ -1620,15 +1722,16 @@ size_t remanence_c1541_bytestream_evidence_count(const RemanenceC1541Bytestream 
 const char *remanence_c1541_bytestream_evidence(const RemanenceC1541Bytestream *bytestream,
                                                 size_t index);
 
-// Inspects an open disk and returns its layered report. Null on failure,
+// Inspects the medium in an occupied device and returns its layered
+// report. Null on failure,
 // with the category and message written to the out-parameters.
-RemanenceDiskReport *remanence_disk_inspect(RemanenceDisk *disk,
-                                            RemanenceErrorCategory *error_category_out,
-                                            char **error_out,
-                                            char **error_rule_out);
+RemanenceDiskReport *remanence_device_inspect(RemanenceDevice *device,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
 
 // Frees an inspection report and everything borrowed from it.
-void remanence_disk_report_free(RemanenceDiskReport *report);
+void remanence_report_free(RemanenceDiskReport *report);
 
 // The device identity assigned by this loaded composition (P21), scoped
 // to the open.

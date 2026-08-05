@@ -4,7 +4,7 @@
 //! Native VDI driver — the VirtualBox Disk Image container — written from
 //! the published format description. It presents the virtual disk as a
 //! [`Device`], exactly as the qcow2 driver does, so a VDI opens,
-//! identifies, inspects, reads and writes through the delivered disk stack
+//! identifies, inspects, reads and writes through the delivered device stack
 //! unchanged.
 //!
 //! The support claim is validated before anything else is touched (P8):
@@ -42,7 +42,7 @@
 //! ([`BLOCK_ZERO`]) reads as zeroes and masks the parent, because the
 //! format keeps the two distinct. Neither is ever confused with a block
 //! that is allocated and happens to hold zeroes. Allocating a block
-//! belongs to the write path alone, which the disk stack reaches inside
+//! belongs to the write path alone, which the device stack reaches inside
 //! commit — never during a read.
 
 use std::path::{Path, PathBuf};

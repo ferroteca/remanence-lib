@@ -1,35 +1,236 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The session: the machine scope (P32).
+//! The session and the machines within it (P32).
 //!
-//! There is no separate machine object. A session *is* the scope within
-//! which device identity is resolved, and it holds a dynamic set of
-//! family-typed storage devices. Nothing above it groups several sessions
-//! into one machine, and nothing needs to.
+//! A **session** is the outermost scope and keeps the meaning the
+//! principles already give it: the P7 claims, the P27 cache budget and
+//! private session storage, and the lifetime everything below it lives
+//! within. A **machine** is one device set inside that scope, owning its
+//! own attachment identities and its own attachment order.
+//!
+//! A session holds machines; a machine holds devices. Machines in a
+//! session do not know about each other — an archive on the host was
+//! never part of the machine whose disk it contains — while the session
+//! owning every machine's lifetime is what lets one machine's device be
+//! backed by state another machine holds, with no lifetime question
+//! between them.
+//!
+//! **A machine carries an identity, and the session's anonymous machine
+//! is the one whose identity is null.** A session always has exactly one
+//! of those, and it behaves as any other machine in every respect: it is
+//! not "machine zero", and no attachment order it carries is more
+//! meaningful than any other's. It serves the caller who is opening
+//! artifacts rather than reconstructing a machine.
 
 use std::path::Path;
 
 use crate::device::AccessIntent;
-use crate::disk::Disk;
+use crate::disk::MediaState;
 use crate::error::{Error, Result};
 use crate::storage_device::{AttachmentId, DeviceFamily, StorageDevice};
 
-/// An open session over one machine's storage.
+/// An open session: the claim scope, the cache budget, and the machines
+/// within it.
 ///
-/// The session holds the devices; each device holds at most one medium,
-/// and each medium holds its own P7 claim for as long as it is attached.
-/// Dropping the session detaches everything and releases every claim.
-#[derive(Debug, Default)]
+/// Every medium attached anywhere in the session holds its own P7 claim
+/// for as long as it stays attached. Dropping the session drops every
+/// machine, detaching everything and releasing every claim.
+#[derive(Debug)]
 pub struct Session {
-    devices: Vec<StorageDevice>,
+    machines: Vec<Machine>,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            machines: vec![Machine::anonymous()],
+        }
+    }
 }
 
 impl Session {
-    /// A session with no devices. Devices are attached and detached over
-    /// its life; the set is not fixed at open.
+    /// A session holding nothing but its anonymous machine. Machines and
+    /// devices are added and removed over its life; neither set is fixed
+    /// at open.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Adds a machine carrying `identity` and answers with it.
+    ///
+    /// An identity already in use is refused by name rather than
+    /// resolving to the machine that holds it — two machines answering
+    /// to one name is a configuration error, not a lookup. The empty
+    /// identity is refused too: the machine with no identity is the
+    /// anonymous one, and there is exactly one of it.
+    pub fn add_machine(&mut self, identity: impl Into<String>) -> Result<&mut Machine> {
+        let identity = identity.into();
+        if identity.is_empty() {
+            return Err(Error::unsupported(
+                "a machine identity may not be empty; the machine with no \
+                 identity is the session's anonymous one"
+                    .to_owned(),
+            ));
+        }
+        if self.machine(&identity).is_some() {
+            return Err(Error::unsupported(format!(
+                "this session already holds a machine identified '{identity}'"
+            )));
+        }
+        self.machines.push(Machine::named(identity));
+        Ok(self.machines.last_mut().expect("just pushed"))
+    }
+
+    /// Every machine in the session, the anonymous one among them, in
+    /// the order they were added.
+    pub fn machines(&self) -> &[Machine] {
+        &self.machines
+    }
+
+    pub fn machine(&self, identity: &str) -> Option<&Machine> {
+        self.machines
+            .iter()
+            .find(|machine| machine.identity() == Some(identity))
+    }
+
+    pub fn machine_mut(&mut self, identity: &str) -> Option<&mut Machine> {
+        self.machines
+            .iter_mut()
+            .find(|machine| machine.identity() == Some(identity))
+    }
+
+    /// The machine identified `identity`, or a refusal naming it.
+    pub fn require_machine(&mut self, identity: &str) -> Result<&mut Machine> {
+        self.machine_mut(identity).ok_or_else(|| {
+            Error::not_found(format!(
+                "this session holds no machine identified '{identity}'"
+            ))
+        })
+    }
+
+    /// The anonymous machine — the one whose identity is null.
+    pub fn anonymous(&self) -> &Machine {
+        self.machines
+            .iter()
+            .find(|machine| machine.identity().is_none())
+            .expect("a session always holds its anonymous machine")
+    }
+
+    pub fn anonymous_mut(&mut self) -> &mut Machine {
+        self.machines
+            .iter_mut()
+            .find(|machine| machine.identity().is_none())
+            .expect("a session always holds its anonymous machine")
+    }
+
+    /// Attaches the medium at `path` to a new device in the session's
+    /// anonymous machine, as [`Machine::attach`] does there.
+    pub fn attach(&mut self, path: impl AsRef<Path>, intent: AccessIntent) -> Result<AttachmentId> {
+        self.anonymous_mut().attach(path, intent)
+    }
+
+    /// Attaches the medium at `path` to the named slot of the anonymous
+    /// machine, as [`Machine::attach_at`] does there.
+    pub fn attach_at(
+        &mut self,
+        family: DeviceFamily,
+        index: u32,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+    ) -> Result<AttachmentId> {
+        self.anonymous_mut().attach_at(family, index, path, intent)
+    }
+
+    /// [`Session::attach`] under a caller-declared session cache bound
+    /// (P27).
+    pub fn attach_with_cache(
+        &mut self,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+        cache_bytes: u64,
+    ) -> Result<AttachmentId> {
+        self.anonymous_mut()
+            .attach_with_cache(path, intent, cache_bytes)
+    }
+
+    /// [`Session::attach_at`] under a caller-declared session cache bound
+    /// (P27).
+    pub fn attach_at_with_cache(
+        &mut self,
+        family: DeviceFamily,
+        index: u32,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+        cache_bytes: u64,
+    ) -> Result<AttachmentId> {
+        self.anonymous_mut()
+            .attach_at_with_cache(family, index, path, intent, cache_bytes)
+    }
+
+    /// Detaches the device at `attachment` from the anonymous machine.
+    pub fn detach(&mut self, attachment: AttachmentId) -> Result<()> {
+        self.anonymous_mut().detach(attachment)
+    }
+
+    /// The anonymous machine's devices, in the order its slots were
+    /// filled.
+    pub fn devices(&self) -> &[StorageDevice] {
+        self.anonymous().devices()
+    }
+
+    /// The attachment identities in use in the anonymous machine.
+    pub fn attachments(&self) -> Vec<AttachmentId> {
+        self.anonymous().attachments()
+    }
+
+    pub fn device(&self, attachment: AttachmentId) -> Option<&StorageDevice> {
+        self.anonymous().device(attachment)
+    }
+
+    pub fn device_mut(&mut self, attachment: AttachmentId) -> Option<&mut StorageDevice> {
+        self.anonymous_mut().device_mut(attachment)
+    }
+
+    /// The anonymous machine's device at `attachment`, or a refusal
+    /// naming the empty slot — the way in to the inspection report and
+    /// the file verbs.
+    pub fn require_device(&mut self, attachment: AttachmentId) -> Result<&mut StorageDevice> {
+        self.anonymous_mut().require_device(attachment)
+    }
+}
+
+/// One machine within a session: a set of family-typed storage devices,
+/// their attachment identities, and the order they were attached in.
+///
+/// The device set is the machine's own. Two machines in one session may
+/// each hold an `hdd0`, and neither can reach the other's.
+#[derive(Debug)]
+pub struct Machine {
+    /// Null for the session's anonymous machine.
+    identity: Option<String>,
+    devices: Vec<StorageDevice>,
+}
+
+impl Machine {
+    fn anonymous() -> Self {
+        Self {
+            identity: None,
+            devices: Vec::new(),
+        }
+    }
+
+    fn named(identity: String) -> Self {
+        Self {
+            identity: Some(identity),
+            devices: Vec::new(),
+        }
+    }
+
+    /// This machine's identity, or `None` where it is the session's
+    /// anonymous machine.
+    pub fn identity(&self) -> Option<&str> {
+        self.identity.as_deref()
     }
 
     /// Attaches the medium at `path` to a new device, taking the lowest
@@ -47,7 +248,7 @@ impl Session {
     /// The caller chooses the **slot**, never the name: an attachment
     /// identity is always its family plus its index. A slot already
     /// occupied is refused by name rather than displacing what is there —
-    /// ejecting is [`Session::detach`], and it is a separate act.
+    /// ejecting is [`Machine::detach`], and it is a separate act.
     pub fn attach_at(
         &mut self,
         family: DeviceFamily,
@@ -59,7 +260,7 @@ impl Session {
     }
 
     /// Attaches to the lowest free slot under a caller-declared session
-    /// cache bound (P27), as [`Session::attach`] otherwise does.
+    /// cache bound (P27), as [`Machine::attach`] otherwise does.
     pub fn attach_with_cache(
         &mut self,
         path: impl AsRef<Path>,
@@ -72,7 +273,7 @@ impl Session {
     }
 
     /// Attaches to a named slot under a caller-declared session cache
-    /// bound (P27), as [`Session::attach_at`] otherwise does.
+    /// bound (P27), as [`Machine::attach_at`] otherwise does.
     pub fn attach_at_with_cache(
         &mut self,
         family: DeviceFamily,
@@ -88,7 +289,7 @@ impl Session {
             )));
         }
 
-        let medium = Disk::open_with_cache(path.as_ref(), intent, cache_bytes)?;
+        let medium = MediaState::open_with_cache(path.as_ref(), intent, cache_bytes)?;
 
         // A device accepts only its own family's media (P14). This is
         // where that bites, and it is not idle even with one family
@@ -121,15 +322,16 @@ impl Session {
     /// evidence-bearing lists — a slot is caller-supplied configuration,
     /// not evidence.
     pub fn detach(&mut self, attachment: AttachmentId) -> Result<()> {
-        let position = self.position(attachment).ok_or_else(|| {
-            Error::not_found(format!("no device is attached at {attachment}"))
-        })?;
+        let position = self
+            .position(attachment)
+            .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))?;
         let mut device = self.devices.remove(position);
         drop(device.eject());
         Ok(())
     }
 
-    /// Every attached device, in the order the slots were filled.
+    /// Every device in this machine, in the order the slots were filled —
+    /// the attachment order a namespace composer reads.
     pub fn devices(&self) -> &[StorageDevice] {
         &self.devices
     }
@@ -151,15 +353,7 @@ impl Session {
     pub fn require_device(&mut self, attachment: AttachmentId) -> Result<&mut StorageDevice> {
         self.position(attachment)
             .map(|at| &mut self.devices[at])
-            .ok_or_else(|| {
-                Error::not_found(format!("no device is attached at {attachment}"))
-            })
-    }
-
-    /// The medium in the device at `attachment` — the usual way in to the
-    /// inspection report and the file verbs.
-    pub fn medium(&mut self, attachment: AttachmentId) -> Result<&mut Disk> {
-        self.require_device(attachment)?.require_medium()
+            .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))
     }
 
     fn position(&self, attachment: AttachmentId) -> Option<usize> {
@@ -196,7 +390,7 @@ impl Session {
 /// which is the honest limit of this check rather than a hole in it: NIB
 /// and NBZ, for instance, have no recognizer until the principle that
 /// places them at the flux rung is delivered.
-fn foreign_family(medium: &Disk) -> Option<&'static str> {
+fn foreign_family(medium: &MediaState) -> Option<&'static str> {
     let mut prefix = [0u8; 8];
     if medium.read_at(0, &mut prefix).is_err() {
         return None;

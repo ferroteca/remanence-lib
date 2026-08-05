@@ -3,8 +3,10 @@
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
 A self-contained disk image analysis library in Rust. A `Session` holds
-family-typed storage devices; attaching a disk image — raw, or an entry
-inside a `.zip` or `.7z` archive — to one opens it under a single claim
+machines, a machine holds family-typed storage devices, and a
+`StorageDevice` is the one handle for a slot and the medium in it;
+attaching a disk image — raw, or an entry inside a `.zip` or `.7z`
+archive — opens it under a single claim
 and identifies its container
 layers: the archive wrapper, image format, physical media geometry, and
 probable filesystem, each with comparable confidence and human-readable
@@ -206,20 +208,21 @@ with build instructions in its header comment.
 ## Using the library
 
 ```rust
-// A session is the machine scope; a medium is reached through the
-// storage device it is attached to.
+// A session holds machines; a machine holds devices; a device is the
+// one handle for its slot and whatever medium occupies it. These verbs
+// are the session's anonymous machine, the one whose identity is null.
 let mut session = remanence::Session::new();
 let hdd0 = session.attach("disk.h8d", remanence::AccessIntent::Read)?;
-let disk = session.medium(hdd0)?;
-let identification = disk.identify();
+let device = session.require_device(hdd0)?;
+let identification = device.identify()?;
 for container in &identification.containers {
     println!("{:?} {} ({}%)", container.kind, container.id, container.confidence);
 }
-let files = disk.list_hdos_files()?;
+let files = device.list_hdos_files()?;
 
 // What the open established about the evidence beneath it, before
 // anything is read from it.
-let assurance = disk.assurance();
+let assurance = device.assurance()?;
 println!("{} {:?}", assurance.outcome, assurance.condition);
 for line in &assurance.evidence {
     println!("  {line}");
@@ -233,7 +236,7 @@ let member = session.attach("captures.7z/track00.raw", remanence::AccessIntent::
 
 // The drive letters a DOS machine would have presented: the machine
 // facts are the caller's, the assignment rule is the library's.
-let report = session.medium(hdd0)?.inspect()?;
+let report = session.require_device(hdd0)?.inspect()?;
 let mut machine = remanence::DosMachine::new();
 machine.assert_fixed_disk(0, &report)?;
 for mapping in &machine.compose(Some(remanence::DosAssignmentRule::MsDos5))?.mappings {
@@ -257,15 +260,15 @@ for member in &capture.inspect().members {
 import remanence
 session = remanence.Session()
 hdd0 = session.attach("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
-disk = session.medium(hdd0)
-print(disk.assurance.outcome, disk.assurance.condition, disk.mode)
-for c in disk.identify().containers:
+device = session.device(hdd0)
+print(device.assurance.outcome, device.assurance.condition, device.mode)
+for c in device.identify().containers:
     print(c.kind, c.id, c.confidence)
-for f in disk.list_hdos_files():
+for f in device.list_hdos_files():
     print(f.display_name, f.size_sectors, f.modified_date_string)
 
 machine = remanence.DosMachine()
-machine.assert_fixed_disk(0, disk.inspect())
+machine.assert_fixed_disk(0, device.inspect())
 drives = machine.compose()          # no variant stated: disagreement is reported
 for mapping in drives.mappings:
     print(mapping.letter, mapping.outcome, mapping.volume, mapping.reason)

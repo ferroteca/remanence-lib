@@ -6,7 +6,7 @@
 //! that holds them lives.
 //!
 //! A media instance is the independent mutable state between image
-//! formats and drives — the block state a [`crate::Disk`] presents, the
+//! formats and drives — the block state a [`crate::StorageDevice`] presents, the
 //! circular pulse streams a [`crate::flux_medium::FluxMedium`] holds.
 //! Each of them **names** one of the profiles below, and the recorded
 //! contents stay with the instance: nothing here holds a byte, a pulse,

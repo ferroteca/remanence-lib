@@ -1529,7 +1529,7 @@ pub(crate) fn read_section<K: SectionAddress>(
 /// This layer's bounded working set of decoded sections (P27).
 ///
 /// Caching is per modeled durable layer under one declared session
-/// budget, so this is the capture's own and not the disk stack's: that
+/// budget, so this is the capture's own and not the device stack's: that
 /// one is addressed by extent offset over a virtual disk, and a
 /// capture is addressed by section key.
 ///

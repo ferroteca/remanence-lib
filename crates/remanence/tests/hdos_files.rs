@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{AttachmentId, Session, AccessIntent, Disk, Error, list_hdos_files};
+use remanence::{AttachmentId, Session, AccessIntent, Error, list_hdos_files};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -40,7 +40,7 @@ fn private_copy(tag: &str) -> PathBuf {
 fn lists_files_from_hdos_fixture_image() {
     let path = private_copy("list");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let files = disk.list_hdos_files().expect("directory parses");
     assert_eq!(files.len(), 31);
@@ -102,7 +102,7 @@ fn lists_files_from_hdos_fixture_image() {
 fn reads_a_file_out_through_the_grt_chain() {
     let path = private_copy("read");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let contents =
         disk.read_hdos_file("DEMO.BAS").expect("file reads");

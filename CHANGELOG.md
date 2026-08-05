@@ -276,6 +276,52 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **A session holds machines; a machine holds devices; and `Disk` merges
+  into `StorageDevice`.** Two structural changes to the delivered types,
+  no behavior change at all.
+
+  A **machine** arrives beneath the session as the device set: it owns
+  the attachment identities and the attachment order, and it carries an
+  identity of its own. The session keeps its name and the meaning the
+  principles already give it — the P7 claims, the P27 cache budget and
+  private session storage — and owns every machine's lifetime. Machines
+  in a session do not know about each other, so two of them may each
+  hold an `hdd0` and neither can reach the other's. **The session's
+  anonymous machine is the one whose identity is null**, every session
+  has exactly one of it, and it behaves as any other machine in every
+  respect; `Session::attach` and its kin land there, which is why
+  nothing a caller did before changes meaning. New surface: `Machine`,
+  `Session::add_machine` (a duplicate identity refused by name, the
+  empty one refused as the anonymous machine's), `machines`, `machine`,
+  `require_machine`, `anonymous`; in C `remanence_session_add_machine`,
+  `remanence_session_machine`, `remanence_session_machine_count`,
+  `remanence_session_machine_identity` and the
+  `remanence_machine_*` family, with the anonymous machine reached by
+  passing a null identity; in Python `Machine`, `Session.add_machine`,
+  `Session.machines` and `Session.machine`.
+
+  **`Disk` merges into `StorageDevice` rather than being renamed.** A
+  caller never holds a medium outside a device, so the delivered
+  two-type shape — `session.medium(attachment) -> &mut Disk` — becomes
+  one handle carrying both nodes' data: the slot-side facts
+  (`attachment`, `family`, `is_occupied`) and the content-side facts
+  (`identify`, `inspect`, `assurance`, `mode`, `format`, the file verbs,
+  `commit`, `rollback`) on the same object, with every content verb
+  refusing by name while the slot is empty. The medium survives as a
+  model node and as data — its media type and profile are undisturbed —
+  not as a type: `Disk` is gone from the public surface, and
+  `Session::medium` with it. Callers reach the handle through the
+  already-delivered `require_device`. In C, `RemanenceDisk` becomes
+  `RemanenceDevice`, every `remanence_disk_*` symbol becomes
+  `remanence_device_*`, `remanence_session_medium` becomes
+  `remanence_session_device` (beside `remanence_machine_device`), and
+  `remanence_disk_report_free` joins the report family it belongs to as
+  `remanence_report_free`. In Python, the `Disk` class becomes
+  `StorageDevice` and `Session.medium` becomes `Session.device`.
+
+  In prose the geometry/volumes/files read-write stack is the **device
+  stack**, following its API as D4 named it.
+
 - **P27 splits: the resource rule keeps the title, thread invisibility
   becomes P34.** No rule changed and no surface moved — the two halves
   fail independently, so they are two principles. P27 keeps what its

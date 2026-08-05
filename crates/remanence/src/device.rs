@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The block device seam: the byte-addressed surface the disk stack
-//! works over, the P7 claims — declared intent for the disk stack, the
+//! The block device seam: the byte-addressed surface the device stack
+//! works over, the P7 claims — declared intent for the device stack, the
 //! discovery ladder for identification sessions — and the host-write
 //! capture a durable commit stages into before the recovery journal is
 //! armed (P9). The P2 commit-point buffer itself is the session cache
@@ -40,7 +40,7 @@ impl AccessIntent {
     }
 }
 
-/// A session's access mode. On the disk stack this echoes the declared
+/// A session's access mode. On the device stack this echoes the declared
 /// [`AccessIntent`]; on an identification session it reports what the
 /// P7 ladder obtained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +66,7 @@ pub(crate) trait Device {
 /// Opens `path` under the identification session's P7 ladder: read/write
 /// with writes denied to others (preferred); read-only with writes still
 /// denied to others when our own write permission cannot be had; fail
-/// fast when deny-write cannot be obtained at all. The disk stack does
+/// fast when deny-write cannot be obtained at all. The device stack does
 /// not ladder — it opens per the caller's declared intent
 /// ([`open_declared`]).
 pub(crate) fn open_locked(path: &Path) -> Result<(File, AccessMode)> {

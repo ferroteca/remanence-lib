@@ -4,13 +4,13 @@
 //! Backing-chain unit tests (U6) over synthetic images the
 //! project owns outright: hand-built qcow2 overlays whose chains bottom
 //! out in a hand-built FAT16 volume. Everything runs through the public
-//! `Disk` surface; cluster-level composition semantics are unit-tested
+//! `StorageDevice` surface; cluster-level composition semantics are unit-tested
 //! inside the crate.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use remanence::{AttachmentId, Session, AccessIntent, Disk, DiskFormat, ErrorCategory};
+use remanence::{AttachmentId, Session, AccessIntent, StorageDevice, DiskFormat, ErrorCategory};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -174,7 +174,7 @@ fn run_qemu_img(qemu_img: &Path, args: &[&str]) -> String {
 
 /// The volume a partitionless image composes, named the only way a caller
 /// can name one: by asking the library what it reported.
-fn only_volume(disk: &mut Disk) -> remanence::VolumeId {
+fn only_volume(disk: &mut StorageDevice) -> remanence::VolumeId {
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1, "a partitionless image, one volume");
     report.volumes[0].id
@@ -192,9 +192,9 @@ fn reads_compose_through_a_raw_backing_file() {
     );
 
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    assert_eq!(disk.format(), DiskFormat::Qcow2 { version: 3 });
-    assert_eq!(disk.size(), base.len() as u64);
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Qcow2 { version: 3 });
+    assert_eq!(disk.size().expect("a medium is attached"), base.len() as u64);
 
     // The FAT volume at the bottom of the chain reads as one disk.
     let report = disk.inspect().expect("inspection composes");
@@ -220,11 +220,11 @@ fn reads_compose_through_a_raw_backing_file() {
     let untouched_top = std::fs::read(&overlay).expect("top reads");
     let top_header = untouched_top[..CLUSTER as usize].to_vec();
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"rolled back")
         .expect("write buffers");
-    disk.rollback();
+    disk.rollback().expect("a medium is attached");
     drop(disk_session);
     assert_eq!(
         std::fs::read(&overlay).expect("rolled-back top reads"),
@@ -233,7 +233,7 @@ fn reads_compose_through_a_raw_backing_file() {
     );
 
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"changed in the top")
         .expect("write buffers");
@@ -246,7 +246,7 @@ fn reads_compose_through_a_raw_backing_file() {
         top_header.as_slice()
     );
     let (mut reopened_session, reopened_at) = attach(&overlay, AccessIntent::Read).expect("written chain reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
     let volume = only_volume(reopened);
     assert_eq!(
         reopened.read_file(volume, "MARKER.TXT").expect("changed file reads"),
@@ -275,7 +275,7 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     let before = run_qemu_img(&qemu, &["info", overlay_arg]);
 
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("QEMU chain opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"remanence copy-on-write")
         .expect("write buffers");
@@ -293,7 +293,7 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     run_qemu_img(&qemu, &["convert", "-O", "raw", overlay_arg, flattened_arg]);
     let (mut qemu_session, qemu_at) =
         attach(&flattened, AccessIntent::Read).expect("QEMU-rendered disk opens");
-    let qemu_view = qemu_session.medium(qemu_at).expect("the medium is attached");
+    let qemu_view = qemu_session.require_device(qemu_at).expect("the medium is attached");
     assert_eq!(
         qemu_view
             .read_file(volume, "MARKER.TXT")
@@ -323,7 +323,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     );
 
     let (mut disk_session, disk_at) = attach(&top, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let report = disk.inspect().expect("inspection composes");
     assert_eq!(report.volumes.len(), 1);
     let volume = report.volumes[0].id;
@@ -337,7 +337,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let base_before = std::fs::read(dir.join("base.img")).expect("base reads");
     let mid_before = std::fs::read(dir.join("mid.qcow2")).expect("middle reads");
     let (mut disk_session, disk_at) = attach(&top, AccessIntent::Write).expect("two-level write opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     disk.write_file(volume, "MARKER.TXT", b"changed above two levels")
         .expect("write buffers");
@@ -352,7 +352,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         mid_before
     );
     let (mut reopened_session, reopened_at) = attach(&top, AccessIntent::Read).expect("changed chain reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
     assert_eq!(
         reopened
             .read_file(volume, "MARKER.TXT")
@@ -381,7 +381,7 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
     // No format extension anywhere: the qcow2 middle and the raw base
     // are each told apart by magic, exactly as at the top.
     let (mut disk_session, disk_at) = attach(&top, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     assert_eq!(
         disk.read_file(volume, "MARKER.TXT")
@@ -510,7 +510,7 @@ fn every_chain_member_is_claimed_immutable() {
     );
 
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     // The backing file is immutable while the chain holds it: another
     // writer is refused immediately, another reader stays admitted.
@@ -521,7 +521,7 @@ fn every_chain_member_is_claimed_immutable() {
         ErrorCategory::Locked
     );
     let (mut reader_session, reader_at) = attach(&base_path, AccessIntent::Read).expect("readers stay admitted");
-    let reader = reader_session.medium(reader_at).expect("the medium is attached");
+    let reader = reader_session.require_device(reader_at).expect("the medium is attached");
     drop(reader_session);
 
     // The claim lasts exactly as long as the chain.

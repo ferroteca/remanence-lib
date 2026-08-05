@@ -290,7 +290,7 @@ impl ContainerView {
     }
 }
 
-/// The result of identifying a disk's image.
+/// The result of identifying a medium's image.
 pub struct RemanenceIdentification {
     modified: bool,
     containers: Vec<ContainerView>,
@@ -401,29 +401,39 @@ pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
 
 
 
-/// The artifact the disk was opened from (the archive path for archive inputs).
+/// The artifact the medium was opened from (the archive path for archive
+/// inputs). Null while the device's slot is empty.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_path(disk: *const RemanenceDisk) -> *const c_char {
-    match unsafe { disk.as_ref() } {
-        Some(handle) => handle.path.as_ptr(),
+pub unsafe extern "C" fn remanence_device_path(device: *const RemanenceDevice) -> *const c_char {
+    match unsafe { device.as_ref() } {
+        Some(handle) => handle
+            .path
+            .as_ref()
+            .map_or(ptr::null(), |path| path.as_ptr()),
         None => ptr::null(),
     }
 }
 
 /// The resolved image path (the entry name for archive inputs).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_image_path(disk: *const RemanenceDisk) -> *const c_char {
-    match unsafe { disk.as_ref() } {
-        Some(handle) => handle.image_path.as_ptr(),
+pub unsafe extern "C" fn remanence_device_image_path(device: *const RemanenceDevice) -> *const c_char {
+    match unsafe { device.as_ref() } {
+        Some(handle) => handle
+            .image_path
+            .as_ref()
+            .map_or(ptr::null(), |path| path.as_ptr()),
         None => ptr::null(),
     }
 }
 
 /// The resolved image's size in bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_image_size_bytes(disk: *const RemanenceDisk) -> u64 {
-    match unsafe { disk.as_ref() } {
-        Some(handle) => handle.medium().map_or(0, |m| m.image_size_bytes()),
+pub unsafe extern "C" fn remanence_device_image_size_bytes(device: *const RemanenceDevice) -> u64 {
+    match unsafe { device.as_ref() } {
+        Some(handle) => handle
+            .device()
+            .and_then(|device| device.image_size_bytes().ok())
+            .unwrap_or(0),
         None => 0,
     }
 }
@@ -433,8 +443,8 @@ pub unsafe extern "C" fn remanence_disk_image_size_bytes(disk: *const RemanenceD
 /// backing and is never resident whole. Returns false on failure and
 /// stores a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_read_at(
-    disk: *const RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_read_at(
+    device: *const RemanenceDevice,
     offset: u64,
     buffer_out: *mut u8,
     length: usize,
@@ -443,8 +453,8 @@ pub unsafe extern "C" fn remanence_disk_read_at(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { disk.as_ref() }) else {
-        let error = remanence::Error::io("null disk");
+    let Some(handle) = (unsafe { device.as_ref() }) else {
+        let error = remanence::Error::io("null device");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -454,7 +464,7 @@ pub unsafe extern "C" fn remanence_disk_read_at(
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
-        let Some(medium) = handle.medium() else {
+        let Some(medium) = handle.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -471,19 +481,19 @@ pub unsafe extern "C" fn remanence_disk_read_at(
 /// Identifies the image's container layers and probable filesystem. Free the
 /// result with `remanence_identification_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_identify(
-    disk: *const RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_identify(
+    device: *const RemanenceDevice,
 ) -> *mut RemanenceIdentification {
-    let Some(handle) = (unsafe { disk.as_ref() }) else {
+    let Some(handle) = (unsafe { device.as_ref() }) else {
         return ptr::null_mut();
     };
     let Identification {
         containers,
         modified,
         evidence,
-    } = match handle.medium() {
-        Some(medium) => medium.identify(),
-        None => return ptr::null_mut(),
+    } = match handle.device().map(|device| device.identify()) {
+        Some(Ok(identification)) => identification,
+        _ => return ptr::null_mut(),
     };
 
     Box::into_raw(Box::new(RemanenceIdentification {
@@ -501,7 +511,7 @@ pub unsafe extern "C" fn remanence_identification_free(identification: *mut Rema
     }
 }
 
-/// Whether the disk reported unsaved modifications at identify time.
+/// Whether the medium reported unsaved modifications at identify time.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_identification_modified(
     identification: *const RemanenceIdentification,
@@ -904,22 +914,22 @@ pub unsafe extern "C" fn remanence_list_hdos_files(
     hdos_list_from_bytes(bytes, error_category_out, error_out, error_rule_out)
 }
 
-/// Parses the HDOS directory from the disk's image. Returns null on
+/// Parses the HDOS directory from the medium's image. Returns null on
 /// failure and stores a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_list_hdos_files(
-    disk: *const RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_list_hdos_files(
+    device: *const RemanenceDevice,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceHdosFileList {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { disk.as_ref() }) else {
-        let error = remanence::Error::io("null disk");
+    let Some(handle) = (unsafe { device.as_ref() }) else {
+        let error = remanence::Error::io("null device");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-        let Some(medium) = handle.medium() else {
+        let Some(medium) = handle.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
@@ -1029,13 +1039,13 @@ pub unsafe extern "C" fn remanence_hdos_file_modified_date(
 }
 
 // ---------------------------------------------------------------------------
-// The Disk surface (U3/U4): open a raw, qcow2 or VDI image under the
-// P7 claim, report partitions and volumes, read/write FAT files with a
-// commit point.
+// The storage-device surface (U3/U4): attach a raw, qcow2 or VDI image
+// under the P7 claim, report partitions and volumes, read/write FAT
+// files with a commit point.
 
 use remanence::{
-    AccessIntent, AccessMode, Disk, DiskContent, DiskFormat, FatEntry, FatEntryKind, RegionRole,
-    VolumeId, VolumeOrigin, read_hdos_file,
+    AccessIntent, AccessMode, DiskContent, DiskFormat, FatEntry, FatEntryKind, RegionRole,
+    StorageDevice, VolumeId, VolumeOrigin, read_hdos_file,
 };
 
 /// The caller's declared intent when opening a disk (P7).
@@ -1046,7 +1056,7 @@ pub enum RemanenceAccessIntent {
     Write,
 }
 
-/// A disk session's effective access mode: the declared intent's echo
+/// A medium's effective access mode: the declared intent's echo
 /// (P7) where the evidence supports it, read-only where it does not (P28).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1072,6 +1082,13 @@ pub enum RemanenceFatEntryKind {
     Directory,
 }
 
+fn access_intent(intent: RemanenceAccessIntent) -> AccessIntent {
+    match intent {
+        RemanenceAccessIntent::Read => AccessIntent::Read,
+        RemanenceAccessIntent::Write => AccessIntent::Write,
+    }
+}
+
 fn access_mode(mode: AccessMode) -> RemanenceAccessMode {
     match mode {
         AccessMode::ReadWrite => RemanenceAccessMode::ReadWrite,
@@ -1079,37 +1096,73 @@ fn access_mode(mode: AccessMode) -> RemanenceAccessMode {
     }
 }
 
-/// An open session: the machine scope, holding a set of family-typed
-/// storage devices (P32).
+/// An open session: the claim and cache scope, holding the machines
+/// within it (P32).
 pub struct RemanenceSession {
     session: Session,
-    /// Borrowed medium views handed to callers. Owned here so their
+    /// Borrowed machine views handed to callers, owned here and freed
+    /// with the session.
+    machines: Vec<Box<RemanenceMachine>>,
+    /// Borrowed device views handed to callers. Owned here so their
     /// strings outlive the call that produced them, and freed with the
     /// session.
-    views: Vec<Box<RemanenceDisk>>,
+    views: Vec<Box<RemanenceDevice>>,
 }
 
-/// A borrowed view of the medium in one storage device.
+/// A borrowed view of one machine in a session.
+///
+/// **The session owns this; never free it.** It stays valid until the
+/// session is freed.
+pub struct RemanenceMachine {
+    session: *mut RemanenceSession,
+    /// Null for the session's anonymous machine.
+    identity: Option<String>,
+    identity_c: Option<CString>,
+}
+
+impl RemanenceMachine {
+    /// The machine this view names. The anonymous one always resolves;
+    /// a named one resolves for as long as the session holds it.
+    #[allow(clippy::mut_from_ref)]
+    fn machine(&self) -> Option<&mut remanence::Machine> {
+        let session = unsafe { &mut (*self.session).session };
+        match &self.identity {
+            Some(identity) => session.machine_mut(identity),
+            None => Some(session.anonymous_mut()),
+        }
+    }
+}
+
+/// A borrowed view of one storage device — the slot, its family, and the
+/// state of the medium in it.
 ///
 /// **The session owns this; never free it.** It stays valid until the
 /// device is detached or the session is freed.
 ///
-/// It names the medium by session and attachment identity rather than by
-/// pointer, and re-resolves on every call. That is deliberate: a later
-/// attach may reallocate the session's device storage, so a cached
-/// pointer to the medium itself would dangle silently.
-pub struct RemanenceDisk {
+/// It names the device by session, machine and attachment identity
+/// rather than by pointer, and re-resolves on every call. That is
+/// deliberate: a later attach may reallocate the machine's device
+/// storage, so a cached pointer to the device itself would dangle
+/// silently.
+pub struct RemanenceDevice {
     session: *mut RemanenceSession,
+    /// Null for the session's anonymous machine.
+    machine: Option<String>,
     attachment: AttachmentId,
-    path: CString,
-    image_path: CString,
+    path: Option<CString>,
+    image_path: Option<CString>,
 }
 
-impl RemanenceDisk {
-    /// The medium this view names, or `None` once its device is detached.
+impl RemanenceDevice {
+    /// The device this view names, or `None` once it is detached.
     #[allow(clippy::mut_from_ref)]
-    fn medium(&self) -> Option<&mut Disk> {
-        unsafe { (*self.session).session.medium(self.attachment).ok() }
+    fn device(&self) -> Option<&mut StorageDevice> {
+        let session = unsafe { &mut (*self.session).session };
+        let machine = match &self.machine {
+            Some(identity) => session.machine_mut(identity)?,
+            None => session.anonymous_mut(),
+        };
+        machine.device_mut(self.attachment)
     }
 }
 
@@ -1151,19 +1204,22 @@ unsafe fn utf8_arg<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
     ))
 }
 
-/// Opens an empty session — the machine scope. Devices are attached and
-/// detached over its life; the set is not fixed at open. Free with
+/// Opens an empty session — the claim and cache scope, holding nothing
+/// but its anonymous machine. Machines and devices are added over its
+/// life; neither set is fixed at open. Free with
 /// `remanence_session_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_new() -> *mut RemanenceSession {
     Box::into_raw(Box::new(RemanenceSession {
         session: Session::new(),
+        machines: Vec::new(),
         views: Vec::new(),
     }))
 }
 
 /// Frees a session, detaching every device and releasing every P7 claim.
-/// Every borrowed medium view obtained from it becomes invalid.
+/// Every borrowed machine and device view obtained from it becomes
+/// invalid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) {
     if !session.is_null() {
@@ -1172,9 +1228,11 @@ pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) 
 }
 
 /// Attaches the medium at `path` (UTF-8) — a raw disk image, or
-/// `archive[/entry]` — to a new device in the lowest free slot of its
-/// family, writing the attachment identity it took (such as `hdd0`) to
-/// `attachment_out`. Free that string with `remanence_string_free`. A
+/// `archive[/entry]` — to a new device in the session's **anonymous
+/// machine**, taking the lowest free slot of its family and writing the
+/// attachment identity it took (such as `hdd0`) to `attachment_out`;
+/// free that string with `remanence_string_free`.
+/// `remanence_machine_attach` does the same in a named machine. A
 /// `Write` intent claims the medium exclusively and fails at the open
 /// when the claim cannot be secured, never by falling back. Returns
 /// false on failure.
@@ -1199,10 +1257,7 @@ pub unsafe extern "C" fn remanence_session_attach(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
-    let intent = match intent {
-        RemanenceAccessIntent::Read => AccessIntent::Read,
-        RemanenceAccessIntent::Write => AccessIntent::Write,
-    };
+    let intent = access_intent(intent);
     match handle.session.attach(path.as_ref(), intent) {
         Ok(attachment) => {
             if !attachment_out.is_null() {
@@ -1218,9 +1273,10 @@ pub unsafe extern "C" fn remanence_session_attach(
 }
 
 /// Attaches the medium at `path` to the slot `attachment` names (such as
-/// `hdd1`). The caller chooses the slot, never the name. A slot already
-/// occupied is refused rather than displaced, and a family this release
-/// does not claim is refused by name (P3).
+/// `hdd1`) in the session's anonymous machine. The caller chooses the
+/// slot, never the name. A slot already occupied is refused rather than
+/// displaced, and a family this release does not claim is refused by
+/// name (P3).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_attach_at(
     session: *mut RemanenceSession,
@@ -1251,10 +1307,7 @@ pub unsafe extern "C" fn remanence_session_attach_at(
             return false;
         }
     };
-    let intent = match intent {
-        RemanenceAccessIntent::Read => AccessIntent::Read,
-        RemanenceAccessIntent::Write => AccessIntent::Write,
-    };
+    let intent = access_intent(intent);
     match handle.session.attach_at(
         attachment.family(),
         attachment.index(),
@@ -1269,9 +1322,9 @@ pub unsafe extern "C" fn remanence_session_attach_at(
     }
 }
 
-/// Detaches the device at `attachment`, releasing its medium's P7 claim
-/// and freeing the slot. Borrowed medium views for that device become
-/// invalid.
+/// Detaches the device at `attachment` from the session's anonymous
+/// machine, releasing its medium's P7 claim and freeing the slot.
+/// Borrowed device views for that device become invalid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_detach(
     session: *mut RemanenceSession,
@@ -1300,7 +1353,9 @@ pub unsafe extern "C" fn remanence_session_detach(
     };
     match handle.session.detach(attachment) {
         Ok(()) => {
-            handle.views.retain(|view| view.attachment != attachment);
+            handle
+                .views
+                .retain(|view| view.machine.is_some() || view.attachment != attachment);
             true
         }
         Err(error) => {
@@ -1310,7 +1365,7 @@ pub unsafe extern "C" fn remanence_session_detach(
     }
 }
 
-/// How many devices the session holds.
+/// How many devices the session's anonymous machine holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_device_count(
     session: *const RemanenceSession,
@@ -1339,16 +1394,346 @@ pub unsafe extern "C" fn remanence_session_device_attachment(
     true
 }
 
-/// A **borrowed** view of the medium in the device at `attachment`.
+/// Adds a machine carrying `identity` (UTF-8) to the session and returns
+/// a **borrowed** view of it.
+///
+/// The session owns it; never free it. An identity already in use is
+/// refused by name rather than resolving to the machine holding it, and
+/// the empty identity is refused too — the machine with no identity is
+/// the session's anonymous one, and there is exactly one of it. Returns
+/// null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_add_machine(
+    session: *mut RemanenceSession,
+    identity: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMachine {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let Some(identity) = (unsafe { utf8_arg(identity) }) else {
+        let error = remanence::Error::io("null machine identity");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let identity = identity.into_owned();
+    if let Err(error) = handle.session.add_machine(identity.clone()) {
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    unsafe { machine_view(session, Some(identity)) }
+}
+
+/// How many machines the session holds, the anonymous one among them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_machine_count(
+    session: *const RemanenceSession,
+) -> usize {
+    unsafe { session.as_ref() }.map_or(0, |handle| handle.session.machines().len())
+}
+
+/// Writes the identity of machine `index` to `identity_out`, freed with
+/// `remanence_string_free`. Returns false when `index` is out of range;
+/// writes null for the anonymous machine, whose identity is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_machine_identity(
+    session: *const RemanenceSession,
+    index: usize,
+    identity_out: *mut *mut c_char,
+) -> bool {
+    let Some(handle) = (unsafe { session.as_ref() }) else {
+        return false;
+    };
+    let Some(machine) = handle.session.machines().get(index) else {
+        return false;
+    };
+    if !identity_out.is_null() {
+        unsafe {
+            *identity_out = match machine.identity() {
+                Some(identity) => to_owned_c_char(identity),
+                None => ptr::null_mut(),
+            }
+        };
+    }
+    true
+}
+
+/// A **borrowed** view of the machine carrying `identity` (UTF-8), or of
+/// the session's **anonymous machine** when `identity` is null — the
+/// anonymous machine being exactly the one whose identity is null.
+///
+/// The session owns it; never free it. Returns null when the session
+/// holds no machine of that identity.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_machine(
+    session: *mut RemanenceSession,
+    identity: *const c_char,
+) -> *mut RemanenceMachine {
+    let Some(handle) = (unsafe { session.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let identity = unsafe { utf8_arg(identity) }.map(|identity| identity.into_owned());
+    if let Some(identity) = &identity {
+        if handle.session.machine(identity).is_none() {
+            return ptr::null_mut();
+        }
+    }
+    unsafe { machine_view(session, identity) }
+}
+
+/// The machine's identity, or null where it is the session's anonymous
+/// machine. Owned by the view; do not free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_identity(
+    machine: *const RemanenceMachine,
+) -> *const c_char {
+    match unsafe { machine.as_ref() } {
+        Some(handle) => handle
+            .identity_c
+            .as_ref()
+            .map_or(ptr::null(), |identity| identity.as_ptr()),
+        None => ptr::null(),
+    }
+}
+
+/// Attaches the medium at `path` (UTF-8) to a new device in this
+/// machine, taking the lowest free slot of its family and writing the
+/// attachment identity it took to `attachment_out`. Free that string
+/// with `remanence_string_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_attach(
+    machine: *mut RemanenceMachine,
+    path: *const c_char,
+    intent: RemanenceAccessIntent,
+    attachment_out: *mut *mut c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(target) = (unsafe { machine.as_ref() }).and_then(RemanenceMachine::machine) else {
+        let error = remanence::Error::io("null or retired machine");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match target.attach(path.as_ref(), access_intent(intent)) {
+        Ok(attachment) => {
+            if !attachment_out.is_null() {
+                unsafe { *attachment_out = to_owned_c_char(&attachment.to_string()) };
+            }
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Attaches the medium at `path` to the slot `attachment` names in this
+/// machine. The caller chooses the slot, never the name; an occupied
+/// slot is refused rather than displaced, and a family this release does
+/// not claim is refused by name (P3).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_attach_at(
+    machine: *mut RemanenceMachine,
+    attachment: *const c_char,
+    path: *const c_char,
+    intent: RemanenceAccessIntent,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(target) = (unsafe { machine.as_ref() }).and_then(RemanenceMachine::machine) else {
+        let error = remanence::Error::io("null or retired machine");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let (Some(attachment), Some(path)) =
+        (unsafe { utf8_arg(attachment) }, unsafe { utf8_arg(path) })
+    else {
+        let error = remanence::Error::io("null attachment or path");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let attachment = match AttachmentId::parse(attachment.as_ref()) {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return false;
+        }
+    };
+    match target.attach_at(
+        attachment.family(),
+        attachment.index(),
+        path.as_ref(),
+        access_intent(intent),
+    ) {
+        Ok(_) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Detaches the device at `attachment` from this machine, releasing its
+/// medium's P7 claim and freeing the slot. Borrowed device views for
+/// that device become invalid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_detach(
+    machine: *mut RemanenceMachine,
+    attachment: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { machine.as_ref() }) else {
+        let error = remanence::Error::io("null machine");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(target) = handle.machine() else {
+        let error = remanence::Error::io("null or retired machine");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(attachment) = (unsafe { utf8_arg(attachment) }) else {
+        let error = remanence::Error::io("null attachment");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let attachment = match AttachmentId::parse(attachment.as_ref()) {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return false;
+        }
+    };
+    match target.detach(attachment) {
+        Ok(()) => {
+            let identity = handle.identity.clone();
+            let session = unsafe { &mut *handle.session };
+            session
+                .views
+                .retain(|view| view.machine != identity || view.attachment != attachment);
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// How many devices this machine holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_device_count(
+    machine: *const RemanenceMachine,
+) -> usize {
+    unsafe { machine.as_ref() }
+        .and_then(RemanenceMachine::machine)
+        .map_or(0, |machine| machine.devices().len())
+}
+
+/// Writes the attachment identity of device `index` in this machine to
+/// `attachment_out`, freed with `remanence_string_free`. Returns false
+/// when `index` is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_device_attachment(
+    machine: *const RemanenceMachine,
+    index: usize,
+    attachment_out: *mut *mut c_char,
+) -> bool {
+    let Some(target) = (unsafe { machine.as_ref() }).and_then(RemanenceMachine::machine) else {
+        return false;
+    };
+    let Some(device) = target.devices().get(index) else {
+        return false;
+    };
+    if !attachment_out.is_null() {
+        unsafe { *attachment_out = to_owned_c_char(&device.attachment().to_string()) };
+    }
+    true
+}
+
+/// A **borrowed** view of the device at `attachment` in this machine.
+///
+/// The session owns it; never free it. It stays valid until that device
+/// is detached or the session is freed. Returns null when this machine
+/// has no device there.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_machine_device(
+    machine: *mut RemanenceMachine,
+    attachment: *const c_char,
+) -> *mut RemanenceDevice {
+    let Some(handle) = (unsafe { machine.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let session = handle.session;
+    let identity = handle.identity.clone();
+    unsafe { device_view(session, identity, attachment) }
+}
+
+/// A **borrowed** view of the device at `attachment` in the session's
+/// anonymous machine — `remanence_machine_device` reaches a named
+/// machine's.
 ///
 /// The session owns it; never free it. It stays valid until that device
 /// is detached or the session is freed. Returns null when nothing is
 /// attached there.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_medium(
+pub unsafe extern "C" fn remanence_session_device(
     session: *mut RemanenceSession,
     attachment: *const c_char,
-) -> *mut RemanenceDisk {
+) -> *mut RemanenceDevice {
+    unsafe { device_view(session, None, attachment) }
+}
+
+/// The borrowed machine view for `identity`, reusing the one already
+/// handed out where there is one so a caller's pointers stay stable.
+unsafe fn machine_view(
+    session: *mut RemanenceSession,
+    identity: Option<String>,
+) -> *mut RemanenceMachine {
+    let Some(handle) = (unsafe { session.as_mut() }) else {
+        return ptr::null_mut();
+    };
+    if let Some(at) = handle
+        .machines
+        .iter()
+        .position(|view| view.identity == identity)
+    {
+        return handle.machines[at].as_mut() as *mut RemanenceMachine;
+    }
+    let identity_c = identity.as_deref().map(to_cstring);
+    handle.machines.push(Box::new(RemanenceMachine {
+        session,
+        identity,
+        identity_c,
+    }));
+    handle.machines.last_mut().expect("just pushed").as_mut() as *mut RemanenceMachine
+}
+
+/// The borrowed device view for one attachment in one machine, reusing
+/// the one already handed out where there is one.
+unsafe fn device_view(
+    session: *mut RemanenceSession,
+    machine: Option<String>,
+    attachment: *const c_char,
+) -> *mut RemanenceDevice {
     let Some(handle) = (unsafe { session.as_mut() }) else {
         return ptr::null_mut();
     };
@@ -1361,40 +1746,44 @@ pub unsafe extern "C" fn remanence_session_medium(
     if let Some(at) = handle
         .views
         .iter()
-        .position(|view| view.attachment == attachment)
+        .position(|view| view.machine == machine && view.attachment == attachment)
     {
-        return handle.views[at].as_mut() as *mut RemanenceDisk;
+        return handle.views[at].as_mut() as *mut RemanenceDevice;
     }
-    let Some(medium) = handle
-        .session
-        .device_mut(attachment)
-        .and_then(|device| device.medium_mut())
-    else {
+    let target = match &machine {
+        Some(identity) => handle.session.machine_mut(identity),
+        None => Some(handle.session.anonymous_mut()),
+    };
+    let Some(device) = target.and_then(|target| target.device_mut(attachment)) else {
         return ptr::null_mut();
     };
-    let path = to_cstring(medium.path());
-    let image_path = to_cstring(&medium.image_path().display().to_string());
-    handle.views.push(Box::new(RemanenceDisk {
+    let path = device.path().ok().map(to_cstring);
+    let image_path = device
+        .image_path()
+        .ok()
+        .map(|image_path| to_cstring(&image_path.display().to_string()));
+    handle.views.push(Box::new(RemanenceDevice {
         session,
+        machine,
         attachment,
         path,
         image_path,
     }));
-    handle
-        .views
-        .last_mut()
-        .expect("just pushed")
-        .as_mut() as *mut RemanenceDisk
+    handle.views.last_mut().expect("just pushed").as_mut() as *mut RemanenceDevice
 }
 
-/// The disk session's **effective** access mode: the declared intent's
+/// The medium's **effective** access mode: the declared intent's
 /// echo where the evidence supports it, and read-only where it does not
 /// (P28). `remanence_assurance_access_mode` reports the same value beside
 /// the reason for it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_mode(disk: *const RemanenceDisk) -> RemanenceAccessMode {
-    unsafe { disk.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |disk| {
-        access_mode(disk.medium().map_or(AccessMode::ReadOnly, |m| m.mode()))
+pub unsafe extern "C" fn remanence_device_mode(device: *const RemanenceDevice) -> RemanenceAccessMode {
+    unsafe { device.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |device| {
+        access_mode(
+            device.device()
+                .and_then(|device| device.mode().ok())
+                .unwrap_or(AccessMode::ReadOnly),
+        )
     })
 }
 
@@ -1433,13 +1822,15 @@ pub struct RemanenceAssurance {
 /// by being told rather than by an operation failing halfway. Null only
 /// when the device holding this medium was detached.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_assurance(
-    disk: *const RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_assurance(
+    device: *const RemanenceDevice,
 ) -> *mut RemanenceAssurance {
-    let Some(medium) = (unsafe { disk.as_ref() }).and_then(RemanenceDisk::medium) else {
+    let Some(medium) = (unsafe { device.as_ref() }).and_then(RemanenceDevice::device) else {
         return ptr::null_mut();
     };
-    let assurance = medium.assurance();
+    let Ok(assurance) = medium.assurance() else {
+        return ptr::null_mut();
+    };
     Box::into_raw(Box::new(RemanenceAssurance {
         outcome: match assurance.outcome {
             remanence::AssuranceOutcome::Verified => RemanenceAssuranceOutcome::Verified,
@@ -1617,8 +2008,8 @@ pub extern "C" fn remanence_assurance_condition_name(index: usize) -> *const c_c
 
 /// The detected container format.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_format(disk: *const RemanenceDisk) -> RemanenceDiskFormat {
-    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
+pub unsafe extern "C" fn remanence_device_format(device: *const RemanenceDevice) -> RemanenceDiskFormat {
+    match unsafe { device.as_ref() }.and_then(|device| device.device()?.format().ok()) {
         Some(DiskFormat::Qcow2 { .. }) => RemanenceDiskFormat::Qcow2,
         Some(DiskFormat::Vdi { .. }) => RemanenceDiskFormat::Vdi,
         _ => RemanenceDiskFormat::Raw,
@@ -1627,8 +2018,8 @@ pub unsafe extern "C" fn remanence_disk_format(disk: *const RemanenceDisk) -> Re
 
 /// The qcow2 version, or 0 for an image of any other format.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_qcow2_version(disk: *const RemanenceDisk) -> u32 {
-    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
+pub unsafe extern "C" fn remanence_device_qcow2_version(device: *const RemanenceDevice) -> u32 {
+    match unsafe { device.as_ref() }.and_then(|device| device.device()?.format().ok()) {
         Some(DiskFormat::Qcow2 { version }) => version,
         _ => 0,
     }
@@ -1636,8 +2027,8 @@ pub unsafe extern "C" fn remanence_disk_qcow2_version(disk: *const RemanenceDisk
 
 /// The VDI version's major part, or 0 for an image of any other format.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_vdi_version_major(disk: *const RemanenceDisk) -> u32 {
-    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
+pub unsafe extern "C" fn remanence_device_vdi_version_major(device: *const RemanenceDevice) -> u32 {
+    match unsafe { device.as_ref() }.and_then(|device| device.device()?.format().ok()) {
         Some(DiskFormat::Vdi { major, .. }) => major,
         _ => 0,
     }
@@ -1647,8 +2038,8 @@ pub unsafe extern "C" fn remanence_disk_vdi_version_major(disk: *const Remanence
 /// Read it beside the major part: on its own, 0 is both "minor zero" and
 /// "not a VDI".
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_vdi_version_minor(disk: *const RemanenceDisk) -> u32 {
-    match unsafe { disk.as_ref() }.and_then(|disk| disk.medium().map(|m| m.format())) {
+pub unsafe extern "C" fn remanence_device_vdi_version_minor(device: *const RemanenceDevice) -> u32 {
+    match unsafe { device.as_ref() }.and_then(|device| device.device()?.format().ok()) {
         Some(DiskFormat::Vdi { minor, .. }) => minor,
         _ => 0,
     }
@@ -1656,21 +2047,25 @@ pub unsafe extern "C" fn remanence_disk_vdi_version_minor(disk: *const Remanence
 
 /// The virtual disk size in bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_size(disk: *const RemanenceDisk) -> u64 {
-    unsafe { disk.as_ref() }.map_or(0, |disk| disk.medium().map_or(0, |m| m.size()))
+pub unsafe extern "C" fn remanence_device_size(device: *const RemanenceDevice) -> u64 {
+    unsafe { device.as_ref() }
+        .and_then(|device| device.device()?.size().ok())
+        .unwrap_or(0)
 }
 
 /// Whether uncommitted changes exist.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_is_modified(disk: *const RemanenceDisk) -> bool {
-    unsafe { disk.as_ref() }.is_some_and(|disk| disk.medium().is_some_and(|m| m.is_modified()))
+pub unsafe extern "C" fn remanence_device_is_modified(device: *const RemanenceDevice) -> bool {
+    unsafe { device.as_ref() }
+        .and_then(|device| device.device()?.is_modified().ok())
+        .unwrap_or(false)
 }
 
 /// Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
 /// with `remanence_fat_entry_list_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_entries(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_entries(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
@@ -1678,11 +2073,11 @@ pub unsafe extern "C" fn remanence_disk_entries(
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFatEntryList {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return ptr::null_mut();
     };
     let path = unsafe { utf8_arg(path) }.unwrap_or_default();
-        let Some(medium) = disk.medium() else {
+        let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
@@ -1705,8 +2100,8 @@ pub unsafe extern "C" fn remanence_disk_entries(
 /// Absence is an answer, distinguished from failure, which returns null
 /// with the error set. Free with `remanence_fat_entry_list_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_stat(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_stat(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
@@ -1714,7 +2109,7 @@ pub unsafe extern "C" fn remanence_disk_stat(
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFatEntryList {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return ptr::null_mut();
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -1722,7 +2117,7 @@ pub unsafe extern "C" fn remanence_disk_stat(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-        let Some(medium) = disk.medium() else {
+        let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
@@ -1790,8 +2185,8 @@ pub unsafe extern "C" fn remanence_fat_entry_size_bytes(
 /// Copies a file's bytes out of `volume_id`. Free with
 /// `remanence_file_data_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_read_file(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_read_file(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
@@ -1799,7 +2194,7 @@ pub unsafe extern "C" fn remanence_disk_read_file(
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFileData {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return ptr::null_mut();
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -1807,7 +2202,7 @@ pub unsafe extern "C" fn remanence_disk_read_file(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-        let Some(medium) = disk.medium() else {
+        let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
@@ -1822,11 +2217,11 @@ pub unsafe extern "C" fn remanence_disk_read_file(
 }
 
 /// Reads part of a file into `buffer_out` — the streamed form beside
-/// `remanence_disk_read_file`: exactly `length` bytes at `offset`,
+/// `remanence_device_read_file`: exactly `length` bytes at `offset`,
 /// which must lie within the file.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_read_file_at(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_read_file_at(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     offset: u64,
@@ -1837,7 +2232,7 @@ pub unsafe extern "C" fn remanence_disk_read_file_at(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -1851,7 +2246,7 @@ pub unsafe extern "C" fn remanence_disk_read_file_at(
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
-    let Some(medium) = disk.medium() else {
+    let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -1866,11 +2261,11 @@ pub unsafe extern "C" fn remanence_disk_read_file_at(
 }
 
 /// Sets a file's size, creating it when absent — with
-/// `remanence_disk_write_file_at`, the streamed replacement for
-/// `remanence_disk_write_file`. Buffered until commit.
+/// `remanence_device_write_file_at`, the streamed replacement for
+/// `remanence_device_write_file`. Buffered until commit.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_resize_file(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_resize_file(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     size: u64,
@@ -1879,7 +2274,7 @@ pub unsafe extern "C" fn remanence_disk_resize_file(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -1887,7 +2282,7 @@ pub unsafe extern "C" fn remanence_disk_resize_file(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
-        let Some(medium) = disk.medium() else {
+        let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -1902,11 +2297,11 @@ pub unsafe extern "C" fn remanence_disk_resize_file(
 }
 
 /// Writes part of a file in place — the streamed form beside
-/// `remanence_disk_write_file`: the span must lie within the file's
+/// `remanence_device_write_file`: the span must lie within the file's
 /// current size. Buffered until commit.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_write_file_at(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_write_file_at(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     offset: u64,
@@ -1917,7 +2312,7 @@ pub unsafe extern "C" fn remanence_disk_write_file_at(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -1935,7 +2330,7 @@ pub unsafe extern "C" fn remanence_disk_write_file_at(
     } else {
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
-    let Some(medium) = disk.medium() else {
+    let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -1981,10 +2376,10 @@ pub unsafe extern "C" fn remanence_file_data_free(data: *mut RemanenceFileData) 
 
 /// Writes a file into `volume_id`. An existing file is overwritten —
 /// shorter or longer, its old clusters released and reclaimed — while
-/// an existing directory is refused. Buffered until `remanence_disk_commit`.
+/// an existing directory is refused. Buffered until `remanence_device_commit`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_write_file(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_write_file(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     bytes: *const u8,
@@ -1994,7 +2389,7 @@ pub unsafe extern "C" fn remanence_disk_write_file(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -2012,7 +2407,7 @@ pub unsafe extern "C" fn remanence_disk_write_file(
     } else {
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
-    let Some(medium) = disk.medium() else {
+    let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -2030,8 +2425,8 @@ pub unsafe extern "C" fn remanence_disk_write_file(
 /// created, and a path that already leads to a directory succeeds
 /// unchanged. Buffered until commit.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_make_directory(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_make_directory(
+    device: *mut RemanenceDevice,
     volume_id: u64,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
@@ -2039,7 +2434,7 @@ pub unsafe extern "C" fn remanence_disk_make_directory(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return false;
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -2047,7 +2442,7 @@ pub unsafe extern "C" fn remanence_disk_make_directory(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
-        let Some(medium) = disk.medium() else {
+        let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -2068,17 +2463,17 @@ pub unsafe extern "C" fn remanence_disk_make_directory(
 /// state the next open reconciles to wholly the old image or wholly
 /// the committed new one.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_commit(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_commit(
+    device: *mut RemanenceDevice,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return false;
     };
-        let Some(medium) = disk.medium() else {
+        let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -2094,10 +2489,10 @@ pub unsafe extern "C" fn remanence_disk_commit(
 
 /// Discards everything buffered; the image is untouched.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_rollback(disk: *mut RemanenceDisk) {
-    if let Some(disk) = unsafe { disk.as_mut() } {
-        if let Some(medium) = disk.medium() {
-            medium.rollback();
+pub unsafe extern "C" fn remanence_device_rollback(device: *mut RemanenceDevice) {
+    if let Some(device) = unsafe { device.as_mut() } {
+        if let Some(medium) = device.device() {
+            let _ = medium.rollback();
         }
     }
 }
@@ -2134,19 +2529,19 @@ pub unsafe extern "C" fn remanence_read_hdos_file(
     }
 }
 
-/// Reads a cataloged HDOS file out of the disk's image. Free with
+/// Reads a cataloged HDOS file out of the medium's image. Free with
 /// `remanence_file_data_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_read_hdos_file(
-    disk: *const RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_read_hdos_file(
+    device: *const RemanenceDevice,
     name: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceFileData {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { disk.as_ref() }) else {
-        let error = remanence::Error::io("null disk");
+    let Some(handle) = (unsafe { device.as_ref() }) else {
+        let error = remanence::Error::io("null device");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
@@ -2155,7 +2550,7 @@ pub unsafe extern "C" fn remanence_disk_read_hdos_file(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-        let Some(medium) = handle.medium() else {
+        let Some(medium) = handle.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
@@ -4973,7 +5368,7 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_evidence(
 // parsing.
 
 /// A snapshot of one disk's layered inspection. Owned by the caller and
-/// released with `remanence_disk_report_free`; every string and record
+/// released with `remanence_report_free`; every string and record
 /// reached through it is borrowed from it and dies with it.
 pub struct RemanenceDiskReport {
     /// The report as the core issued it, kept so a drive-letter machine
@@ -5112,20 +5507,21 @@ fn label_view(label: &remanence::VolumeLabel) -> VolumeLabelView {
     }
 }
 
-/// Inspects an open disk and returns its layered report. Null on failure,
+/// Inspects the medium in an occupied device and returns its layered
+/// report. Null on failure,
 /// with the category and message written to the out-parameters.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_inspect(
-    disk: *mut RemanenceDisk,
+pub unsafe extern "C" fn remanence_device_inspect(
+    device: *mut RemanenceDevice,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceDiskReport {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(disk) = (unsafe { disk.as_mut() }) else {
+    let Some(device) = (unsafe { device.as_mut() }) else {
         return ptr::null_mut();
     };
-        let Some(medium) = disk.medium() else {
+        let Some(medium) = device.device() else {
         let error = remanence::Error::io("the device holding this medium was detached");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
@@ -5225,7 +5621,7 @@ pub unsafe extern "C" fn remanence_disk_inspect(
 
 /// Frees an inspection report and everything borrowed from it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_disk_report_free(report: *mut RemanenceDiskReport) {
+pub unsafe extern "C" fn remanence_report_free(report: *mut RemanenceDiskReport) {
     if !report.is_null() {
         drop(unsafe { Box::from_raw(report) });
     }
@@ -6529,7 +6925,9 @@ mod tests {
         let attachment = session
             .attach(path, AccessIntent::Write)
             .expect("the whole image attaches");
-        let medium = session.medium(attachment).expect("medium");
+        let medium = session
+            .require_device(attachment)
+            .expect("the medium is attached");
         let volume = medium.inspect().expect("inspects").volumes[0].id;
         let content: Vec<u8> = (0..1_200_000u32).map(|n| (n % 241) as u8).collect();
         medium.write_file(volume, "FAR.BIN", &content).expect("writes");
@@ -6576,10 +6974,10 @@ mod tests {
             },
             "a truncated source still attaches, degraded"
         );
-        let disk = unsafe { remanence_session_medium(session, attachment) };
-        assert!(!disk.is_null());
+        let device = unsafe { remanence_session_device(session, attachment) };
+        assert!(!device.is_null());
 
-        let assurance = unsafe { remanence_disk_assurance(disk) };
+        let assurance = unsafe { remanence_device_assurance(device) };
         assert_eq!(
             unsafe { remanence_assurance_outcome(assurance) },
             RemanenceAssuranceOutcome::Degraded
@@ -6595,7 +6993,7 @@ mod tests {
             RemanenceAccessMode::ReadOnly
         );
         assert_eq!(
-            unsafe { remanence_disk_mode(disk) },
+            unsafe { remanence_device_mode(device) },
             RemanenceAccessMode::ReadOnly,
             "the effective mode is the same answer read another way"
         );
@@ -6629,7 +7027,7 @@ mod tests {
         // Every mutation path carries the condition as its rule.
         assert!(
             !unsafe {
-                remanence_disk_commit(disk, &mut category, &mut message, &mut rule)
+                remanence_device_commit(device, &mut category, &mut message, &mut rule)
             },
             "commit is denied"
         );

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! `Disk`-surface unit tests over synthetic images the project
+//! `StorageDevice`-surface unit tests over synthetic images the project
 //! owns outright: a hand-built FAT16 volume, bare and behind an MBR, on
 //! raw disks. (qcow2 round-trips are unit-tested inside the crate, where the
 //! writer can build the image.)
@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, AttachmentId, Disk, DiskContent, DiskFormat, DosNameRule,
+    AccessIntent, AccessMode, AttachmentId, StorageDevice, DiskContent, DiskFormat, DosNameRule,
     ErrorCategory, FatEntryKind, FatKind, RegionRole, Session, VolumeId, VolumeOrigin,
 };
 
@@ -206,7 +206,7 @@ fn label_of(filesystem: &remanence::FilesystemInfo) -> Option<&str> {
 /// The volume a caller works in, named the only way a caller can name
 /// one: by asking the library what it reported. Nothing here builds an
 /// identity or parses one.
-fn only_volume(disk: &mut Disk) -> remanence::VolumeId {
+fn only_volume(disk: &mut StorageDevice) -> remanence::VolumeId {
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1, "these images compose one volume");
     report.volumes[0].id
@@ -218,13 +218,13 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     assert_eq!(
-        disk.mode(),
+        disk.mode().expect("a medium is attached"),
         AccessMode::ReadWrite,
         "the mode echoes the intent"
     );
-    assert_eq!(disk.format(), DiskFormat::Raw);
+    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Raw);
 
     let report = disk.inspect().expect("inspection reads");
     // The device reports the medium attached to it (P14): a raw image is
@@ -248,7 +248,7 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     let payload: Vec<u8> = (0..2000u32).flat_map(|n| n.to_le_bytes()).collect();
     disk.write_file(volume, "SUB/HELLO.BIN", &payload)
         .expect("write");
-    assert!(disk.is_modified());
+    assert!(disk.is_modified().expect("a medium is attached"));
 
     let entries = disk.entries(volume, "SUB").expect("list");
     assert_eq!(entries.len(), 1);
@@ -286,8 +286,8 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     );
 
     // Rollback: the image is untouched.
-    disk.rollback();
-    assert!(!disk.is_modified());
+    disk.rollback().expect("a medium is attached");
+    assert!(!disk.is_modified().expect("a medium is attached"));
     assert!(disk.entries(volume, "SUB").is_err());
 
     // Write again and commit this time; overwriting replaces the
@@ -297,15 +297,15 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     disk.write_file(volume, "KEPT.TXT", b"kept bytes")
         .expect("overwrite");
     disk.commit().expect("commit");
-    assert!(!disk.is_modified());
+    assert!(!disk.is_modified().expect("a medium is attached"));
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, AccessIntent::Read).expect("reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
 
     let volume_reopened = only_volume(reopened);
     assert_eq!(
-        reopened.mode(),
+        reopened.mode().expect("a medium is attached"),
         AccessMode::ReadOnly,
         "the mode echoes the intent"
     );
@@ -326,7 +326,7 @@ fn fat16_behind_an_mbr_partition() {
     std::fs::write(&path, synthetic_mbr_disk(&synthetic_fat16())).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.content, DiskContent::Schema);
@@ -354,7 +354,7 @@ fn fat16_behind_an_mbr_partition() {
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, AccessIntent::Read).expect("reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
 
     let volume_reopened = only_volume(reopened);
     assert_eq!(
@@ -372,7 +372,7 @@ fn stat_answers_presence_and_absence_distinctly() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     disk.make_directory(volume, "SUB").expect("mkdir");
     disk.write_file(volume, "SUB/FILE.BIN", b"1234567890")
@@ -432,7 +432,7 @@ fn overwrite_releases_and_reclaims_clusters() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     // 7000 of the volume's 7903 data clusters: two of these can never
     // coexist, so each rewrite below only fits by releasing the last.
@@ -467,7 +467,7 @@ fn overwrite_releases_and_reclaims_clusters() {
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, AccessIntent::Read).expect("reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
 
     let volume_reopened = only_volume(reopened);
     assert_eq!(
@@ -496,7 +496,7 @@ fn make_directory_creates_parents_and_is_idempotent() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
 
     // Missing parents are created in one call.
@@ -543,7 +543,7 @@ fn make_directory_creates_parents_and_is_idempotent() {
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, AccessIntent::Read).expect("reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
 
     let volume_reopened = only_volume(reopened);
     assert_eq!(
@@ -563,7 +563,7 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     disk.make_directory(volume, "SUB").expect("mkdir");
 
@@ -579,7 +579,7 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, AccessIntent::Read).expect("reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("the medium is attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
 
     let volume_reopened = only_volume(reopened);
     let entries = reopened.entries(volume_reopened, "SUB").expect("list");
@@ -604,7 +604,7 @@ fn a_blank_disk_is_an_answer_with_zero_volumes() {
     std::fs::write(&path, vec![0u8; 8000 * 512]).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let report = disk.inspect().expect("blank is an answer, not an error");
     assert_eq!(report.content, DiskContent::Blank);
     assert!(report.regions.is_empty());
@@ -630,7 +630,7 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
     std::fs::write(&path, synthetic_extended_disk(&fat, false)).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let report = disk.inspect().expect("inspection reads");
 
     assert_eq!(report.regions.len(), 4);
@@ -688,7 +688,7 @@ fn a_broken_chain_keeps_what_it_found() {
     std::fs::write(&path, synthetic_extended_disk(&fat, true)).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let report = disk
         .inspect()
         .expect("a broken link does not fail the disk");
@@ -734,7 +734,7 @@ fn cylinders_are_reported_only_where_the_derivation_is_exact() {
     let path = temp_path("cylinders-exact");
     std::fs::write(&path, synthetic_fat12_floppy()).expect("image writes");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1);
     let filesystem = report
@@ -752,7 +752,7 @@ fn cylinders_are_reported_only_where_the_derivation_is_exact() {
     image[24..28].fill(0); // sectors/track and heads unstated
     std::fs::write(&path, image).expect("image writes");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let report = disk.inspect().expect("inspection reads");
     let filesystem = report
         .filesystem_on(report.volumes[0].id)
@@ -772,7 +772,7 @@ fn p7_declared_intent_claims_and_refusals() {
     // A writable session admits no observers: while it holds the claim,
     // a second open fails fast whatever its intent.
     let (mut writer_session, writer_at) = attach(&path, AccessIntent::Write).expect("writable open");
-    let writer = writer_session.medium(writer_at).expect("the medium is attached");
+    let writer = writer_session.require_device(writer_at).expect("the medium is attached");
     assert_eq!(
         attach(&path, AccessIntent::Read)
             .expect_err("a reader is excluded while a writable session lives")
@@ -790,9 +790,9 @@ fn p7_declared_intent_claims_and_refusals() {
     // A read session keeps admitting other readers and still denies
     // every writer.
     let (mut reader_session, reader_at) = attach(&path, AccessIntent::Read).expect("read open");
-    let reader = reader_session.medium(reader_at).expect("the medium is attached");
+    let reader = reader_session.require_device(reader_at).expect("the medium is attached");
     let (mut second_session, second_at) = attach(&path, AccessIntent::Read).expect("second reader admitted");
-    let second = second_session.medium(second_at).expect("the medium is attached");
+    let second = second_session.require_device(second_at).expect("the medium is attached");
     assert_eq!(
         attach(&path, AccessIntent::Write)
             .expect_err("a writer is refused while readers hold the file")
@@ -814,9 +814,9 @@ fn p7_declared_intent_claims_and_refusals() {
         "a writable open on a read-only file fails at the open"
     );
     let (mut readonly_session, readonly_at) = attach(&path, AccessIntent::Read).expect("read open proceeds");
-    let readonly = readonly_session.medium(readonly_at).expect("the medium is attached");
+    let readonly = readonly_session.require_device(readonly_at).expect("the medium is attached");
     let volume_readonly = only_volume(readonly);
-    assert_eq!(readonly.mode(), AccessMode::ReadOnly);
+    assert_eq!(readonly.mode().expect("a medium is attached"), AccessMode::ReadOnly);
     assert!(readonly.inspect().is_ok(), "analysis proceeds");
     let refused = readonly
         .write_file(volume_readonly, "NO.TXT", b"denied")
@@ -849,7 +849,7 @@ fn p8_refuses_a_future_qcow2_version_by_name() {
     std::fs::remove_file(&path).ok();
 }
 
-// The layered inspection report. These exercise `Disk::inspect` through
+// The layered inspection report. These exercise `StorageDevice::inspect` through
 // the public surface only: no test reaches for an internal record, and
 // every relationship is traversed by the identity the report issued.
 
@@ -864,7 +864,7 @@ fn image_at(tag: &str, bytes: &[u8]) -> PathBuf {
 fn a_partitionless_volume_inspects_as_one_whole_device_volume() {
     let path = image_at("inspect-bare", &synthetic_fat16());
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -889,7 +889,7 @@ fn a_partitionless_volume_inspects_as_one_whole_device_volume() {
 fn a_blank_disk_states_that_it_is_blank() {
     let path = image_at("inspect-blank", &vec![0u8; 4096]);
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -910,7 +910,7 @@ fn unclaimed_nonblank_content_is_a_reported_outcome() {
     bytes[..4].copy_from_slice(b"\xde\xad\xbe\xef");
     let path = image_at("inspect-unknown", &bytes);
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection succeeds on unknown content");
     let DiskContent::UnknownNonblank { evidence } = &report.content else {
@@ -931,7 +931,7 @@ fn unclaimed_nonblank_content_is_a_reported_outcome() {
 fn a_partitioned_disk_reports_schema_regions_and_composed_volumes() {
     let path = image_at("inspect-mbr", &synthetic_mbr_disk(&synthetic_fat16()));
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -977,7 +977,7 @@ fn an_unread_region_is_explained_kept_and_composes_nothing() {
     let disk_bytes = synthetic_multi_mbr(&[(0x06, &volume), (0x07, &volume), (0x06, &volume)]);
     let path = image_at("inspect-unread", &disk_bytes);
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1018,12 +1018,12 @@ fn identities_survive_a_separate_open_of_an_unchanged_layout() {
 
     let first = {
         let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-        let disk = disk_session.medium(disk_at).expect("the medium is attached");
+        let disk = disk_session.require_device(disk_at).expect("the medium is attached");
         disk.inspect().expect("inspection reads")
     };
     let second = {
         let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image reopens");
-        let disk = disk_session.medium(disk_at).expect("the medium is attached");
+        let disk = disk_session.require_device(disk_at).expect("the medium is attached");
         disk.inspect().expect("inspection reads")
     };
 
@@ -1051,7 +1051,7 @@ fn a_volume_whose_filesystem_is_unrecognized_stays_a_volume() {
         &synthetic_multi_mbr(&[(0x06, &good), (0x06, &rubbish)]),
     );
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1088,7 +1088,7 @@ fn a_structural_container_is_reported_and_is_not_a_volume() {
         &synthetic_extended_disk(&synthetic_fat16(), false),
     );
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1158,7 +1158,7 @@ fn set_boot_record(image: &mut [u8], signature: u8, text: &str) {
 fn label_answer(tag: &str, image: &[u8]) -> remanence::VolumeLabel {
     let path = image_at(tag, image);
     let (mut session, attachment) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = session.medium(attachment).expect("the medium is attached");
+    let disk = session.require_device(attachment).expect("the medium is attached");
     let report = disk.inspect().expect("inspection reads");
     let answer = report
         .filesystem_on(report.volumes[0].id)
@@ -1287,7 +1287,7 @@ fn an_empty_partition_table_inspects_as_a_schema_with_no_volumes() {
     bytes[511] = 0xaa;
     let path = image_at("inspect-empty-table", &bytes);
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1321,7 +1321,7 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
     let path = temp_path("dos-names");
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
     let (mut session, at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = session.medium(at).expect("the medium is attached");
+    let disk = session.require_device(at).expect("the medium is attached");
     let volume = only_volume(disk);
 
     disk.make_directory(volume, "out").expect("mkdir");
@@ -1374,7 +1374,7 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
     let path = temp_path("dos-name-rules");
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
     let (mut session, at) = attach(&path, AccessIntent::Write).expect("disk opens");
-    let disk = session.medium(at).expect("the medium is attached");
+    let disk = session.require_device(at).expect("the medium is attached");
     let volume = only_volume(disk);
 
     let cases = [
@@ -1408,7 +1408,7 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
         disk.entries(volume, "").expect("list root").is_empty(),
         "a refused name is refused, not repaired into some other name"
     );
-    assert!(!disk.is_modified(), "nothing was staged for commit");
+    assert!(!disk.is_modified().expect("a medium is attached"), "nothing was staged for commit");
 
     // The rule sits beside the category rather than replacing it, and a
     // refusal belonging to no rule set carries none at all.

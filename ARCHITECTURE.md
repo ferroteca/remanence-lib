@@ -13,7 +13,7 @@ One core, two bindings:
   dependencies. Everything the project knows lives here, in four groups.
   The **identification model** and the adapters beneath it: executable
   image formats, serialized containers, partition layouts and
-  filesystems, each enrolled in its own catalog. The **disk stack**: the
+  filesystems, each enrolled in its own catalog. The **device stack**: the
   declared-intent deny-write claim, the native qcow2 and VDI drivers with
   their backing and differencing chains, MBR partition discovery,
   FAT12/FAT16 volume read/write, the assurance gate that meets a
@@ -44,8 +44,9 @@ application surface?" by lookup, not judgement. Numbers are permanent and
 never reused.
 
 - **S1 — The Rust crate API.** The public surface of `crates/remanence`:
-  `Session`, `StorageDevice`, `AttachmentId` and `DeviceFamily`;
-  `Disk` — reached through a device, never opened directly —
+  `Session`, `Machine`, `StorageDevice`, `AttachmentId` and
+  `DeviceFamily` — the device being the one storage handle, carrying the
+  content verbs of the medium in its slot —
   `Identification` and the container/layout types,
   `Assurance` and the outcome, condition and byte-range types beside it,
   `Archive` and `ArchiveEntry`,
@@ -325,7 +326,7 @@ Image-format adapters load and save media state; hardware and CHS
 presentations operate on that state through their own seams. A media
 profile contains neither image recognition nor hardware behavior and
 cannot implicitly choose how far hardware emulation descends. Every medium
-the library holds names one enrolled type: a `Disk`'s medium is named by
+the library holds names one enrolled type: a block medium is named by
 the image-format adapter that loaded its state, and a flux medium by the
 family declaration of the drive profile it was mastered under.
 

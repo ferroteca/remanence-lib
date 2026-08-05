@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind, Disk, ErrorCategory};
+use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind, ErrorCategory};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -105,8 +105,8 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
     // The second member: reached by decoding past the first, which is
     // what a solid folder costs, and no further.
     let (mut disk_session, disk_at) = attach(entry_path(&path, SECOND_MEMBER), AccessIntent::Read).expect("the member opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    assert_eq!(disk.image_size_bytes(), SECOND_MEMBER_BYTES);
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), SECOND_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
     disk.read_at(0, &mut front).expect("the front reads");
@@ -118,7 +118,7 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
         .read_at(SECOND_MEMBER_BYTES - 32, &mut tail)
         .expect("the tail reads");
 
-    let identification = disk.identify();
+    let identification = disk.identify().expect("a medium is attached");
     let container = &identification.containers[0];
     assert_eq!(container.kind, ContainerKind::Archive);
     assert_eq!(container.id, "7z");
@@ -138,8 +138,8 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     let path = private_copy("long");
     let (mut disk_session, disk_at) =
         attach(entry_path(&path, LAST_MEMBER), AccessIntent::Read).expect("the last member opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    assert_eq!(disk.image_size_bytes(), LAST_MEMBER_BYTES);
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), LAST_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
     disk.read_at(0, &mut front).expect("the front reads");

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The session cache: the bounded working set the disk stack streams
+//! The session cache: the bounded working set the device stack streams
 //! through (P27) and the commit-point buffer (P2). Reads load
 //! extents from the virtual disk on demand and serve later hits without
 //! disk I/O; altered extents are the session's uncommitted truth and are

@@ -3,18 +3,23 @@
 
 //! Self-contained disk image analysis library.
 //!
-//! An [`Archive`] lists what a supported archive holds — ZIP and 7z —
-//! and a [`Disk`] opens a disk image, optionally naming an entry inside
-//! one of those archives. One open takes one P7 claim and serves both of
-//! the medium's planes: [`Disk::identify`] reports the container layers
-//! (archive, image, physical media, filesystem) recognized by built-in
-//! executable adapters, over the image's own bytes, while
-//! [`Disk::inspect`] and the volume-scoped file verbs work over the disk
-//! a format adapter presents above them. Every open also states what it
-//! established about the evidence beneath it ([`Disk::assurance`]): a
-//! source short of what its own interpretation declares is read as far as
-//! it truthfully goes, read-only, with the shortfall named rather than
-//! hidden or thrown away whole (P28).
+//! A [`Session`] is the claim and cache scope; the [`Machine`]s within it
+//! are the device sets, and a [`StorageDevice`] is the one storage
+//! handle — the slot, its family, and the state of whatever medium
+//! occupies it. Attaching a disk image, optionally naming an entry
+//! inside a supported archive, takes one P7 claim and serves both of the
+//! medium's planes through that handle:
+//! [`StorageDevice::identify`] reports the container layers (archive,
+//! image, physical media, filesystem) recognized by built-in executable
+//! adapters, over the image's own bytes, while
+//! [`StorageDevice::inspect`] and the volume-scoped file verbs work over
+//! the disk a format adapter presents above them. Every open also states
+//! what it established about the evidence beneath it
+//! ([`StorageDevice::assurance`]): a source short of what its own
+//! interpretation declares is read as far as it truthfully goes,
+//! read-only, with the shortfall named rather than hidden or thrown away
+//! whole (P28). An [`Archive`] lists what a supported archive holds — ZIP
+//! and 7z.
 
 mod adapters;
 mod archive;
@@ -70,7 +75,7 @@ pub use c1541_presentation::{
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
-pub use disk::{Disk, DiskFormat};
+pub use disk::DiskFormat;
 pub use dos_letters::{
     DosAssignmentRule, DosMachine, DriveMap, DriveMapping, LetterOutcome, MachineDevice,
     ResidentCondition,
@@ -81,7 +86,7 @@ pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
 pub use fat::{FatEntry, FatEntryKind, FatKind};
 pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
-pub use machine::Session;
+pub use machine::{Machine, Session};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,

@@ -61,30 +61,30 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
 /* The container format the adapter recognized, and the version the
  * formats that declare one carry. A version accessor answers 0 for an
  * image of any other format, so each is read only under its own format. */
-static void print_disk_format(const RemanenceDisk *disk) {
-    switch (remanence_disk_format(disk)) {
+static void print_device_format(const RemanenceDevice *device) {
+    switch (remanence_device_format(device)) {
         case REMANENCE_DISK_FORMAT_QCOW2:
             printf("Format:  qcow2 (version %" PRIu32 ")\n",
-                   remanence_disk_qcow2_version(disk));
+                   remanence_device_qcow2_version(device));
             break;
         case REMANENCE_DISK_FORMAT_VDI:
             printf("Format:  vdi (version %" PRIu32 ".%" PRIu32 ")\n",
-                   remanence_disk_vdi_version_major(disk),
-                   remanence_disk_vdi_version_minor(disk));
+                   remanence_device_vdi_version_major(device),
+                   remanence_device_vdi_version_minor(device));
             break;
         case REMANENCE_DISK_FORMAT_RAW:
             printf("Format:  raw\n");
             break;
     }
-    printf("Size:    %" PRIu64 " bytes\n", remanence_disk_size(disk));
+    printf("Size:    %" PRIu64 " bytes\n", remanence_device_size(device));
 }
 
 /* What the open established about the evidence beneath it (P28), and what
  * that narrows. A verified medium says so in one line; a degraded one
  * states the condition, the evidence, the extents that read, and the
  * access it actually has -- before anything is read from it. */
-static void print_assurance(const RemanenceDisk *disk) {
-    RemanenceAssurance *assurance = remanence_disk_assurance(disk);
+static void print_assurance(const RemanenceDevice *device) {
+    RemanenceAssurance *assurance = remanence_device_assurance(device);
     if (assurance == NULL) {
         return;
     }
@@ -134,20 +134,20 @@ static const char *outcome_name(RemanenceLetterOutcome outcome) {
     return "undetermined";
 }
 
-/* Composes the drive letters a DOS machine holding this one disk would
- * have presented. The machine facts are ours to assert — this disk is the
- * first fixed disk attached — and the assignment rule is the library's.
+/* Composes the drive letters a DOS machine holding this one device would
+ * have presented. The machine facts are ours to assert — this device is the
+ * first fixed device attached — and the assignment rule is the library's.
  * No variant is stated here, so a letter the claimed rules disagree on
  * comes back undetermined rather than guessed. */
-static void show_drive_letters(RemanenceDisk *disk) {
+static void show_drive_letters(RemanenceDevice *device) {
     RemanenceErrorCategory error_category;
     char *error = NULL;
     char *error_rule = NULL;
 
     RemanenceDiskReport *report =
-        remanence_disk_inspect(disk, &error_category, &error, &error_rule);
+        remanence_device_inspect(device, &error_category, &error, &error_rule);
     if (report == NULL) {
-        report_error("\nerror inspecting disk", error_category, error, error_rule);
+        report_error("\nerror inspecting device", error_category, error, error_rule);
         return;
     }
 
@@ -156,7 +156,7 @@ static void show_drive_letters(RemanenceDisk *disk) {
                                                  &error, &error_rule)) {
         report_error("\nerror asserting the machine", error_category, error, error_rule);
         remanence_dos_machine_free(machine);
-        remanence_disk_report_free(report);
+        remanence_report_free(report);
         return;
     }
 
@@ -165,7 +165,7 @@ static void show_drive_letters(RemanenceDisk *disk) {
     if (map == NULL) {
         report_error("\nerror composing drive letters", error_category, error, error_rule);
         remanence_dos_machine_free(machine);
-        remanence_disk_report_free(report);
+        remanence_report_free(report);
         return;
     }
 
@@ -203,7 +203,7 @@ static void show_drive_letters(RemanenceDisk *disk) {
 
     remanence_drive_map_free(map);
     remanence_dos_machine_free(machine);
-    remanence_disk_report_free(report);
+    remanence_report_free(report);
 }
 
 /* Lists what an archive holds, without reading any entry's data. */
@@ -255,7 +255,8 @@ int main(int argc, char **argv) {
     char *error = NULL;
     char *error_rule = NULL;
     /* Nothing is reachable except through a device (P32): attach the
-     * medium to a session, then borrow the medium the device holds. */
+     * medium to a session's anonymous machine, then borrow the device
+     * holding it -- the one handle for the slot and its medium alike. */
     RemanenceSession *session = remanence_session_new();
     char *attachment = NULL;
     if (!remanence_session_attach(session, argv[1], REMANENCE_ACCESS_INTENT_READ,
@@ -266,8 +267,8 @@ int main(int argc, char **argv) {
     }
 
     /* Borrowed: the session owns this, so we never free it. */
-    RemanenceDisk *disk = remanence_session_medium(session, attachment);
-    if (disk == NULL) {
+    RemanenceDevice *device = remanence_session_device(session, attachment);
+    if (device == NULL) {
         fprintf(stderr, "no medium attached at %s\n", attachment);
         remanence_string_free(attachment);
         remanence_session_free(session);
@@ -275,12 +276,12 @@ int main(int argc, char **argv) {
     }
     printf("Device:  %s\n", attachment);
 
-    RemanenceIdentification *identification = remanence_disk_identify(disk);
+    RemanenceIdentification *identification = remanence_device_identify(device);
 
-    printf("Source:  %s\n", remanence_disk_path(disk));
-    printf("Image:   %s\n", remanence_disk_image_path(disk));
-    print_disk_format(disk);
-    print_assurance(disk);
+    printf("Source:  %s\n", remanence_device_path(device));
+    printf("Image:   %s\n", remanence_device_image_path(device));
+    print_device_format(device);
+    print_assurance(device);
     printf("Modified: %s\n\n", remanence_identification_modified(identification) ? "yes" : "no");
 
     size_t container_count = remanence_identification_container_count(identification);
@@ -310,7 +311,7 @@ int main(int argc, char **argv) {
     int status = EXIT_SUCCESS;
     if (has_hdos) {
         RemanenceHdosFileList *files =
-            remanence_disk_list_hdos_files(disk, &error_category, &error, &error_rule);
+            remanence_device_list_hdos_files(device, &error_category, &error, &error_rule);
         if (files == NULL) {
             report_error("\nerror listing HDOS files", error_category, error, error_rule);
             status = EXIT_FAILURE;
@@ -328,7 +329,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    show_drive_letters(disk);
+    show_drive_letters(device);
 
     remanence_identification_free(identification);
     remanence_string_free(attachment);

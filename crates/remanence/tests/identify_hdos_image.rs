@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, ArchiveLayout, AttachmentId, ContainerKind, ContainerLayout, Disk,
+    AccessIntent, ArchiveLayout, AttachmentId, ContainerKind, ContainerLayout, StorageDevice,
     Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, Session,
 };
 
@@ -89,8 +89,8 @@ fn identifies_hdos_fixture_image() {
     let image_path = fixture_path(IMAGE_NAME);
 
     let (mut disk_session, disk_at) = attach(&image_path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    let identification = disk.identify();
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let identification = disk.identify().expect("a medium is attached");
 
     assert_eq!(identification.containers.len(), 3);
     assert_hdos_identification(&identification);
@@ -101,8 +101,8 @@ fn identifies_single_image_inside_zip_fixture() {
     let zip_path = private_copy(ZIP_NAME, "single");
 
     let (mut disk_session, disk_at) = attach(&zip_path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    let identification = disk.identify();
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let identification = disk.identify().expect("a medium is attached");
 
     let archive = &identification.containers[0];
     assert_eq!(archive.name, "ZIP archive");
@@ -110,8 +110,8 @@ fn identifies_single_image_inside_zip_fixture() {
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(layout.uncompressed_size, Some(102_400));
     assert_eq!(identification.containers.len(), 4);
-    assert_eq!(disk.path(), zip_path.display().to_string());
-    assert_eq!(disk.image_path(), PathBuf::from(IMAGE_NAME));
+    assert_eq!(disk.path().expect("a medium is attached"), zip_path.display().to_string());
+    assert_eq!(disk.image_path().expect("a medium is attached"), PathBuf::from(IMAGE_NAME));
     assert_hdos_identification(&identification);
 
     drop(disk_session);
@@ -124,8 +124,8 @@ fn identifies_explicit_image_inside_zip_fixture() {
     let image_path = zip_path.join(IMAGE_NAME);
 
     let (mut disk_session, disk_at) = attach(&image_path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    let identification = disk.identify();
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let identification = disk.identify().expect("a medium is attached");
 
     let layout = archive_layout(&identification);
     assert_eq!(layout.entry_name, IMAGE_NAME);

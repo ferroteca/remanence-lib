@@ -7,7 +7,7 @@
 //! blocks are all present, and differencing chains over both — each
 //! carrying the same hand-built FAT16 volume. Block-map semantics and
 //! copy-on-write are unit-tested inside the crate; everything here runs
-//! through `Session`, `Disk` and the reports they issue, including the
+//! through `Session`, `StorageDevice` and the reports they issue, including the
 //! parent resolution that only exists once an image has a path.
 
 use std::path::PathBuf;
@@ -37,7 +37,7 @@ fn temp_path(tag: &str) -> PathBuf {
 
 /// The one volume a synthetic image composes, named the only way a caller
 /// can name one: from the report the library issued.
-fn only_volume(disk: &mut remanence::Disk) -> VolumeId {
+fn only_volume(disk: &mut remanence::StorageDevice) -> VolumeId {
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1, "these images compose one volume");
     report.volumes[0].id
@@ -229,7 +229,7 @@ fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]
     std::fs::write(&path, base_vdi(&volume_bytes, create)).expect("base writes");
 
     let (mut session, at) = attach(&path, AccessIntent::Write).expect("base opens");
-    let disk = session.medium(at).expect("the medium is attached");
+    let disk = session.require_device(at).expect("the medium is attached");
     let volume = only_volume(disk);
     disk.write_file(volume, "BASE.BIN", content).expect("write");
     disk.commit().expect("commit");
@@ -241,9 +241,9 @@ fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]
 fn a_vdi_identifies_layer_by_layer_with_its_evidence() {
     let path = write_image("identify", &dynamic_vdi(&synthetic_fat16()));
     let (mut session, at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = session.medium(at).expect("the medium is attached");
+    let disk = session.require_device(at).expect("the medium is attached");
 
-    let identification = disk.identify();
+    let identification = disk.identify().expect("a medium is attached");
     let image = &identification.containers[0];
     assert_eq!(image.kind, ContainerKind::Image);
     assert_eq!(image.id, "vdi");
@@ -291,17 +291,17 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
     );
 
     let (mut session, at) = attach(&path, AccessIntent::Write).expect("image opens");
-    let disk = session.medium(at).expect("the medium is attached");
-    assert_eq!(disk.format(), DiskFormat::Vdi { major: 1, minor: 1 });
-    assert_eq!(disk.size(), virtual_size);
-    assert_eq!(disk.mode(), AccessMode::ReadWrite);
+    let disk = session.require_device(at).expect("the medium is attached");
+    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(disk.size().expect("a medium is attached"), virtual_size);
+    assert_eq!(disk.mode().expect("a medium is attached"), AccessMode::ReadWrite);
 
     let volume = only_volume(disk);
     let contents: Vec<u8> = (0..40_000u32).map(|n| (n % 251) as u8).collect();
     disk.make_directory(volume, "GUEST").expect("mkdir");
     disk.write_file(volume, "GUEST/PAYLOAD.BIN", &contents)
         .expect("write");
-    assert!(disk.is_modified());
+    assert!(disk.is_modified().expect("a medium is attached"));
     assert_eq!(
         std::fs::metadata(&path).expect("metadata").len(),
         before,
@@ -317,7 +317,7 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
 
     let (mut reopened_session, reopened_at) =
         attach(&path, AccessIntent::Read).expect("image reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("attached");
     assert_eq!(
         reopened
             .read_file(volume, "GUEST/PAYLOAD.BIN")
@@ -333,9 +333,9 @@ fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
     let volume_bytes = synthetic_fat16();
     let path = write_image("fixed", &fixed_vdi(&volume_bytes));
     let (mut session, at) = attach(&path, AccessIntent::Write).expect("image opens");
-    let disk = session.medium(at).expect("the medium is attached");
-    assert_eq!(disk.format(), DiskFormat::Vdi { major: 1, minor: 1 });
-    assert_eq!(disk.size(), volume_bytes.len() as u64);
+    let disk = session.require_device(at).expect("the medium is attached");
+    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(disk.size().expect("a medium is attached"), volume_bytes.len() as u64);
 
     let volume = only_volume(disk);
     let report = disk.inspect().expect("inspection reads");
@@ -354,7 +354,7 @@ fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
 
     let (mut reopened_session, reopened_at) =
         attach(&path, AccessIntent::Read).expect("image reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("attached");
     assert_eq!(
         reopened.read_file(volume, "FIXED.BIN").expect("read"),
         b"written in place"
@@ -369,7 +369,7 @@ fn reading_a_dynamic_vdi_allocates_nothing() {
     let before = std::fs::read(&path).expect("image reads");
 
     let (mut session, at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = session.medium(at).expect("the medium is attached");
+    let disk = session.require_device(at).expect("the medium is attached");
     let volume = only_volume(disk);
     assert!(disk.entries(volume, "").expect("listing reads").is_empty());
 
@@ -444,14 +444,14 @@ fn a_differencing_chain_composes_as_one_disk() {
     .expect("top writes");
 
     let (mut session, at) = attach(&top, AccessIntent::Write).expect("the chain opens");
-    let disk = session.medium(at).expect("the medium is attached");
-    assert_eq!(disk.format(), DiskFormat::Vdi { major: 1, minor: 1 });
-    assert_eq!(disk.size(), virtual_size);
+    let disk = session.require_device(at).expect("the medium is attached");
+    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(disk.size().expect("a medium is attached"), virtual_size);
 
     // Identification is deliberately untouched: the top image identifies
     // as the VDI container it is (U5), with its type and its parent among
     // the evidence (P4).
-    let identification = disk.identify();
+    let identification = disk.identify().expect("a medium is attached");
     assert_eq!(identification.containers[0].id, "vdi");
     let evidence = identification.evidence.join("\n");
     assert!(evidence.contains("differencing"), "{evidence}");
@@ -481,7 +481,7 @@ fn a_differencing_chain_composes_as_one_disk() {
 
     let (mut reopened_session, reopened_at) =
         attach(&top, AccessIntent::Read).expect("the chain reopens");
-    let reopened = reopened_session.medium(reopened_at).expect("attached");
+    let reopened = reopened_session.require_device(reopened_at).expect("attached");
     let volume = only_volume(reopened);
     assert_eq!(
         reopened.read_file(volume, "TOP.BIN").expect("read"),

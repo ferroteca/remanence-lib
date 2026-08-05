@@ -7,7 +7,7 @@
 //! reads without the entry resident whole. These tests build their zip
 //! by hand, so they run without fixtures.
 
-use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind, Disk};
+use remanence::{AttachmentId, Session, AccessIntent, Archive, ContainerKind};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -103,8 +103,8 @@ fn temp_zip(tag: &str, bytes: &[u8]) -> std::path::PathBuf {
 
 fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
     let (mut disk_session, disk_at) = attach(path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    assert_eq!(disk.image_size_bytes(), expected.len() as u64);
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), expected.len() as u64);
 
     // Bounded reads round-trip, at the front and across the tail.
     let mut front = [0u8; 64];
@@ -115,7 +115,7 @@ fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
     assert_eq!(&tail[..], &expected[expected.len() - 64..]);
 
     // The layers report the archive wrapper and the h8d-sized image.
-    let identification = disk.identify();
+    let identification = disk.identify().expect("a medium is attached");
     let archive = &identification.containers[0];
     assert_eq!(archive.kind, ContainerKind::Archive);
     assert_eq!(archive.id, "zip");
@@ -193,10 +193,10 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
     let path = temp_zip("inspects", &zip);
 
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("the archived image opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     // The raw plane: the archive wrapper is still reported.
-    let identification = disk.identify();
+    let identification = disk.identify().expect("a medium is attached");
     assert_eq!(identification.containers[0].kind, ContainerKind::Archive);
     assert_eq!(identification.containers[0].id, "zip");
 
@@ -205,7 +205,7 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
     assert_eq!(report.device.length_bytes, IMAGE_LEN as u64);
 
     // And both planes agree about the medium's size.
-    assert_eq!(disk.image_size_bytes(), IMAGE_LEN as u64);
+    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), IMAGE_LEN as u64);
 
     drop(disk_session);
     std::fs::remove_file(&path).ok();
@@ -247,7 +247,7 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
     let id = session
         .attach(&path, AccessIntent::Read)
         .expect("the image itself opens; only the HDOS reader is bounded");
-    let medium = session.medium(id).expect("the medium is attached");
+    let medium = session.require_device(id).expect("the medium is attached");
 
     let error = medium
         .list_hdos_files()

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The `Disk` surface (U3 and U4): open a raw, qcow2 or VDI
-//! image under the P7 claim, report its partitions and volumes as they
-//! actually are, and read/write files in its FAT volumes with a commit
-//! point (P2) — everything rolls back until `commit`. The commit is
+//! The media state a storage device homes (U3 and U4): a raw, qcow2 or
+//! VDI image open under the P7 claim, its partitions and volumes as they
+//! actually are, and read/write access to the files in its FAT volumes
+//! with a commit point (P2) — everything rolls back until `commit`. The commit is
 //! durable (P9): a recovery journal is armed beneath the write-through,
 //! so an interruption at any point leaves state the next open
 //! reconciles — wholly the old image or wholly the committed new one —
@@ -19,6 +19,13 @@
 //! record declares more bytes than the file holds — is degraded: bounded
 //! to the extent that is really there, read-only for the session's whole
 //! life, and naming every operation it withholds.
+//!
+//! **This is not a handle.** A caller never holds a medium outside a
+//! device, so the medium survives as a model node and as data on
+//! [`crate::StorageDevice`] rather than as a type of its own. Every verb
+//! below is reached through the device that homes it, and the
+//! caller-facing contract each one answers for is documented there,
+//! beside the slot-side facts it sits with.
 
 use std::path::{Path, PathBuf};
 
@@ -138,7 +145,8 @@ fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> 
     })
 }
 
-/// An open disk image.
+/// The state of one open medium — what a storage device homes while that
+/// medium occupies its slot.
 ///
 /// One medium, one P7 claim, and the two planes that claim serves (F43):
 /// the **raw** plane — the image's own bytes, which identification and the
@@ -149,7 +157,7 @@ fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> 
 /// two separate top-level types that could not both be opened on one image
 /// because each took its own claim.
 #[derive(Debug)]
-pub struct Disk {
+pub(crate) struct MediaState {
     virtual_disk: Box<dyn OpenedImage>,
     /// The raw plane over the shared claim: the session cache and the
     /// predictive reader (P27, P34).
@@ -194,42 +202,42 @@ pub struct Disk {
     failed: Option<String>,
 }
 
-impl Disk {
+impl MediaState {
+    /// Opens `path` at the stated default cache bound.
+    ///
+    /// Test-only. A medium reaches a caller through
+    /// [`crate::Machine::attach`] and nothing else (P32), so this exists
+    /// for the unit tests in this module, which exercise the device
+    /// stack below the device tier.
+    #[cfg(test)]
+    pub(crate) fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
+        Self::open_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
+    }
+
     /// Opens `path` with the caller's declared intent (P7). A `Write`
     /// open claims the image exclusively — no other reader or writer
-    /// for the session's whole life — and an open that cannot secure
-    /// that claim fails at the open, naming the reason, never by
+    /// for as long as the medium stays attached — and an open that
+    /// cannot secure that claim fails here, naming the reason, never by
     /// falling back to read-only (a running VM holding the image is
     /// the designed refusal). A `Read` open takes read access only,
     /// denies writes to every other process, and keeps admitting other
     /// readers. An interrupted commit left by an earlier session is
     /// reconciled here, before the disk is exposed (P9): the image
     /// comes back wholly the old state or wholly the committed new
-    /// one, never a partial third state. The container is whichever
-    /// image-format adapter recognizes it — qcow2 or VDI today — and raw
-    /// where none does.
-    /// A qcow2 naming a backing file, and a VDI naming a parent
+    /// one, never a partial third state. The image format is whichever
+    /// adapter recognizes it — qcow2 or VDI today — and raw where none
+    /// does. A qcow2 naming a backing file, and a VDI naming a parent
     /// identity, open with their whole chain composed, every file behind
     /// the top one claimed immutable for the session's life (U6). Writes
     /// allocate copy-on-write into the top image only; commit preserves
     /// the relationship.
-    /// Opens `path` at the stated default cache bound.
     ///
-    /// Test-only. A medium reaches a caller through
-    /// [`crate::Session::attach`] and nothing else (P32), so this exists
-    /// for the unit tests in this module, which exercise the disk stack
-    /// below the device tier.
-    #[cfg(test)]
-    pub(crate) fn open(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Self> {
-        Self::open_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
-    }
-
-    /// Opens `path` as [`Disk::open_with_cache`] does, under a caller-declared
-    /// session cache bound (P27): at most `cache_bytes` of session
-    /// state stays resident — reads, uncommitted writes, and a
-    /// commit's staging alike — rounded up to whole 64 KiB extents,
-    /// with one extent as the floor. Altered state past the bound
-    /// spills to private session storage, never the image.
+    /// `cache_bytes` is the caller-declared session cache bound (P27):
+    /// at most that much session state stays resident — reads,
+    /// uncommitted writes, and a commit's staging alike — rounded up to
+    /// whole 64 KiB extents, with one extent as the floor. Altered state
+    /// past the bound spills to private session storage, never the
+    /// image.
     pub(crate) fn open_with_cache(
         path: impl AsRef<Path>,
         intent: AccessIntent,
@@ -310,35 +318,29 @@ impl Disk {
 
     /// The resolved image — the entry name for an image opened from
     /// inside an archive, else the source path.
-    pub fn image_path(&self) -> &Path {
+    pub(crate) fn image_path(&self) -> &Path {
         &self.image_path
     }
 
-    /// The resolved image's own size in bytes — the raw plane.
-    ///
-    /// Distinct from [`Disk::size`], which is the size of the disk the
-    /// format adapter presents. For a raw image they agree; for a qcow2
-    /// they do not, and conflating them is exactly the confusion the
-    /// merge could have introduced by putting both planes on one type.
-    pub fn image_size_bytes(&self) -> u64 {
+    /// The resolved image's own size in bytes — the raw plane, distinct
+    /// from [`MediaState::size`], which is the presented one.
+    pub(crate) fn image_size_bytes(&self) -> u64 {
         self.source.len()
     }
 
     /// Reads `buf` from the resolved image at `offset` — the medium's own
-    /// bytes, not the presented disk. This is the bounded access form
-    /// (P27): the image streams from its backing through the session
-    /// cache, and no operation requires it resident whole.
-    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+    /// bytes, not the presented disk, and bounded where the assurance
+    /// narrowed the readable extent (P27, P28).
+    pub(crate) fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
         if let Some(bound) = &self.bound {
             bound.check(offset, buf.len() as u64)?;
         }
         self.source.read_at(offset, buf)
     }
 
-    /// Identifies the image's container layers and probable filesystem.
-    /// Probes read bounded evidence — a leading prefix, the length, and
-    /// the name — never the whole image (P27).
-    pub fn identify(&self) -> Identification {
+    /// Identifies the image's container layers and probable filesystem
+    /// over the raw plane, probing bounded evidence alone (P27).
+    pub(crate) fn identify(&self) -> Identification {
         session::identify_medium(
             &self.source,
             &self.image_path,
@@ -350,45 +352,34 @@ impl Disk {
 
     /// Parses the HDOS directory from the image. HDOS images are bounded
     /// small by their formats, so the whole volume is read through the
-    /// cache; an image past the bound is refused by size, never loaded
-    /// (P27).
-    pub fn list_hdos_files(&self) -> Result<Vec<crate::hdos::HdosFile>> {
+    /// cache; an image past [`HDOS_IMAGE_BOUND`] is refused by size,
+    /// never loaded (P27).
+    pub(crate) fn list_hdos_files(&self) -> Result<Vec<crate::hdos::HdosFile>> {
         let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
         crate::hdos::list_hdos_files(&bytes)
     }
 
     /// Copies one HDOS file's bytes out of the image, under the same size
-    /// bound as [`Disk::list_hdos_files`].
-    pub fn read_hdos_file(&self, name: &str) -> Result<Vec<u8>> {
+    /// bound as [`MediaState::list_hdos_files`].
+    pub(crate) fn read_hdos_file(&self, name: &str) -> Result<Vec<u8>> {
         let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
         crate::hdos::read_hdos_file(&bytes, name)
     }
 
-    /// The session's **effective** access mode: the declared intent's echo
-    /// where the evidence supports it, and read-only where it does not.
-    ///
-    /// A write-intent open whose evidence came up short reports read-only
-    /// here and says why in [`Disk::assurance`] (P28). The claim taken at
-    /// the open is unchanged — this is a restriction after a safe claim,
-    /// not P7's no-silent-fallback rule, which still fails an open that
-    /// cannot claim what it asked for.
-    pub fn mode(&self) -> AccessMode {
+    /// The **effective** access mode this open settled on (P28): the
+    /// declared intent's echo where the evidence supports it, read-only
+    /// where it does not.
+    pub(crate) fn mode(&self) -> AccessMode {
         self.mode
     }
 
-    /// What this open established about the evidence beneath it (P28):
-    /// the outcome, the condition where one narrowed the session, the
-    /// ordered evidence, the exact extents that read, and the access the
-    /// evidence permits.
-    ///
-    /// It is available immediately, before anything is read, so a caller
-    /// meets a deficiency by being told rather than by an operation
-    /// failing halfway.
-    pub fn assurance(&self) -> &Assurance {
+    /// What this open established about the evidence beneath it (P28),
+    /// settled before anything was read.
+    pub(crate) fn assurance(&self) -> &Assurance {
         &self.assurance
     }
 
-    pub fn format(&self) -> DiskFormat {
+    pub(crate) fn format(&self) -> DiskFormat {
         debug_assert_eq!(self.active_layer, self.descriptor.initial_active_layer);
         let _composition_identity = self.device_identity.value();
         let _authoritative_layer = self.descriptor.authoritative_layer;
@@ -396,16 +387,16 @@ impl Disk {
     }
 
     /// The virtual disk size (the guest-visible size for qcow2).
-    pub fn size(&self) -> u64 {
+    pub(crate) fn size(&self) -> u64 {
         self.virtual_disk.presented_size()
     }
 
-    pub fn path(&self) -> &str {
+    pub(crate) fn path(&self) -> &str {
         &self.path
     }
 
     /// Whether uncommitted changes exist.
-    pub fn is_modified(&self) -> bool {
+    pub(crate) fn is_modified(&self) -> bool {
         self.cache.modified()
     }
 
@@ -442,21 +433,11 @@ impl Disk {
         Ok((offset, volume))
     }
 
-    /// The layered inspection of this disk: the block-active device, what
-    /// its leading structure turned out to be, any recognized partition
-    /// schema, every region that schema declares, every volume actually
-    /// composed, and every filesystem recognition attempted on one.
-    ///
-    /// Each fact stays at the seam that owns it. A region whose type this
-    /// release declines to read is still reported, with a reading of what
-    /// the type declares and the refusal beside it; a volume whose
-    /// filesystem could not be recognized is still a volume, with the
-    /// refusal at the filesystem seam; and neither renumbers what follows.
-    ///
-    /// Content no adapter claims is an outcome here rather than a
-    /// refusal — a disk in no format this release knows is a fact about
-    /// the disk. An image that cannot be *read* still fails.
-    pub fn inspect(&mut self) -> Result<DiskReport> {
+    /// The layered inspection of this disk, built seam by seam: each fact
+    /// stays with the seam that owns it, an unread region or an
+    /// unrecognized filesystem is still reported with its refusal beside
+    /// it, and neither renumbers what follows.
+    pub(crate) fn inspect(&mut self) -> Result<DiskReport> {
         self.require_usable()?;
         let device_identity = self.device_identity;
         let device = DeviceInfo {
@@ -615,18 +596,16 @@ impl Disk {
 
     /// Lists a directory in the volume identified by `volume_id`
     /// ("" = root; "A/B" descends).
-    pub fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
+    pub(crate) fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
         let segments = Self::split_path(path)?;
         let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
         fat.entries(&mut composed, &segments)
     }
 
-    /// Answers one path in the volume identified by `volume_id` with its
-    /// entry, or `None` when nothing exists at that path — a missing
-    /// leaf, a missing parent, or a parent that is a file alike. Absence
-    /// is an answer, distinguished from failure to read the volume (U3).
-    pub fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
+    /// Answers one path with its entry, or `None` where nothing exists
+    /// at it — absence being an answer rather than a failure (U3).
+    pub(crate) fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a path is required".to_owned()));
@@ -664,7 +643,7 @@ impl Disk {
     }
 
     /// Copies a file's bytes out of the volume identified by `volume_id`.
-    pub fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
+    pub(crate) fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
@@ -675,10 +654,9 @@ impl Disk {
         fat.read_file(&mut composed, &segments)
     }
 
-    /// Reads part of a file — the streamed form (P27), beside
-    /// [`Disk::read_file`]: exactly `buf` bytes at `offset`, which must
-    /// lie within the file.
-    pub fn read_file_at(
+    /// Reads part of a file — the streamed form (P27): exactly `buf`
+    /// bytes at `offset`, which must lie within the file.
+    pub(crate) fn read_file_at(
         &mut self,
         volume_id: VolumeId,
         path: &str,
@@ -696,10 +674,8 @@ impl Disk {
     }
 
     /// Sets a file's size, creating it when absent: kept bytes preserved
-    /// in place, a grown region reads as zeros. With
-    /// [`Disk::write_file_at`] this is the streamed replacement for
-    /// [`Disk::write_file`]. Buffered until commit.
-    pub fn resize_file(&mut self, volume_id: VolumeId, path: &str, size: u64) -> Result<()> {
+    /// in place, a grown region reading as zeros. Buffered until commit.
+    pub(crate) fn resize_file(&mut self, volume_id: VolumeId, path: &str, size: u64) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
@@ -710,10 +686,10 @@ impl Disk {
         fat.resize_file(&mut composed, &segments, size)
     }
 
-    /// Writes part of a file in place — the streamed form (P27), beside
-    /// [`Disk::write_file`]: the span must lie within the file's current
-    /// size (resize first to change it). Buffered until commit.
-    pub fn write_file_at(
+    /// Writes part of a file in place — the streamed form (P27): the
+    /// span must lie within the file's current size. Buffered until
+    /// commit.
+    pub(crate) fn write_file_at(
         &mut self,
         volume_id: VolumeId,
         path: &str,
@@ -753,12 +729,15 @@ impl Disk {
         }
     }
 
-    /// Writes a file into the volume identified by `volume_id`. An
-    /// existing file is overwritten — shorter or longer, its old
-    /// clusters released and reclaimed, every FAT copy kept in step —
-    /// while an existing directory is refused. Buffered until
-    /// [`Disk::commit`].
-    pub fn write_file(&mut self, volume_id: VolumeId, path: &str, contents: &[u8]) -> Result<()> {
+    /// Writes a file into the volume identified by `volume_id`, an
+    /// existing one overwritten and an existing directory refused.
+    /// Buffered until [`MediaState::commit`].
+    pub(crate) fn write_file(
+        &mut self,
+        volume_id: VolumeId,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
@@ -769,11 +748,9 @@ impl Disk {
         fat.write_file(&mut composed, &segments, contents)
     }
 
-    /// Ensures a directory exists in the volume identified by
-    /// `volume_id`: missing parents are created, and a path that already
-    /// leads to a directory — the root included — succeeds unchanged.
-    /// Buffered until commit.
-    pub fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
+    /// Ensures a directory exists, missing parents created and an
+    /// existing directory succeeding unchanged. Buffered until commit.
+    pub(crate) fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         let (_, fat) = self.volume_at(volume_id)?;
@@ -781,16 +758,14 @@ impl Disk {
         fat.make_directory(&mut composed, &segments)
     }
 
-    /// The commit point (P2): writes everything buffered since open (or
-    /// the last commit/rollback) through to the image, then flushes.
-    /// The commit is durable (P9): every host write is staged in memory
-    /// first, the bytes it will overwrite are made durable in a private
-    /// recovery journal, and only then does the file change — so an
-    /// interruption at any point leaves state the next open reconciles
-    /// to wholly the old image or wholly the committed new one. A
-    /// write-through refusal (P6) likewise surfaces before a single
-    /// byte of the file has moved.
-    pub fn commit(&mut self) -> Result<()> {
+    /// The commit point (P2), staged and journalled so that it is also
+    /// durable (P9): the write-through runs against a capture while the
+    /// file is untouched, the bytes it will overwrite reach the recovery
+    /// journal before the first of them changes, and the journal retires
+    /// only once the apply is through. The three phases below are that
+    /// sequence, and each one's failure path is what makes an
+    /// interruption reconcilable.
+    pub(crate) fn commit(&mut self) -> Result<()> {
         self.require_usable()?;
         self.require_writable()?;
         if !self.cache.modified() {
@@ -881,7 +856,7 @@ impl Disk {
 
     /// Discards everything buffered; the image is untouched. Unaltered
     /// cached extents stay resident — they still mirror the image.
-    pub fn rollback(&mut self) {
+    pub(crate) fn rollback(&mut self) {
         self.cache.discard_dirty();
     }
 }
@@ -892,7 +867,7 @@ mod tests {
 
     /// The volume a partitionless test image composes, named the only way
     /// a caller can name one: from the report the library issued.
-    fn only_volume(disk: &mut Disk) -> VolumeId {
+    fn only_volume(disk: &mut MediaState) -> VolumeId {
         let report = disk.inspect().expect("inspection reads");
         assert_eq!(report.volumes.len(), 1, "these images compose one volume");
         report.volumes[0].id
@@ -953,7 +928,7 @@ mod tests {
         let virtual_size = build_fat16_qcow2(&path);
 
         // Now the public path.
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("disk opens");
         assert!(matches!(disk.format(), DiskFormat::Qcow2 { version: 3 }));
         assert_eq!(disk.size(), virtual_size);
 
@@ -986,7 +961,7 @@ mod tests {
         disk.commit().expect("commit");
         drop(disk);
 
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened
                 .read_file(volume, "GUEST/PAYLOAD.BIN")
@@ -1064,7 +1039,7 @@ mod tests {
         let virtual_size = build_fat16_vdi(&path);
         let before = std::fs::metadata(&path).expect("metadata").len();
 
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("disk opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("disk opens");
         assert_eq!(
             disk.format(),
             DiskFormat::Vdi {
@@ -1106,7 +1081,7 @@ mod tests {
         );
         drop(disk);
 
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened
                 .read_file(volume, "GUEST/PAYLOAD.BIN")
@@ -1129,7 +1104,7 @@ mod tests {
     /// expect an interrupted commit to come back to.
     fn build_committed_raw(path: &std::path::Path) {
         std::fs::write(path, fat16_volume_bytes()).expect("image writes");
-        let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(path, AccessIntent::Write).expect("opens");
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
@@ -1155,7 +1130,8 @@ mod tests {
     fn crash_commit_child() {
         let path = std::env::var_os(CRASH_IMAGE).expect("the parent supplies an image path");
         let mut disk =
-            Disk::open(std::path::PathBuf::from(path), AccessIntent::Write).expect("child opens");
+            MediaState::open(std::path::PathBuf::from(path), AccessIntent::Write)
+                .expect("child opens");
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("child overwrites");
@@ -1182,7 +1158,7 @@ mod tests {
 
     fn build_committed_qcow2(path: &std::path::Path) {
         build_fat16_qcow2(path);
-        let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(path, AccessIntent::Write).expect("opens");
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
@@ -1191,7 +1167,7 @@ mod tests {
 
     fn build_committed_vdi(path: &std::path::Path) {
         build_fat16_vdi(path);
-        let mut disk = Disk::open(path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(path, AccessIntent::Write).expect("opens");
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
@@ -1230,7 +1206,7 @@ mod tests {
         base_image[0x188..0x198].copy_from_slice(&VDI_BASE_ID);
         std::fs::write(&base, base_image).expect("base writes");
 
-        let mut base_disk = Disk::open(&base, AccessIntent::Write).expect("base opens");
+        let mut base_disk = MediaState::open(&base, AccessIntent::Write).expect("base opens");
         let volume = only_volume(&mut base_disk);
         base_disk
             .write_file(volume, "OLD.BIN", &old_content())
@@ -1248,7 +1224,7 @@ mod tests {
         let base = directory.join("base.qcow2");
         let top = directory.join("top.qcow2");
         let virtual_size = build_fat16_qcow2(&base);
-        let mut base_disk = Disk::open(&base, AccessIntent::Write).expect("base opens");
+        let mut base_disk = MediaState::open(&base, AccessIntent::Write).expect("base opens");
         let volume = only_volume(&mut base_disk);
         base_disk
             .write_file(volume, "OLD.BIN", &old_content())
@@ -1309,7 +1285,7 @@ mod tests {
 
                 run_crashing_commit(&path, boundary);
 
-                let mut reopened = Disk::open(&path, AccessIntent::Read)
+                let mut reopened = MediaState::open(&path, AccessIntent::Read)
                     .unwrap_or_else(|error| panic!("{shape}/{boundary} reopens: {error}"));
                 let volume = only_volume(&mut reopened);
                 let content = reopened
@@ -1349,10 +1325,10 @@ mod tests {
     }
 
     /// Runs a commit's staging and journal phases exactly as
-    /// [`Disk::commit`] does, stopping at the durability boundary: the
+    /// [`MediaState::commit`] does, stopping at the durability boundary: the
     /// journal is armed, the file untouched. Returns the staged host
     /// writes so a test can apply any prefix of them before "crashing".
-    fn stage_and_arm(disk: &mut Disk) -> (Vec<(u64, Vec<u8>)>, u64) {
+    fn stage_and_arm(disk: &mut MediaState) -> (Vec<(u64, Vec<u8>)>, u64) {
         let cache_bytes = disk.cache_bytes;
         disk.cache.join_offloads();
         disk.virtual_disk.host_mut().begin_capture(cache_bytes);
@@ -1376,7 +1352,7 @@ mod tests {
     fn streamed_file_verbs_round_trip_beside_the_whole_file_forms() {
         let path = temp_image("streamed-verbs");
         std::fs::write(&path, fat16_volume_bytes()).expect("image writes");
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
         let volume = only_volume(&mut disk);
 
         // Streamed replace: size the file, then write it in chunks.
@@ -1433,7 +1409,7 @@ mod tests {
         // Everything above survives the commit.
         disk.commit().expect("commits");
         drop(disk);
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
         let back = reopened
             .read_file(volume, "BIG.BIN")
             .expect("reads");
@@ -1451,7 +1427,7 @@ mod tests {
         // A one-extent working set: reads, uncommitted writes, and the
         // commit's capture all evict and spill constantly (P27), and
         // the result is byte-identical to an unbounded run.
-        let mut disk = Disk::open_with_cache(&path, AccessIntent::Write, 1).expect("opens");
+        let mut disk = MediaState::open_with_cache(&path, AccessIntent::Write, 1).expect("opens");
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
@@ -1459,7 +1435,7 @@ mod tests {
         disk.commit().expect("commits");
         drop(disk);
 
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened
                 .read_file(volume, "OLD.BIN")
@@ -1475,7 +1451,7 @@ mod tests {
         let path = temp_image("retires");
         build_committed_raw(&path);
 
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
 
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "NEW.BIN", &new_content())
@@ -1487,7 +1463,7 @@ mod tests {
         );
         drop(disk);
 
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reopens");
+        let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
             reopened
                 .read_file(volume, "NEW.BIN")
@@ -1510,7 +1486,8 @@ mod tests {
         let sidecar = crate::journal::sidecar_path(&path);
         std::fs::write(&sidecar, b"torn mid-write, never sealed").expect("sidecar writes");
 
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
+        let mut reopened =
+            MediaState::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!sidecar.exists(), "the torn sidecar is discarded");
         let volume = only_volume(&mut reopened);
         assert_eq!(
@@ -1528,7 +1505,7 @@ mod tests {
         let path = temp_image("mid-apply");
         build_committed_raw(&path);
 
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
 
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &new_content())
@@ -1547,7 +1524,8 @@ mod tests {
         }
         drop(disk);
 
-        let mut reopened = Disk::open(&path, AccessIntent::Write).expect("reconciles and opens");
+        let mut reopened =
+            MediaState::open(&path, AccessIntent::Write).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
         assert_eq!(
             reopened
@@ -1564,7 +1542,7 @@ mod tests {
             .expect("overwrites");
         reopened.commit().expect("commits");
         drop(reopened);
-        let mut committed = Disk::open(&path, AccessIntent::Read).expect("opens");
+        let mut committed = MediaState::open(&path, AccessIntent::Read).expect("opens");
         assert_eq!(
             committed
                 .read_file(volume, "OLD.BIN")
@@ -1580,7 +1558,7 @@ mod tests {
         let path = temp_image("unretired");
         build_committed_raw(&path);
 
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
 
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "NEW.BIN", &new_content())
@@ -1599,7 +1577,8 @@ mod tests {
         }
         drop(disk);
 
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
+        let mut reopened =
+            MediaState::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
         assert_eq!(
             reopened.stat(volume, "NEW.BIN").expect("stats"),
@@ -1625,7 +1604,7 @@ mod tests {
         build_fat16_qcow2(&path);
 
         // The wholly-old state: one committed file inside the qcow2.
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
@@ -1635,7 +1614,7 @@ mod tests {
 
         // An interrupted commit: cluster allocations and metadata
         // updates land partially, then the process vanishes.
-        let mut disk = Disk::open(&path, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
         disk.write_file(volume, "NEW.BIN", &new_content())
             .expect("writes");
         let (blocks, new_len) = stage_and_arm(&mut disk);
@@ -1651,7 +1630,8 @@ mod tests {
 
         // The next open reconciles to wholly the old image: metadata
         // consistent, the old file intact, the interrupted one absent.
-        let mut reopened = Disk::open(&path, AccessIntent::Read).expect("reconciles and opens");
+        let mut reopened =
+            MediaState::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
         let volume = only_volume(&mut reopened);
         assert_eq!(
@@ -1679,7 +1659,7 @@ mod tests {
             std::process::id()
         ));
         let virtual_size = build_fat16_qcow2(&base);
-        let mut disk = Disk::open(&base, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&base, AccessIntent::Write).expect("opens");
         let volume = only_volume(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
@@ -1688,7 +1668,7 @@ mod tests {
 
         // An interrupted commit on the base, left behind before it
         // became a backing file.
-        let mut disk = Disk::open(&base, AccessIntent::Write).expect("opens");
+        let mut disk = MediaState::open(&base, AccessIntent::Write).expect("opens");
         disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
         let (blocks, new_len) = stage_and_arm(&mut disk);
@@ -1711,7 +1691,8 @@ mod tests {
 
         // Composing the chain reconciles the base first (P9): its
         // sidecar is gone and wholly the old bytes show through.
-        let mut chained = Disk::open(&top, AccessIntent::Read).expect("reconciles and composes");
+        let mut chained =
+            MediaState::open(&top, AccessIntent::Read).expect("reconciles and composes");
         assert!(!crate::journal::sidecar_path(&base).exists());
         assert_eq!(
             chained

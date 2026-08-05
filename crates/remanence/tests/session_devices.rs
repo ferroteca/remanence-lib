@@ -139,8 +139,8 @@ fn the_device_is_the_slot_and_the_medium_is_what_occupies_it() {
     assert_eq!(device.family(), DeviceFamily::Hdd);
 
     // The medium is reached through the device, and nothing else.
-    let medium = session.medium(id).expect("the medium is reachable");
-    assert_eq!(medium.image_size_bytes(), 1024 * 1024);
+    let medium = session.require_device(id).expect("the medium is reachable");
+    assert_eq!(medium.image_size_bytes().expect("a medium is attached"), 1024 * 1024);
 
     drop(session);
     std::fs::remove_file(&a).ok();
@@ -162,14 +162,14 @@ fn two_devices_keep_their_volume_identities_device_scoped() {
     let second = session.attach(&b, AccessIntent::Read).expect("second attaches");
 
     let first_report = session
-        .medium(first)
+        .require_device(first)
         .expect("medium")
         .inspect()
         .expect("first inspects");
     let first_volumes: Vec<u64> = first_report.volumes.iter().map(|v| v.id.value()).collect();
 
     let second_report = session
-        .medium(second)
+        .require_device(second)
         .expect("medium")
         .inspect()
         .expect("second inspects");

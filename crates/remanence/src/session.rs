@@ -250,7 +250,7 @@ fn containers_with(containers: &[Container], extra: Vec<Container>) -> Vec<Conta
 ///
 /// This is the raw plane's verb (F43): it works over the medium's own
 /// bytes, above the same claim the presented disk is opened on, and is
-/// reached through [`crate::Disk`].
+/// reached through [`crate::StorageDevice`].
 pub(crate) fn identify_medium(
     source: &ImageSource,
     image_path: &Path,
@@ -433,7 +433,7 @@ mod tests {
         let path = temp_image_path("session-container", "h8d");
         write_file(&path, &vec![0u8; 102_400]);
 
-        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        let disk = crate::disk::MediaState::open(&path, AccessIntent::Read).expect("disk opens");
         let identification = disk.identify();
 
         assert!(!disk.is_modified());
@@ -482,7 +482,7 @@ mod tests {
         bytes[128..132].copy_from_slice(b"HDOS");
         write_file(&path, &bytes);
 
-        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        let disk = crate::disk::MediaState::open(&path, AccessIntent::Read).expect("disk opens");
         let identification = disk.identify();
 
         let image = &identification.containers[0];
@@ -515,7 +515,7 @@ mod tests {
 
         // A one-extent working set (P27's declared bound at its floor):
         // identification still walks every layer correctly.
-        let disk = crate::Disk::open_with_cache(&path, AccessIntent::Read, 1).expect("disk opens");
+        let disk = crate::disk::MediaState::open_with_cache(&path, AccessIntent::Read, 1).expect("disk opens");
         let identification = disk.identify();
         assert_eq!(identification.containers[0].id, "h8d");
         assert_eq!(
@@ -538,7 +538,7 @@ mod tests {
         // A four-extent bound under a sequential scan: the predictive
         // reader races ahead while eviction churns behind, and the
         // results must be identical to an unbounded, unthreaded read.
-        let disk = crate::Disk::open_with_cache(&path, AccessIntent::Read, 4 * 64 * 1024).expect("opens");
+        let disk = crate::disk::MediaState::open_with_cache(&path, AccessIntent::Read, 4 * 64 * 1024).expect("opens");
         let mut out = vec![0u8; bytes.len()];
         let chunk = 64 * 1024;
         for start in (0..bytes.len()).step_by(chunk) {
@@ -556,7 +556,7 @@ mod tests {
         let path = temp_image_path("session-unknown", "bin");
         write_file(&path, &[0u8; 10]);
 
-        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        let disk = crate::disk::MediaState::open(&path, AccessIntent::Read).expect("disk opens");
         let identification = disk.identify();
 
         assert_eq!(identification.containers.len(), 2);
@@ -592,7 +592,7 @@ mod tests {
         // surface has real ones, so the reported state is the session
         // cache's own and the flag is gone. The modified-after-write half
         // lives in `tests/disk.rs`, where a volume exists to write to.
-        let disk = crate::Disk::open(&path, AccessIntent::Read).expect("disk opens");
+        let disk = crate::disk::MediaState::open(&path, AccessIntent::Read).expect("disk opens");
         assert!(!disk.is_modified());
         assert_eq!(disk.identify().modified, disk.is_modified());
 

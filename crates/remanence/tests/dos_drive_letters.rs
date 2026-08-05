@@ -165,7 +165,7 @@ fn write_image(tag: &str, bytes: Vec<u8>) -> PathBuf {
 fn inspect(path: &PathBuf) -> (Session, DiskReport) {
     let (mut session, attachment) = attach(path);
     let report = session
-        .medium(attachment)
+        .require_device(attachment)
         .expect("the medium is attached")
         .inspect()
         .expect("inspection reads");
@@ -572,7 +572,7 @@ fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
     let path = rig_artifact("file-verb");
     let (mut session, attachment) = attach(&path);
     let report = session
-        .medium(attachment)
+        .require_device(attachment)
         .expect("attached")
         .inspect()
         .expect("inspection reads");
@@ -582,7 +582,7 @@ fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
     let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
 
     let marker = session
-        .medium(attachment)
+        .require_device(attachment)
         .expect("attached")
         .read_file(volume_at(&map, 'C'), "RMNMARK.TXT")
         .expect("C: reads through the identity the map returned");

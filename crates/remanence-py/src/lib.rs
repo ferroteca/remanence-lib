@@ -3,13 +3,15 @@
 
 //! Python bindings for the Remanence disk image analysis library.
 //!
-//! The module mirrors the Rust crate's public surface: `Archive` lists
-//! what a supported archive holds (`.zip`, `.7z`), and `Disk` opens a
-//! disk image (optionally an entry inside one of those archives) under
-//! one P7 claim that serves both of the medium's planes —
-//! `Disk.identify()` reports the detected container layers over the
-//! image's own bytes, while `Disk.inspect()` and the volume-scoped file
-//! verbs work over the disk a format adapter presents above them.
+//! The module mirrors the Rust crate's public surface: a `Session` holds
+//! `Machine`s, a machine holds `StorageDevice`s, and a device is the one
+//! handle for a slot and the medium in it. Attaching a disk image
+//! (optionally an entry inside a `.zip` or `.7z` archive) takes one P7
+//! claim serving both of the medium's planes — `StorageDevice.identify()`
+//! reports the detected container layers over the image's own bytes,
+//! while `StorageDevice.inspect()` and the volume-scoped file verbs work
+//! over the disk a format adapter presents above them, and `Archive`
+//! lists what a supported archive holds.
 //! Failures raise `RemanenceError`, which carries a stable `category`
 //! saying how to behave and, where the refusal came from an enumerated rule
 //! set such as the DOS 8.3 namespace's, a stable `rule` naming which rule
@@ -883,6 +885,14 @@ impl FatEntry {
     }
 }
 
+fn access_intent(writable: bool) -> remanence::AccessIntent {
+    if writable {
+        remanence::AccessIntent::Write
+    } else {
+        remanence::AccessIntent::Read
+    }
+}
+
 fn mode_str(mode: remanence::AccessMode) -> &'static str {
     match mode {
         remanence::AccessMode::ReadWrite => "read-write",
@@ -964,11 +974,13 @@ fn assurance_conditions() -> Vec<String> {
         .collect()
 }
 
-/// An open session: the machine scope, holding a set of family-typed
-/// storage devices (P32).
+/// An open session: the claim and cache scope, holding the machines
+/// within it (P32).
 ///
-/// There is no separate machine object — a session *is* the scope within
-/// which device identity is resolved.
+/// A session holds machines; a machine holds devices. The attach verbs
+/// here are the session's **anonymous machine** — the one whose identity
+/// is null, which every session has exactly one of, and which behaves as
+/// any other machine in every respect.
 #[pyclass(module = "remanence")]
 pub struct Session {
     inner: Arc<Mutex<remanence::Session>>,
@@ -976,8 +988,8 @@ pub struct Session {
 
 #[pymethods]
 impl Session {
-    /// A session with no devices. Devices are attached and detached over
-    /// its life; the set is not fixed at open.
+    /// A session holding nothing but its anonymous machine. Machines and
+    /// devices are added over its life; neither set is fixed at open.
     #[new]
     fn new() -> Self {
         Self {
@@ -985,11 +997,51 @@ impl Session {
         }
     }
 
+    /// Adds a machine carrying `identity` and returns it.
+    ///
+    /// An identity already in use is refused by name rather than
+    /// resolving to the machine holding it, and the empty identity is
+    /// refused too — the machine with no identity is this session's
+    /// anonymous one, and there is exactly one of it.
+    fn add_machine(&self, identity: &str) -> PyResult<Machine> {
+        self.lock().add_machine(identity).map_err(to_py_err)?;
+        Ok(Machine {
+            session: Arc::clone(&self.inner),
+            identity: Some(identity.to_owned()),
+        })
+    }
+
+    /// Every machine identity in the session, in the order the machines
+    /// were added; `None` is the anonymous machine's.
+    #[getter]
+    fn machines(&self) -> Vec<Option<String>> {
+        self.lock()
+            .machines()
+            .iter()
+            .map(|machine| machine.identity().map(str::to_owned))
+            .collect()
+    }
+
+    /// The machine carrying `identity`, or the anonymous machine when
+    /// `identity` is `None` — the anonymous machine being exactly the
+    /// one whose identity is null.
+    #[pyo3(signature = (identity = None))]
+    fn machine(&self, identity: Option<&str>) -> PyResult<Machine> {
+        if let Some(identity) = identity {
+            self.lock().require_machine(identity).map_err(to_py_err)?;
+        }
+        Ok(Machine {
+            session: Arc::clone(&self.inner),
+            identity: identity.map(str::to_owned),
+        })
+    }
+
     /// Attaches the medium at `path` — a raw disk image, or
-    /// `archive[/entry]` — to a new device in the lowest free slot of
-    /// its family, returning the attachment identity it took (`"hdd0"`).
-    /// `writable=True` claims the medium exclusively and fails at the
-    /// open when that claim cannot be secured, never by falling back.
+    /// `archive[/entry]` — to a new device in the session's anonymous
+    /// machine, taking the lowest free slot of its family and returning
+    /// the attachment identity it took (`"hdd0"`). `writable=True`
+    /// claims the medium exclusively and fails at the open when that
+    /// claim cannot be secured, never by falling back.
     #[pyo3(signature = (path, *, writable, cache_bytes = None))]
     fn attach(
         &self,
@@ -997,11 +1049,7 @@ impl Session {
         writable: bool,
         cache_bytes: Option<u64>,
     ) -> PyResult<String> {
-        let intent = if writable {
-            remanence::AccessIntent::Write
-        } else {
-            remanence::AccessIntent::Read
-        };
+        let intent = access_intent(writable);
         let mut session = self.lock();
         let attachment = match cache_bytes {
             Some(cache_bytes) => session.attach_with_cache(path, intent, cache_bytes),
@@ -1012,9 +1060,10 @@ impl Session {
     }
 
     /// Attaches the medium at `path` to the slot `attachment` names
-    /// (such as `"hdd1"`). The caller chooses the slot, never the name.
-    /// An occupied slot is refused rather than displaced, and a family
-    /// this release does not claim is refused by name.
+    /// (such as `"hdd1"`) in the session's anonymous machine. The caller
+    /// chooses the slot, never the name. An occupied slot is refused
+    /// rather than displaced, and a family this release does not claim
+    /// is refused by name.
     #[pyo3(signature = (attachment, path, *, writable, cache_bytes = None))]
     fn attach_at(
         &self,
@@ -1023,11 +1072,7 @@ impl Session {
         writable: bool,
         cache_bytes: Option<u64>,
     ) -> PyResult<String> {
-        let intent = if writable {
-            remanence::AccessIntent::Write
-        } else {
-            remanence::AccessIntent::Read
-        };
+        let intent = access_intent(writable);
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         let mut session = self.lock();
         match cache_bytes {
@@ -1044,14 +1089,15 @@ impl Session {
         Ok(attachment.to_string())
     }
 
-    /// Detaches the device at `attachment`, releasing its medium's claim
-    /// and freeing the slot.
+    /// Detaches the device at `attachment` from the anonymous machine,
+    /// releasing its medium's claim and freeing the slot.
     fn detach(&self, attachment: &str) -> PyResult<()> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         self.lock().detach(attachment).map_err(to_py_err)
     }
 
-    /// The attachment identities currently in use, in slot-fill order.
+    /// The anonymous machine's attachment identities, in slot-fill
+    /// order.
     #[getter]
     fn devices(&self) -> Vec<String> {
         self.lock()
@@ -1061,13 +1107,15 @@ impl Session {
             .collect()
     }
 
-    /// The medium in the device at `attachment`. The session owns it;
+    /// The device at `attachment` in the session's anonymous machine —
+    /// `Machine.device` reaches a named machine's. The session owns it;
     /// the returned object stays valid until that device is detached.
-    fn medium(&self, attachment: &str) -> PyResult<Disk> {
+    fn device(&self, attachment: &str) -> PyResult<StorageDevice> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
-        self.lock().medium(attachment).map_err(to_py_err)?;
-        Ok(Disk {
+        self.lock().require_device(attachment).map_err(to_py_err)?;
+        Ok(StorageDevice {
             session: Arc::clone(&self.inner),
+            machine: None,
             attachment,
         })
     }
@@ -1095,76 +1143,240 @@ impl Session {
     }
 }
 
-/// The medium in one storage device, reached through the session that
-/// holds it. Nothing is reachable except through a device (P32).
-#[pyclass(module = "remanence")]
-pub struct Disk {
-    session: Arc<Mutex<remanence::Session>>,
-    attachment: remanence::AttachmentId,
-}
-
-/// A borrow of the session with one medium selected.
+/// One machine in a session: a set of family-typed storage devices,
+/// their attachment identities, and the order they were attached in.
 ///
-/// It dereferences to the medium, so every verb below reads as though it
-/// held the disk directly while the session stays the owner. The medium
-/// is re-resolved on each borrow, so a detached device refuses rather
-/// than reaching freed state.
-struct MediumGuard<'a> {
-    session: MutexGuard<'a, remanence::Session>,
+/// The device set is the machine's own. Two machines in one session may
+/// each hold an `"hdd0"`, and neither can reach the other's.
+#[pyclass(module = "remanence")]
+pub struct Machine {
+    session: Arc<Mutex<remanence::Session>>,
+    /// `None` for the session's anonymous machine.
+    identity: Option<String>,
+}
+
+impl Machine {
+    /// The machine this handle names, or a refusal where the session no
+    /// longer holds it.
+    fn get<'a>(
+        &self,
+        session: &'a mut MutexGuard<'_, remanence::Session>,
+    ) -> PyResult<&'a mut remanence::Machine> {
+        match &self.identity {
+            Some(identity) => session.require_machine(identity).map_err(to_py_err),
+            None => Ok(session.anonymous_mut()),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, remanence::Session> {
+        self.session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+#[pymethods]
+impl Machine {
+    /// This machine's identity, or `None` where it is the session's
+    /// anonymous machine.
+    #[getter]
+    fn identity(&self) -> Option<String> {
+        self.identity.clone()
+    }
+
+    /// Attaches the medium at `path` to a new device in this machine,
+    /// taking the lowest free slot of its family and returning the
+    /// attachment identity it took.
+    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
+    fn attach(
+        &self,
+        path: PathBuf,
+        writable: bool,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<String> {
+        let intent = access_intent(writable);
+        let mut session = self.lock();
+        let machine = self.get(&mut session)?;
+        let attachment = match cache_bytes {
+            Some(cache_bytes) => machine.attach_with_cache(path, intent, cache_bytes),
+            None => machine.attach(path, intent),
+        }
+        .map_err(to_py_err)?;
+        Ok(attachment.to_string())
+    }
+
+    /// Attaches the medium at `path` to the slot `attachment` names in
+    /// this machine. The caller chooses the slot, never the name.
+    #[pyo3(signature = (attachment, path, *, writable, cache_bytes = None))]
+    fn attach_at(
+        &self,
+        attachment: &str,
+        path: PathBuf,
+        writable: bool,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<String> {
+        let intent = access_intent(writable);
+        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
+        let mut session = self.lock();
+        let machine = self.get(&mut session)?;
+        match cache_bytes {
+            Some(cache_bytes) => machine.attach_at_with_cache(
+                attachment.family(),
+                attachment.index(),
+                path,
+                intent,
+                cache_bytes,
+            ),
+            None => machine.attach_at(attachment.family(), attachment.index(), path, intent),
+        }
+        .map_err(to_py_err)?;
+        Ok(attachment.to_string())
+    }
+
+    /// Detaches the device at `attachment` from this machine, releasing
+    /// its medium's claim and freeing the slot.
+    fn detach(&self, attachment: &str) -> PyResult<()> {
+        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
+        let mut session = self.lock();
+        self.get(&mut session)?.detach(attachment).map_err(to_py_err)
+    }
+
+    /// This machine's attachment identities, in slot-fill order — the
+    /// attachment order a namespace composer reads.
+    #[getter]
+    fn devices(&self) -> PyResult<Vec<String>> {
+        let mut session = self.lock();
+        Ok(self
+            .get(&mut session)?
+            .attachments()
+            .iter()
+            .map(ToString::to_string)
+            .collect())
+    }
+
+    /// The device at `attachment` in this machine. The session owns it;
+    /// the returned object stays valid until that device is detached.
+    fn device(&self, attachment: &str) -> PyResult<StorageDevice> {
+        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
+        let mut session = self.lock();
+        self.get(&mut session)?
+            .require_device(attachment)
+            .map_err(to_py_err)?;
+        Ok(StorageDevice {
+            session: Arc::clone(&self.session),
+            machine: self.identity.clone(),
+            attachment,
+        })
+    }
+}
+
+/// One storage device — the durable slot, its family, and the state of
+/// whatever medium occupies it. Nothing is reachable except through a
+/// device (P32), and the content verbs below refuse by name while its
+/// slot is empty.
+#[pyclass(module = "remanence")]
+pub struct StorageDevice {
+    session: Arc<Mutex<remanence::Session>>,
+    /// `None` for the session's anonymous machine.
+    machine: Option<String>,
     attachment: remanence::AttachmentId,
 }
 
-impl std::ops::Deref for MediumGuard<'_> {
-    type Target = remanence::Disk;
+/// A borrow of the session with one device selected.
+///
+/// It dereferences to the device, so every verb below reads as though it
+/// held the device directly while the session stays the owner. The
+/// device is re-resolved on each borrow, so a detached one refuses
+/// rather than reaching freed state.
+struct DeviceGuard<'a> {
+    session: MutexGuard<'a, remanence::Session>,
+    machine: Option<String>,
+    attachment: remanence::AttachmentId,
+}
+
+impl std::ops::Deref for DeviceGuard<'_> {
+    type Target = remanence::StorageDevice;
 
     fn deref(&self) -> &Self::Target {
-        self.session
-            .device(self.attachment)
-            .and_then(remanence::StorageDevice::medium)
+        let machine = match &self.machine {
+            Some(identity) => self.session.machine(identity),
+            None => Some(self.session.anonymous()),
+        };
+        machine
+            .and_then(|machine| machine.device(self.attachment))
             .expect("the device was present when this guard was taken")
     }
 }
 
-impl std::ops::DerefMut for MediumGuard<'_> {
+impl std::ops::DerefMut for DeviceGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.session
-            .medium(self.attachment)
+        let machine = match &self.machine {
+            Some(identity) => self.session.machine_mut(identity),
+            None => Some(self.session.anonymous_mut()),
+        };
+        machine
+            .and_then(|machine| machine.device_mut(self.attachment))
             .expect("the device was present when this guard was taken")
     }
 }
 
-impl Disk {
-    fn get(&mut self) -> PyResult<MediumGuard<'_>> {
+impl StorageDevice {
+    fn get(&mut self) -> PyResult<DeviceGuard<'_>> {
         let session = self
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if session.device(self.attachment).is_none() {
+        let present = match &self.machine {
+            Some(identity) => session
+                .machine(identity)
+                .is_some_and(|machine| machine.device(self.attachment).is_some()),
+            None => session.device(self.attachment).is_some(),
+        };
+        if !present {
             return Err(categorized_py_err(
                 remanence::ErrorCategory::NotFound,
-                "the device holding this medium was detached",
+                "this device was detached",
             ));
         }
-        Ok(MediumGuard {
+        Ok(DeviceGuard {
             session,
+            machine: self.machine.clone(),
             attachment: self.attachment,
         })
     }
 }
 
 #[pymethods]
-impl Disk {
-    /// The artifact the disk was opened from (the archive path for
+impl StorageDevice {
+    /// This device's attachment identity — `"hdd0"` and the like.
+    #[getter]
+    fn attachment(&self) -> String {
+        self.attachment.to_string()
+    }
+
+    /// The device family this slot belongs to.
+    #[getter]
+    fn family(&self) -> String {
+        self.attachment.family().name().to_owned()
+    }
+
+    /// Whether a medium currently occupies the slot.
+    #[getter]
+    fn is_occupied(&mut self) -> PyResult<bool> {
+        Ok(self.get()?.is_occupied())
+    }
+
+    /// The artifact the medium was opened from (the archive path for
     /// archive inputs).
     #[getter]
     fn path(&mut self) -> PyResult<String> {
-        Ok(self.get()?.path().to_owned())
+        Ok(self.get()?.path().map_err(to_py_err)?.to_owned())
     }
 
     /// The resolved image path (the entry name for archive inputs).
     #[getter]
     fn image_path(&mut self) -> PyResult<String> {
-        Ok(self.get()?.image_path().display().to_string())
+        Ok(self.get()?.image_path().map_err(to_py_err)?.display().to_string())
     }
 
     /// The resolved image's own size in bytes — the raw plane. Distinct
@@ -1172,7 +1384,7 @@ impl Disk {
     /// two differ.
     #[getter]
     fn image_size_bytes(&mut self) -> PyResult<u64> {
-        Ok(self.get()?.image_size_bytes())
+        self.get()?.image_size_bytes().map_err(to_py_err)
     }
 
     /// Reads `length` bytes of the resolved image at `offset` — the
@@ -1191,7 +1403,7 @@ impl Disk {
 
     /// Identifies the image's container layers and probable filesystem.
     fn identify(&mut self, py: Python<'_>) -> PyResult<Identification> {
-        let identification = self.get()?.identify();
+        let identification = self.get()?.identify().map_err(to_py_err)?;
         let containers = identification
             .containers
             .iter()
@@ -1227,7 +1439,7 @@ impl Disk {
     /// read-only where it does not (P28). `assurance` says why.
     #[getter]
     fn mode(&mut self) -> PyResult<&'static str> {
-        Ok(mode_str(self.get()?.mode()))
+        Ok(mode_str(self.get()?.mode().map_err(to_py_err)?))
     }
 
     /// What this open established about the evidence beneath it (P28),
@@ -1236,13 +1448,13 @@ impl Disk {
     /// extents that read, and the access the evidence permits.
     #[getter]
     fn assurance(&mut self) -> PyResult<Assurance> {
-        Ok(Assurance::new(self.get()?.assurance()))
+        Ok(Assurance::new(self.get()?.assurance().map_err(to_py_err)?))
     }
 
     /// `"raw"`, `"qcow2"` or `"vdi"`.
     #[getter]
     fn format(&mut self) -> PyResult<&'static str> {
-        Ok(match self.get()?.format() {
+        Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Raw => "raw",
             remanence::DiskFormat::Qcow2 { .. } => "qcow2",
             remanence::DiskFormat::Vdi { .. } => "vdi",
@@ -1252,7 +1464,7 @@ impl Disk {
     /// The qcow2 version, or `None` for an image of any other format.
     #[getter]
     fn qcow2_version(&mut self) -> PyResult<Option<u32>> {
-        Ok(match self.get()?.format() {
+        Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Qcow2 { version } => Some(version),
             remanence::DiskFormat::Raw | remanence::DiskFormat::Vdi { .. } => None,
         })
@@ -1262,7 +1474,7 @@ impl Disk {
     /// of any other format.
     #[getter]
     fn vdi_version(&mut self) -> PyResult<Option<(u32, u32)>> {
-        Ok(match self.get()?.format() {
+        Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Vdi { major, minor } => Some((major, minor)),
             remanence::DiskFormat::Raw | remanence::DiskFormat::Qcow2 { .. } => None,
         })
@@ -1271,13 +1483,13 @@ impl Disk {
     /// The virtual disk size in bytes.
     #[getter]
     fn size(&mut self) -> PyResult<u64> {
-        Ok(self.get()?.size())
+        self.get()?.size().map_err(to_py_err)
     }
 
     /// Whether uncommitted changes exist.
     #[getter]
     fn is_modified(&mut self) -> PyResult<bool> {
-        Ok(self.get()?.is_modified())
+        self.get()?.is_modified().map_err(to_py_err)
     }
 
     /// The layered inspection of this disk: the block-active device, what
@@ -1486,14 +1698,7 @@ impl Disk {
 
     /// Discards everything buffered; the image is untouched.
     fn rollback(&mut self) -> PyResult<()> {
-        self.get()?.rollback();
-        Ok(())
-    }
-
-    /// The attachment identity of the device holding this medium.
-    #[getter]
-    fn attachment(&self) -> String {
-        self.attachment.to_string()
+        self.get()?.rollback().map_err(to_py_err)
     }
 }
 
@@ -3302,7 +3507,8 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FilesystemLayout>()?;
     m.add_class::<HdosFile>()?;
     m.add_class::<Session>()?;
-    m.add_class::<Disk>()?;
+    m.add_class::<Machine>()?;
+    m.add_class::<StorageDevice>()?;
     m.add_class::<Assurance>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;

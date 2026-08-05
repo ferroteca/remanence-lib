@@ -106,7 +106,7 @@ fn build_floppy(path: &Path) {
     let attachment = session
         .attach(path, AccessIntent::Write)
         .expect("the whole image attaches");
-    let medium = session.medium(attachment).expect("medium");
+    let medium = session.require_device(attachment).expect("medium");
     let volume = only_volume_of(medium);
     medium
         .write_file(volume, NEAR, &near_content())
@@ -117,7 +117,7 @@ fn build_floppy(path: &Path) {
     medium.commit().expect("commits");
 }
 
-fn only_volume_of(medium: &mut remanence::Disk) -> VolumeId {
+fn only_volume_of(medium: &mut remanence::StorageDevice) -> VolumeId {
     let report = medium.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1, "a bare floppy composes one volume");
     report.volumes[0].id
@@ -152,15 +152,15 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
 
     let mut session = Session::new();
     let attachment = session.attach(&path, AccessIntent::Write).expect("attaches");
-    let medium = session.medium(attachment).expect("medium");
-    let assurance = medium.assurance().clone();
+    let medium = session.require_device(attachment).expect("medium");
+    let assurance = medium.assurance().expect("a medium is attached").clone();
 
     assert_eq!(assurance.outcome, AssuranceOutcome::Verified);
     assert_eq!(assurance.condition, None);
     assert_eq!(assurance.readable, vec![ByteRange::new(0, DECLARED)]);
     assert_eq!(assurance.access, AccessMode::ReadWrite);
     assert_eq!(assurance.first_unavailable_byte, None);
-    assert_eq!(medium.mode(), AccessMode::ReadWrite);
+    assert_eq!(medium.mode().expect("a medium is attached"), AccessMode::ReadWrite);
 
     let volume = only_volume_of(medium);
     assert_eq!(
@@ -175,9 +175,10 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
 fn a_truncated_floppy_declares_its_shortfall_before_anything_is_read() {
     let (path, mut session, attachment) = truncated("notifies", AccessIntent::Write);
     let assurance = session
-        .medium(attachment)
+        .require_device(attachment)
         .expect("medium")
         .assurance()
+        .expect("a medium is attached")
         .clone();
 
     assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
@@ -212,14 +213,14 @@ fn a_truncated_floppy_declares_its_shortfall_before_anything_is_read() {
 #[test]
 fn a_write_intent_open_reports_its_effective_read_only_mode() {
     let (path, mut session, attachment) = truncated("effective-mode", AccessIntent::Write);
-    let medium = session.medium(attachment).expect("medium");
+    let medium = session.require_device(attachment).expect("medium");
 
     assert_eq!(
-        medium.mode(),
+        medium.mode().expect("a medium is attached"),
         AccessMode::ReadOnly,
         "the evidence, not the declaration, settles the effective mode"
     );
-    assert_eq!(medium.assurance().access, AccessMode::ReadOnly);
+    assert_eq!(medium.assurance().expect("a medium is attached").access, AccessMode::ReadOnly);
 
     drop(session);
     std::fs::remove_file(&path).ok();
@@ -228,7 +229,7 @@ fn a_write_intent_open_reports_its_effective_read_only_mode() {
 #[test]
 fn every_mutation_path_including_commit_returns_the_condition() {
     let (path, mut session, attachment) = truncated("mutations", AccessIntent::Write);
-    let medium = session.medium(attachment).expect("medium");
+    let medium = session.require_device(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
     let refusals: Vec<remanence::Error> = vec![
@@ -272,7 +273,7 @@ fn every_mutation_path_including_commit_returns_the_condition() {
 #[test]
 fn wholly_present_directory_and_file_data_still_read() {
     let (path, mut session, attachment) = truncated("reads", AccessIntent::Read);
-    let medium = session.medium(attachment).expect("medium");
+    let medium = session.require_device(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
     let names: Vec<String> = medium
@@ -307,7 +308,7 @@ fn wholly_present_directory_and_file_data_still_read() {
 #[test]
 fn a_crossing_file_is_refused_whole_rather_than_clipped() {
     let (path, mut session, attachment) = truncated("crossing", AccessIntent::Read);
-    let medium = session.medium(attachment).expect("medium");
+    let medium = session.require_device(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
     let refusal = medium
@@ -345,7 +346,7 @@ fn a_crossing_file_is_refused_whole_rather_than_clipped() {
 #[test]
 fn a_read_of_the_medium_past_the_extent_names_the_condition() {
     let (path, mut session, attachment) = truncated("medium-read", AccessIntent::Read);
-    let medium = session.medium(attachment).expect("medium");
+    let medium = session.require_device(attachment).expect("medium");
 
     let mut inside = [0u8; 512];
     medium
@@ -378,8 +379,8 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
 
     let mut session = Session::new();
     let attachment = session.attach(&path, AccessIntent::Read).expect("attaches");
-    let medium = session.medium(attachment).expect("medium");
-    let assurance = medium.assurance().clone();
+    let medium = session.require_device(attachment).expect("medium");
+    let assurance = medium.assurance().expect("a medium is attached").clone();
     assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
     assert_eq!(assurance.observed_bytes, Some(4_096));
     assert!(
@@ -457,11 +458,11 @@ fn the_gate_is_narrow_and_claims_no_rule_beyond_the_raw_direct_volume() {
 
     let mut session = Session::new();
     let attachment = session.attach(&path, AccessIntent::Write).expect("attaches");
-    let medium = session.medium(attachment).expect("medium");
-    assert_eq!(medium.assurance().outcome, AssuranceOutcome::Verified);
-    assert_eq!(medium.assurance().condition, None);
+    let medium = session.require_device(attachment).expect("medium");
+    assert_eq!(medium.assurance().expect("a medium is attached").outcome, AssuranceOutcome::Verified);
+    assert_eq!(medium.assurance().expect("a medium is attached").condition, None);
     assert_eq!(
-        medium.mode(),
+        medium.mode().expect("a medium is attached"),
         AccessMode::ReadWrite,
         "nothing narrowed this session's authority"
     );

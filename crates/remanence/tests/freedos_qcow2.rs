@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{AttachmentId, Session, AccessIntent, Disk, DiskFormat, RegionRole};
+use remanence::{AttachmentId, Session, AccessIntent, DiskFormat, RegionRole};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -43,8 +43,8 @@ fn private_artifact(tag: &str) -> PathBuf {
 fn inspection_reports_primaries_extended_and_logicals() {
     let path = private_artifact("regions");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
-    assert!(matches!(disk.format(), DiskFormat::Qcow2 { .. }));
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    assert!(matches!(disk.format().expect("a medium is attached"), DiskFormat::Qcow2 { .. }));
 
     let report = disk.inspect().expect("inspection reads");
     assert_ne!(report.content, remanence::DiskContent::Blank);
@@ -103,7 +103,7 @@ fn inspection_reports_primaries_extended_and_logicals() {
 fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volumes: Vec<_> = disk
         .inspect()
         .expect("inspection reads")
@@ -129,7 +129,7 @@ fn marker_files_read_out_of_every_volume() {
 fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let path = private_artifact("roundtrip");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("rig artifact opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let volume_id = disk.inspect().expect("inspection reads").volumes[0].id;
     disk.write_file(
@@ -143,7 +143,7 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
             .expect("reads back"),
         b"buffered write on a real image"
     );
-    disk.rollback();
+    disk.rollback().expect("a medium is attached");
     assert!(
         disk.read_file(volume_id, "RMNDIR/RTRIP.BIN").is_err(),
         "rollback leaves the image untouched"
@@ -159,7 +159,7 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
 fn inspection_reports_the_qcow2_device_schema_and_volumes() {
     let path = private_artifact("inspect");
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
-    let disk = disk_session.medium(disk_at).expect("the medium is attached");
+    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let report = disk.inspect().expect("inspection reads");
 
