@@ -19,6 +19,18 @@ use remanence::{
     ErrorCategory, Session, VolumeId,
 };
 
+/// The filesystem on one volume of `device`, selected by the identity the
+/// inspection report issued — the walk `device.volume(id).filesystem()`
+/// spelled once, because the file verbs live on the namespace node and
+/// nowhere else (P19).
+fn fs(device: &mut remanence::StorageDevice, volume: remanence::VolumeId) -> remanence::Filesystem<'_> {
+    device
+        .volume(volume)
+        .expect("the report issued this volume")
+        .filesystem()
+        .expect("the volume bears a filesystem")
+}
+
 /// The 1.44 MiB floppy's declared size: 2880 sectors of 512 bytes.
 const DECLARED: u64 = 1_474_560;
 
@@ -111,11 +123,9 @@ fn build_floppy(path: &Path) {
         .load_media(path, AccessIntent::Write)
         .expect("the whole image loads");
     let volume = only_volume_of(medium);
-    medium
-        .write_file(volume, NEAR, &near_content())
+    fs(medium, volume).write_file(NEAR, &near_content())
         .expect("writes the near file");
-    medium
-        .write_file(volume, FAR, &far_content())
+    fs(medium, volume).write_file(FAR, &far_content())
         .expect("writes the far file");
     medium.commit().expect("commits");
 }
@@ -175,7 +185,7 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
 
     let volume = only_volume_of(medium);
     assert_eq!(
-        medium.read_file(volume, FAR).expect("reads whole"),
+        fs(medium, volume).read_file(FAR).expect("reads whole"),
         far_content()
     );
     drop(session);
@@ -244,17 +254,16 @@ fn every_mutation_path_including_commit_returns_the_condition() {
     let volume = only_volume_of(medium);
 
     let refusals: Vec<remanence::Error> = vec![
-        medium
-            .write_file(volume, "NEW.BIN", b"nope")
+        fs(medium, volume).write_file("NEW.BIN", b"nope")
             .expect_err("write_file is denied"),
-        medium
-            .write_file_at(volume, NEAR, 0, b"nope")
-            .expect_err("write_file_at is denied"),
-        medium
-            .resize_file(volume, NEAR, 10)
+        fs(medium, volume)
+            .get_file(NEAR)
+            .expect("the entry is inside the readable extent")
+            .write_at(0, b"nope")
+            .expect_err("the ranged write is denied"),
+        fs(medium, volume).resize_file(NEAR, 10)
             .expect_err("resize_file is denied"),
-        medium
-            .make_directory(volume, "SUB")
+        fs(medium, volume).make_directory("SUB")
             .expect_err("make_directory is denied"),
         medium.commit().expect_err("commit is denied"),
     ];
@@ -287,8 +296,7 @@ fn wholly_present_directory_and_file_data_still_read() {
     let medium = session.require_device(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
-    let names: Vec<String> = medium
-        .entries(volume, "")
+    let names: Vec<String> = fs(medium, volume).entries("")
         .expect("the root directory is wholly present, so it lists")
         .into_iter()
         .map(|entry| entry.name)
@@ -299,8 +307,7 @@ fn wholly_present_directory_and_file_data_still_read() {
     );
 
     assert_eq!(
-        medium
-            .stat(volume, FAR)
+        fs(medium, volume).stat(FAR)
             .expect("stat reads the record")
             .map(|entry| entry.size_bytes),
         Some(far_content().len() as u64),
@@ -308,7 +315,7 @@ fn wholly_present_directory_and_file_data_still_read() {
     );
 
     assert_eq!(
-        medium.read_file(volume, NEAR).expect("the near file reads"),
+        fs(medium, volume).read_file(NEAR).expect("the near file reads"),
         near_content()
     );
 
@@ -322,8 +329,7 @@ fn a_crossing_file_is_refused_whole_rather_than_clipped() {
     let medium = session.require_device(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
-    let refusal = medium
-        .read_file(volume, FAR)
+    let refusal = fs(medium, volume).read_file(FAR)
         .expect_err("a chain leaving the readable extent is refused");
     assert_eq!(refusal.category(), ErrorCategory::Unavailable);
     assert_eq!(
@@ -340,8 +346,10 @@ fn a_crossing_file_is_refused_whole_rather_than_clipped() {
     // span sits inside the readable extent, but the file does not, and an
     // extracted file is whole or it is nothing.
     let mut buf = [0u8; 512];
-    let ranged = medium
-        .read_file_at(volume, FAR, 0, &mut buf)
+    let ranged = fs(medium, volume)
+        .get_file(FAR)
+        .expect("the directory record is inside the readable extent")
+        .read_at(0, &mut buf)
         .expect_err("a range of an unavailable file is refused");
     assert_eq!(ranged.category(), ErrorCategory::Unavailable);
     assert_eq!(
@@ -422,10 +430,15 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
         Some(AssuranceCondition::SourceTruncated.as_str())
     );
 
+    // And the node answers the same way one seam up: resolving to the
+    // filesystem hands back the recognition seam's own refusal, category
+    // and rule intact, rather than a coarser absence of this seam's own.
     let volume = report.volumes[0].id;
     let refusal = medium
-        .entries(volume, "")
-        .expect_err("no directory is addressable");
+        .volume(volume)
+        .expect("the volume composed")
+        .filesystem()
+        .expect_err("no namespace is addressable");
     assert_eq!(refusal.category(), ErrorCategory::Unavailable);
 
     drop(session);

@@ -49,34 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F48 — The Filesystem node
-
-Move file verbs onto the one namespace node: `Filesystem`, with
-`get_file` and its kin living there and nowhere else.
-`device.filesystem()` is the resolve-or-refuse transparency
-method; `device.volume(id).filesystem()` selects where several
-candidates exist; `list_hdos_files` is regularized as the resolver's
-transparent form. The device exposes no file access — a device holding a
-partitionable medium and bearing `get_file` would be a category error,
-not a refusal waiting to happen. A device may be asked what it resolves
-to; it may not be told to act as something it isn't.
-
-**This feature pays the container retirement in the code and on the
-surfaces.** The vocabulary ruling retired "container" and nothing had
-been made responsible for delivering it: `file_container.rs` becomes the
-filesystem module, the `remanence_container_*` C symbols and their Python
-mirrors take the namespace vocabulary, and the doc comments follow. The
-in-force P19 and P23 text — P19's title and P23's active-layer row both
-carry the retired word — lands with the P19 amendment in the same change,
-since the norm and its implementation move together. What is *not* purged
-is the word where it is somebody else's: an image container format is the
-industry's term for qcow2 and VDI, and D2-style retirement reaches this
-project's own vocabulary, not quotations of the world's.
-
-Touches: S1, S2, S3. Supports: the U2 amendment; the P19 amendment;
-P35; in-force P10 (the resolver's refusals are categorized and
-rule-identified).
-
 ## F49 — Uniform archive open
 
 An archive enters the machine as every medium does: an archive-family
@@ -106,12 +78,18 @@ source to avoid saying so.
 Read-only, as archives are today; a write claim is its own future
 feature.
 
-This feature finishes the container retirement F48 begins: the archive
-journey is where "container" survived most thickly — the `archive[/entry]`
-path resolution, the archive catalog's own prose, and the S1 `Container`
-records — and folding that journey into the model is what removes the
-last of it from this project's vocabulary.
+This feature finishes the container retirement the `Filesystem` node
+began: that change purged the word from the code and the surfaces, and
+what survives is the archive journey's own shape — the `archive[/entry]`
+path resolution and the archive catalog's prose — which only folding
+that journey into the model removes.
+
+It also finishes the P19 amendment, which landed only as far as the
+delivered code honored it (D25): the "serialized-container adapter"
+provider form dissolves when an archive becomes a medium whose grammar
+is a P12 adapter at the namespace seam, and the composer's move to P35
+waits for the machine namespace that principle claims.
 
 Touches: S1, S2, S3. Supports: the U2 amendment; the P14 amendment;
-P35; the P19 amendment; in-force P7, P12, P27. Needs F48, whose
-`Filesystem` node is what an archive's content is reached through.
+P35; the P19 amendment; in-force P7, P12, P19, P27. The `Filesystem`
+node an archive's content is reached through is delivered.

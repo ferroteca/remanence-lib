@@ -167,7 +167,7 @@ pub struct DeviceInfo {
     /// is scoped to the open, unlike the layout-derived identities of the
     /// records below.
     pub id: u64,
-    /// The image format the container turned out to be.
+    /// The image format the artifact turned out to be.
     pub image_format: String,
     /// The media type of the medium attached here, named from the
     /// media-type catalog (P14). It says what the medium *is* — the
@@ -204,9 +204,9 @@ pub struct PartitionSchemaInfo {
 pub enum RegionRole {
     /// A region declaring data, which volume composition may compose.
     Data,
-    /// A structural container — an extended partition. It is reported,
-    /// and it is not thereby a volume.
-    Container,
+    /// A structural region — an extended partition. It is reported, and
+    /// it is not thereby a volume.
+    Structure,
 }
 
 impl RegionRole {
@@ -214,7 +214,7 @@ impl RegionRole {
     pub fn name(self) -> &'static str {
         match self {
             Self::Data => "data",
-            Self::Container => "container",
+            Self::Structure => "structure",
         }
     }
 }
@@ -237,7 +237,7 @@ pub struct RegionInfo {
     /// an entry on the extended chain.
     ///
     /// This is a different axis from [`role`](Self::role) and neither
-    /// implies the other: the extended container is a primary slot whose
+    /// implies the other: the extended region is a primary slot whose
     /// role is structural, while every logical entry is data.
     pub declared_placement: String,
     /// Whether the schema declares this region as data or as structure.

@@ -256,7 +256,7 @@ fn discovery_refuses_a_foreign_family_artifact_where_a_load_would() {
     std::fs::write(&path, &bytes).expect("artifact writes");
 
     let error =
-        discover_media(&path, AccessIntent::Read).expect_err("a flux container is no device's");
+        discover_media(&path, AccessIntent::Read).expect_err("a flux artifact is no device's");
     let message = error.to_string();
     assert!(message.contains("flux"), "names the family found: {message}");
     assert!(

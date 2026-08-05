@@ -10,8 +10,21 @@ use std::path::PathBuf;
 
 use remanence::{
     AccessIntent, AccessMode, AttachmentId, DeviceFamily, StorageDevice, DiskContent, DiskFormat, DosNameRule,
-    ErrorCategory, FatEntryKind, FatKind, RegionRole, Session, VolumeId, VolumeOrigin,
+    ErrorCategory, EntryKind, FatKind, NamespaceRule, RegionRole, Session, VolumeId,
+    VolumeOrigin,
 };
+
+/// The filesystem on one volume of `device`, selected by the identity the
+/// inspection report issued — the walk `device.volume(id).filesystem()`
+/// spelled once, because the file verbs live on the namespace node and
+/// nowhere else (P19).
+fn fs(device: &mut remanence::StorageDevice, volume: remanence::VolumeId) -> remanence::Filesystem<'_> {
+    device
+        .volume(volume)
+        .expect("the report issued this volume")
+        .filesystem()
+        .expect("the volume bears a filesystem")
+}
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -152,7 +165,7 @@ fn synthetic_extended_disk(volume: &[u8], corrupt_second_ebr: bool) -> Vec<u8> {
     let ext_len = 2 * link_span;
     let mut disk = vec![0u8; (ext_base + ext_len) * 512];
 
-    // MBR: slot 0 = FAT16B primary, slot 1 = the extended container.
+    // MBR: slot 0 = FAT16B primary, slot 1 = the extended partition.
     disk[446 + 4] = 0x06;
     disk[446 + 8..446 + 12].copy_from_slice(&(primary_start as u32).to_le_bytes());
     disk[446 + 12..446 + 16].copy_from_slice(&(sectors as u32).to_le_bytes());
@@ -246,42 +259,42 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert_eq!(filesystem.declared_geometry.cylinders, None);
 
     // Write a directory and a file; read them back through the overlay.
-    disk.make_directory(volume, "SUB").expect("mkdir");
+    fs(disk, volume).make_directory("SUB").expect("mkdir");
     let payload: Vec<u8> = (0..2000u32).flat_map(|n| n.to_le_bytes()).collect();
-    disk.write_file(volume, "SUB/HELLO.BIN", &payload)
+    fs(disk, volume).write_file("SUB/HELLO.BIN", &payload)
         .expect("write");
     assert!(disk.is_modified().expect("a medium is attached"));
 
-    let entries = disk.entries(volume, "SUB").expect("list");
+    let entries = fs(disk, volume).entries("SUB").expect("list");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "HELLO.BIN");
-    assert_eq!(entries[0].kind, FatEntryKind::File);
+    assert_eq!(entries[0].kind, EntryKind::File);
     assert_eq!(entries[0].size_bytes, payload.len() as u64);
     assert_eq!(
-        disk.read_file(volume, "SUB/HELLO.BIN")
+        fs(disk, volume).read_file("SUB/HELLO.BIN")
             .expect("read"),
         payload
     );
     assert_eq!(
-        disk.read_file(volume, "SUB")
+        fs(disk, volume).read_file("SUB")
             .expect_err("directory is not a file")
             .category(),
         ErrorCategory::IsDirectory
     );
     assert_eq!(
-        disk.entries(volume, "SUB/HELLO.BIN")
+        fs(disk, volume).entries("SUB/HELLO.BIN")
             .expect_err("file is not a directory")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        disk.read_file(volume, "SUB/MISSING.BIN")
+        fs(disk, volume).read_file("SUB/MISSING.BIN")
             .expect_err("missing file is refused")
             .category(),
         ErrorCategory::NotFound
     );
     assert_eq!(
-        disk.write_file(volume, "TOO-BIG.BIN", &vec![0u8; 5_000_000],)
+        fs(disk, volume).write_file("TOO-BIG.BIN", &vec![0u8; 5_000_000],)
             .expect_err("allocation exhaustion is refused")
             .category(),
         ErrorCategory::NoSpace
@@ -290,13 +303,13 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     // Rollback: the image is untouched.
     disk.rollback().expect("a medium is attached");
     assert!(!disk.is_modified().expect("a medium is attached"));
-    assert!(disk.entries(volume, "SUB").is_err());
+    assert!(fs(disk, volume).entries("SUB").is_err());
 
     // Write again and commit this time; overwriting replaces the
     // contents rather than refusing (U3).
-    disk.write_file(volume, "KEPT.TXT", b"the first draft, rather longer")
+    fs(disk, volume).write_file("KEPT.TXT", b"the first draft, rather longer")
         .expect("write");
-    disk.write_file(volume, "KEPT.TXT", b"kept bytes")
+    fs(disk, volume).write_file("KEPT.TXT", b"kept bytes")
         .expect("overwrite");
     disk.commit().expect("commit");
     assert!(!disk.is_modified().expect("a medium is attached"));
@@ -312,8 +325,7 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
         "the mode echoes the intent"
     );
     assert_eq!(
-        reopened
-            .read_file(volume_reopened, "KEPT.TXT")
+        fs(reopened, volume_reopened).read_file("KEPT.TXT")
             .expect("read"),
         b"kept bytes"
     );
@@ -350,7 +362,7 @@ fn fat16_behind_an_mbr_partition() {
         Some("REMANENCE")
     );
 
-    disk.write_file(volume, "ROOT.TXT", b"in the partition")
+    fs(disk, volume).write_file("ROOT.TXT", b"in the partition")
         .expect("write");
     disk.commit().expect("commit");
     drop(disk_session);
@@ -360,7 +372,7 @@ fn fat16_behind_an_mbr_partition() {
 
     let volume_reopened = only_volume(reopened);
     assert_eq!(
-        reopened.read_file(volume_reopened, "ROOT.TXT").expect("read"),
+        fs(reopened, volume_reopened).read_file("ROOT.TXT").expect("read"),
         b"in the partition"
     );
     drop(reopened_session);
@@ -376,51 +388,49 @@ fn stat_answers_presence_and_absence_distinctly() {
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
-    disk.make_directory(volume, "SUB").expect("mkdir");
-    disk.write_file(volume, "SUB/FILE.BIN", b"1234567890")
+    fs(disk, volume).make_directory("SUB").expect("mkdir");
+    fs(disk, volume).write_file("SUB/FILE.BIN", b"1234567890")
         .expect("write");
 
-    let file = disk
-        .stat(volume, "sub/file.bin")
+    let file = fs(disk, volume).stat("sub/file.bin")
         .expect("stat succeeds")
         .expect("the file exists");
     assert_eq!(file.name, "FILE.BIN");
-    assert_eq!(file.kind, FatEntryKind::File);
+    assert_eq!(file.kind, EntryKind::File);
     assert_eq!(file.size_bytes, 10);
 
-    let directory = disk
-        .stat(volume, "SUB")
+    let directory = fs(disk, volume).stat("SUB")
         .expect("stat succeeds")
         .expect("the directory exists");
-    assert_eq!(directory.kind, FatEntryKind::Directory);
+    assert_eq!(directory.kind, EntryKind::Directory);
 
     // Absence is an answer, not a failure: a missing leaf, a missing
     // parent, and a parent that is a file all answer None.
     assert_eq!(
-        disk.stat(volume, "SUB/MISSING.BIN")
+        fs(disk, volume).stat("SUB/MISSING.BIN")
             .expect("an answer"),
         None
     );
     assert_eq!(
-        disk.stat(volume, "NOWHERE/FILE.BIN")
+        fs(disk, volume).stat("NOWHERE/FILE.BIN")
             .expect("an answer"),
         None
     );
     assert_eq!(
-        disk.stat(volume, "SUB/FILE.BIN/DEEPER.BIN")
+        fs(disk, volume).stat("SUB/FILE.BIN/DEEPER.BIN")
             .expect("an answer"),
         None
     );
 
     // Failure stays failure: a missing volume identity, an empty path.
     assert_eq!(
-        disk.stat(VolumeId::from_value(0xdead_beef), "FILE.BIN")
+        disk.volume(VolumeId::from_value(0xdead_beef))
             .expect_err("no such volume")
             .category(),
         ErrorCategory::NotFound
     );
     assert!(
-        disk.stat(volume, "").is_err(),
+        fs(disk, volume).stat("").is_err(),
         "the root has no entry to answer with"
     );
     drop(disk_session);
@@ -439,27 +449,27 @@ fn overwrite_releases_and_reclaims_clusters() {
     // 7000 of the volume's 7903 data clusters: two of these can never
     // coexist, so each rewrite below only fits by releasing the last.
     let big = vec![0xabu8; 7000 * 512];
-    disk.write_file(volume, "BIG.BIN", &big)
+    fs(disk, volume).write_file("BIG.BIN", &big)
         .expect("first write");
 
     let replacement = vec![0xcdu8; 7000 * 512];
-    disk.write_file(volume, "BIG.BIN", &replacement)
+    fs(disk, volume).write_file("BIG.BIN", &replacement)
         .expect("overwriting releases the old clusters first");
     assert_eq!(
-        disk.read_file(volume, "BIG.BIN").expect("read"),
+        fs(disk, volume).read_file("BIG.BIN").expect("read"),
         replacement
     );
 
     // Shrinking releases clusters for other files to claim.
-    disk.write_file(volume, "BIG.BIN", b"now tiny")
+    fs(disk, volume).write_file("BIG.BIN", b"now tiny")
         .expect("shrinking overwrite");
-    disk.write_file(volume, "OTHER.BIN", &big)
+    fs(disk, volume).write_file("OTHER.BIN", &big)
         .expect("the released clusters are claimable again");
 
     // Overwriting a directory is refused by name.
-    disk.make_directory(volume, "DIR").expect("mkdir");
+    fs(disk, volume).make_directory("DIR").expect("mkdir");
     assert_eq!(
-        disk.write_file(volume, "DIR", b"not a file")
+        fs(disk, volume).write_file("DIR", b"not a file")
             .expect_err("a directory is not overwritable")
             .category(),
         ErrorCategory::IsDirectory
@@ -473,11 +483,11 @@ fn overwrite_releases_and_reclaims_clusters() {
 
     let volume_reopened = only_volume(reopened);
     assert_eq!(
-        reopened.read_file(volume_reopened, "BIG.BIN").expect("read"),
+        fs(reopened, volume_reopened).read_file("BIG.BIN").expect("read"),
         b"now tiny"
     );
     assert_eq!(
-        reopened.read_file(volume_reopened, "OTHER.BIN").expect("read"),
+        fs(reopened, volume_reopened).read_file("OTHER.BIN").expect("read"),
         big
     );
     drop(reopened_session);
@@ -502,40 +512,40 @@ fn make_directory_creates_parents_and_is_idempotent() {
     let volume = only_volume(disk);
 
     // Missing parents are created in one call.
-    disk.make_directory(volume, "A/B/C")
+    fs(disk, volume).make_directory("A/B/C")
         .expect("missing parents are created");
     assert_eq!(
-        disk.stat(volume, "A/B/C")
+        fs(disk, volume).stat("A/B/C")
             .expect("stat")
             .expect("exists")
             .kind,
-        FatEntryKind::Directory
+        EntryKind::Directory
     );
 
     // Already existing — wholly, partly, or the root itself — succeeds
     // unchanged, and the chain extends from wherever it stops.
-    disk.make_directory(volume, "A/B/C")
+    fs(disk, volume).make_directory("A/B/C")
         .expect("idempotent");
-    disk.make_directory(volume, "A/B")
+    fs(disk, volume).make_directory("A/B")
         .expect("an existing prefix succeeds");
-    disk.make_directory(volume, "")
+    fs(disk, volume).make_directory("")
         .expect("the root already exists");
-    disk.make_directory(volume, "A/B/C/D")
+    fs(disk, volume).make_directory("A/B/C/D")
         .expect("extends the existing chain");
 
     // The created directories hold files like any other.
-    disk.write_file(volume, "A/B/C/D/DEEP.TXT", b"nested payload")
+    fs(disk, volume).write_file("A/B/C/D/DEEP.TXT", b"nested payload")
         .expect("write");
 
     // A file in the way is refused by name, at the leaf or mid-path.
     assert_eq!(
-        disk.make_directory(volume, "A/B/C/D/DEEP.TXT")
+        fs(disk, volume).make_directory("A/B/C/D/DEEP.TXT")
             .expect_err("a file at the leaf is refused")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        disk.make_directory(volume, "A/B/C/D/DEEP.TXT/E")
+        fs(disk, volume).make_directory("A/B/C/D/DEEP.TXT/E")
             .expect_err("a file mid-path is refused")
             .category(),
         ErrorCategory::NotDirectory
@@ -549,8 +559,7 @@ fn make_directory_creates_parents_and_is_idempotent() {
 
     let volume_reopened = only_volume(reopened);
     assert_eq!(
-        reopened
-            .read_file(volume_reopened, "A/B/C/D/DEEP.TXT")
+        fs(reopened, volume_reopened).read_file("A/B/C/D/DEEP.TXT")
             .expect("read"),
         b"nested payload"
     );
@@ -567,14 +576,14 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("disk opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
-    disk.make_directory(volume, "SUB").expect("mkdir");
+    fs(disk, volume).make_directory("SUB").expect("mkdir");
 
     // One 512-byte cluster holds 16 records; "." and ".." take two, so
     // the fifteenth file forces the directory to grow mid-write, and
     // the grown cluster must never collide with a file's data clusters.
     let names: Vec<String> = (0..20).map(|n| format!("FILE{n:02}.BIN")).collect();
     for (n, name) in names.iter().enumerate() {
-        disk.write_file(volume, &format!("SUB/{name}"), &vec![n as u8; 700])
+        fs(disk, volume).write_file(&format!("SUB/{name}"), &vec![n as u8; 700])
             .expect("write");
     }
     disk.commit().expect("commit");
@@ -584,12 +593,11 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
 
     let volume_reopened = only_volume(reopened);
-    let entries = reopened.entries(volume_reopened, "SUB").expect("list");
+    let entries = fs(reopened, volume_reopened).entries("SUB").expect("list");
     assert_eq!(entries.len(), 20);
     for (n, name) in names.iter().enumerate() {
         assert_eq!(
-            reopened
-                .read_file(volume_reopened, &format!("SUB/{name}"))
+            fs(reopened, volume_reopened).read_file(&format!("SUB/{name}"))
                 .expect("read"),
             vec![n as u8; 700],
             "{name} reads back intact"
@@ -615,7 +623,7 @@ fn a_blank_disk_is_an_answer_with_zero_volumes() {
     // Zero volumes means no identity names one. A value this disk never
     // issued resolves to nothing rather than to something plausible.
     assert_eq!(
-        disk.entries(VolumeId::from_value(0), "")
+        disk.volume(VolumeId::from_value(0))
             .expect_err("an unissued identity is refused")
             .category(),
         ErrorCategory::NotFound
@@ -645,14 +653,14 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
         placements,
         [
             "primary",
-            "primary", // the extended container
+            "primary", // the extended partition
             "logical",
             "logical",
         ]
     );
-    // Placement and role are different axes: the container occupies a
+    // Placement and role are different axes: the extended partition occupies a
     // primary slot, and its role is structural rather than data.
-    assert_eq!(report.regions[1].role, RegionRole::Container);
+    assert_eq!(report.regions[1].role, RegionRole::Structure);
     assert_eq!(
         report.regions[1].declared_type_reading,
         "an extended partition, CHS-addressed"
@@ -674,7 +682,7 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
     let volumes: Vec<_> = report.volumes.iter().map(|volume| volume.id).collect();
     for volume in volumes {
         assert!(
-            disk.entries(volume, "").is_ok(),
+            fs(disk, volume).entries("").is_ok(),
             "volume {volume:?} readable"
         );
     }
@@ -695,8 +703,8 @@ fn a_broken_chain_keeps_what_it_found() {
         .inspect()
         .expect("a broken link does not fail the disk");
 
-    // The primary, the container, and the first logical all stay; the
-    // container region carries why the walk stopped.
+    // The primary, the extended partition, and the first logical all
+    // stay; the extended region carries why the walk stopped.
     assert_eq!(report.regions.len(), 3);
     let numbers: Vec<u32> = report
         .regions
@@ -704,11 +712,11 @@ fn a_broken_chain_keeps_what_it_found() {
         .map(|region| region.declared_number)
         .collect();
     assert_eq!(numbers, [1, 2, 3], "nothing renumbers");
-    let container = &report.regions[1];
-    let issue = container
+    let extended = &report.regions[1];
+    let issue = extended
         .issue
         .as_ref()
-        .expect("the container carries the issue");
+        .expect("the extended region carries the issue");
     assert_eq!(issue.category(), ErrorCategory::InvalidImage);
     assert!(
         issue.to_string().contains("signature"),
@@ -820,8 +828,7 @@ fn p7_declared_intent_claims_and_refusals() {
     let volume_readonly = only_volume(readonly);
     assert_eq!(readonly.mode().expect("a medium is attached"), AccessMode::ReadOnly);
     assert!(readonly.inspect().is_ok(), "analysis proceeds");
-    let refused = readonly
-        .write_file(volume_readonly, "NO.TXT", b"denied")
+    let refused = fs(readonly, volume_readonly).write_file("NO.TXT", b"denied")
         .expect_err("write actions are denied on a read session");
     assert_eq!(refused.category(), ErrorCategory::ReadOnly);
     drop(readonly_session);
@@ -970,7 +977,7 @@ fn a_partitioned_disk_reports_schema_regions_and_composed_volumes() {
     std::fs::remove_file(&path).ok();
 }
 
-/// A structural container is reported and is not thereby a volume, and a
+/// A structural region is reported and is not thereby a volume, and a
 /// region this release will not read keeps its place: the regions behind
 /// an unread one never renumber, and its reading still explains it.
 #[test]
@@ -1081,10 +1088,10 @@ fn a_volume_whose_filesystem_is_unrecognized_stays_a_volume() {
     std::fs::remove_file(&path).ok();
 }
 
-/// An extended container is a region and not a volume; its logicals are
+/// An extended partition is a region and not a volume; its logicals are
 /// regions in their own right, each composing one.
 #[test]
-fn a_structural_container_is_reported_and_is_not_a_volume() {
+fn a_structural_region_is_reported_and_is_not_a_volume() {
     let path = image_at(
         "inspect-extended",
         &synthetic_extended_disk(&synthetic_fat16(), false),
@@ -1094,25 +1101,25 @@ fn a_structural_container_is_reported_and_is_not_a_volume() {
 
     let report = disk.inspect().expect("inspection reads");
 
-    let containers: Vec<_> = report
+    let structural: Vec<_> = report
         .regions
         .iter()
-        .filter(|region| region.role == RegionRole::Container)
+        .filter(|region| region.role == RegionRole::Structure)
         .collect();
-    assert_eq!(containers.len(), 1, "one extended container");
-    assert_eq!(containers[0].declared_type, 0x05);
+    assert_eq!(structural.len(), 1, "one extended partition");
+    assert_eq!(structural[0].declared_type, 0x05);
     assert_eq!(
-        containers[0].declared_type_reading,
+        structural[0].declared_type_reading,
         "an extended partition, CHS-addressed"
     );
 
-    let container = containers[0].id;
+    let extended = structural[0].id;
     assert!(
         !report.volumes.iter().any(|volume| matches!(
             &volume.origin,
-            VolumeOrigin::Regions(regions) if regions.contains(&container)
+            VolumeOrigin::Regions(regions) if regions.contains(&extended)
         )),
-        "the container composed no volume"
+        "the extended partition composed no volume"
     );
     // One primary plus two logicals.
     assert_eq!(report.composed_volume_count(), 3);
@@ -1326,17 +1333,17 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
     let disk = session.require_device(at).expect("the medium is attached");
     let volume = only_volume(disk);
 
-    disk.make_directory(volume, "out").expect("mkdir");
-    disk.write_file(volume, "out/x.txt", b"payload")
+    fs(disk, volume).make_directory("out").expect("mkdir");
+    fs(disk, volume).write_file("out/x.txt", b"payload")
         .expect("write");
 
-    let entries = disk.entries(volume, "OUT").expect("list");
+    let entries = fs(disk, volume).entries("OUT").expect("list");
     assert_eq!(entries.len(), 1);
     assert_eq!(
         entries[0].name, "X.TXT",
         "the listing returns the name as stored, not as supplied"
     );
-    let root = disk.entries(volume, "").expect("list root");
+    let root = fs(disk, volume).entries("").expect("list root");
     assert!(
         root.iter().any(|entry| entry.name == "OUT"),
         "the directory name was uppercased at the seam too"
@@ -1344,13 +1351,13 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
 
     for spelling in ["out/x.txt", "OUT/X.TXT", "Out/X.Txt"] {
         assert_eq!(
-            disk.read_file(volume, spelling).expect("read"),
+            fs(disk, volume).read_file(spelling).expect("read"),
             b"payload",
             "'{spelling}' matches the stored name without regard to case"
         );
     }
     assert_eq!(
-        disk.stat(volume, "out/x.txt")
+        fs(disk, volume).stat("out/x.txt")
             .expect("stat reads")
             .expect("the file is there")
             .name,
@@ -1359,9 +1366,9 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
 
     // Case is not a second file: writing the same name in another case
     // overwrites the one record rather than adding a second.
-    disk.write_file(volume, "OUT/X.TXT", b"replaced")
+    fs(disk, volume).write_file("OUT/X.TXT", b"replaced")
         .expect("overwrite");
-    assert_eq!(disk.entries(volume, "out").expect("list").len(), 1);
+    assert_eq!(fs(disk, volume).entries("out").expect("list").len(), 1);
 
     drop(session);
     std::fs::remove_file(&path).ok();
@@ -1395,34 +1402,201 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
         ("lpt1", DosNameRule::ReservedDeviceName),
     ];
     for (name, expected) in cases {
-        let error = disk
-            .write_file(volume, name, b"contents")
+        let error = fs(disk, volume).write_file(name, b"contents")
             .expect_err("a name outside the namespace is refused");
         assert_eq!(refused_rule(error), expected, "writing '{name}'");
 
-        let error = disk
-            .make_directory(volume, name)
+        let error = fs(disk, volume).make_directory(name)
             .expect_err("a directory name takes the same rules");
         assert_eq!(refused_rule(error), expected, "creating '{name}'");
     }
 
     assert!(
-        disk.entries(volume, "").expect("list root").is_empty(),
+        fs(disk, volume).entries("").expect("list root").is_empty(),
         "a refused name is refused, not repaired into some other name"
     );
     assert!(!disk.is_modified().expect("a medium is attached"), "nothing was staged for commit");
 
     // The rule sits beside the category rather than replacing it, and a
     // refusal belonging to no rule set carries none at all.
-    let error = disk
-        .write_file(volume, "con", b"contents")
+    let error = fs(disk, volume).write_file("con", b"contents")
         .expect_err("reserved");
     assert_eq!(error.category(), ErrorCategory::Io);
     assert_eq!(
-        disk.read_file(volume, "MISSING.TXT")
+        fs(disk, volume).read_file("MISSING.TXT")
             .expect_err("absent")
             .rule(),
         None
+    );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+// ---------------------------------------------------------------------------
+// The namespace node (P19): file access lives on one type, and the device
+// answers only what it *resolves* to.
+
+/// One supported answer at every seam, so the walk is transparent: no
+/// volume is named and none has to be.
+#[test]
+fn the_resolver_is_transparent_where_every_seam_has_one_answer() {
+    let path = temp_path("resolve-one");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+    let (mut session, attachment) = attach(&path, AccessIntent::Read).expect("image opens");
+    let disk = session.require_device(attachment).expect("attached");
+
+    let expected = only_volume(disk);
+    let mut filesystem = disk.filesystem().expect("one volume, one filesystem");
+    assert_eq!(filesystem.kind(), FatKind::Fat16.name());
+    assert_eq!(
+        filesystem.volume_id(),
+        Some(expected),
+        "the resolver reports which volume it walked to"
+    );
+    assert!(
+        filesystem.entries("").is_ok(),
+        "the verbs answer on the node the resolver handed back"
+    );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// Two volumes bearing filesystems and the resolver refuses, naming both
+/// — transparent when there is one supported result, explicit when there
+/// are several, never guessing. The refusal carries its rule identity so
+/// a caller can branch on it without reading the sentence (P10).
+#[test]
+fn several_candidates_are_refused_by_name_and_selected_by_identity() {
+    let path = temp_path("resolve-several");
+    let volume = synthetic_fat16();
+    std::fs::write(
+        &path,
+        synthetic_multi_mbr(&[(0x06, &volume), (0x06, &volume)]),
+    )
+    .expect("image writes");
+    let (mut session, attachment) = attach(&path, AccessIntent::Read).expect("image opens");
+    let disk = session.require_device(attachment).expect("attached");
+
+    let report = disk.inspect().expect("inspection reads");
+    let volumes: Vec<VolumeId> = report.volumes.iter().map(|volume| volume.id).collect();
+    assert_eq!(volumes.len(), 2);
+
+    let refusal = disk
+        .filesystem()
+        .expect_err("two answers, so there is nothing to be transparent about");
+    assert_eq!(refusal.category(), ErrorCategory::Unsupported);
+    assert_eq!(
+        refusal.rule(),
+        Some(NamespaceRule::SeveralCandidates.as_str())
+    );
+    let message = refusal.to_string();
+    for volume in &volumes {
+        assert!(
+            message.contains(&volume.value().to_string()),
+            "the refusal names each candidate: {message}"
+        );
+    }
+
+    // Selection is by the identity the report issued, never by position.
+    for volume in volumes {
+        let mut filesystem = disk
+            .volume(volume)
+            .expect("the report issued it")
+            .filesystem()
+            .expect("it bears one");
+        assert_eq!(filesystem.volume_id(), Some(volume));
+        assert!(filesystem.entries("").is_ok());
+    }
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// A volume that bears no filesystem is an ordinary volume: the node
+/// answers a named absence rather than an empty listing.
+#[test]
+fn a_volume_bearing_no_filesystem_is_a_named_absence() {
+    let good = synthetic_fat16();
+    let mut rubbish = vec![0u8; good.len()];
+    rubbish[..2].copy_from_slice(b"\xeb\x3c");
+    rubbish[510] = 0x55;
+    rubbish[511] = 0xaa;
+    let path = image_at(
+        "resolve-absent",
+        &synthetic_multi_mbr(&[(0x06, &good), (0x06, &rubbish)]),
+    );
+    let (mut session, attachment) = attach(&path, AccessIntent::Read).expect("image opens");
+    let disk = session.require_device(attachment).expect("attached");
+
+    let report = disk.inspect().expect("inspection reads");
+    let bare = report.volumes[1].id;
+    let refusal = disk
+        .volume(bare)
+        .expect("the volume composed")
+        .filesystem()
+        .expect_err("it bears nothing this release recognizes");
+    assert!(
+        !refusal.to_string().is_empty(),
+        "the absence is named rather than silent"
+    );
+
+    // And the volume is still a volume, with its own extent.
+    let volume = disk.volume(bare).expect("the volume composed");
+    assert_eq!(volume.id(), bare);
+    assert_eq!(volume.length_bytes(), report.volumes[1].length_bytes);
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `get_file` is where absence stops being an answer, and the file it
+/// answers with offers both the whole-value and the bounded form (P27).
+#[test]
+fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
+    let path = temp_path("file-view");
+    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+    let (mut session, attachment) = attach(&path, AccessIntent::Write).expect("image opens");
+    let disk = session.require_device(attachment).expect("attached");
+
+    let payload: Vec<u8> = (0..4000u32).map(|n| (n % 251) as u8).collect();
+    disk.filesystem()
+        .expect("resolves")
+        .write_file("PAYLOAD.BIN", &payload)
+        .expect("write buffers");
+
+    let mut filesystem = disk.filesystem().expect("resolves");
+    let mut file = filesystem.get_file("payload.bin").expect("matched case-insensitively");
+    assert_eq!(file.name(), "PAYLOAD.BIN", "the name comes back as stored");
+    assert_eq!(file.size_bytes(), payload.len() as u64);
+    assert_eq!(file.bytes().expect("whole value"), payload);
+
+    let mut window = [0u8; 64];
+    file.read_at(1000, &mut window).expect("bounded form");
+    assert_eq!(window[..], payload[1000..1064]);
+
+    file.write_at(0, b"edited").expect("the ranged write buffers");
+    assert_eq!(
+        &filesystem.read_file("PAYLOAD.BIN").expect("read")[..6],
+        b"edited"
+    );
+
+    // Absence and a directory are both refusals here, unlike `stat`.
+    filesystem.make_directory("SUB").expect("mkdir");
+    assert!(filesystem.stat("NOPE.BIN").expect("an answer").is_none());
+    assert_eq!(
+        filesystem
+            .get_file("NOPE.BIN")
+            .expect_err("nothing is there")
+            .category(),
+        ErrorCategory::NotFound
+    );
+    assert_eq!(
+        filesystem
+            .get_file("SUB")
+            .expect_err("a directory holds no bytes")
+            .category(),
+        ErrorCategory::IsDirectory
     );
 
     drop(session);

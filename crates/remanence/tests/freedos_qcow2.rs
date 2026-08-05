@@ -14,6 +14,18 @@ use std::path::PathBuf;
 
 use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, DiskFormat, RegionRole};
 
+/// The filesystem on one volume of `device`, selected by the identity the
+/// inspection report issued — the walk `device.volume(id).filesystem()`
+/// spelled once, because the file verbs live on the namespace node and
+/// nowhere else (P19).
+fn fs(device: &mut remanence::StorageDevice, volume: remanence::VolumeId) -> remanence::Filesystem<'_> {
+    device
+        .volume(volume)
+        .expect("the report issued this volume")
+        .filesystem()
+        .expect("the volume bears a filesystem")
+}
+
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
 /// session alive for as long as they use the medium.
@@ -55,12 +67,12 @@ fn inspection_reports_primaries_extended_and_logicals() {
         "every declared region reads cleanly"
     );
 
-    // Placement and role are different axes: the extended container is a
+    // Placement and role are different axes: the extended partition is a
     // primary slot whose role is structural, and every chain entry is data.
-    let containers = report
+    let structural = report
         .regions
         .iter()
-        .filter(|region| region.role == RegionRole::Container)
+        .filter(|region| region.role == RegionRole::Structure)
         .count();
     let logicals = report
         .regions
@@ -72,7 +84,7 @@ fn inspection_reports_primaries_extended_and_logicals() {
         .iter()
         .filter(|region| region.role == RegionRole::Data)
         .count();
-    assert_eq!(containers, 1, "one extended container");
+    assert_eq!(structural, 1, "one extended partition");
     assert!(logicals >= 2, "the chain's rows report as logical");
     assert!(data >= 4, "two primaries and two logicals");
     assert!(
@@ -80,8 +92,8 @@ fn inspection_reports_primaries_extended_and_logicals() {
             .regions
             .iter()
             .any(|region| region.declared_placement == "primary"
-                && region.role == RegionRole::Container),
-        "the extended container is a primary slot with a structural role"
+                && region.role == RegionRole::Structure),
+        "the extended partition is a primary slot with a structural role"
     );
     assert!(report.composed_volume_count() >= 4, "every data region composed");
 
@@ -114,8 +126,7 @@ fn marker_files_read_out_of_every_volume() {
         .map(|volume| volume.id)
         .collect();
     for volume in volumes {
-        let marker = disk
-            .read_file(volume, "RMNMARK.TXT")
+        let marker = fs(disk, volume).read_file("RMNMARK.TXT")
             .unwrap_or_else(|error| panic!("marker in volume {volume:?}: {error}"));
         assert!(
             marker.starts_with(b"remanence marker:"),
@@ -134,20 +145,18 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
 
     let volume_id = disk.inspect().expect("inspection reads").volumes[0].id;
-    disk.write_file(
-        volume_id,
-        "RMNDIR/RTRIP.BIN",
+    fs(disk, volume_id).write_file("RMNDIR/RTRIP.BIN",
         b"buffered write on a real image",
     )
     .expect("write buffers");
     assert_eq!(
-        disk.read_file(volume_id, "RMNDIR/RTRIP.BIN")
+        fs(disk, volume_id).read_file("RMNDIR/RTRIP.BIN")
             .expect("reads back"),
         b"buffered write on a real image"
     );
     disk.rollback().expect("a medium is attached");
     assert!(
-        disk.read_file(volume_id, "RMNDIR/RTRIP.BIN").is_err(),
+        fs(disk, volume_id).read_file("RMNDIR/RTRIP.BIN").is_err(),
         "rollback leaves the image untouched"
     );
 

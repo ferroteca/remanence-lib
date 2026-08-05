@@ -388,7 +388,7 @@ fn a_flux_family_artifact_is_refused_by_every_device() {
     // adapter, so without this check a P64 loaded happily and read as
     // raw — declaring the block layer authoritative when P64's own
     // adapter declares flux. No device in this release holds flux state;
-    // the container is reached through its own type.
+    // the artifact is reached through its own type.
     let path = temp_path("flux-artifact");
     let mut bytes = b"P64-1541".to_vec();
     bytes.extend_from_slice(&[0u8; 1024]);
@@ -396,7 +396,7 @@ fn a_flux_family_artifact_is_refused_by_every_device() {
 
     let mut session = Session::new();
     let error = load(&mut session, &path, AccessIntent::Read)
-        .expect_err("a flux container is no device's medium");
+        .expect_err("a flux artifact is no device's medium");
 
     let message = error.to_string();
     assert!(message.contains("flux"), "names the family found: {message}");

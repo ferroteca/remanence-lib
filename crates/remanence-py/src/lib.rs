@@ -8,10 +8,14 @@
 //! handle for a slot and the medium in it. Attaching a disk image
 //! (optionally an entry inside a `.zip` or `.7z` archive) takes one P7
 //! claim serving both of the medium's planes — `StorageDevice.identify()`
-//! reports the detected container layers over the image's own bytes,
-//! while `StorageDevice.inspect()` and the volume-scoped file verbs work
-//! over the disk a format adapter presents above them, and `Archive`
-//! lists what a supported archive holds.
+//! reports the layers of the artifact's nesting over the image's own
+//! bytes, while `StorageDevice.inspect()` works over the disk a format
+//! adapter presents above them. **File access lives on one node**:
+//! `StorageDevice.filesystem()` resolves device to volume to filesystem
+//! where every seam has one supported answer, `StorageDevice.volume(id)`
+//! selects where several exist, and the verbs live on the `Filesystem`
+//! that resolver hands back. `Archive` lists what a supported archive
+//! holds.
 //! Failures raise `RemanenceError`, which carries a stable `category`
 //! saying how to behave and, where the refusal came from an enumerated rule
 //! set such as the DOS 8.3 namespace's, a stable `rule` naming which rule
@@ -65,13 +69,13 @@ fn to_py_err(error: remanence::Error) -> PyErr {
     py_err(error.category(), error.rule(), error.to_string())
 }
 
-fn kind_str(kind: remanence::ContainerKind) -> &'static str {
+fn kind_str(kind: remanence::LayerKind) -> &'static str {
     match kind {
-        remanence::ContainerKind::Archive => "archive",
-        remanence::ContainerKind::Image => "image",
-        remanence::ContainerKind::PhysicalMedia => "physical-media",
-        remanence::ContainerKind::Filesystem => "filesystem",
-        remanence::ContainerKind::Unknown => "unknown",
+        remanence::LayerKind::Archive => "archive",
+        remanence::LayerKind::Image => "image",
+        remanence::LayerKind::PhysicalMedia => "physical-media",
+        remanence::LayerKind::Filesystem => "filesystem",
+        remanence::LayerKind::Unknown => "unknown",
     }
 }
 
@@ -93,7 +97,7 @@ pub struct ArchiveLayout {
     pub uncompressed_size: Option<u64>,
 }
 
-/// Where the payload sits inside a raw image container.
+/// Where the payload sits inside a raw image layer.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct ImageLayout {
@@ -111,7 +115,7 @@ pub struct TrackSectorLayout {
     pub sector_size: Option<u64>,
 }
 
-/// Physical disk geometry derived from a container format.
+/// Physical disk geometry derived from an image format.
 ///
 /// `sector_layout` is `"unknown"`, `"fixed"`, or `"variable"`;
 /// `sectors_per_track` is set for fixed layouts and `tracks` for variable ones.
@@ -171,7 +175,7 @@ pub struct FilesystemLayout {
     pub length_bytes: Option<u64>,
 }
 
-/// One detected container layer.
+/// One recognized layer of an artifact's nesting.
 ///
 /// `kind` and `layout_kind` are `"archive"`, `"image"`, `"physical-media"`,
 /// `"filesystem"`, or `"unknown"`. `layout` is the matching layout object —
@@ -179,7 +183,7 @@ pub struct FilesystemLayout {
 /// `None` when no layout details are known.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
-pub struct Container {
+pub struct Layer {
     pub kind: String,
     pub id: String,
     pub name: String,
@@ -190,11 +194,11 @@ pub struct Container {
     pub layout: Option<Py<PyAny>>,
 }
 
-impl Container {
-    fn new(py: Python<'_>, container: &remanence::Container) -> PyResult<Self> {
-        let (layout_kind, layout) = match &container.layout {
-            remanence::ContainerLayout::Unknown => ("unknown", None),
-            remanence::ContainerLayout::Archive(layout) => (
+impl Layer {
+    fn new(py: Python<'_>, layer: &remanence::Layer) -> PyResult<Self> {
+        let (layout_kind, layout) = match &layer.layout {
+            remanence::LayerLayout::Unknown => ("unknown", None),
+            remanence::LayerLayout::Archive(layout) => (
                 "archive",
                 Some(
                     Py::new(
@@ -209,7 +213,7 @@ impl Container {
                     .into_any(),
                 ),
             ),
-            remanence::ContainerLayout::Image(layout) => (
+            remanence::LayerLayout::Image(layout) => (
                 "image",
                 Some(
                     Py::new(
@@ -222,14 +226,14 @@ impl Container {
                     .into_any(),
                 ),
             ),
-            remanence::ContainerLayout::PhysicalMedia(layout) => match layout {
+            remanence::LayerLayout::PhysicalMedia(layout) => match layout {
                 remanence::PhysicalMediaLayout::Unknown => ("physical-media", None),
                 remanence::PhysicalMediaLayout::Disk(disk) => (
                     "physical-media",
                     Some(Py::new(py, DiskLayout::new(disk))?.into_any()),
                 ),
             },
-            remanence::ContainerLayout::Filesystem(layout) => (
+            remanence::LayerLayout::Filesystem(layout) => (
                 "filesystem",
                 Some(
                     Py::new(
@@ -245,14 +249,14 @@ impl Container {
         };
 
         Ok(Self {
-            kind: kind_str(container.kind).to_owned(),
-            id: container.id.clone(),
-            name: container.name.clone(),
-            confidence: container.confidence,
-            known: container.known,
+            kind: kind_str(layer.kind).to_owned(),
+            id: layer.id.clone(),
+            name: layer.name.clone(),
+            confidence: layer.confidence,
+            known: layer.known,
             size: SizeInformation {
-                current_bytes: container.size.current_bytes,
-                expected_bytes: container.size.expected_bytes,
+                current_bytes: layer.size.current_bytes,
+                expected_bytes: layer.size.expected_bytes,
             },
             layout_kind: layout_kind.to_owned(),
             layout,
@@ -263,76 +267,9 @@ impl Container {
 /// The result of identifying a session's image.
 #[pyclass(frozen, get_all, module = "remanence")]
 pub struct Identification {
-    pub containers: Vec<Container>,
+    pub layers: Vec<Layer>,
     pub modified: bool,
     pub evidence: Vec<String>,
-}
-
-/// One file listed in an HDOS directory.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct HdosFile {
-    pub name: String,
-    pub extension: String,
-    pub size_sectors: u32,
-    pub modified_date: u16,
-    pub flags: u8,
-}
-
-#[pymethods]
-impl HdosFile {
-    /// `"NAME.EXT"` or `"NAME"` when the extension is empty.
-    #[getter]
-    fn display_name(&self) -> String {
-        self.as_core().display_name()
-    }
-
-    /// Size in bytes (`size_sectors * 256`).
-    #[getter]
-    fn size_bytes(&self) -> u64 {
-        self.as_core().size_bytes()
-    }
-
-    /// HDOS flag letters (subset of `"SLWC"`), possibly empty.
-    #[getter]
-    fn flags_string(&self) -> String {
-        self.as_core().flags_string()
-    }
-
-    /// HDOS catalog date, e.g. `"09-May-78"`, or `"No-Date"`.
-    #[getter]
-    fn modified_date_string(&self) -> String {
-        self.as_core().modified_date_string()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "HdosFile(name={:?}, extension={:?}, size_sectors={}, modified_date={}, flags={})",
-            self.name, self.extension, self.size_sectors, self.modified_date, self.flags
-        )
-    }
-}
-
-impl HdosFile {
-    fn new(file: &remanence::HdosFile) -> Self {
-        Self {
-            name: file.name.clone(),
-            extension: file.extension.clone(),
-            size_sectors: file.size_sectors,
-            modified_date: file.modified_date,
-            flags: file.flags,
-        }
-    }
-
-    fn as_core(&self) -> remanence::HdosFile {
-        remanence::HdosFile {
-            name: self.name.clone(),
-            extension: self.extension.clone(),
-            size_sectors: self.size_sectors,
-            modified_date: self.modified_date,
-            flags: self.flags,
-        }
-    }
 }
 
 /// An open analysis session over one disk image.
@@ -375,9 +312,9 @@ pub struct RegionInfo {
     /// How the schema places this region in its own vocabulary: for MBR,
     /// `"primary"` for one of the four slots and `"logical"` for an entry
     /// on the extended chain. A different axis from `role`: the extended
-    /// container is a primary slot whose role is structural.
+    /// partition is a primary slot whose role is structural.
     pub declared_placement: String,
-    /// `"data"` or `"container"`.
+    /// `"data"` or `"structure"`.
     pub role: String,
     pub declared_type: u8,
     pub declared_type_reading: String,
@@ -931,24 +868,63 @@ impl DosMachine {
     }
 }
 
-/// One FAT directory entry; `kind` is `"file"` or `"directory"`.
+/// A fact the recognizing filesystem declares about an entry that this
+/// vocabulary has no named field for, in that filesystem's own spelling.
+///
+/// Nothing is normalized on the way through, so an HDOS catalog date
+/// keeps HDOS's reading of it.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
-pub struct FatEntry {
+pub struct EntryFact {
+    pub key: String,
+    pub value: String,
+}
+
+#[pymethods]
+impl EntryFact {
+    fn __repr__(&self) -> String {
+        format!("EntryFact(key={:?}, value={:?})", self.key, self.value)
+    }
+}
+
+/// One entry of a namespace; `kind` is `"file"` or `"directory"`.
+///
+/// `declared` carries what the recognizing filesystem states beyond the
+/// fields above, in its own spelling and order. A filesystem whose format
+/// records none declares none.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct Entry {
     pub name: String,
     pub kind: String,
     pub size_bytes: u64,
+    pub declared: Vec<EntryFact>,
 }
 
-impl FatEntry {
-    fn new(entry: &remanence::FatEntry) -> Self {
+#[pymethods]
+impl Entry {
+    fn __repr__(&self) -> String {
+        format!(
+            "Entry(name={:?}, kind={:?}, size_bytes={})",
+            self.name, self.kind, self.size_bytes
+        )
+    }
+}
+
+impl Entry {
+    fn new(entry: &remanence::Entry) -> Self {
         Self {
             name: entry.name.clone(),
-            kind: match entry.kind {
-                remanence::FatEntryKind::File => "file".to_owned(),
-                remanence::FatEntryKind::Directory => "directory".to_owned(),
-            },
+            kind: entry.kind.name().to_owned(),
             size_bytes: entry.size_bytes,
+            declared: entry
+                .declared
+                .iter()
+                .map(|fact| EntryFact {
+                    key: fact.key.clone(),
+                    value: fact.value.clone(),
+                })
+                .collect(),
         }
     }
 }
@@ -1143,7 +1119,7 @@ impl Discovery {
         self.read(|discovery| discovery.image_format_name().to_owned())
     }
 
-    /// `"raw"`, `"qcow2"` or `"vdi"` — the container format, as
+    /// `"raw"`, `"qcow2"` or `"vdi"` — the image container format, as
     /// `StorageDevice.format` reports it.
     #[getter]
     fn format(&self) -> PyResult<&'static str> {
@@ -1227,18 +1203,18 @@ impl Discovery {
         self.read(|discovery| Assurance::new(discovery.assurance()))
     }
 
-    /// Identifies the artifact's container layers and probable
+    /// Identifies the artifact's nesting layers and probable
     /// filesystem — the same reading `StorageDevice.identify` gives once
     /// a medium is loaded.
     fn identify(&self, py: Python<'_>) -> PyResult<Identification> {
         let identification = self.read(remanence::Discovery::identify)?;
-        let containers = identification
-            .containers
+        let layers = identification
+            .layers
             .iter()
-            .map(|container| Container::new(py, container))
+            .map(|layer| Layer::new(py, layer))
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Identification {
-            containers,
+            layers,
             modified: identification.modified,
             evidence: identification.evidence,
         })
@@ -1771,37 +1747,19 @@ impl StorageDevice {
         Ok(PyBytes::new(py, &buffer))
     }
 
-    /// Identifies the image's container layers and probable filesystem.
+    /// Identifies the artifact's nesting layers and probable filesystem.
     fn identify(&mut self, py: Python<'_>) -> PyResult<Identification> {
         let identification = self.get()?.identify().map_err(to_py_err)?;
-        let containers = identification
-            .containers
+        let layers = identification
+            .layers
             .iter()
-            .map(|container| Container::new(py, container))
+            .map(|layer| Layer::new(py, layer))
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Identification {
-            containers,
+            layers,
             modified: identification.modified,
             evidence: identification.evidence,
         })
-    }
-
-    /// Parses the HDOS directory from the disk's image.
-    fn list_hdos_files(&mut self) -> PyResult<Vec<HdosFile>> {
-        self.get()?
-            .list_hdos_files()
-            .map(|files| files.iter().map(HdosFile::new).collect())
-            .map_err(to_py_err)
-    }
-
-    /// Reads a cataloged HDOS file's contents out of the disk's image.
-    fn read_hdos_file<'py>(
-        &mut self,
-        py: Python<'py>,
-        name: &str,
-    ) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self.get()?.read_hdos_file(name).map_err(to_py_err)?;
-        Ok(PyBytes::new(py, &bytes))
     }
 
     /// `"read-write"` or `"read-only"` — the **effective** mode: the
@@ -1959,102 +1917,48 @@ impl StorageDevice {
         })
     }
 
-    /// Lists a directory in `volume_id` ("" = root, "A/B" descends).
-    #[pyo3(signature = (volume_id, path = ""))]
-    fn entries(&mut self, volume_id: u64, path: &str) -> PyResult<Vec<FatEntry>> {
-        Ok(self
-            .get()?
-            .entries(remanence::VolumeId::from_value(volume_id), path)
-            .map_err(to_py_err)?
-            .iter()
-            .map(FatEntry::new)
-            .collect())
+    /// The filesystem this device resolves to.
+    ///
+    /// The walk device to volume to filesystem is transparent where every
+    /// seam has exactly one supported answer, and raises naming the
+    /// candidates where one does not. A volume bearing no filesystem is a
+    /// named absence, not an empty listing. **The device carries no file
+    /// verbs of its own** — it may be asked what it resolves to, and may
+    /// not be told to act as something it isn't.
+    fn filesystem(&mut self) -> PyResult<Filesystem> {
+        let (kind, volume) = {
+            let mut device = self.get()?;
+            let filesystem = device.filesystem().map_err(to_py_err)?;
+            (filesystem.kind().to_owned(), filesystem.volume_id())
+        };
+        Ok(Filesystem {
+            session: Arc::clone(&self.session),
+            machine: self.machine.clone(),
+            attachment: self.attachment,
+            volume: volume.map(remanence::VolumeId::value),
+            kind,
+        })
     }
 
-    /// Answers one path in `volume_id` with its entry, or `None` when
-    /// nothing exists at that path — a missing leaf, a missing parent,
-    /// or a parent that is a file alike. Absence is an answer,
-    /// distinguished from failure, which raises.
-    fn stat(&mut self, volume_id: u64, path: &str) -> PyResult<Option<FatEntry>> {
-        Ok(self
-            .get()?
-            .stat(remanence::VolumeId::from_value(volume_id), path)
-            .map_err(to_py_err)?
-            .as_ref()
-            .map(FatEntry::new))
-    }
-
-    /// Copies a file's bytes out of `volume_id`.
-    fn read_file<'py>(
-        &mut self,
-        py: Python<'py>,
-        volume_id: u64,
-        path: &str,
-    ) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self.get()?.read_file(remanence::VolumeId::from_value(volume_id), path).map_err(to_py_err)?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    /// Reads part of a file — the streamed form, `os.pread`-shaped:
-    /// exactly `length` bytes at `offset`, which must lie within the
-    /// file.
-    fn read_file_at<'py>(
-        &mut self,
-        py: Python<'py>,
-        volume_id: u64,
-        path: &str,
-        offset: u64,
-        length: usize,
-    ) -> PyResult<Bound<'py, PyBytes>> {
-        let mut buffer = vec![0u8; length];
-        self.get()?
-            .read_file_at(remanence::VolumeId::from_value(volume_id), path, offset, &mut buffer)
-            .map_err(to_py_err)?;
-        Ok(PyBytes::new(py, &buffer))
-    }
-
-    /// Writes a file into `volume_id`. An existing file is overwritten —
-    /// shorter or longer, its old clusters released and reclaimed —
-    /// while an existing directory is refused. Buffered until
-    /// `commit()`.
-    fn write_file(&mut self, volume_id: u64, path: &str, contents: &[u8]) -> PyResult<()> {
-        self.get()?
-            .write_file(remanence::VolumeId::from_value(volume_id), path, contents)
-            .map_err(to_py_err)
-    }
-
-    /// Sets a file's size, creating it when absent — `truncate`-shaped:
-    /// kept bytes preserved in place, a grown region reads as zeros.
-    /// With `write_file_at` this is the streamed replacement for
-    /// `write_file`. Buffered until `commit()`.
-    fn resize_file(&mut self, volume_id: u64, path: &str, size: u64) -> PyResult<()> {
-        self.get()?
-            .resize_file(remanence::VolumeId::from_value(volume_id), path, size)
-            .map_err(to_py_err)
-    }
-
-    /// Writes part of a file in place — the streamed form,
-    /// `os.pwrite`-shaped: the span must lie within the file's current
-    /// size (resize first to change it). Buffered until `commit()`.
-    fn write_file_at(
-        &mut self,
-        volume_id: u64,
-        path: &str,
-        offset: u64,
-        data: &[u8],
-    ) -> PyResult<()> {
-        self.get()?
-            .write_file_at(remanence::VolumeId::from_value(volume_id), path, offset, data)
-            .map_err(to_py_err)
-    }
-
-    /// Ensures a directory exists in `volume_id`: missing parents are
-    /// created, and a path that already leads to a directory succeeds
-    /// unchanged. Buffered until `commit()`.
-    fn make_directory(&mut self, volume_id: u64, path: &str) -> PyResult<()> {
-        self.get()?
-            .make_directory(remanence::VolumeId::from_value(volume_id), path)
-            .map_err(to_py_err)
+    /// One volume of this device's medium, by the identity the inspection
+    /// report issued for it — the selector where several namespaces
+    /// exist.
+    fn volume(&mut self, volume_id: u64) -> PyResult<Volume> {
+        let (start_bytes, length_bytes) = {
+            let mut device = self.get()?;
+            let volume = device
+                .volume(remanence::VolumeId::from_value(volume_id))
+                .map_err(to_py_err)?;
+            (volume.start_bytes(), volume.length_bytes())
+        };
+        Ok(Volume {
+            session: Arc::clone(&self.session),
+            machine: self.machine.clone(),
+            attachment: self.attachment,
+            id: volume_id,
+            start_bytes,
+            length_bytes,
+        })
     }
 
     /// The commit point: everything buffered reaches the image, flushed.
@@ -2069,6 +1973,346 @@ impl StorageDevice {
     /// Discards everything buffered; the image is untouched.
     fn rollback(&mut self) -> PyResult<()> {
         self.get()?.rollback().map_err(to_py_err)
+    }
+}
+
+/// One volume of a device's medium, selected by the identity the
+/// inspection report issued.
+///
+/// A volume is not held: this is the selector between several namespaces,
+/// and it carries no ordinal because no format defines one for a volume.
+#[pyclass(module = "remanence")]
+pub struct Volume {
+    session: Arc<Mutex<remanence::Session>>,
+    machine: Option<String>,
+    attachment: remanence::AttachmentId,
+    id: u64,
+    start_bytes: u64,
+    length_bytes: u64,
+}
+
+#[pymethods]
+impl Volume {
+    /// This volume's opaque identity, as the inspection report issued it.
+    #[getter]
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Where the volume starts in the presented disk.
+    #[getter]
+    fn start_bytes(&self) -> u64 {
+        self.start_bytes
+    }
+
+    #[getter]
+    fn length_bytes(&self) -> u64 {
+        self.length_bytes
+    }
+
+    /// The filesystem this volume bears.
+    ///
+    /// A volume with no filesystem is an ordinary volume — swap, boot
+    /// code, unformatted space — so the absence is raised as a named
+    /// absence rather than treated as a failure to read one.
+    fn filesystem(&self) -> PyResult<Filesystem> {
+        let kind = with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            Some(self.id),
+            |filesystem| Ok(filesystem.kind().to_owned()),
+        )?;
+        Ok(Filesystem {
+            session: Arc::clone(&self.session),
+            machine: self.machine.clone(),
+            attachment: self.attachment,
+            volume: Some(self.id),
+            kind,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Volume(id={}, length_bytes={})", self.id, self.length_bytes)
+    }
+}
+
+/// Resolves the named filesystem and runs `action` over it.
+///
+/// Every verb below passes through here, so the refusals a caller meets
+/// are the library's own — the resolver's where the walk had no single
+/// answer, the namespace's where it did — and a medium that has left
+/// answers by name rather than through state that is gone.
+fn with_filesystem<T>(
+    session: &Arc<Mutex<remanence::Session>>,
+    machine: &Option<String>,
+    attachment: remanence::AttachmentId,
+    volume: Option<u64>,
+    action: impl FnOnce(&mut remanence::Filesystem<'_>) -> remanence::Result<T>,
+) -> PyResult<T> {
+    let mut guard = session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let target = match machine {
+        Some(identity) => guard.machine_mut(identity),
+        None => Some(guard.anonymous_mut()),
+    };
+    let Some(device) = target.and_then(|target| target.device_mut(attachment)) else {
+        return Err(categorized_py_err(
+            remanence::ErrorCategory::NotFound,
+            "this device was removed",
+        ));
+    };
+    let mut filesystem = match volume {
+        Some(id) => device
+            .volume(remanence::VolumeId::from_value(id))
+            .map_err(to_py_err)?
+            .filesystem()
+            .map_err(to_py_err)?,
+        None => device.filesystem().map_err(to_py_err)?,
+    };
+    action(&mut filesystem).map_err(to_py_err)
+}
+
+/// The namespace node: the one type that carries file verbs.
+///
+/// It is a view over its provider's state, never an instance: every verb
+/// reads or writes the state beneath it, mutations project into the
+/// active layer, and nothing here holds a listing that could go stale.
+#[pyclass(module = "remanence")]
+pub struct Filesystem {
+    session: Arc<Mutex<remanence::Session>>,
+    machine: Option<String>,
+    attachment: remanence::AttachmentId,
+    /// The volume it is borne by, or `None` where the medium bears the
+    /// namespace itself and composed no volume.
+    volume: Option<u64>,
+    kind: String,
+}
+
+#[pymethods]
+impl Filesystem {
+    /// The filesystem kind in its stable spelling — `"FAT12"`, `"hdos"`.
+    /// It is data on the handle, never a type of its own.
+    #[getter]
+    fn kind(&self) -> String {
+        self.kind.clone()
+    }
+
+    /// The identity of the volume this filesystem is borne by, or `None`
+    /// where the medium bears the namespace itself.
+    #[getter]
+    fn volume_id(&self) -> Option<u64> {
+        self.volume
+    }
+
+    /// Lists a directory (`""` is the root, `"A/B"` descends).
+    #[pyo3(signature = (path = ""))]
+    fn entries(&self, path: &str) -> PyResult<Vec<Entry>> {
+        let entries = with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.entries(path),
+        )?;
+        Ok(entries.iter().map(Entry::new).collect())
+    }
+
+    /// Answers one path with its entry, or `None` when nothing exists
+    /// there — a missing leaf, a missing parent, or a parent that is a
+    /// file alike. Absence is an answer, distinguished from failure,
+    /// which raises.
+    fn stat(&self, path: &str) -> PyResult<Option<Entry>> {
+        let entry = with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.stat(path),
+        )?;
+        Ok(entry.as_ref().map(Entry::new))
+    }
+
+    /// The file at `path`.
+    ///
+    /// This is where absence stops being an answer: `stat` asks whether
+    /// something is there, and this asks for the file, so nothing and a
+    /// directory both raise by name.
+    fn get_file(&self, path: &str) -> PyResult<File> {
+        let entry = with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| Ok(filesystem.get_file(path)?.entry().clone()),
+        )?;
+        Ok(File {
+            session: Arc::clone(&self.session),
+            machine: self.machine.clone(),
+            attachment: self.attachment,
+            volume: self.volume,
+            path: path.to_owned(),
+            entry: Entry::new(&entry),
+        })
+    }
+
+    /// Copies a file's bytes out — the whole-value convenience beside
+    /// `File.read_at`.
+    fn read_file<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.read_file(path),
+        )?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Writes a file. An existing file is overwritten — shorter or
+    /// longer, its old clusters released and reclaimed — while an
+    /// existing directory is refused. Buffered until
+    /// `StorageDevice.commit()`.
+    fn write_file(&self, path: &str, contents: &[u8]) -> PyResult<()> {
+        with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.write_file(path, contents),
+        )
+    }
+
+    /// Sets a file's size, creating it when absent — `truncate`-shaped:
+    /// kept bytes preserved in place, a grown region reads as zeros.
+    /// Buffered until commit.
+    fn resize_file(&self, path: &str, size: u64) -> PyResult<()> {
+        with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.resize_file(path, size),
+        )
+    }
+
+    /// Ensures a directory exists: missing parents are created, and a
+    /// path that already leads to one succeeds unchanged. Buffered until
+    /// commit.
+    fn make_directory(&self, path: &str) -> PyResult<()> {
+        with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.make_directory(path),
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        match self.volume {
+            Some(volume) => format!("Filesystem(kind={:?}, volume_id={volume})", self.kind),
+            None => format!("Filesystem(kind={:?}, volume_id=None)", self.kind),
+        }
+    }
+}
+
+/// One file, named by the filesystem that holds it.
+///
+/// It is never an instance: the bytes stay where they are and this offers
+/// the two ways of reaching them — `read_at`, the bounded streamed form,
+/// and `bytes()`, the whole-value convenience beside it.
+#[pyclass(module = "remanence")]
+pub struct File {
+    session: Arc<Mutex<remanence::Session>>,
+    machine: Option<String>,
+    attachment: remanence::AttachmentId,
+    volume: Option<u64>,
+    path: String,
+    entry: Entry,
+}
+
+#[pymethods]
+impl File {
+    /// The path this file was reached by.
+    #[getter]
+    fn path(&self) -> String {
+        self.path.clone()
+    }
+
+    /// The name as the filesystem stores it, which is not always the
+    /// spelling the caller asked by.
+    #[getter]
+    fn name(&self) -> String {
+        self.entry.name.clone()
+    }
+
+    /// What the filesystem claims this file's size is.
+    #[getter]
+    fn size_bytes(&self) -> u64 {
+        self.entry.size_bytes
+    }
+
+    /// This file's entry, declared facts included.
+    #[getter]
+    fn entry(&self) -> Entry {
+        self.entry.clone()
+    }
+
+    /// The whole file, copied out.
+    fn bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let path = self.path.clone();
+        let bytes = with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.get_file(&path)?.bytes(),
+        )?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Exactly `length` bytes at `offset` — the streamed form,
+    /// `os.pread`-shaped. The span must lie within the file.
+    fn read_at<'py>(
+        &self,
+        py: Python<'py>,
+        offset: u64,
+        length: usize,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let path = self.path.clone();
+        let mut buffer = vec![0u8; length];
+        with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.get_file(&path)?.read_at(offset, &mut buffer),
+        )?;
+        Ok(PyBytes::new(py, &buffer))
+    }
+
+    /// Writes `data` at `offset` in place — the streamed form,
+    /// `os.pwrite`-shaped. The span must lie within the file's current
+    /// size; `Filesystem.resize_file` is what changes it. Buffered until
+    /// commit.
+    fn write_at(&self, offset: u64, data: &[u8]) -> PyResult<()> {
+        let path = self.path.clone();
+        with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.get_file(&path)?.write_at(offset, data),
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "File(path={:?}, size_bytes={})",
+            self.path, self.entry.size_bytes
+        )
     }
 }
 
@@ -3804,25 +4048,6 @@ impl P64Image {
     }
 }
 
-/// Parses the HDOS directory from raw image bytes.
-#[pyfunction]
-fn list_hdos_files(image: Vec<u8>) -> PyResult<Vec<HdosFile>> {
-    remanence::list_hdos_files(&image)
-        .map(|files| files.iter().map(HdosFile::new).collect())
-        .map_err(to_py_err)
-}
-
-/// Reads a cataloged HDOS file's contents out of raw image bytes.
-#[pyfunction]
-fn read_hdos_file<'py>(
-    py: Python<'py>,
-    image: Vec<u8>,
-    name: &str,
-) -> PyResult<Bound<'py, PyBytes>> {
-    let bytes = remanence::read_hdos_file(&image, name).map_err(to_py_err)?;
-    Ok(PyBytes::new(py, &bytes))
-}
-
 #[pymodule(name = "remanence")]
 fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The distribution version (pyproject.toml) governs; the crate version is
@@ -3868,14 +4093,13 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MasteredLocation>()?;
     m.add_class::<DeclaredLoss>()?;
     m.add_class::<Identification>()?;
-    m.add_class::<Container>()?;
+    m.add_class::<Layer>()?;
     m.add_class::<SizeInformation>()?;
     m.add_class::<ArchiveLayout>()?;
     m.add_class::<ImageLayout>()?;
     m.add_class::<DiskLayout>()?;
     m.add_class::<TrackSectorLayout>()?;
     m.add_class::<FilesystemLayout>()?;
-    m.add_class::<HdosFile>()?;
     m.add_class::<Discovery>()?;
     m.add_class::<Session>()?;
     m.add_class::<Machine>()?;
@@ -3890,7 +4114,11 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FilesystemInfo>()?;
     m.add_class::<VolumeLabel>()?;
     m.add_class::<LabelReading>()?;
-    m.add_class::<FatEntry>()?;
+    m.add_class::<Entry>()?;
+    m.add_class::<EntryFact>()?;
+    m.add_class::<Volume>()?;
+    m.add_class::<Filesystem>()?;
+    m.add_class::<File>()?;
     m.add_class::<DosMachine>()?;
     m.add_class::<DriveMap>()?;
     m.add_class::<DriveMapping>()?;
@@ -3899,7 +4127,5 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(device_families, m)?)?;
     m.add_function(wrap_pyfunction!(discover_media, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
-    m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
-    m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;
     Ok(())
 }

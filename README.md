@@ -17,13 +17,21 @@ and hands back a discovery holding that claim, which a load consumes so
 nothing is opened twice; where a format declares a drive,
 `add_device_for` composes both acts in one, and where it declares none a
 raw image says nothing about its machine, so the caller states the
-drive. The load identifies the image's container
-layers: the archive wrapper, image format, physical media geometry, and
+drive. The load identifies the layers of the artifact's nesting: the
+archive wrapper, image format, physical media geometry, and
 probable filesystem, each with comparable confidence and human-readable
 evidence. Executable, role-specific adapters recognize and validate formats;
 ambiguous strongest matches remain unknown rather than being resolved by
-catalog order. An HDOS directory lister reads the file catalog out of
-Heathkit `.h8d` images.
+catalog order.
+
+**File access lives on one node.** A device is asked what it *resolves*
+to — `device.filesystem()` walks device → volume → filesystem where
+every seam has one supported answer, refuses naming the candidates where
+it does not, and answers a named absence where nothing bears a
+namespace — and the file verbs live on the `Filesystem` it hands back,
+never on the device. Where several volumes bear one, selection runs by
+the identity the inspection report issued. FAT12/FAT16 volumes and the
+HDOS catalog of a Heathkit `.h8d` are reached the same way.
 
 An `Archive` lists what a supported archive holds, reading its index and
 never its entry data. Each grammar sits behind its own catalog adapter,
@@ -229,10 +237,21 @@ let device = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
 println!("{}", device.attachment());      // heathfloppy0
 device.load_media("disk.h8d", remanence::AccessIntent::Read)?;
 let identification = device.identify()?;
-for container in &identification.containers {
-    println!("{:?} {} ({}%)", container.kind, container.id, container.confidence);
+for layer in &identification.layers {
+    println!("{:?} {} ({}%)", layer.kind, layer.id, layer.confidence);
 }
-let files = device.list_hdos_files()?;
+
+// The device is asked what it resolves to; the file verbs live there.
+let mut filesystem = device.filesystem()?;
+for entry in filesystem.entries("")? {
+    println!("{} ({} bytes)", entry.name, entry.size_bytes);
+    // Whatever this filesystem states past name, kind and size, in its
+    // own spelling: an HDOS catalog date, its flag letters.
+    for fact in &entry.declared {
+        println!("    {} = {}", fact.key, fact.value);
+    }
+}
+let bytes = filesystem.get_file("HDOS.SYS")?.bytes()?;
 
 // What the open established about the evidence beneath it, before
 // anything is read from it.
@@ -298,10 +317,15 @@ device = session.add_device("heathkit-h17")
 print(device.attachment)            # heathfloppy0
 device.load_media("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
 print(device.assurance.outcome, device.assurance.condition, device.mode)
-for c in device.identify().containers:
-    print(c.kind, c.id, c.confidence)
-for f in device.list_hdos_files():
-    print(f.display_name, f.size_sectors, f.modified_date_string)
+for layer in device.identify().layers:
+    print(layer.kind, layer.id, layer.confidence)
+
+# The device is asked what it resolves to; the file verbs live there.
+filesystem = device.filesystem()
+for entry in filesystem.entries():
+    print(entry.name, entry.size_bytes,
+          [(fact.key, fact.value) for fact in entry.declared])
+data = filesystem.get_file("HDOS.SYS").bytes()
 device.eject()                      # the drive stays; the disk goes
 
 # What an artifact is, before a machine has been configured for it.

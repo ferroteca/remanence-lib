@@ -8,9 +8,15 @@ use crate::adapters::{
 };
 use crate::source::{ArchiveLayer, ImageSource};
 
-/// What role a detected container plays in the image's layering.
+/// What role a recognized layer plays in the artifact's nesting.
+///
+/// This is a different axis from the P13 authoritative layer and the P23
+/// active layer a device reports: those name which representation an
+/// artifact records and which one carries the session's mutable truth,
+/// while these name what was recognized at each level of the nesting an
+/// artifact was reached through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContainerKind {
+pub enum LayerKind {
     Archive,
     Image,
     PhysicalMedia,
@@ -27,7 +33,7 @@ pub struct ArchiveLayout {
     pub uncompressed_size: Option<u64>,
 }
 
-/// Where the payload sits inside a raw image container.
+/// Where the payload sits inside a raw image.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImageLayout {
     pub payload_offset_bytes: Option<u64>,
@@ -51,7 +57,7 @@ pub enum SectorLayout {
     Variable { tracks: Vec<TrackSectorLayout> },
 }
 
-/// Physical disk geometry derived from a container format.
+/// Physical disk geometry derived from an image format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskLayout {
     /// The media type the image format names for the medium it holds
@@ -118,9 +124,9 @@ impl FilesystemLayout {
     }
 }
 
-/// Layout details specific to each container kind.
+/// Layout details specific to each layer kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerLayout {
+pub enum LayerLayout {
     Unknown,
     Archive(ArchiveLayout),
     Image(ImageLayout),
@@ -144,47 +150,47 @@ impl SizeInformation {
     }
 }
 
-/// One detected container layer.
+/// One recognized layer of the artifact's nesting.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Container {
-    pub kind: ContainerKind,
+pub struct Layer {
+    pub kind: LayerKind,
     pub id: String,
     pub name: String,
     pub confidence: u8,
     pub known: bool,
     pub size: SizeInformation,
-    pub layout: ContainerLayout,
+    pub layout: LayerLayout,
 }
 
 /// The result of identifying a session's image.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identification {
-    pub containers: Vec<Container>,
+    pub layers: Vec<Layer>,
     pub modified: bool,
     pub evidence: Vec<String>,
 }
 
-fn unknown_image(size: SizeInformation) -> Container {
-    Container {
-        kind: ContainerKind::Unknown,
+fn unknown_image(size: SizeInformation) -> Layer {
+    Layer {
+        kind: LayerKind::Unknown,
         id: "unknown".to_owned(),
-        name: "Unknown container format".to_owned(),
+        name: "Unknown image format".to_owned(),
         confidence: 0,
         known: false,
         size,
-        layout: ContainerLayout::Unknown,
+        layout: LayerLayout::Unknown,
     }
 }
 
-fn unknown_filesystem() -> Container {
-    Container {
-        kind: ContainerKind::Filesystem,
+fn unknown_filesystem() -> Layer {
+    Layer {
+        kind: LayerKind::Filesystem,
         id: "unknown".to_owned(),
         name: "Unknown filesystem".to_owned(),
         confidence: 0,
         known: false,
         size: SizeInformation::unknown(),
-        layout: ContainerLayout::Filesystem(FilesystemLayout::unknown()),
+        layout: LayerLayout::Filesystem(FilesystemLayout::unknown()),
     }
 }
 
@@ -198,11 +204,11 @@ fn unknown_filesystem() -> Container {
 fn physical_media_from_descriptor(
     descriptor: &ImageFormatDescriptor,
     current_bytes: u64,
-) -> Container {
+) -> Layer {
     let media = descriptor.media;
     let expected_bytes = descriptor.disk.map(|disk| disk.expected_size());
-    Container {
-        kind: ContainerKind::PhysicalMedia,
+    Layer {
+        kind: LayerKind::PhysicalMedia,
         id: media.id.to_owned(),
         name: media.name.to_owned(),
         confidence: 100,
@@ -211,21 +217,21 @@ fn physical_media_from_descriptor(
             current_bytes: Some(current_bytes),
             expected_bytes,
         },
-        layout: ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(
+        layout: LayerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(
             DiskLayout::from_descriptor(descriptor),
         )),
     }
 }
 
-pub(crate) fn container_from_layer(layer: ArchiveLayer) -> Container {
+pub(crate) fn layer_from_archive(layer: ArchiveLayer) -> Layer {
     let layout = ArchiveLayout {
         path: layer.path,
         entry_name: layer.entry_name,
         compressed_size: layer.compressed_size,
         uncompressed_size: layer.uncompressed_size,
     };
-    Container {
-        kind: ContainerKind::Archive,
+    Layer {
+        kind: LayerKind::Archive,
         id: layer.id,
         name: layer.name,
         confidence: 100,
@@ -234,17 +240,17 @@ pub(crate) fn container_from_layer(layer: ArchiveLayer) -> Container {
             current_bytes: layer.archive_size,
             expected_bytes: None,
         },
-        layout: ContainerLayout::Archive(layout),
+        layout: LayerLayout::Archive(layout),
     }
 }
 
-fn containers_with(containers: &[Container], extra: Vec<Container>) -> Vec<Container> {
-    let mut result = containers.to_vec();
+fn layers_with(layers: &[Layer], extra: Vec<Layer>) -> Vec<Layer> {
+    let mut result = layers.to_vec();
     result.extend(extra);
     result
 }
 
-/// Identifies a medium's container layers and probable filesystem.
+/// Identifies a medium's nesting layers and probable filesystem.
 /// Probes read bounded evidence — a leading prefix, the length, and the
 /// name — never the whole image (P27).
 ///
@@ -254,7 +260,7 @@ fn containers_with(containers: &[Container], extra: Vec<Container>) -> Vec<Conta
 pub(crate) fn identify_medium(
     source: &ImageSource,
     image_path: &Path,
-    containers: &[Container],
+    layers: &[Layer],
     device_identity: DeviceIdentity,
     modified: bool,
 ) -> Identification {
@@ -269,8 +275,8 @@ pub(crate) fn identify_medium(
         let current_bytes = source.len();
 
         let mut archive_evidence = Vec::new();
-        for existing in containers {
-            if let ContainerLayout::Archive(layout) = &existing.layout {
+        for existing in layers {
+            if let LayerLayout::Archive(layout) = &existing.layout {
                 archive_evidence.push(format!(
                     "loaded '{}' from {} archive '{}'",
                     layout.entry_name,
@@ -284,7 +290,7 @@ pub(crate) fn identify_medium(
             ImageIdentification::Unknown { evidence } => {
                 archive_evidence.extend(evidence);
                 return Identification {
-                    containers: containers_with(containers, vec![
+                    layers: layers_with(layers, vec![
                         unknown_image(SizeInformation {
                             current_bytes: Some(current_bytes),
                             expected_bytes: None,
@@ -310,8 +316,8 @@ pub(crate) fn identify_medium(
                 ));
                 archive_evidence.extend(all);
                 let expected = descriptor.disk.map(|disk| disk.expected_size());
-                let image = Container {
-                    kind: ContainerKind::Image,
+                let image = Layer {
+                    kind: LayerKind::Image,
                     id: descriptor.id.to_owned(),
                     name: descriptor.name.to_owned(),
                     confidence,
@@ -320,7 +326,7 @@ pub(crate) fn identify_medium(
                         current_bytes: Some(current_bytes),
                         expected_bytes: expected,
                     },
-                    layout: ContainerLayout::Image(ImageLayout {
+                    layout: LayerLayout::Image(ImageLayout {
                         payload_offset_bytes: Some(0),
                         payload_length_bytes: Some(current_bytes),
                     }),
@@ -331,7 +337,7 @@ pub(crate) fn identify_medium(
                     unknown_filesystem(),
                 ];
                 return Identification {
-                    containers: containers_with(containers, extra),
+                    layers: layers_with(layers, extra),
                     modified: modified,
                     evidence: archive_evidence,
                 };
@@ -351,8 +357,8 @@ pub(crate) fn identify_medium(
         ));
 
         let expected_bytes = descriptor.disk.map(|disk| disk.expected_size());
-        let image = Container {
-            kind: ContainerKind::Image,
+        let image = Layer {
+            kind: LayerKind::Image,
             id: descriptor.id.to_owned(),
             name: descriptor.name.to_owned(),
             confidence,
@@ -361,7 +367,7 @@ pub(crate) fn identify_medium(
                 current_bytes: Some(current_bytes),
                 expected_bytes,
             },
-            layout: ContainerLayout::Image(ImageLayout {
+            layout: LayerLayout::Image(ImageLayout {
                 payload_offset_bytes: Some(0),
                 payload_length_bytes: Some(current_bytes),
             }),
@@ -380,8 +386,8 @@ pub(crate) fn identify_medium(
                         filesystem.id,
                         device_identity.value()
                     ));
-                    extra.push(Container {
-                        kind: ContainerKind::Filesystem,
+                    extra.push(Layer {
+                        kind: LayerKind::Filesystem,
                         id: filesystem.id,
                         name: filesystem.name,
                         confidence: filesystem.confidence,
@@ -390,7 +396,7 @@ pub(crate) fn identify_medium(
                             current_bytes: Some(filesystem.length),
                             expected_bytes: expected_bytes.filter(|_| filesystem.offset == 0),
                         },
-                        layout: ContainerLayout::Filesystem(FilesystemLayout {
+                        layout: LayerLayout::Filesystem(FilesystemLayout {
                             offset_bytes: Some(filesystem.offset),
                             length_bytes: Some(filesystem.length),
                         }),
@@ -405,7 +411,7 @@ pub(crate) fn identify_medium(
         }
 
         Identification {
-            containers: containers_with(containers, extra),
+            layers: layers_with(layers, extra),
             modified: modified,
             evidence: archive_evidence,
         }
@@ -429,8 +435,8 @@ mod tests {
     }
 
     #[test]
-    fn session_loads_file_and_identifies_container() {
-        let path = temp_image_path("session-container", "h8d");
+    fn session_loads_file_and_identifies_the_image_layer() {
+        let path = temp_image_path("session-layer", "h8d");
         write_file(&path, &vec![0u8; 102_400]);
 
         let disk = crate::disk::MediaState::open(&path, AccessIntent::Read).expect("disk opens");
@@ -442,18 +448,18 @@ mod tests {
         let mut probe = [0u8; 16];
         disk.read_at(102_384, &mut probe).expect("bounded read");
         assert_eq!(probe, [0u8; 16]);
-        assert_eq!(identification.containers.len(), 3);
+        assert_eq!(identification.layers.len(), 3);
 
-        let image = &identification.containers[0];
-        assert_eq!(image.kind, ContainerKind::Image);
+        let image = &identification.layers[0];
+        assert_eq!(image.kind, LayerKind::Image);
         assert_eq!(image.id, "h8d");
         assert_eq!(image.name, "Heathkit H8 H17 disk image");
         assert_eq!(image.size.current_bytes, Some(102_400));
         assert_eq!(image.size.expected_bytes, Some(102_400));
 
-        let media = &identification.containers[1];
-        assert_eq!(media.kind, ContainerKind::PhysicalMedia);
-        let ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout else {
+        let media = &identification.layers[1];
+        assert_eq!(media.kind, LayerKind::PhysicalMedia);
+        let LayerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout else {
             panic!("expected disk layout, found {:?}", media.layout);
         };
         assert_eq!(disk.cylinders, Some(40));
@@ -466,17 +472,17 @@ mod tests {
         );
 
         let filesystem = identification
-            .containers
+            .layers
             .last()
-            .expect("filesystem container");
-        assert_eq!(filesystem.kind, ContainerKind::Filesystem);
+            .expect("filesystem layer");
+        assert_eq!(filesystem.kind, LayerKind::Filesystem);
         assert_eq!(filesystem.id, "unknown");
 
         std::fs::remove_file(&path).ok();
     }
 
     #[test]
-    fn session_identifies_filesystem_after_container() {
+    fn session_identifies_filesystem_after_the_image_layer() {
         let path = temp_image_path("session-filesystem", "h8d");
         let mut bytes = vec![0u8; 102_400];
         bytes[128..132].copy_from_slice(b"HDOS");
@@ -485,19 +491,19 @@ mod tests {
         let disk = crate::disk::MediaState::open(&path, AccessIntent::Read).expect("disk opens");
         let identification = disk.identify();
 
-        let image = &identification.containers[0];
-        assert_eq!(image.kind, ContainerKind::Image);
+        let image = &identification.layers[0];
+        assert_eq!(image.kind, LayerKind::Image);
         assert_eq!(image.id, "h8d");
 
         let filesystem = identification
-            .containers
+            .layers
             .last()
-            .expect("filesystem container");
-        assert_eq!(filesystem.kind, ContainerKind::Filesystem);
+            .expect("filesystem layer");
+        assert_eq!(filesystem.kind, LayerKind::Filesystem);
         assert_eq!(filesystem.id, "hdos");
         assert_eq!(filesystem.name, "Heath Disk Operating System");
         assert_eq!(filesystem.size.current_bytes, Some(102_400));
-        let ContainerLayout::Filesystem(layout) = &filesystem.layout else {
+        let LayerLayout::Filesystem(layout) = &filesystem.layout else {
             panic!("expected filesystem layout, found {:?}", filesystem.layout);
         };
         assert_eq!(layout.offset_bytes, Some(0));
@@ -517,9 +523,9 @@ mod tests {
         // identification still walks every layer correctly.
         let disk = crate::disk::MediaState::open_with_cache(&path, AccessIntent::Read, 1).expect("disk opens");
         let identification = disk.identify();
-        assert_eq!(identification.containers[0].id, "h8d");
+        assert_eq!(identification.layers[0].id, "h8d");
         assert_eq!(
-            identification.containers.last().expect("filesystem").id,
+            identification.layers.last().expect("filesystem").id,
             "hdos"
         );
         let mut probe = [0u8; 4];
@@ -552,28 +558,28 @@ mod tests {
     }
 
     #[test]
-    fn session_reports_unknown_container_and_filesystem() {
+    fn session_reports_unknown_image_and_filesystem() {
         let path = temp_image_path("session-unknown", "bin");
         write_file(&path, &[0u8; 10]);
 
         let disk = crate::disk::MediaState::open(&path, AccessIntent::Read).expect("disk opens");
         let identification = disk.identify();
 
-        assert_eq!(identification.containers.len(), 2);
-        let image = &identification.containers[0];
-        assert_eq!(image.kind, ContainerKind::Unknown);
+        assert_eq!(identification.layers.len(), 2);
+        let image = &identification.layers[0];
+        assert_eq!(image.kind, LayerKind::Unknown);
         assert_eq!(image.id, "unknown");
-        assert_eq!(image.name, "Unknown container format");
+        assert_eq!(image.name, "Unknown image format");
         assert!(!image.known);
         assert_eq!(image.size.current_bytes, Some(10));
         assert_eq!(image.size.expected_bytes, None);
-        assert_eq!(image.layout, ContainerLayout::Unknown);
+        assert_eq!(image.layout, LayerLayout::Unknown);
 
         let filesystem = identification
-            .containers
+            .layers
             .last()
-            .expect("filesystem container");
-        assert_eq!(filesystem.kind, ContainerKind::Filesystem);
+            .expect("filesystem layer");
+        assert_eq!(filesystem.kind, LayerKind::Filesystem);
         assert_eq!(filesystem.id, "unknown");
         assert_eq!(filesystem.name, "Unknown filesystem");
         assert!(!filesystem.known);

@@ -22,13 +22,23 @@
 //! runs twice; [`Machine::add_device_for`] composes the two acts over it
 //! where a format declares a default, and refuses by name where none
 //! does. Through the storage handle:
-//! [`StorageDevice::identify`] reports the container layers (archive,
-//! image, physical media, filesystem) recognized by built-in executable
-//! adapters, over the image's own bytes, while
-//! [`StorageDevice::inspect`] and the volume-scoped file verbs work over
-//! the disk a format adapter presents above them. Every open also states
-//! what it established about the evidence beneath it
-//! ([`StorageDevice::assurance`]): a source short of what its own
+//! [`StorageDevice::identify`] reports the layers of the artifact's
+//! nesting (archive, image, physical media, filesystem) recognized by
+//! built-in executable adapters, over the image's own bytes, while
+//! [`StorageDevice::inspect`] works over the disk a format adapter
+//! presents above them.
+//!
+//! **File access lives on one node.** [`StorageDevice::filesystem`]
+//! resolves device → volume → filesystem where every seam has exactly
+//! one supported answer and refuses naming the candidates where one does
+//! not; [`StorageDevice::volume`] selects by the identity the inspection
+//! report issued where several exist. The verbs — [`Filesystem::entries`],
+//! [`Filesystem::stat`], [`Filesystem::get_file`] and their kin — live on
+//! the [`Filesystem`] the resolver answers with, and the device carries
+//! none of them.
+//!
+//! Every open also states what it established about the evidence beneath
+//! it ([`StorageDevice::assurance`]): a source short of what its own
 //! interpretation declares is read as far as it truthfully goes,
 //! read-only, with the shortfall named rather than hidden or thrown away
 //! whole (P28). An [`Archive`] lists what a supported archive holds — ZIP
@@ -52,8 +62,8 @@ mod encoded_bytestream;
 mod error;
 mod evidence;
 mod fat;
-mod file_container;
 mod filesystem;
+mod filesystem_catalog;
 mod flux_capture;
 mod flux_medium;
 mod hardware_bitstream;
@@ -101,8 +111,8 @@ pub use dos_name::DosNameRule;
 pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim};
 pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
-pub use fat::{FatEntry, FatEntryKind, FatKind};
-pub use hdos::{HdosFile, list_hdos_files, read_hdos_file};
+pub use fat::FatKind;
+pub use filesystem::{Entry, EntryFact, EntryKind, File, Filesystem, NamespaceRule, Volume};
 pub use machine::{Machine, Session};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
@@ -116,7 +126,6 @@ pub use report::{
 pub use p64::{P64HalfTrack, P64Image, P64Report};
 pub use storage_device::{AttachmentId, StorageDevice};
 pub use session::{
-    ArchiveLayout, Container, ContainerKind, ContainerLayout, DiskLayout, FilesystemLayout,
-    Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, SizeInformation,
-    TrackSectorLayout,
+    ArchiveLayout, DiskLayout, FilesystemLayout, Identification, ImageLayout, Layer, LayerKind,
+    LayerLayout, PhysicalMediaLayout, SectorLayout, SizeInformation, TrackSectorLayout,
 };

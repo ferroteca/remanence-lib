@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ContainerKind, ErrorCategory};
+use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, LayerKind, ErrorCategory};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -121,10 +121,10 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
         .expect("the tail reads");
 
     let identification = disk.identify().expect("a medium is attached");
-    let container = &identification.containers[0];
-    assert_eq!(container.kind, ContainerKind::Archive);
-    assert_eq!(container.id, "7z");
-    assert_eq!(container.name, "7z archive");
+    let archive = &identification.layers[0];
+    assert_eq!(archive.kind, LayerKind::Archive);
+    assert_eq!(archive.id, "7z");
+    assert_eq!(archive.name, "7z archive");
 
     drop(disk_session);
     std::fs::remove_file(&path).ok();

@@ -5,8 +5,8 @@
 //! knows it: declared facts in their own namespace, qualifications noted
 //! rather than repaired, and the provenance carried beside both.
 //!
-//! It belongs to no one layer. A provider at any depth — a file
-//! container, a flux capture — states its facts in these terms, so the
+//! It belongs to no one layer. A provider at any depth — a namespace, a
+//! flux capture — states its facts in these terms, so the
 //! same reading applies wherever a fact surfaces. Nothing here
 //! interprets a fact; that is the declaring namespace's business.
 //!

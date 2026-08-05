@@ -64,7 +64,7 @@ pub type RuleIdentity = &'static str;
 /// identity where the refusal came from an enumerated rule set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// A container archive (e.g. ZIP, 7z) could not be read.
+    /// An archive (e.g. ZIP, 7z) could not be read.
     Archive {
         category: ErrorCategory,
         rule: Option<RuleIdentity>,
@@ -77,11 +77,13 @@ pub enum Error {
         rule: Option<RuleIdentity>,
         reason: String,
     },
-    /// A disk image did not match its container format.
+    /// A disk image did not match the format that claimed it.
     InvalidImage {
         category: ErrorCategory,
         rule: Option<RuleIdentity>,
-        container: String,
+        /// The format, filesystem or grammar whose reading was refused —
+        /// the seam the refusal is attributed to.
+        format: String,
         reason: String,
     },
 }
@@ -132,7 +134,7 @@ impl Error {
         Self::categorized_io(ErrorCategory::Unsupported, reason)
     }
 
-    fn categorized_io(category: ErrorCategory, reason: impl Into<String>) -> Self {
+    pub(crate) fn categorized_io(category: ErrorCategory, reason: impl Into<String>) -> Self {
         Self::Io {
             category,
             rule: None,
@@ -140,19 +142,19 @@ impl Error {
         }
     }
 
-    pub fn invalid_image(container: impl Into<String>, reason: impl Into<String>) -> Self {
-        Self::categorized_image(ErrorCategory::InvalidImage, container, reason)
+    pub fn invalid_image(format: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::categorized_image(ErrorCategory::InvalidImage, format, reason)
     }
 
     pub(crate) fn categorized_image(
         category: ErrorCategory,
-        container: impl Into<String>,
+        format: impl Into<String>,
         reason: impl Into<String>,
     ) -> Self {
         Self::InvalidImage {
             category,
             rule: None,
-            container: container.into(),
+            format: format.into(),
             reason: reason.into(),
         }
     }
@@ -186,13 +188,13 @@ impl Error {
             },
             Self::InvalidImage {
                 category,
-                container,
+                format,
                 reason,
                 ..
             } => Self::InvalidImage {
                 category,
                 rule: Some(rule),
-                container,
+                format,
                 reason,
             },
         }
@@ -230,9 +232,9 @@ impl fmt::Display for Error {
             }
             Self::Io { reason, .. } => write!(f, "{reason}"),
             Self::InvalidImage {
-                container, reason, ..
+                format, reason, ..
             } => {
-                write!(f, "invalid {container} disk image: {reason}")
+                write!(f, "invalid {format} disk image: {reason}")
             }
         }
     }

@@ -4,8 +4,9 @@
 //! C ABI for the Remanence disk image analysis library.
 //!
 //! Conventions:
-//! - Handles (`RemanenceIdentification`, `RemanenceHdosFileList`,
-//!   `RemanenceArchive`) are opaque and freed with their matching `*_free` function.
+//! - Handles (`RemanenceIdentification`, `RemanenceVolume`,
+//!   `RemanenceFilesystem`, `RemanenceFile`, `RemanenceArchive`) are
+//!   opaque and freed with their matching `*_free` function.
 //! - `const char*` return values are UTF-8, owned by the handle they were read
 //!   from, and valid until that handle is freed. Do not free them.
 //! - Fallible calls take optional category, message and rule outputs; on
@@ -19,14 +20,14 @@
 //!   there — the DOS 8.3 namespace's is the set the file verbs draw on — so
 //!   the identity is a string rather than a second library-wide enum.
 //! - Accessors taking an index return null / false / 0 when the index is out of
-//!   range or the field does not apply to the container's layout.
+//!   range or the field does not apply to the layer's layout.
 
 use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 
 use remanence::{
-    AttachmentId, Container, ContainerKind, ContainerLayout, DiskLayout, ErrorCategory,
-    HdosFile, Identification, PhysicalMediaLayout, SectorLayout, Session, list_hdos_files,
+    AttachmentId, Layer, LayerKind, LayerLayout, DiskLayout, ErrorCategory,
+    Identification, PhysicalMediaLayout, SectorLayout, Session,
 };
 
 /// Stable, machine-readable classification of a library refusal. A fallible
@@ -66,10 +67,13 @@ impl From<ErrorCategory> for RemanenceErrorCategory {
     }
 }
 
-/// What role a detected container plays in the image's layering.
+/// What a recognized layer of an artifact's nesting is.
+///
+/// This is a different axis from the P13 authoritative layer and the P23
+/// active layer a device reports.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceContainerKind {
+pub enum RemanenceLayerKind {
     Archive,
     Image,
     PhysicalMedia,
@@ -77,7 +81,7 @@ pub enum RemanenceContainerKind {
     Unknown,
 }
 
-/// Which layout details a container carries.
+/// Which layout details a layer carries.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RemanenceLayoutKind {
@@ -232,8 +236,8 @@ enum LayoutView {
     },
 }
 
-struct ContainerView {
-    kind: RemanenceContainerKind,
+struct NestedLayerView {
+    kind: RemanenceLayerKind,
     id: CString,
     name: CString,
     confidence: u8,
@@ -243,35 +247,35 @@ struct ContainerView {
     layout: LayoutView,
 }
 
-impl ContainerView {
-    fn new(container: &Container) -> Self {
-        let kind = match container.kind {
-            ContainerKind::Archive => RemanenceContainerKind::Archive,
-            ContainerKind::Image => RemanenceContainerKind::Image,
-            ContainerKind::PhysicalMedia => RemanenceContainerKind::PhysicalMedia,
-            ContainerKind::Filesystem => RemanenceContainerKind::Filesystem,
-            ContainerKind::Unknown => RemanenceContainerKind::Unknown,
+impl NestedLayerView {
+    fn new(layer: &Layer) -> Self {
+        let kind = match layer.kind {
+            LayerKind::Archive => RemanenceLayerKind::Archive,
+            LayerKind::Image => RemanenceLayerKind::Image,
+            LayerKind::PhysicalMedia => RemanenceLayerKind::PhysicalMedia,
+            LayerKind::Filesystem => RemanenceLayerKind::Filesystem,
+            LayerKind::Unknown => RemanenceLayerKind::Unknown,
         };
 
-        let layout = match &container.layout {
-            ContainerLayout::Unknown => LayoutView::Unknown,
-            ContainerLayout::Archive(layout) => LayoutView::Archive {
+        let layout = match &layer.layout {
+            LayerLayout::Unknown => LayoutView::Unknown,
+            LayerLayout::Archive(layout) => LayoutView::Archive {
                 path: to_cstring(&layout.path.display().to_string()),
                 entry_name: to_cstring(&layout.entry_name),
                 compressed_size: layout.compressed_size,
                 uncompressed_size: layout.uncompressed_size,
             },
-            ContainerLayout::Image(layout) => LayoutView::Image {
+            LayerLayout::Image(layout) => LayoutView::Image {
                 payload_offset_bytes: layout.payload_offset_bytes,
                 payload_length_bytes: layout.payload_length_bytes,
             },
-            ContainerLayout::PhysicalMedia(layout) => match layout {
+            LayerLayout::PhysicalMedia(layout) => match layout {
                 PhysicalMediaLayout::Unknown => LayoutView::PhysicalMedia(None),
                 PhysicalMediaLayout::Disk(disk) => {
                     LayoutView::PhysicalMedia(Some(DiskView::new(disk)))
                 }
             },
-            ContainerLayout::Filesystem(layout) => LayoutView::Filesystem {
+            LayerLayout::Filesystem(layout) => LayoutView::Filesystem {
                 offset_bytes: layout.offset_bytes,
                 length_bytes: layout.length_bytes,
             },
@@ -279,12 +283,12 @@ impl ContainerView {
 
         Self {
             kind,
-            id: to_cstring(&container.id),
-            name: to_cstring(&container.name),
-            confidence: container.confidence,
-            known: container.known,
-            current_bytes: container.size.current_bytes,
-            expected_bytes: container.size.expected_bytes,
+            id: to_cstring(&layer.id),
+            name: to_cstring(&layer.name),
+            confidence: layer.confidence,
+            known: layer.known,
+            current_bytes: layer.size.current_bytes,
+            expected_bytes: layer.size.expected_bytes,
             layout,
         }
     }
@@ -293,75 +297,16 @@ impl ContainerView {
 /// The result of identifying a medium's image.
 pub struct RemanenceIdentification {
     modified: bool,
-    containers: Vec<ContainerView>,
+    layers: Vec<NestedLayerView>,
     evidence: Vec<CString>,
 }
 
-struct HdosFileView {
-    name: CString,
-    extension: CString,
-    display_name: CString,
-    size_sectors: u32,
-    size_bytes: u64,
-    modified_date_raw: u16,
-    flags_raw: u8,
-    flags: CString,
-    modified_date: CString,
-}
-
-impl HdosFileView {
-    fn new(file: &HdosFile) -> Self {
-        Self {
-            name: to_cstring(&file.name),
-            extension: to_cstring(&file.extension),
-            display_name: to_cstring(&file.display_name()),
-            size_sectors: file.size_sectors,
-            size_bytes: file.size_bytes(),
-            modified_date_raw: file.modified_date,
-            flags_raw: file.flags,
-            flags: to_cstring(&file.flags_string()),
-            modified_date: to_cstring(&file.modified_date_string()),
-        }
-    }
-}
-
-/// A parsed HDOS directory listing.
-pub struct RemanenceHdosFileList {
-    files: Vec<HdosFileView>,
-}
-
-unsafe fn container_view<'a>(
+unsafe fn layer_view<'a>(
     identification: *const RemanenceIdentification,
     index: usize,
-) -> Option<&'a ContainerView> {
+) -> Option<&'a NestedLayerView> {
     let identification = unsafe { identification.as_ref() }?;
-    identification.containers.get(index)
-}
-
-unsafe fn hdos_file_view<'a>(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> Option<&'a HdosFileView> {
-    let list = unsafe { list.as_ref() }?;
-    list.files.get(index)
-}
-
-fn hdos_list_from_bytes(
-    bytes: &[u8],
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceHdosFileList {
-    match list_hdos_files(bytes) {
-        Ok(files) => {
-            let files = files.iter().map(HdosFileView::new).collect();
-            Box::into_raw(Box::new(RemanenceHdosFileList { files }))
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
+    identification.layers.get(index)
 }
 
 /// Returns the library version as a static string. Do not free.
@@ -843,7 +788,7 @@ pub unsafe extern "C" fn remanence_discovery_image_format_name(
         .map_or(ptr::null(), |discovery| discovery.image_format_name.as_ptr())
 }
 
-/// The detected container format, as the device reader reports it.
+/// The image container format, as the device reader reports it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_discovery_format(
     discovery: *const RemanenceDiscovery,
@@ -949,7 +894,7 @@ pub unsafe extern "C" fn remanence_discovery_assurance(
     Box::into_raw(Box::new(assurance_view(discovery.discovery.assurance())))
 }
 
-/// Identifies the artifact's container layers and probable filesystem —
+/// Identifies the artifact's nesting layers and probable filesystem —
 /// the same reading `remanence_device_identify` gives once a medium is
 /// loaded. Free with `remanence_identification_free`.
 #[unsafe(no_mangle)]
@@ -960,13 +905,13 @@ pub unsafe extern "C" fn remanence_discovery_identify(
         return ptr::null_mut();
     };
     let Identification {
-        containers,
+        layers,
         modified,
         evidence,
     } = discovery.discovery.identify();
     Box::into_raw(Box::new(RemanenceIdentification {
         modified,
-        containers: containers.iter().map(ContainerView::new).collect(),
+        layers: layers.iter().map(NestedLayerView::new).collect(),
         evidence: evidence.iter().map(|line| to_cstring(line)).collect(),
     }))
 }
@@ -1048,7 +993,7 @@ pub unsafe extern "C" fn remanence_device_read_at(
     }
 }
 
-/// Identifies the image's container layers and probable filesystem. Free the
+/// Identifies the artifact's nesting layers and probable filesystem. Free the
 /// result with `remanence_identification_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_device_identify(
@@ -1058,7 +1003,7 @@ pub unsafe extern "C" fn remanence_device_identify(
         return ptr::null_mut();
     };
     let Identification {
-        containers,
+        layers,
         modified,
         evidence,
     } = match handle.device().map(|device| device.identify()) {
@@ -1068,7 +1013,7 @@ pub unsafe extern "C" fn remanence_device_identify(
 
     Box::into_raw(Box::new(RemanenceIdentification {
         modified,
-        containers: containers.iter().map(ContainerView::new).collect(),
+        layers: layers.iter().map(NestedLayerView::new).collect(),
         evidence: evidence.iter().map(|line| to_cstring(line)).collect(),
     }))
 }
@@ -1089,12 +1034,12 @@ pub unsafe extern "C" fn remanence_identification_modified(
     unsafe { identification.as_ref() }.is_some_and(|identification| identification.modified)
 }
 
-/// Number of detected container layers.
+/// Number of recognized nesting layers.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_identification_container_count(
+pub unsafe extern "C" fn remanence_identification_layer_count(
     identification: *const RemanenceIdentification,
 ) -> usize {
-    unsafe { identification.as_ref() }.map_or(0, |identification| identification.containers.len())
+    unsafe { identification.as_ref() }.map_or(0, |identification| identification.layers.len())
 }
 
 /// Number of evidence lines.
@@ -1116,84 +1061,84 @@ pub unsafe extern "C" fn remanence_identification_evidence(
         .map_or(ptr::null(), |line| line.as_ptr())
 }
 
-/// The container's kind, or `RemanenceContainerKind::Unknown` when out of range.
+/// The layer's kind, or `RemanenceLayerKind::Unknown` when out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_kind(
+pub unsafe extern "C" fn remanence_layer_kind(
     identification: *const RemanenceIdentification,
     index: usize,
-) -> RemanenceContainerKind {
-    unsafe { container_view(identification, index) }
-        .map_or(RemanenceContainerKind::Unknown, |container| container.kind)
+) -> RemanenceLayerKind {
+    unsafe { layer_view(identification, index) }
+        .map_or(RemanenceLayerKind::Unknown, |layer| layer.kind)
 }
 
-/// The container's id (e.g. "h8d", "zip", "hdos").
+/// The layer's id (e.g. "h8d", "zip", "hdos").
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_id(
+pub unsafe extern "C" fn remanence_layer_id(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    unsafe { container_view(identification, index) }
-        .map_or(ptr::null(), |container| container.id.as_ptr())
+    unsafe { layer_view(identification, index) }
+        .map_or(ptr::null(), |layer| layer.id.as_ptr())
 }
 
-/// The container's human-readable name.
+/// The layer's human-readable name.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_name(
+pub unsafe extern "C" fn remanence_layer_name(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    unsafe { container_view(identification, index) }
-        .map_or(ptr::null(), |container| container.name.as_ptr())
+    unsafe { layer_view(identification, index) }
+        .map_or(ptr::null(), |layer| layer.name.as_ptr())
 }
 
 /// Detection confidence, 0-100.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_confidence(
+pub unsafe extern "C" fn remanence_layer_confidence(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> u8 {
-    unsafe { container_view(identification, index) }.map_or(0, |container| container.confidence)
+    unsafe { layer_view(identification, index) }.map_or(0, |layer| layer.confidence)
 }
 
-/// Whether the container matched a known format.
+/// Whether the layer matched a known format.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_known(
+pub unsafe extern "C" fn remanence_layer_known(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> bool {
-    unsafe { container_view(identification, index) }.is_some_and(|container| container.known)
+    unsafe { layer_view(identification, index) }.is_some_and(|layer| layer.known)
 }
 
 /// Current size in bytes; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_current_bytes(
+pub unsafe extern "C" fn remanence_layer_current_bytes(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = unsafe { container_view(identification, index) }.and_then(|c| c.current_bytes);
+    let value = unsafe { layer_view(identification, index) }.and_then(|c| c.current_bytes);
     unsafe { write_opt_u64(value, out) }
 }
 
 /// Expected size in bytes; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_expected_bytes(
+pub unsafe extern "C" fn remanence_layer_expected_bytes(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = unsafe { container_view(identification, index) }.and_then(|c| c.expected_bytes);
+    let value = unsafe { layer_view(identification, index) }.and_then(|c| c.expected_bytes);
     unsafe { write_opt_u64(value, out) }
 }
 
-/// Which layout details this container carries.
+/// Which layout details this layer carries.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_layout_kind(
+pub unsafe extern "C" fn remanence_layer_layout_kind(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> RemanenceLayoutKind {
-    unsafe { container_view(identification, index) }.map_or(RemanenceLayoutKind::Unknown, |container| {
-        match &container.layout {
+    unsafe { layer_view(identification, index) }.map_or(RemanenceLayoutKind::Unknown, |layer| {
+        match &layer.layout {
             LayoutView::Unknown => RemanenceLayoutKind::Unknown,
             LayoutView::Archive { .. } => RemanenceLayoutKind::Archive,
             LayoutView::Image { .. } => RemanenceLayoutKind::Image,
@@ -1205,11 +1150,11 @@ pub unsafe extern "C" fn remanence_container_layout_kind(
 
 /// Archive layout: the archive file path; null for other layouts.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_archive_path(
+pub unsafe extern "C" fn remanence_layer_archive_path(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Archive { path, .. }) => path.as_ptr(),
         _ => ptr::null(),
     }
@@ -1217,11 +1162,11 @@ pub unsafe extern "C" fn remanence_container_archive_path(
 
 /// Archive layout: the entry name inside the archive; null for other layouts.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_archive_entry_name(
+pub unsafe extern "C" fn remanence_layer_archive_entry_name(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Archive { entry_name, .. }) => entry_name.as_ptr(),
         _ => ptr::null(),
     }
@@ -1229,12 +1174,12 @@ pub unsafe extern "C" fn remanence_container_archive_entry_name(
 
 /// Archive layout: compressed entry size; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_archive_compressed_size(
+pub unsafe extern "C" fn remanence_layer_archive_compressed_size(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    let value = match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Archive {
             compressed_size, ..
         }) => *compressed_size,
@@ -1245,12 +1190,12 @@ pub unsafe extern "C" fn remanence_container_archive_compressed_size(
 
 /// Archive layout: uncompressed entry size; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_archive_uncompressed_size(
+pub unsafe extern "C" fn remanence_layer_archive_uncompressed_size(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    let value = match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Archive {
             uncompressed_size, ..
         }) => *uncompressed_size,
@@ -1261,12 +1206,12 @@ pub unsafe extern "C" fn remanence_container_archive_uncompressed_size(
 
 /// Image layout: payload offset in bytes; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_image_payload_offset(
+pub unsafe extern "C" fn remanence_layer_image_payload_offset(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    let value = match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Image {
             payload_offset_bytes,
             ..
@@ -1278,12 +1223,12 @@ pub unsafe extern "C" fn remanence_container_image_payload_offset(
 
 /// Image layout: payload length in bytes; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_image_payload_length(
+pub unsafe extern "C" fn remanence_layer_image_payload_length(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    let value = match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Image {
             payload_length_bytes,
             ..
@@ -1297,7 +1242,7 @@ unsafe fn disk_view<'a>(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> Option<&'a DiskView> {
-    match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::PhysicalMedia(disk)) => disk.as_ref(),
         _ => None,
     }
@@ -1305,7 +1250,7 @@ unsafe fn disk_view<'a>(
 
 /// Physical media layout: whether disk geometry is known.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_has_disk_layout(
+pub unsafe extern "C" fn remanence_layer_has_disk_layout(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> bool {
@@ -1313,10 +1258,10 @@ pub unsafe extern "C" fn remanence_container_has_disk_layout(
 }
 
 /// Disk layout: the media type the image format names for its medium
-/// (e.g. "logical-block-512"); null when the container has no disk
+/// (e.g. "logical-block-512"); null when the layer has no disk
 /// layout.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_media_type(
+pub unsafe extern "C" fn remanence_layer_disk_media_type(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
@@ -1326,7 +1271,7 @@ pub unsafe extern "C" fn remanence_container_disk_media_type(
 
 /// Disk layout: sector size in bytes; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_sector_size(
+pub unsafe extern "C" fn remanence_layer_disk_sector_size(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
@@ -1337,7 +1282,7 @@ pub unsafe extern "C" fn remanence_container_disk_sector_size(
 
 /// Disk layout: cylinder count; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_cylinders(
+pub unsafe extern "C" fn remanence_layer_disk_cylinders(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u32,
@@ -1348,7 +1293,7 @@ pub unsafe extern "C" fn remanence_container_disk_cylinders(
 
 /// Disk layout: side count; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_sides(
+pub unsafe extern "C" fn remanence_layer_disk_sides(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u32,
@@ -1359,7 +1304,7 @@ pub unsafe extern "C" fn remanence_container_disk_sides(
 
 /// Disk layout: how sectors are arranged.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_sector_layout_kind(
+pub unsafe extern "C" fn remanence_layer_disk_sector_layout_kind(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> RemanenceSectorLayoutKind {
@@ -1369,7 +1314,7 @@ pub unsafe extern "C" fn remanence_container_disk_sector_layout_kind(
 
 /// Disk layout: sectors per track for fixed layouts; 0 otherwise.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_sectors_per_track(
+pub unsafe extern "C" fn remanence_layer_disk_sectors_per_track(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> u32 {
@@ -1378,7 +1323,7 @@ pub unsafe extern "C" fn remanence_container_disk_sectors_per_track(
 
 /// Disk layout: per-track entry count for variable layouts; 0 otherwise.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_track_count(
+pub unsafe extern "C" fn remanence_layer_disk_track_count(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> usize {
@@ -1389,7 +1334,7 @@ pub unsafe extern "C" fn remanence_container_disk_track_count(
 /// out of range. `has_sector_size` and `sector_size` report the optional
 /// per-track sector size.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_track(
+pub unsafe extern "C" fn remanence_layer_disk_track(
     identification: *const RemanenceIdentification,
     index: usize,
     track_index: usize,
@@ -1427,7 +1372,7 @@ pub unsafe extern "C" fn remanence_container_disk_track(
 
 /// Disk layout: total sector count; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_disk_total_sectors(
+pub unsafe extern "C" fn remanence_layer_disk_total_sectors(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
@@ -1438,12 +1383,12 @@ pub unsafe extern "C" fn remanence_container_disk_total_sectors(
 
 /// Filesystem layout: offset in bytes; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_fs_offset_bytes(
+pub unsafe extern "C" fn remanence_layer_fs_offset_bytes(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    let value = match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Filesystem { offset_bytes, .. }) => *offset_bytes,
         _ => None,
     };
@@ -1452,160 +1397,16 @@ pub unsafe extern "C" fn remanence_container_fs_offset_bytes(
 
 /// Filesystem layout: length in bytes; returns false when unknown.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_container_fs_length_bytes(
+pub unsafe extern "C" fn remanence_layer_fs_length_bytes(
     identification: *const RemanenceIdentification,
     index: usize,
     out: *mut u64,
 ) -> bool {
-    let value = match unsafe { container_view(identification, index) }.map(|c| &c.layout) {
+    let value = match unsafe { layer_view(identification, index) }.map(|c| &c.layout) {
         Some(LayoutView::Filesystem { length_bytes, .. }) => *length_bytes,
         _ => None,
     };
     unsafe { write_opt_u64(value, out) }
-}
-
-/// Parses the HDOS directory from raw image bytes. Returns null on failure and
-/// stores a message in `error_out` (free with `remanence_string_free`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_list_hdos_files(
-    bytes: *const u8,
-    length: usize,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceHdosFileList {
-    unsafe { clear_error(error_out, error_rule_out) };
-    if bytes.is_null() {
-        let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
-    hdos_list_from_bytes(bytes, error_category_out, error_out, error_rule_out)
-}
-
-/// Parses the HDOS directory from the medium's image. Returns null on
-/// failure and stores a message in `error_out` (free with `remanence_string_free`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_list_hdos_files(
-    device: *const RemanenceDevice,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceHdosFileList {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { device.as_ref() }) else {
-        let error = remanence::Error::io("null device");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-        let Some(medium) = handle.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    match medium.list_hdos_files() {
-        Ok(files) => {
-            let files = files.iter().map(HdosFileView::new).collect();
-            Box::into_raw(Box::new(RemanenceHdosFileList { files }))
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Frees an HDOS file list handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_list_free(list: *mut RemanenceHdosFileList) {
-    if !list.is_null() {
-        drop(unsafe { Box::from_raw(list) });
-    }
-}
-
-/// Number of files in the listing.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_count(list: *const RemanenceHdosFileList) -> usize {
-    unsafe { list.as_ref() }.map_or(0, |list| list.files.len())
-}
-
-/// File name without extension, e.g. "HDOS".
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_name(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.name.as_ptr())
-}
-
-/// File extension, possibly empty, e.g. "SYS".
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_extension(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.extension.as_ptr())
-}
-
-/// `"NAME.EXT"`, or `"NAME"` when the extension is empty.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_display_name(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.display_name.as_ptr())
-}
-
-/// Size in 256-byte sectors.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_size_sectors(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> u32 {
-    unsafe { hdos_file_view(list, index) }.map_or(0, |file| file.size_sectors)
-}
-
-/// Size in bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_size_bytes(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> u64 {
-    unsafe { hdos_file_view(list, index) }.map_or(0, |file| file.size_bytes)
-}
-
-/// Raw HDOS date word.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_modified_date_raw(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> u16 {
-    unsafe { hdos_file_view(list, index) }.map_or(0, |file| file.modified_date_raw)
-}
-
-/// Raw HDOS flag byte.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_flags_raw(list: *const RemanenceHdosFileList, index: usize) -> u8 {
-    unsafe { hdos_file_view(list, index) }.map_or(0, |file| file.flags_raw)
-}
-
-/// HDOS flag letters (subset of "SLWC"), possibly empty.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_flags(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.flags.as_ptr())
-}
-
-/// HDOS catalog date, e.g. "09-May-78", or "No-Date".
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_hdos_file_modified_date(
-    list: *const RemanenceHdosFileList,
-    index: usize,
-) -> *const c_char {
-    unsafe { hdos_file_view(list, index) }.map_or(ptr::null(), |file| file.modified_date.as_ptr())
 }
 
 // ---------------------------------------------------------------------------
@@ -1614,8 +1415,8 @@ pub unsafe extern "C" fn remanence_hdos_file_modified_date(
 // files with a commit point.
 
 use remanence::{
-    AccessIntent, AccessMode, DeviceFamily, DiskContent, DiskFormat, FatEntry, FatEntryKind,
-    RegionRole, StorageDevice, VolumeId, VolumeOrigin, read_hdos_file,
+    AccessIntent, AccessMode, DeviceFamily, DiskContent, DiskFormat, Entry, EntryKind,
+    RegionRole, StorageDevice, VolumeId, VolumeOrigin,
 };
 
 /// The caller's declared intent when opening a disk (P7).
@@ -1635,7 +1436,7 @@ pub enum RemanenceAccessMode {
     ReadOnly,
 }
 
-/// The container format a disk image turned out to be.
+/// The image container format a disk image turned out to be.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RemanenceDiskFormat {
@@ -1647,7 +1448,7 @@ pub enum RemanenceDiskFormat {
 /// What a FAT directory entry is.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceFatEntryKind {
+pub enum RemanenceEntryKind {
     File,
     Directory,
 }
@@ -1761,26 +1562,39 @@ impl RemanenceDevice {
 }
 
 /// A directory listing.
-pub struct RemanenceFatEntryList {
-    entries: Vec<FatEntryView>,
+pub struct RemanenceEntryList {
+    entries: Vec<EntryView>,
 }
 
-struct FatEntryView {
+struct EntryView {
     name: CString,
-    kind: RemanenceFatEntryKind,
+    kind: RemanenceEntryKind,
     size_bytes: u64,
+    /// What the recognizing filesystem declares beyond the fields above,
+    /// in its own spelling and order — HDOS's catalog date and flag
+    /// letters are the delivered case.
+    declared: Vec<(CString, CString)>,
 }
 
-impl FatEntryView {
-    fn new(entry: &FatEntry) -> Self {
+impl EntryView {
+    fn new(entry: &Entry) -> Self {
         Self {
             name: to_cstring(&entry.name),
-            kind: match entry.kind {
-                FatEntryKind::File => RemanenceFatEntryKind::File,
-                FatEntryKind::Directory => RemanenceFatEntryKind::Directory,
-            },
+            kind: entry_kind(entry.kind),
             size_bytes: entry.size_bytes,
+            declared: entry
+                .declared
+                .iter()
+                .map(|fact| (to_cstring(&fact.key), to_cstring(&fact.value)))
+                .collect(),
         }
+    }
+}
+
+fn entry_kind(kind: EntryKind) -> RemanenceEntryKind {
+    match kind {
+        EntryKind::File => RemanenceEntryKind::File,
+        EntryKind::Directory => RemanenceEntryKind::Directory,
     }
 }
 
@@ -2771,7 +2585,7 @@ pub extern "C" fn remanence_assurance_condition_name(index: usize) -> *const c_c
         .map_or(ptr::null(), |name| name.as_ptr())
 }
 
-/// The detected container format.
+/// The image container format.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_device_format(device: *const RemanenceDevice) -> RemanenceDiskFormat {
     match unsafe { device.as_ref() }.and_then(|device| device.device()?.format().ok()) {
@@ -2826,31 +2640,155 @@ pub unsafe extern "C" fn remanence_device_is_modified(device: *const RemanenceDe
         .unwrap_or(false)
 }
 
-/// Lists a directory in `volume_id` ("" = root, "A/B" descends). Free
-/// with `remanence_fat_entry_list_free`.
+// ---------------------------------------------------------------------------
+// The namespace surface (P19): file access lives on one node.
+//
+// A device carries no file verbs at all. It answers what it *resolves*
+// to — `remanence_device_filesystem`, and `remanence_device_volume` where
+// several answers exist — and the verbs live on the filesystem that
+// resolver hands back.
+//
+// The three handles below name their provider by session, machine,
+// attachment and volume identity rather than by pointer, and re-resolve
+// on every call: a medium that has been ejected answers by name instead
+// of reaching state that has left.
+
+/// One volume of a device's medium, selected by the identity the
+/// inspection report issued. Free with `remanence_volume_free`.
+pub struct RemanenceVolume {
+    session: *mut RemanenceSession,
+    machine: Option<String>,
+    attachment: AttachmentId,
+    id: u64,
+    start_bytes: u64,
+    length_bytes: u64,
+}
+
+/// The namespace node: the one handle that carries file verbs. Free with
+/// `remanence_filesystem_free`.
+pub struct RemanenceFilesystem {
+    session: *mut RemanenceSession,
+    machine: Option<String>,
+    attachment: AttachmentId,
+    /// The volume it is borne by, or `None` where the medium bears the
+    /// namespace itself and composed no volume.
+    volume: Option<u64>,
+    kind: CString,
+}
+
+/// One file, named by the filesystem that holds it. Free with
+/// `remanence_file_free`.
+pub struct RemanenceFile {
+    session: *mut RemanenceSession,
+    machine: Option<String>,
+    attachment: AttachmentId,
+    volume: Option<u64>,
+    path: CString,
+    name: CString,
+    kind: RemanenceEntryKind,
+    size_bytes: u64,
+}
+
+/// Resolves the named filesystem and runs `action` over it.
+///
+/// Every verb below passes through here, so the refusals a caller meets
+/// are the library's own — the resolver's where the walk had no single
+/// answer, the namespace's where it did.
+unsafe fn with_filesystem<T>(
+    session: *mut RemanenceSession,
+    machine: &Option<String>,
+    attachment: AttachmentId,
+    volume: Option<u64>,
+    action: impl FnOnce(&mut remanence::Filesystem<'_>) -> remanence::Result<T>,
+) -> remanence::Result<T> {
+    let handle =
+        unsafe { session.as_mut() }.ok_or_else(|| remanence::Error::io("null session"))?;
+    let target = match machine {
+        Some(identity) => handle.session.machine_mut(identity),
+        None => Some(handle.session.anonymous_mut()),
+    };
+    let device = target
+        .and_then(|target| target.device_mut(attachment))
+        .ok_or_else(|| remanence::Error::io("the device holding this medium was removed"))?;
+    let mut filesystem = match volume {
+        Some(id) => device.volume(VolumeId::from_value(id))?.filesystem()?,
+        None => device.filesystem()?,
+    };
+    action(&mut filesystem)
+}
+
+/// The filesystem this device resolves to, or null with the refusal set.
+///
+/// The walk device to volume to filesystem is transparent where every
+/// seam has exactly one supported answer, and refuses naming the
+/// candidates where one does not. A volume bearing no filesystem is a
+/// named absence, not an empty listing. Free with
+/// `remanence_filesystem_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_entries(
+pub unsafe extern "C" fn remanence_device_filesystem(
     device: *mut RemanenceDevice,
-    volume_id: u64,
-    path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceFatEntryList {
+) -> *mut RemanenceFilesystem {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
+    let Some(handle) = (unsafe { device.as_mut() }) else {
         return ptr::null_mut();
     };
-    let path = unsafe { utf8_arg(path) }.unwrap_or_default();
-        let Some(medium) = device.device() else {
+    let (session, machine, attachment) =
+        (handle.session, handle.machine.clone(), handle.attachment);
+    match unsafe {
+        with_filesystem(session, &machine, attachment, None, |filesystem| {
+            Ok((filesystem.kind().to_owned(), filesystem.volume_id()))
+        })
+    } {
+        Ok((kind, volume)) => Box::into_raw(Box::new(RemanenceFilesystem {
+            session,
+            machine,
+            attachment,
+            volume: volume.map(VolumeId::value),
+            kind: to_cstring(&kind),
+        })),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// One volume of this device's medium, by the identity the inspection
+/// report issued for it — the selector where several namespaces exist.
+/// Free with `remanence_volume_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_device_volume(
+    device: *mut RemanenceDevice,
+    volume_id: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceVolume {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { device.as_mut() }) else {
+        return ptr::null_mut();
+    };
+    let (session, machine, attachment) =
+        (handle.session, handle.machine.clone(), handle.attachment);
+    let Some(medium) = handle.device() else {
         let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match medium.entries(VolumeId::from_value(volume_id), path.as_ref()) {
-        Ok(entries) => {
-            let entries = entries.iter().map(FatEntryView::new).collect();
-            Box::into_raw(Box::new(RemanenceFatEntryList { entries }))
+    match medium.volume(VolumeId::from_value(volume_id)) {
+        Ok(volume) => {
+            let (start_bytes, length_bytes) = (volume.start_bytes(), volume.length_bytes());
+            Box::into_raw(Box::new(RemanenceVolume {
+                session,
+                machine,
+                attachment,
+                id: volume_id,
+                start_bytes,
+                length_bytes,
+            }))
         }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -2859,22 +2797,154 @@ pub unsafe extern "C" fn remanence_device_entries(
     }
 }
 
-/// Answers one path in `volume_id` (U3): a one-entry listing when
-/// something exists there, an empty listing when nothing does — a
-/// missing leaf, a missing parent, or a parent that is a file alike.
-/// Absence is an answer, distinguished from failure, which returns null
-/// with the error set. Free with `remanence_fat_entry_list_free`.
+/// Frees a volume handle. The device and its medium are untouched.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_stat(
-    device: *mut RemanenceDevice,
-    volume_id: u64,
+pub unsafe extern "C" fn remanence_volume_free(volume: *mut RemanenceVolume) {
+    if !volume.is_null() {
+        drop(unsafe { Box::from_raw(volume) });
+    }
+}
+
+/// This volume's opaque identity, as the inspection report issued it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_volume_id(volume: *const RemanenceVolume) -> u64 {
+    unsafe { volume.as_ref() }.map_or(0, |volume| volume.id)
+}
+
+/// Where the volume starts in the presented disk.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_volume_start_bytes(volume: *const RemanenceVolume) -> u64 {
+    unsafe { volume.as_ref() }.map_or(0, |volume| volume.start_bytes)
+}
+
+/// The volume's length in bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_volume_length_bytes(volume: *const RemanenceVolume) -> u64 {
+    unsafe { volume.as_ref() }.map_or(0, |volume| volume.length_bytes)
+}
+
+/// The filesystem this volume bears, or null with the named absence set:
+/// a volume with no filesystem is an ordinary volume, not a failure.
+/// Free with `remanence_filesystem_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_volume_filesystem(
+    volume: *const RemanenceVolume,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceFilesystem {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { volume.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            Some(handle.id),
+            |filesystem| Ok(filesystem.kind().to_owned()),
+        )
+    } {
+        Ok(kind) => Box::into_raw(Box::new(RemanenceFilesystem {
+            session: handle.session,
+            machine: handle.machine.clone(),
+            attachment: handle.attachment,
+            volume: Some(handle.id),
+            kind: to_cstring(&kind),
+        })),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a filesystem handle. The medium it was a view of is untouched.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_free(filesystem: *mut RemanenceFilesystem) {
+    if !filesystem.is_null() {
+        drop(unsafe { Box::from_raw(filesystem) });
+    }
+}
+
+/// The filesystem kind in its stable spelling, `"FAT12"` or `"hdos"`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_kind(
+    filesystem: *const RemanenceFilesystem,
+) -> *const c_char {
+    unsafe { filesystem.as_ref() }.map_or(ptr::null(), |filesystem| filesystem.kind.as_ptr())
+}
+
+/// Whether this filesystem is borne by a volume. False where the medium
+/// bears the namespace itself and composed none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_has_volume(
+    filesystem: *const RemanenceFilesystem,
+) -> bool {
+    unsafe { filesystem.as_ref() }.is_some_and(|filesystem| filesystem.volume.is_some())
+}
+
+/// The identity of the volume this filesystem is borne by, or 0 where it
+/// is borne by none — `remanence_filesystem_has_volume` distinguishes the
+/// two.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_volume_id(
+    filesystem: *const RemanenceFilesystem,
+) -> u64 {
+    unsafe { filesystem.as_ref() }.map_or(0, |filesystem| filesystem.volume.unwrap_or(0))
+}
+
+/// Lists a directory ("" = root, "A/B" descends). Free with
+/// `remanence_entry_list_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_entries(
+    filesystem: *const RemanenceFilesystem,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceFatEntryList {
+) -> *mut RemanenceEntryList {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let path = unsafe { utf8_arg(path) }.unwrap_or_default();
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.entries(path.as_ref()),
+        )
+    } {
+        Ok(entries) => {
+            let entries = entries.iter().map(EntryView::new).collect();
+            Box::into_raw(Box::new(RemanenceEntryList { entries }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Answers one path (U3): a one-entry listing when something is there, an
+/// empty listing when nothing is — a missing leaf, a missing parent, or a
+/// parent that is a file alike. Absence is an answer, distinguished from
+/// failure, which returns null with the error set. Free with
+/// `remanence_entry_list_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_stat(
+    filesystem: *const RemanenceFilesystem,
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceEntryList {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
         return ptr::null_mut();
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -2882,15 +2952,18 @@ pub unsafe extern "C" fn remanence_device_stat(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-        let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    match medium.stat(VolumeId::from_value(volume_id), path.as_ref()) {
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.stat(path.as_ref()),
+        )
+    } {
         Ok(entry) => {
-            let entries = entry.iter().map(FatEntryView::new).collect();
-            Box::into_raw(Box::new(RemanenceFatEntryList { entries }))
+            let entries = entry.iter().map(EntryView::new).collect();
+            Box::into_raw(Box::new(RemanenceEntryList { entries }))
         }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -2901,65 +2974,100 @@ pub unsafe extern "C" fn remanence_device_stat(
 
 /// Frees a directory listing.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_fat_entry_list_free(list: *mut RemanenceFatEntryList) {
+pub unsafe extern "C" fn remanence_entry_list_free(list: *mut RemanenceEntryList) {
     if !list.is_null() {
         drop(unsafe { Box::from_raw(list) });
     }
 }
 
-unsafe fn fat_entry_view<'a>(
-    list: *const RemanenceFatEntryList,
-    index: usize,
-) -> Option<&'a FatEntryView> {
+unsafe fn entry_view<'a>(list: *const RemanenceEntryList, index: usize) -> Option<&'a EntryView> {
     unsafe { list.as_ref() }?.entries.get(index)
 }
 
 /// Number of entries in the listing.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_fat_entry_count(list: *const RemanenceFatEntryList) -> usize {
+pub unsafe extern "C" fn remanence_entry_count(list: *const RemanenceEntryList) -> usize {
     unsafe { list.as_ref() }.map_or(0, |list| list.entries.len())
 }
 
-/// An entry's 8.3 name.
+/// An entry's name, as the filesystem stores it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_fat_entry_name(
-    list: *const RemanenceFatEntryList,
+pub unsafe extern "C" fn remanence_entry_name(
+    list: *const RemanenceEntryList,
     index: usize,
 ) -> *const c_char {
-    unsafe { fat_entry_view(list, index) }.map_or(ptr::null(), |entry| entry.name.as_ptr())
+    unsafe { entry_view(list, index) }.map_or(ptr::null(), |entry| entry.name.as_ptr())
 }
 
 /// Whether an entry is a file or a directory.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_fat_entry_kind(
-    list: *const RemanenceFatEntryList,
+pub unsafe extern "C" fn remanence_entry_kind(
+    list: *const RemanenceEntryList,
     index: usize,
-) -> RemanenceFatEntryKind {
-    unsafe { fat_entry_view(list, index) }.map_or(RemanenceFatEntryKind::File, |entry| entry.kind)
+) -> RemanenceEntryKind {
+    unsafe { entry_view(list, index) }.map_or(RemanenceEntryKind::File, |entry| entry.kind)
 }
 
 /// An entry's size in bytes (0 for directories).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_fat_entry_size_bytes(
-    list: *const RemanenceFatEntryList,
+pub unsafe extern "C" fn remanence_entry_size_bytes(
+    list: *const RemanenceEntryList,
     index: usize,
 ) -> u64 {
-    unsafe { fat_entry_view(list, index) }.map_or(0, |entry| entry.size_bytes)
+    unsafe { entry_view(list, index) }.map_or(0, |entry| entry.size_bytes)
 }
 
-/// Copies a file's bytes out of `volume_id`. Free with
-/// `remanence_file_data_free`.
+/// How many facts the recognizing filesystem declares about this entry
+/// beyond name, kind and size.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_read_file(
-    device: *mut RemanenceDevice,
-    volume_id: u64,
+pub unsafe extern "C" fn remanence_entry_declared_count(
+    list: *const RemanenceEntryList,
+    index: usize,
+) -> usize {
+    unsafe { entry_view(list, index) }.map_or(0, |entry| entry.declared.len())
+}
+
+/// One declared fact's key, as the recognizing filesystem spells it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_entry_declared_key(
+    list: *const RemanenceEntryList,
+    index: usize,
+    fact: usize,
+) -> *const c_char {
+    unsafe { entry_view(list, index) }
+        .and_then(|entry| entry.declared.get(fact))
+        .map_or(ptr::null(), |(key, _)| key.as_ptr())
+}
+
+/// One declared fact's value, as that filesystem reads it. Nothing is
+/// normalized on the way through.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_entry_declared_value(
+    list: *const RemanenceEntryList,
+    index: usize,
+    fact: usize,
+) -> *const c_char {
+    unsafe { entry_view(list, index) }
+        .and_then(|entry| entry.declared.get(fact))
+        .map_or(ptr::null(), |(_, value)| value.as_ptr())
+}
+
+/// The file at `path`, or null with the refusal set.
+///
+/// This is where absence stops being an answer: `remanence_filesystem_stat`
+/// asks whether something is there, and this asks for the file, so nothing
+/// and a directory are both refused by name. Free with
+/// `remanence_file_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_get_file(
+    filesystem: *const RemanenceFilesystem,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceFileData {
+) -> *mut RemanenceFile {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
         return ptr::null_mut();
     };
     let Some(path) = (unsafe { utf8_arg(path) }) else {
@@ -2967,12 +3075,67 @@ pub unsafe extern "C" fn remanence_device_read_file(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-        let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| {
+                let file = target.get_file(path.as_ref())?;
+                Ok((
+                    file.name().to_owned(),
+                    entry_kind(file.entry().kind),
+                    file.size_bytes(),
+                ))
+            },
+        )
+    } {
+        Ok((name, kind, size_bytes)) => Box::into_raw(Box::new(RemanenceFile {
+            session: handle.session,
+            machine: handle.machine.clone(),
+            attachment: handle.attachment,
+            volume: handle.volume,
+            path: to_cstring(path.as_ref()),
+            name: to_cstring(&name),
+            kind,
+            size_bytes,
+        })),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Copies a file's bytes out — the whole-value convenience beside
+/// `remanence_file_read_at`. Free with `remanence_file_data_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_read_file(
+    filesystem: *const RemanenceFilesystem,
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceFileData {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match medium.read_file(VolumeId::from_value(volume_id), path.as_ref()) {
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.read_file(path.as_ref()),
+        )
+    } {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -2981,14 +3144,198 @@ pub unsafe extern "C" fn remanence_device_read_file(
     }
 }
 
-/// Reads part of a file into `buffer_out` — the streamed form beside
-/// `remanence_device_read_file`: exactly `length` bytes at `offset`,
-/// which must lie within the file.
+/// Sets a file's size, creating it when absent: kept bytes preserved in
+/// place, a grown region reads as zeros. Buffered until commit.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_read_file_at(
-    device: *mut RemanenceDevice,
-    volume_id: u64,
+pub unsafe extern "C" fn remanence_filesystem_resize_file(
+    filesystem: *const RemanenceFilesystem,
     path: *const c_char,
+    size: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return false;
+    };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.resize_file(path.as_ref(), size),
+        )
+    } {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Writes a file. An existing file is overwritten — shorter or longer,
+/// its old clusters released and reclaimed — while an existing directory
+/// is refused. Buffered until `remanence_device_commit`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_write_file(
+    filesystem: *const RemanenceFilesystem,
+    path: *const c_char,
+    bytes: *const u8,
+    length: usize,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return false;
+    };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    if bytes.is_null() && length > 0 {
+        let error = remanence::Error::io("null bytes");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    }
+    let contents = if length == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(bytes, length) }
+    };
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.write_file(path.as_ref(), contents),
+        )
+    } {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Ensures a directory exists: missing parents are created, and a path
+/// that already leads to one succeeds unchanged. Buffered until commit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_make_directory(
+    filesystem: *const RemanenceFilesystem,
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return false;
+    };
+    let Some(path) = (unsafe { utf8_arg(path) }) else {
+        let error = remanence::Error::io("null path");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.make_directory(path.as_ref()),
+        )
+    } {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Frees a file handle. Nothing it was a view of is disturbed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_free(file: *mut RemanenceFile) {
+    if !file.is_null() {
+        drop(unsafe { Box::from_raw(file) });
+    }
+}
+
+/// The path this file was reached by.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_path(file: *const RemanenceFile) -> *const c_char {
+    unsafe { file.as_ref() }.map_or(ptr::null(), |file| file.path.as_ptr())
+}
+
+/// The name as the filesystem stores it, which is not always the
+/// spelling the caller asked by.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_name(file: *const RemanenceFile) -> *const c_char {
+    unsafe { file.as_ref() }.map_or(ptr::null(), |file| file.name.as_ptr())
+}
+
+/// What the filesystem claims this file's size is.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_size_bytes(file: *const RemanenceFile) -> u64 {
+    unsafe { file.as_ref() }.map_or(0, |file| file.size_bytes)
+}
+
+/// What this entry is. Always a file — `remanence_filesystem_get_file`
+/// refuses a directory by name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_kind(file: *const RemanenceFile) -> RemanenceEntryKind {
+    unsafe { file.as_ref() }.map_or(RemanenceEntryKind::File, |file| file.kind)
+}
+
+/// The whole file, copied out. Free with `remanence_file_data_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_bytes(
+    file: *const RemanenceFile,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceFileData {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { file.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let path = handle.path.to_string_lossy().into_owned();
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.get_file(&path)?.bytes(),
+        )
+    } {
+        Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Reads exactly `length` bytes at `offset` into `buffer_out` — the
+/// bounded streamed form beside `remanence_file_bytes`. The span must lie
+/// within the file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_read_at(
+    file: *const RemanenceFile,
     offset: u64,
     buffer_out: *mut u8,
     length: usize,
@@ -2997,12 +3344,7 @@ pub unsafe extern "C" fn remanence_device_read_file_at(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
-        return false;
-    };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+    let Some(handle) = (unsafe { file.as_ref() }) else {
         return false;
     };
     if buffer_out.is_null() {
@@ -3011,12 +3353,16 @@ pub unsafe extern "C" fn remanence_device_read_file_at(
         return false;
     }
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
-    let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match medium.read_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, buffer) {
+    let path = handle.path.to_string_lossy().into_owned();
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.get_file(&path)?.read_at(offset, buffer),
+        )
+    } {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -3025,50 +3371,13 @@ pub unsafe extern "C" fn remanence_device_read_file_at(
     }
 }
 
-/// Sets a file's size, creating it when absent — with
-/// `remanence_device_write_file_at`, the streamed replacement for
-/// `remanence_device_write_file`. Buffered until commit.
+/// Writes `length` bytes at `offset` in place — the streamed form beside
+/// `remanence_filesystem_write_file`. The span must lie within the file's
+/// current size; `remanence_filesystem_resize_file` is what changes it.
+/// Buffered until commit.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_resize_file(
-    device: *mut RemanenceDevice,
-    volume_id: u64,
-    path: *const c_char,
-    size: u64,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
-        return false;
-    };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-        let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match medium.resize_file(VolumeId::from_value(volume_id), path.as_ref(), size) {
-        Ok(()) => true,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
-    }
-}
-
-/// Writes part of a file in place — the streamed form beside
-/// `remanence_device_write_file`: the span must lie within the file's
-/// current size. Buffered until commit.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_write_file_at(
-    device: *mut RemanenceDevice,
-    volume_id: u64,
-    path: *const c_char,
+pub unsafe extern "C" fn remanence_file_write_at(
+    file: *const RemanenceFile,
     offset: u64,
     bytes: *const u8,
     length: usize,
@@ -3077,15 +3386,10 @@ pub unsafe extern "C" fn remanence_device_write_file_at(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
+    let Some(handle) = (unsafe { file.as_ref() }) else {
         return false;
     };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    if bytes.is_null() && length != 0 {
+    if bytes.is_null() && length > 0 {
         let error = remanence::Error::io("null bytes");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
@@ -3095,12 +3399,16 @@ pub unsafe extern "C" fn remanence_device_write_file_at(
     } else {
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
-    let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match medium.write_file_at(VolumeId::from_value(volume_id), path.as_ref(), offset, data) {
+    let path = handle.path.to_string_lossy().into_owned();
+    match unsafe {
+        with_filesystem(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            |target| target.get_file(&path)?.write_at(offset, data),
+        )
+    } {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -3136,88 +3444,6 @@ pub unsafe extern "C" fn remanence_file_data_bytes(
 pub unsafe extern "C" fn remanence_file_data_free(data: *mut RemanenceFileData) {
     if !data.is_null() {
         drop(unsafe { Box::from_raw(data) });
-    }
-}
-
-/// Writes a file into `volume_id`. An existing file is overwritten —
-/// shorter or longer, its old clusters released and reclaimed — while
-/// an existing directory is refused. Buffered until `remanence_device_commit`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_write_file(
-    device: *mut RemanenceDevice,
-    volume_id: u64,
-    path: *const c_char,
-    bytes: *const u8,
-    length: usize,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
-        return false;
-    };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    if bytes.is_null() && length > 0 {
-        let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    }
-    let contents = if length == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(bytes, length) }
-    };
-    let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match medium.write_file(VolumeId::from_value(volume_id), path.as_ref(), contents) {
-        Ok(()) => true,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
-    }
-}
-
-/// Ensures a directory exists in `volume_id`: missing parents are
-/// created, and a path that already leads to a directory succeeds
-/// unchanged. Buffered until commit.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_make_directory(
-    device: *mut RemanenceDevice,
-    volume_id: u64,
-    path: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(device) = (unsafe { device.as_mut() }) else {
-        return false;
-    };
-    let Some(path) = (unsafe { utf8_arg(path) }) else {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-        let Some(medium) = device.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match medium.make_directory(VolumeId::from_value(volume_id), path.as_ref()) {
-        Ok(()) => true,
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
     }
 }
 
@@ -3258,73 +3484,6 @@ pub unsafe extern "C" fn remanence_device_rollback(device: *mut RemanenceDevice)
     if let Some(device) = unsafe { device.as_mut() } {
         if let Some(medium) = device.device() {
             let _ = medium.rollback();
-        }
-    }
-}
-
-/// Reads a cataloged HDOS file's contents out of raw image bytes. Free
-/// with `remanence_file_data_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_read_hdos_file(
-    bytes: *const u8,
-    length: usize,
-    name: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceFileData {
-    unsafe { clear_error(error_out, error_rule_out) };
-    if bytes.is_null() {
-        let error = remanence::Error::io("null bytes");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    }
-    let Some(name) = (unsafe { utf8_arg(name) }) else {
-        let error = remanence::Error::io("null name");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let image = unsafe { std::slice::from_raw_parts(bytes, length) };
-    match read_hdos_file(image, name.as_ref()) {
-        Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Reads a cataloged HDOS file out of the medium's image. Free with
-/// `remanence_file_data_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_read_hdos_file(
-    device: *const RemanenceDevice,
-    name: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceFileData {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { device.as_ref() }) else {
-        let error = remanence::Error::io("null device");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let Some(name) = (unsafe { utf8_arg(name) }) else {
-        let error = remanence::Error::io("null name");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-        let Some(medium) = handle.device() else {
-        let error = remanence::Error::io("the device holding this medium was removed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    match medium.read_hdos_file(name.as_ref()) {
-        Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
         }
     }
 }
@@ -6175,7 +6334,7 @@ pub enum RemanenceDiskContent {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RemanenceRegionRole {
     Data,
-    Container,
+    Structure,
 }
 
 /// Where a volume's storage came from.
@@ -6315,7 +6474,7 @@ pub unsafe extern "C" fn remanence_device_inspect(
                     declared_placement: to_cstring(&region.declared_placement),
                     role: match region.role {
                         RegionRole::Data => RemanenceRegionRole::Data,
-                        RegionRole::Container => RemanenceRegionRole::Container,
+                        RegionRole::Structure => RemanenceRegionRole::Structure,
                     },
                     declared_type: region.declared_type,
                     declared_type_reading: to_cstring(&region.declared_type_reading),
@@ -6420,7 +6579,7 @@ pub unsafe extern "C" fn remanence_report_device_id(report: *const RemanenceDisk
     unsafe { report.as_ref() }.map_or(0, |report| report.device_id)
 }
 
-/// The image format the container turned out to be.
+/// The image format the artifact turned out to be.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_report_device_image_format(
     report: *const RemanenceDiskReport,
@@ -6563,7 +6722,7 @@ pub unsafe extern "C" fn remanence_report_region_declared_number(
 
 /// How the schema places this region in its own vocabulary: for MBR,
 /// "primary" for one of the four slots and "logical" for an entry on the
-/// extended chain. A different axis from the role: the extended container
+/// extended chain. A different axis from the role: the extended partition
 /// is a primary slot whose role is structural.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_report_region_declared_placement(
@@ -7698,9 +7857,12 @@ mod tests {
         medium
             .load_media(path, AccessIntent::Write)
             .expect("the whole image loads");
-        let volume = medium.inspect().expect("inspects").volumes[0].id;
         let content: Vec<u8> = (0..1_200_000u32).map(|n| (n % 241) as u8).collect();
-        medium.write_file(volume, "FAR.BIN", &content).expect("writes");
+        medium
+            .filesystem()
+            .expect("the floppy resolves to its one filesystem")
+            .write_file("FAR.BIN", &content)
+            .expect("writes");
         medium.commit().expect("commits");
         drop(session);
 

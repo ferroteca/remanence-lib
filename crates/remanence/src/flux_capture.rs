@@ -139,7 +139,7 @@ impl Marker {
 /// Where something sat in the artifact the adapter read, in bytes.
 ///
 /// The capture side anchors to the source artifact, which is why this
-/// is not the file-container layer's floor extent: a floor is addressed
+/// is not the namespace layer's floor extent: a floor is addressed
 /// in whatever units its presentation uses, and a capture's foreign
 /// records point at bytes on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

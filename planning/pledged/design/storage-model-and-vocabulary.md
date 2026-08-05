@@ -10,10 +10,11 @@ their cardinalities, and the rule for which of them a caller ever holds —
 argued in the owner's design discussion of 2026-08-04. It serves the U2
 amendment ([../USE-CASES.md](../USE-CASES.md)) and the P14, P19 and P32
 amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md), delivered
-by F48 and F49 in [../FEATURES.md](../FEATURES.md), the machine
+by F49 in [../FEATURES.md](../FEATURES.md), the machine
 scope, the one storage handle, the two-act access path over a
-lineage-bearing family catalog (F50), and discovery with the
-format-declared default device and the one convenience over it (F51)
+lineage-bearing family catalog (F50), discovery with the
+format-declared default device and the one convenience over it (F51),
+and the `Filesystem` node with the container retirement it paid
 having landed already. Pledged, not
 implementation approval: this is guidance toward work the project owes,
 each piece landing through its own gate, and the document is swept when
@@ -409,16 +410,19 @@ lives in the report.
 
 The set is pledged beside this document: the P14, P19, and P32
 amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md),
-delivered by F48 and F49 in [../FEATURES.md](../FEATURES.md) — the
-`Filesystem` node and the uniform archive open. What is delivered: the
+delivered by F49 in [../FEATURES.md](../FEATURES.md) — the uniform
+archive open. What is delivered: the
 session gained machines beneath it, `Disk` merged into `StorageDevice`,
 the access path became the two acts over a family catalog carrying its
 lineage, with an empty device first-class and a medium in the wrong
-drive refused naming both sides, and `discover_media` landed on no
+drive refused naming both sides, `discover_media` landed on no
 handle at all — a consumable claim-scope handle a load takes the state
 out of, over image formats that now declare the device family whose
 disks they record, with `add_device_for` composing the two acts where
-one is declared and refusing by name where none is. This document
+one is declared and refusing by name where none is — and the
+`Filesystem` node took the file verbs, with the resolver, the volume
+selector, one entry vocabulary and the container retirement paid across
+the code and the surfaces (D25). This document
 serves the entries that remain and the U2 amendment, and is swept when
 they deliver.
 
@@ -426,11 +430,14 @@ they deliver.
 
 - **P19** slims to the namespace convergence it always claimed: one
   file-access interface however reached, honest absence, transparency.
-  Its "serialized-container provider form" dissolves — an archive is a
-  medium, its adapter a P12 adapter at the namespace seam. The
+  That half is **in force**, with file access living on one node. Its
+  "serialized-container provider form" dissolves — an archive is a
+  medium, its adapter a P12 adapter at the namespace seam — and the
   namespace-mapping composer's three constraints move out of P19 into the
   machine-namespace statement below; the previously proposed P19/P34
-  split is superseded by this relocation.
+  split is superseded by this relocation. Those two losses wait for the
+  archive open and for P35's arming respectively, because the in-force
+  list is an implementation claim (D25).
 - **A machine-namespace statement** (amendment or new principle) owns
   `MachineFilesystem`: one composed namespace over several child
   filesystems; the mapping consumed where a system persists it (pledged
@@ -470,15 +477,17 @@ they deliver.
   separate `archive[/entry]` path syntax and the `Archive` type's
   standalone journey fold into the model (the archive catalog itself is
   untouched — it becomes the family's adapter).
-- File verbs move to the `Filesystem` node: `get_file` lives there and
+- File verbs moved to the `Filesystem` node and are delivered:
+  `get_file` lives there and
   nowhere else — the device exposes none — with `device.filesystem()`
   resolving-or-refusing and `device.volume(id).filesystem()` selecting
   where several candidates exist; `list_hdos_files`'s selector-free
-  signature stops being an inconsistency and becomes the resolver's
+  signature stopped being an inconsistency and became the resolver's
   transparent form.
 
 **Records.** The vocabulary rulings become a D-entry when landed (D2-style
-retirements: container everywhere, bare "disk" as a generic). No new
+retirements: container everywhere, bare "disk" as a generic); the
+container half is D25. No new
 numbers are issued by this document: a design is identified by its path,
 and the U2 amendment keeps U2's number.
 

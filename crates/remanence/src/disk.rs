@@ -35,16 +35,14 @@ use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Device};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
+use crate::filesystem::Catalog;
+use crate::filesystem_catalog::{self, CatalogRecognition, FilesystemAdapter};
 use crate::journal;
 use crate::mbr::{self, Discovery};
 use crate::media_profile::MediaProfile;
-use crate::session::{self, Container, Identification};
+use crate::session::{self, Identification, Layer};
 use crate::source::{self, ImageSource};
 
-/// The largest image the HDOS reader will materialize (P27): HDOS lives
-/// on small vintage disks, so anything larger is refused by size before
-/// a byte of it is loaded.
-const HDOS_IMAGE_BOUND: u64 = 8 * 1024 * 1024;
 use crate::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
@@ -61,7 +59,7 @@ fn crash_test_process_at(boundary: &str) {
     }
 }
 
-/// The container format a disk image turned out to be.
+/// The image container format a disk image turned out to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskFormat {
     Raw,
@@ -109,11 +107,11 @@ impl Device for Composed<'_> {
 /// The gate is narrow, and this is where its narrowness lives: it applies
 /// to a raw image whose leading sector is a FAT boot record — the one
 /// composition where a filesystem's own declaration bounds the whole disk,
-/// because the caller selected the image's bytes as the disk. A container
-/// format declares its own virtual size and answers for it at its version
-/// gate (P8), so no automatic degradation rule is claimed for qcow2, VDI,
-/// an archive, or a partition schema; each is its own feature if it is
-/// ever wanted.
+/// because the caller selected the image's bytes as the disk. An image
+/// container format declares its own virtual size and answers for it at
+/// its version gate (P8), so no automatic degradation rule is claimed for
+/// qcow2, VDI, an archive, or a partition schema; each is its own feature
+/// if it is ever wanted.
 fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> Result<Assurance> {
     let observed = image.presented_size();
     if format != DiskFormat::Raw || observed < 512 {
@@ -163,7 +161,7 @@ pub(crate) struct MediaState {
     /// predictive reader (P27, P34).
     source: ImageSource,
     /// The archive wrappers unwrapped on the way in, if any.
-    containers: Vec<Container>,
+    layers: Vec<Layer>,
     /// The resolved image — the entry name for an archived image, else
     /// the source path.
     image_path: PathBuf,
@@ -287,16 +285,16 @@ impl MediaState {
             condition,
         });
 
-        let containers = resolved
+        let layers = resolved
             .archive_layers
             .into_iter()
-            .map(session::container_from_layer)
+            .map(session::layer_from_archive)
             .collect();
 
         Ok(Self {
             virtual_disk,
             source: resolved.source,
-            containers,
+            layers,
             image_path: resolved.image_path,
             cache: SessionCache::with_bytes_offloading(cache_bytes),
             cache_bytes,
@@ -338,32 +336,40 @@ impl MediaState {
         self.source.read_at(offset, buf)
     }
 
-    /// Identifies the image's container layers and probable filesystem
+    /// Identifies the artifact's nesting layers and probable filesystem
     /// over the raw plane, probing bounded evidence alone (P27).
     pub(crate) fn identify(&self) -> Identification {
         session::identify_medium(
             &self.source,
             &self.image_path,
-            &self.containers,
+            &self.layers,
             self.device_identity,
             self.is_modified(),
         )
     }
 
-    /// Parses the HDOS directory from the image. HDOS images are bounded
-    /// small by their formats, so the whole volume is read through the
-    /// cache; an image past [`HDOS_IMAGE_BOUND`] is refused by size,
-    /// never loaded (P27).
-    pub(crate) fn list_hdos_files(&self) -> Result<Vec<crate::hdos::HdosFile>> {
-        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
-        crate::hdos::list_hdos_files(&bytes)
+    /// Which enrolled adapter claims the namespace this medium bears
+    /// directly (P18), for the resolver on the storage handle.
+    ///
+    /// It probes the *presented* disk, not the raw plane: what a
+    /// namespace sits on is the disk the format adapter exposes, and for
+    /// the media this reaches today the two are the same bytes.
+    pub(crate) fn recognize_namespace(&mut self) -> Result<CatalogRecognition> {
+        self.require_usable()?;
+        let mut composed = self.composed();
+        filesystem_catalog::recognize(&mut composed)
     }
 
-    /// Copies one HDOS file's bytes out of the image, under the same size
-    /// bound as [`MediaState::list_hdos_files`].
-    pub(crate) fn read_hdos_file(&self, name: &str) -> Result<Vec<u8>> {
-        let bytes = self.source.bytes_bounded(HDOS_IMAGE_BOUND, "hdos")?;
-        crate::hdos::read_hdos_file(&bytes, name)
+    /// Opens the namespace `adapter` recognized. The adapter that
+    /// recognized it is the one that reads it, so nothing here branches
+    /// on a filesystem identifier.
+    pub(crate) fn open_namespace(
+        &mut self,
+        adapter: &'static dyn FilesystemAdapter,
+    ) -> Result<Box<dyn Catalog>> {
+        self.require_usable()?;
+        let mut composed = self.composed();
+        adapter.open(&mut composed)
     }
 
     /// The **effective** access mode this open settled on (P28): the
@@ -539,7 +545,7 @@ impl MediaState {
                 for partition in &partitions {
                     let id = RegionId::declared(partition.number);
                     let role = if mbr::is_extended(partition.type_byte) {
-                        RegionRole::Container
+                        RegionRole::Structure
                     } else {
                         RegionRole::Data
                     };
@@ -557,10 +563,10 @@ impl MediaState {
                         length_bytes: partition.length_bytes,
                         issue: partition.issue.clone(),
                     });
-                    // A structural container is reported and is not thereby
+                    // A structural region is reported and is not thereby
                     // a volume; a region this release will not read composes
                     // nothing, and both keep their place in the report.
-                    if role == RegionRole::Container || !claimed || partition.issue.is_some() {
+                    if role == RegionRole::Structure || !claimed || partition.issue.is_some() {
                         continue;
                     }
                     let composed_volume = crate::volume::direct(crate::volume::AddressedRegion {

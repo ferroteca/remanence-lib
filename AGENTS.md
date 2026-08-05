@@ -40,10 +40,22 @@ ABI, or Python module.
   image-format adapter that loaded its state and a flux medium from the
   drive profile's declaration of what its family is served;
   `partition.rs` the partition-layout catalog;
-  `filesystem.rs` the streamed filesystem adapters and catalog (crate-private,
-  reached through the device's `identify`); `session.rs` the layered
-  identification model, reached through the one storage handle; `hdos.rs` the HDOS directory lister and file
-  extractor; `archive.rs` the archive-catalog seam — the
+  `filesystem.rs` the P19 namespace node and the presentation contract
+  beneath it — the public `Filesystem`, the `Volume` selector, the `File`
+  view, the one `Entry` vocabulary with the facts a filesystem declares
+  in its own spelling, the enumerated `NamespaceRule` set its refusals
+  name, and the resolver that walks device → volume → filesystem where
+  every seam has one supported answer and refuses naming the candidates
+  where it does not; **the file verbs live here and on nothing else**;
+  `filesystem_catalog.rs` the streamed filesystem adapters and catalog
+  for the namespaces a medium bears directly (crate-private, reached
+  through the device's `identify` and through the resolver — the adapter
+  that recognized a namespace being the one that opens it, so nothing
+  branches on a filesystem identifier);
+  `session.rs` the layered
+  identification model — the layers of an artifact's nesting, reached
+  through the one storage handle; `hdos.rs` the HDOS directory lister and file
+  extractor, private behind the namespace node; `archive.rs` the archive-catalog seam — the
   `ArchiveCatalog` trait, the public `Archive` listing, and the
   enrollment each grammar is reached by — with `source.rs` resolving
   `archive[/entry]` paths through it under the claim;
@@ -90,7 +102,7 @@ ABI, or Python module.
   artifact under a claim stated before the file exists. It sits outside
   `adapters.rs`'s catalog deliberately: that catalog's adapters open a
   byte-addressed device, and block and flux are disjoint families (P13),
-  so a flux container is reached through its own type as the capture-set
+  so a flux artifact is reached through its own type as the capture-set
   adapter is;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the device stack, the discovery ladder for
@@ -144,7 +156,11 @@ ABI, or Python module.
   composes both acts (`add_device_for`, adding a device of the
   format-declared default family and refusing by name where a format
   declares none), and every content verb of the medium occupying it
-  (identify/inspect/entries/stat/read/write/mkdir/commit/rollback),
+  (identify/inspect/commit/rollback, plus the two resolve-or-refuse
+  queries `filesystem` and `volume` that reach the namespace node —
+  **a device carries no file access of its own**, because one holding a
+  partitionable medium and bearing `get_file` would be a category error
+  in the type rather than a refusal waiting to happen),
   refusing by name while the slot is empty; `disk.rs` the private
   `MediaState` that handle homes — a caller never holds a medium outside
   a device — with `report.rs` the layered inspection report its

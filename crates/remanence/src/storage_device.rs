@@ -20,10 +20,18 @@
 //! outside a device, so the two model nodes are exposed as one object:
 //! slot-side facts — the attachment identity, the family, occupancy — and
 //! content-side facts — the media type's planes, identification,
-//! inspection, the file verbs, commit and rollback — answer on the same
-//! handle, with the content verbs refusing by name when the slot is
-//! empty. The nodes stay attributed even so: the medium's state is
+//! inspection, commit and rollback — answer on the same handle, with the
+//! content verbs refusing by name when the slot is empty. The nodes stay
+//! attributed even so: the medium's state is
 //! [`crate::disk::MediaState`], private, homed here rather than held.
+//!
+//! **File access is not among them.** A device holding a partitionable
+//! medium and bearing `get_file` would be a category error in the type
+//! rather than a refusal waiting to happen, so the file verbs live on
+//! [`crate::Filesystem`] and nowhere else. A device may be asked what it
+//! *resolves* to — [`StorageDevice::filesystem`], and
+//! [`StorageDevice::volume`] where several answers exist — and may not
+//! be told to act as something it isn't.
 
 use std::fmt;
 use std::path::Path;
@@ -35,7 +43,8 @@ use crate::discovery::Discovery;
 use crate::disk::{DiskFormat, MediaState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
-use crate::hdos::HdosFile;
+use crate::filesystem::{Catalog, Filesystem, Volume};
+use crate::filesystem_catalog::{CatalogRecognition, FilesystemAdapter};
 use crate::report::{DiskReport, VolumeId};
 use crate::session::Identification;
 
@@ -194,7 +203,7 @@ impl StorageDevice {
         if let Some(foreign) = medium.foreign_family() {
             return Err(Error::unsupported(format!(
                 "'{}' is a {foreign}-family artifact and no device in this \
-                 release holds a {foreign} medium; a {foreign} container is \
+                 release holds a {foreign} medium; a {foreign} artifact is \
                  read through its own type",
                 path.display()
             )));
@@ -333,25 +342,11 @@ impl StorageDevice {
         self.media("read_at")?.read_at(offset, buf)
     }
 
-    /// Identifies the image's container layers and probable filesystem.
+    /// Identifies the artifact's nesting layers and probable filesystem.
     /// Probes read bounded evidence — a leading prefix, the length, and
     /// the name — never the whole image (P27).
     pub fn identify(&self) -> Result<Identification> {
         Ok(self.media("identify")?.identify())
-    }
-
-    /// Parses the HDOS directory from the image. HDOS images are bounded
-    /// small by their formats, so the whole volume is read through the
-    /// cache; an image past the bound is refused by size, never loaded
-    /// (P27).
-    pub fn list_hdos_files(&self) -> Result<Vec<HdosFile>> {
-        self.media("list_hdos_files")?.list_hdos_files()
-    }
-
-    /// Copies one HDOS file's bytes out of the image, under the same size
-    /// bound as [`StorageDevice::list_hdos_files`].
-    pub fn read_hdos_file(&self, name: &str) -> Result<Vec<u8>> {
-        self.media("read_hdos_file")?.read_hdos_file(name)
     }
 
     /// The session's **effective** access mode for this medium: the
@@ -379,7 +374,7 @@ impl StorageDevice {
         Ok(self.media("assurance")?.assurance())
     }
 
-    /// The container format the medium's image turned out to be.
+    /// The image container format the medium's image turned out to be.
     pub fn format(&self) -> Result<DiskFormat> {
         Ok(self.media("format")?.format())
     }
@@ -413,29 +408,62 @@ impl StorageDevice {
         self.media_mut("inspect")?.inspect()
     }
 
+    /// The filesystem this device resolves to, or the refusal that says
+    /// why it does not resolve to exactly one (P19, P10).
+    ///
+    /// **The device carries no file access of its own.** This is a query
+    /// about what it resolves to, whose answer set already includes
+    /// *refuse* and *absent*; the file verbs live on the
+    /// [`Filesystem`] it answers with and nowhere else. Where several
+    /// volumes bear one, select with [`StorageDevice::volume`] rather
+    /// than being guessed for.
+    pub fn filesystem(&mut self) -> Result<Filesystem<'_>> {
+        self.media("filesystem")?;
+        Filesystem::resolve(self)
+    }
+
+    /// One volume of the attached medium, by the identity the inspection
+    /// report issued for it — the selector where several namespaces
+    /// exist.
+    pub fn volume(&mut self, id: VolumeId) -> Result<Volume<'_>> {
+        self.media("volume")?;
+        Volume::select(self, id)
+    }
+
+    /// Which enrolled adapter claims the namespace this medium bears
+    /// directly, for the resolver above.
+    pub(crate) fn recognize_namespace(&mut self) -> Result<CatalogRecognition> {
+        self.media_mut("filesystem")?.recognize_namespace()
+    }
+
+    /// Opens the namespace `adapter` recognized — the adapter that
+    /// recognized it is the one that reads it.
+    pub(crate) fn open_namespace(
+        &mut self,
+        adapter: &'static dyn FilesystemAdapter,
+    ) -> Result<Box<dyn Catalog>> {
+        self.media_mut("filesystem")?.open_namespace(adapter)
+    }
+
     /// Lists a directory in the volume identified by `volume_id`
     /// ("" = root; "A/B" descends).
-    pub fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
+    pub(crate) fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
         self.media_mut("entries")?.entries(volume_id, path)
     }
 
     /// Answers one path in the volume identified by `volume_id` with its
-    /// entry, or `None` when nothing exists at that path — a missing
-    /// leaf, a missing parent, or a parent that is a file alike. Absence
-    /// is an answer, distinguished from failure to read the volume (U3).
-    pub fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
+    /// entry, or `None` when nothing exists at that path.
+    pub(crate) fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
         self.media_mut("stat")?.stat(volume_id, path)
     }
 
     /// Copies a file's bytes out of the volume identified by `volume_id`.
-    pub fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
+    pub(crate) fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
         self.media_mut("read_file")?.read_file(volume_id, path)
     }
 
-    /// Reads part of a file — the streamed form (P27), beside
-    /// [`StorageDevice::read_file`]: exactly `buf` bytes at `offset`,
-    /// which must lie within the file.
-    pub fn read_file_at(
+    /// Reads part of a file — the streamed form (P27).
+    pub(crate) fn read_file_at(
         &mut self,
         volume_id: VolumeId,
         path: &str,
@@ -446,19 +474,21 @@ impl StorageDevice {
             .read_file_at(volume_id, path, offset, buf)
     }
 
-    /// Sets a file's size, creating it when absent: kept bytes preserved
-    /// in place, a grown region reads as zeros. With
-    /// [`StorageDevice::write_file_at`] this is the streamed replacement
-    /// for [`StorageDevice::write_file`]. Buffered until commit.
-    pub fn resize_file(&mut self, volume_id: VolumeId, path: &str, size: u64) -> Result<()> {
+    /// Sets a file's size, creating it when absent. Buffered until
+    /// commit.
+    pub(crate) fn resize_file(
+        &mut self,
+        volume_id: VolumeId,
+        path: &str,
+        size: u64,
+    ) -> Result<()> {
         self.media_mut("resize_file")?
             .resize_file(volume_id, path, size)
     }
 
-    /// Writes part of a file in place — the streamed form (P27), beside
-    /// [`StorageDevice::write_file`]: the span must lie within the file's
-    /// current size (resize first to change it). Buffered until commit.
-    pub fn write_file_at(
+    /// Writes part of a file in place — the streamed form (P27).
+    /// Buffered until commit.
+    pub(crate) fn write_file_at(
         &mut self,
         volume_id: VolumeId,
         path: &str,
@@ -469,21 +499,21 @@ impl StorageDevice {
             .write_file_at(volume_id, path, offset, data)
     }
 
-    /// Writes a file into the volume identified by `volume_id`. An
-    /// existing file is overwritten — shorter or longer, its old
-    /// clusters released and reclaimed, every FAT copy kept in step —
-    /// while an existing directory is refused. Buffered until
-    /// [`StorageDevice::commit`].
-    pub fn write_file(&mut self, volume_id: VolumeId, path: &str, contents: &[u8]) -> Result<()> {
+    /// Writes a file into the volume identified by `volume_id`. Buffered
+    /// until [`StorageDevice::commit`].
+    pub(crate) fn write_file(
+        &mut self,
+        volume_id: VolumeId,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<()> {
         self.media_mut("write_file")?
             .write_file(volume_id, path, contents)
     }
 
     /// Ensures a directory exists in the volume identified by
-    /// `volume_id`: missing parents are created, and a path that already
-    /// leads to a directory — the root included — succeeds unchanged.
-    /// Buffered until commit.
-    pub fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
+    /// `volume_id`. Buffered until commit.
+    pub(crate) fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
         self.media_mut("make_directory")?
             .make_directory(volume_id, path)
     }

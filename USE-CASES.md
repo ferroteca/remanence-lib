@@ -19,10 +19,13 @@ doesn't know, it says "unknown" rather than guessing.
 
 ## U2 — Browse a vintage volume and pull files out of it
 
-Once an image is identified, I list its catalog — HDOS today —
-with the real names, sizes, dates and flags, and I copy a chosen
-file's bytes out to the host, without ever booting anything or
-mutating the image.
+Once an image is identified, I ask the drive what it resolves to and
+list its catalog — HDOS today — with the real names, sizes, dates and
+flags, and I copy a chosen file's bytes out to the host, without ever
+booting anything or mutating the image. I name no volume, because a
+disk that bears one namespace has one supported answer at every seam
+between; where the answer is not single the library refuses naming what
+it found rather than picking for me.
 
 ## U3 — I read and write a stopped machine's files
 
@@ -36,10 +39,13 @@ the host, write a file in, create a directory. Writing a file that
 already exists replaces its contents, shorter or longer, releasing
 and reclaiming clusters; creating a directory creates missing
 parents and succeeds when the directory already exists. I attach each
-image to a storage device in my session and work through that device;
-the library addresses a volume by the opaque identity its inspection
-report issued for it, and a path within it — and where the guest was DOS,
-U22's composer maps that identity to the drive letter I show a user. All of
+image to a storage device in my session, ask that device which
+filesystem it resolves to — or select one by the opaque identity its
+inspection report issued for a volume, where several bear one — and
+work through the filesystem it answers with, which is the one type
+carrying file verbs; a path within it names the file. Where the guest
+was DOS, U22's composer maps that same volume identity to the drive
+letter I show a user. All of
 this without booting the guest and without any external helper
 process: the library does
 the format work itself. Reading never changes the image. Writing is

@@ -12,7 +12,7 @@ One core, two bindings:
 - **`crates/remanence`** — the analysis library, pure Rust, zero runtime
   dependencies. Everything the project knows lives here, in four groups.
   The **identification model** and the adapters beneath it: executable
-  image formats, serialized containers, partition layouts and
+  image formats, archives, partition layouts and
   filesystems, each enrolled in its own catalog. The **device stack**: the
   declared-intent deny-write claim, the native qcow2 and VDI drivers with
   their backing and differencing chains, MBR partition discovery,
@@ -47,10 +47,12 @@ never reused.
   `Session`, `Machine`, `StorageDevice`, `AttachmentId` and
   `DeviceFamily` — the device being the one storage handle, carrying the
   content verbs of the medium in its slot —
-  `Identification` and the container/layout types,
+  `Volume`, `Filesystem`, `File` and the `Entry` vocabulary, the
+  namespace node being the one type that carries file verbs,
+  `Identification` and the layer/layout types,
   `Assurance` and the outcome, condition and byte-range types beside it,
   `Archive` and `ArchiveEntry`,
-  `list_hdos_files` and `HdosFile`, `Error`/`ErrorCategory`/`Result`,
+  `Error`/`ErrorCategory`/`Result` and the rule sets refusals name,
   `DosMachine` and the drive-letter mapping it composes, and
   the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo
   doc` output is a representation of it.
@@ -173,7 +175,7 @@ and asserted as protocol against the rest.
 
 ### P8 — Versioned formats are supported by explicit version, or refused
 
-Where a container format or filesystem declares its version — a version
+Where an image container format or a filesystem declares its version — a version
 field, a feature bitmap, anything the format provides for saying "this
 is newer than you know" — the library validates it against the versions
 it explicitly claims, **before touching anything else**, and a version
@@ -252,7 +254,7 @@ Every supported image format is an adapter at the seam matching the
 representation it persistently encodes. The adapter owns its identity,
 recognition and evidence, validation and refusals, variants,
 interpretation, capabilities, decoding, and encoding where writing is
-claimed. Raw sectors, logical-block containers, encoded tracks, flux
+claimed. Raw sectors, logical-block images, encoded tracks, flux
 recordings, and filesystem-level images are distinct image-format
 families; they do not collapse into one universal interface.
 
@@ -369,8 +371,8 @@ interface while requiring no partition choice from the caller.
 
 ### P18 — Filesystems are an independent seam
 
-A filesystem adapter consumes one volume and exposes a P19 file-container
-view of the namespace, metadata, and data operations it claims. FAT, HDOS,
+A filesystem adapter consumes one volume and exposes a P19 namespace
+view of the names, metadata, and data operations it claims. FAT, HDOS,
 CP/M, NTFS, ext, and other filesystems illustrate variation at this seam;
 their mention is not a support claim. The adapter owns recognition and
 evidence, structural validation, version and feature ceilings, refusals,
@@ -380,21 +382,27 @@ A filesystem does not parse an image container, discover the partition
 layout around its volume, or know how that volume was composed. The
 filesystem catalog and interface remain independent of those adjacent seams.
 
-### P19 — File containers are the common file-access seam
+### P19 — The namespace is the common file-access seam
 
-A file container exposes a rooted namespace of named files and containers,
-with their metadata and data operations, independently of what backs that
-view. This is the high-level convergence point for file access: a
-supported composition may pass through serialized containers, image
+A namespace exposes a rooted tree of named files and directories, with
+their metadata and data operations, independently of what backs that view.
+This is the high-level convergence point for file access: a
+supported composition may pass through archives, image
 formats, partition layouts, volume composition, filesystems, or namespace
 mappings, and every file-bearing result presents this interface, retaining
 the layers, identities, and evidence that produced it. Multiple roots or
 ambiguous paths are exposed or refused explicitly rather than flattened or
 guessed.
 
+**File access lives on one node and nowhere else.** The type that carries
+the file verbs is the namespace itself; a device or a volume may be asked
+what it *resolves* to, and may not be told to act as something it isn't —
+a device bearing `get_file` would be a category error in the type rather
+than a refusal waiting to happen.
+
 When every applicable seam has one supported result, composition is
-transparent: a simple legacy floppy image opens as its filesystem's file
-container without asking the caller to select the intervening layers.
+transparent: a simple legacy floppy image resolves to its filesystem
+without asking the caller to select the intervening layers.
 Drive and mechanism emulation are not constructed merely to reach files.
 
 P19 is the usual high-level destination, not a universal content model. A
@@ -405,19 +413,19 @@ neither calls valid non-file data empty nor manufactures pseudo-files to
 force it through P19, and opening specifically for file access returns a
 named absence or refusal when no file-bearing interpretation is claimed.
 
-Three provider forms meet here. Serialized-container adapters consume byte
+Three provider forms meet here. Serialized-artifact adapters consume byte
 streams; filesystem adapters (P18) consume volumes; namespace-composition
-adapters consume file containers plus explicit drive, mount, folder, or
+adapters consume namespaces plus explicit drive, mount, folder, or
 volume mappings. Composition preserves the identity and provenance of its
-sources rather than flattening or copying them, so a file container may be
+sources rather than flattening or copying them, so a namespace may be
 backed by a whole volume, by part of a storage graph, or by several
-mounted filesystem containers.
+mounted filesystems.
 
 A **namespace-mapping composer** *derives* the mapping the third form
 consumes, from composed volumes with their identities plus the machine
 facts its caller asserts, applying one named assignment rule. It opens
 nothing and takes reports the caller already holds. Producing a mapping
-and composing a file container over it are separate acts: the mapping
+and composing a namespace over it are separate acts: the mapping
 answers on its own, and a composer that can establish only part of one
 still answers with that part. Three constraints keep the derivation from
 becoming a guess:
@@ -437,7 +445,7 @@ becoming a guess:
   establish, never filled from position, size, order, label, or which
   volume happened to read cleanly.
 
-The file-container view is not a disk representation and declares no image
+The namespace view is not a disk representation and declares no image
 layer, media, geometry, partition layout, or volume semantics. Raw
 partitions and volumes do not satisfy it. Selecting a file yields a byte
 stream; only independent P12 recognition can make that file an image and
@@ -537,7 +545,7 @@ The durable active-layer vocabulary is exactly:
 
 | Active layer | Durable session state | Claim |
 |---|---|---|
-| **file container** | a rooted namespace of named entries and nested containers, entry bytes, and claimed metadata | container structure, not disk allocation or recording |
+| **namespace** | a rooted tree of named entries and nested directories, entry bytes, and claimed metadata | namespace structure, not disk allocation or recording |
 | **flux medium** | circular track-relative flux transitions and strength semantics, with marker/sensor channels and provenance | a modeled magnetic recording surface |
 | **hardware bitstream** | circular track-relative clocked bit state, with the timing and provenance its declared drive family requires | what a family's read channel resolved, not what it means |
 | **encoded bytestream** | the circular track-relative byte sequence a declared family codec materializes from that bit state | the recording's own bytes, before any of them is a header, a sector, or a file |
@@ -562,13 +570,13 @@ Encoded tracks, bitcells, nibbles, and filesystem structures may be
 authoritative image layers or derived representations, but they are not
 additional durable active layers; a composition materializes them into the
 applicable flux, CHS, or block state before service begins. P19's
-file-container interface does not by itself make file container the active
+namespace interface does not by itself make namespace the active
 layer: over a filesystem it is a derived presentation whose mutations
-project into the media's active state, while over a serialized container
+project into the media's active state, while over an archive
 the named-entry state itself is active. Nested artifacts have one active
 layer per independently mutable instance, not one for the whole object
 graph — opening `archive.zip/disk.d64` can leave the outer ZIP active as a
-file container while the entry is a child disk image with its own active
+namespace while the entry is a child disk image with its own active
 media instance.
 
 P13's authoritative layer and the active layer answer different questions:

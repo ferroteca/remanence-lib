@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, ArchiveLayout, AttachmentId, ContainerKind, ContainerLayout, DeviceFamily,
+    AccessIntent, ArchiveLayout, AttachmentId, LayerKind, LayerLayout, DeviceFamily,
     Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, Session,
 };
 
@@ -44,24 +44,24 @@ fn private_copy(name: &str, tag: &str) -> PathBuf {
 
 fn assert_hdos_identification(identification: &Identification) {
     assert!(!identification.modified);
-    let count = identification.containers.len();
+    let count = identification.layers.len();
 
-    let image = &identification.containers[count - 3];
-    assert_eq!(image.kind, ContainerKind::Image);
+    let image = &identification.layers[count - 3];
+    assert_eq!(image.kind, LayerKind::Image);
     assert_eq!(image.id, "h8d");
     assert_eq!(image.name, "Heathkit H8 H17 disk image");
     assert_eq!(image.size.current_bytes, Some(102_400));
     assert_eq!(image.size.expected_bytes, Some(102_400));
-    assert!(matches!(image.layout, ContainerLayout::Image(ImageLayout { .. })));
+    assert!(matches!(image.layout, LayerLayout::Image(ImageLayout { .. })));
 
-    let media = &identification.containers[count - 2];
-    assert_eq!(media.kind, ContainerKind::PhysicalMedia);
+    let media = &identification.layers[count - 2];
+    assert_eq!(media.kind, LayerKind::PhysicalMedia);
     // The medium is the article, named from the media-type catalog
     // (P14): the ten-sector hard-sectored 5.25-inch disk an H17 records
     // on. The ten records to a track below are the recording, and they
     // follow the medium's ten sector holes without being them.
     assert_eq!(media.id, "flexible-5.25-hard-10");
-    let ContainerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout
+    let LayerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout
     else {
         panic!("expected disk layout, found {:?}", media.layout);
     };
@@ -70,17 +70,17 @@ fn assert_hdos_identification(identification: &Identification) {
     assert_eq!(disk.sectors, SectorLayout::Fixed { sectors_per_track: 10 });
     assert_eq!(disk.media_type, "flexible-5.25-hard-10");
 
-    let filesystem = identification.containers.last().expect("filesystem container");
-    assert_eq!(filesystem.kind, ContainerKind::Filesystem);
+    let filesystem = identification.layers.last().expect("filesystem layer");
+    assert_eq!(filesystem.kind, LayerKind::Filesystem);
     assert_eq!(filesystem.id, "hdos");
     assert_eq!(filesystem.name, "Heath Disk Operating System");
 }
 
 fn archive_layout(identification: &Identification) -> &ArchiveLayout {
-    let archive = &identification.containers[0];
-    assert_eq!(archive.kind, ContainerKind::Archive);
+    let archive = &identification.layers[0];
+    assert_eq!(archive.kind, LayerKind::Archive);
     assert_eq!(archive.id, "zip");
-    let ContainerLayout::Archive(layout) = &archive.layout else {
+    let LayerLayout::Archive(layout) = &archive.layout else {
         panic!("expected archive layout, found {:?}", archive.layout);
     };
     layout
@@ -94,7 +94,7 @@ fn identifies_hdos_fixture_image() {
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let identification = disk.identify().expect("a medium is attached");
 
-    assert_eq!(identification.containers.len(), 3);
+    assert_eq!(identification.layers.len(), 3);
     assert_hdos_identification(&identification);
 }
 
@@ -106,12 +106,12 @@ fn identifies_single_image_inside_zip_fixture() {
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let identification = disk.identify().expect("a medium is attached");
 
-    let archive = &identification.containers[0];
+    let archive = &identification.layers[0];
     assert_eq!(archive.name, "ZIP archive");
     let layout = archive_layout(&identification);
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(layout.uncompressed_size, Some(102_400));
-    assert_eq!(identification.containers.len(), 4);
+    assert_eq!(identification.layers.len(), 4);
     assert_eq!(disk.path().expect("a medium is attached"), zip_path.display().to_string());
     assert_eq!(disk.image_path().expect("a medium is attached"), PathBuf::from(IMAGE_NAME));
     assert_hdos_identification(&identification);
@@ -131,7 +131,7 @@ fn identifies_explicit_image_inside_zip_fixture() {
 
     let layout = archive_layout(&identification);
     assert_eq!(layout.entry_name, IMAGE_NAME);
-    assert_eq!(identification.containers.len(), 4);
+    assert_eq!(identification.layers.len(), 4);
     assert_hdos_identification(&identification);
 
     drop(disk_session);

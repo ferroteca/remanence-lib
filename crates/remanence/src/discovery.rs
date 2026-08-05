@@ -68,7 +68,7 @@ pub fn discover_media_with_cache(
     if let Some(foreign) = medium.foreign_family() {
         return Err(Error::unsupported(format!(
             "'{}' is a {foreign}-family artifact and no device in this \
-             release holds a {foreign} medium; a {foreign} container is \
+             release holds a {foreign} medium; a {foreign} artifact is \
              read through its own type",
             path.display()
         )));
@@ -181,7 +181,7 @@ impl Discovery {
         self.medium.assurance()
     }
 
-    /// Identifies the artifact's container layers and probable
+    /// Identifies the artifact's nesting layers and probable
     /// filesystem, over bounded evidence alone (P27) — the same reading
     /// [`crate::StorageDevice::identify`] gives once a medium is loaded.
     pub fn identify(&self) -> Identification {

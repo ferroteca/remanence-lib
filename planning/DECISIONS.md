@@ -58,6 +58,115 @@ removes it is the record either way.
 
 ## Decisions
 
+### D25 — The namespace node lands whole; the P19 amendment lands as far as the code honors it
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-05. **Supports** S1, S2, S3; the U2 amendment, the P19
+amendment, P35; in-force P10, P18, P19, P23, P27.
+
+Rulings made delivering the `Filesystem` node and the container
+retirement it pays. The delivery itself is recorded by the commit; these
+are the calls made in its course, and the first is the one a later
+reader most needs.
+
+**The P19 amendment could not fully arm, and landed in the part that
+could.** The amendment says P19 keeps the convergence claim and loses two
+things: the "serialized-container adapter" provider form, because an
+archive is a medium whose grammar is a P12 adapter at the namespace seam;
+and the namespace-mapping composer, which moves to P35. Neither loss is
+available yet. An archive is *not* a medium until the uniform archive
+open lands, so deleting that provider form now would unbind the journey
+the code actually takes today; and P35 is pledged, not armed, so moving
+the composer's three constraints out of P19 would delete from the
+in-force list a rule the code implements and honors, leaving it bound by
+nothing. **The root lists are implementation claims**, so what landed is
+what the code honors: the retitle, the retired word purged from P19 and
+from P23's active-layer row, and the amendment's positive claim — one
+file-access interface however reached, with file access living on one
+node and nowhere else. The rest is F49's, which is why that feature now
+says so. The pledged scope-of-claim amendment (the coverage account) is
+untouched and unclaimed: the delivered node produces no account, and
+nothing here says it does.
+
+**"Container" was retired into three different words, because it was
+doing three different jobs.** At the P19 seam it becomes **namespace**,
+which is the vocabulary ruling's own word and the one the node is named
+for. In an identification it becomes a **layer** of the artifact's
+nesting — `Layer`, `LayerKind`, `Identification.layers`,
+`remanence_layer_*` — with the doc comments saying in as many words that
+this is a different axis from P13's authoritative layer and P23's active
+layer, because two disjoint enumerations sharing a word is the ambiguity
+the retirement exists to end. On a region role it becomes **structure**,
+an extended partition being a structural region. And on
+`Error::InvalidImage` the `container` field becomes `format`, which is
+what it always held: the seam a refusal is attributed to. What survives
+is the word where it is somebody else's — an *image container format* is
+the industry's term for qcow2, VDI and P64 — and the surviving uses were
+audited one by one rather than swept.
+
+**A `Volume` handle exists, and it is still not a thing to hold.** The
+storage model rules volumes values, passed as selectors and never held;
+the feature's own spelling is `device.volume(id).filesystem()`. Both are
+satisfied by a borrowed selector: `Volume` carries the identity the
+report issued and the extent, borrows the device it came from, and cannot
+outlive it. It accepts no ordinal, because no format defines one.
+
+**An entry declares what the node's vocabulary has no field for.** In-force
+U2 claims the real names, sizes, **dates and flags** of an HDOS catalog,
+and the node's common `Entry` names only the first two. Rather than keep a
+second file type beside it — which is the "one file-access interface"
+claim abandoned at the first filesystem that records more than three
+facts — an entry carries `EntryFact`s in the recognizing filesystem's own
+spelling and order: HDOS declares its catalog date, its flag letters, its
+sector count and the raw values behind the readings. This is the flux
+layer's two-outcome rule at the node's surface, and it is why the
+standalone HDOS reader could be deleted rather than kept.
+
+**"And nowhere else" reached the free functions too.** `list_hdos_files`,
+`read_hdos_file` and `HdosFile` took a byte slice and belonged to no
+node; keeping them would have left a second way to walk a namespace
+outside the type that claims to be the only one. They are deleted from
+all three surfaces and the reader is private behind the node.
+
+**The recognizing adapter opens what it recognized.** The resolver needs
+to reach a namespace a medium bears directly, and the obvious route —
+read the filesystem id the catalog returns and `match` on it — is the
+string-named rule in orchestration that P12 and P18 keep out. So the
+catalog's adapters gained an `open`, whose default is a refusal naming a
+namespace this release recognizes and does not read; CP/M is that case
+today. **The lookup is bounded** by the byte count the HDOS reader
+already declared, said once for the seam: a medium composing no volume
+and larger than it is a named absence rather than a full scan of a
+gigabyte (P27).
+
+**A refused recognition answers with its own refusal.** Where a volume
+composed and its filesystem seam attempted a recognition and refused, the
+node hands that seam's error back — category and rule intact — instead of
+a coarser "bears no filesystem" of its own. The seam that owns the
+refusal already carries what explains it (P4, P10), and replacing it
+would tell a caller less than the inspection report already holds.
+
+**Weighed and declined:** landing the P19 amendment whole and arming a
+narrowed P35 in the same act (P35's own claim is the machine namespace,
+which nothing builds yet, so arming it would assert a node that does not
+exist — and narrowing a principle at the moment of arming is a bigger
+ruling than this feature's course); leaving the composer's clauses in P19
+with a note that P35 will take them (a pointer to unbuilt work inside an
+in-force principle is planning prose in the one place the project keeps
+free of it); keeping `HdosFile` beside `Entry` so U2's dates and flags
+had a typed home (two entry types is two interfaces, and the declared-fact
+route was already the project's answer for a fact with no named field);
+naming the identification's records `Recognition` (taken by the drive-profile
+seam) or leaving them `Container` for F49 to rename (F48 names the C symbols
+explicitly, and renaming the C mirror while the Rust type kept the retired
+word would split one vocabulary across two surfaces); and giving the
+resolver a whole-medium scan with no bound, which is the P27 violation the
+HDOS reader's existing bound was written to prevent.
+
+**Reopens if:** the machine namespace lands and P35 arms — at which point
+the composer's three constraints move out of P19 as the amendment says,
+and this entry's first ruling is spent.
+
 ### D24 — The file-view load waits for the node that mints the view
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

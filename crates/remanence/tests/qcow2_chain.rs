@@ -12,6 +12,18 @@ use std::process::Command;
 
 use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, StorageDevice, DiskFormat, ErrorCategory};
 
+/// The filesystem on one volume of `device`, selected by the identity the
+/// inspection report issued — the walk `device.volume(id).filesystem()`
+/// spelled once, because the file verbs live on the namespace node and
+/// nowhere else (P19).
+fn fs(device: &mut remanence::StorageDevice, volume: remanence::VolumeId) -> remanence::Filesystem<'_> {
+    device
+        .volume(volume)
+        .expect("the report issued this volume")
+        .filesystem()
+        .expect("the volume bears a filesystem")
+}
+
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
 /// session alive for as long as they use the medium.
@@ -210,7 +222,7 @@ fn reads_compose_through_a_raw_backing_file() {
         Some("REMANENCE".to_owned())
     );
     assert_eq!(
-        disk.read_file(volume, "MARKER.TXT")
+        fs(disk, volume).read_file("MARKER.TXT")
             .expect("the marker reads through the chain"),
         b"read through the chain"
     );
@@ -224,7 +236,7 @@ fn reads_compose_through_a_raw_backing_file() {
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
-    disk.write_file(volume, "MARKER.TXT", b"rolled back")
+    fs(disk, volume).write_file("MARKER.TXT", b"rolled back")
         .expect("write buffers");
     disk.rollback().expect("a medium is attached");
     drop(disk_session);
@@ -237,7 +249,7 @@ fn reads_compose_through_a_raw_backing_file() {
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
-    disk.write_file(volume, "MARKER.TXT", b"changed in the top")
+    fs(disk, volume).write_file("MARKER.TXT", b"changed in the top")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -251,7 +263,7 @@ fn reads_compose_through_a_raw_backing_file() {
     let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
     let volume = only_volume(reopened);
     assert_eq!(
-        reopened.read_file(volume, "MARKER.TXT").expect("changed file reads"),
+        fs(reopened, volume).read_file("MARKER.TXT").expect("changed file reads"),
         b"changed in the top"
     );
 
@@ -279,7 +291,7 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("QEMU chain opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
-    disk.write_file(volume, "MARKER.TXT", b"remanence copy-on-write")
+    fs(disk, volume).write_file("MARKER.TXT", b"remanence copy-on-write")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -297,8 +309,7 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
         attach(&flattened, AccessIntent::Read).expect("QEMU-rendered disk opens");
     let qemu_view = qemu_session.require_device(qemu_at).expect("the medium is attached");
     assert_eq!(
-        qemu_view
-            .read_file(volume, "MARKER.TXT")
+        fs(qemu_view, volume).read_file("MARKER.TXT")
             .expect("QEMU-rendered changed file reads"),
         b"remanence copy-on-write"
     );
@@ -330,7 +341,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     assert_eq!(report.volumes.len(), 1);
     let volume = report.volumes[0].id;
     assert_eq!(
-        disk.read_file(volume, "MARKER.TXT")
+        fs(disk, volume).read_file("MARKER.TXT")
             .expect("reads through two members"),
         b"read through the chain"
     );
@@ -341,7 +352,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let (mut disk_session, disk_at) = attach(&top, AccessIntent::Write).expect("two-level write opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
-    disk.write_file(volume, "MARKER.TXT", b"changed above two levels")
+    fs(disk, volume).write_file("MARKER.TXT", b"changed above two levels")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -356,8 +367,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let (mut reopened_session, reopened_at) = attach(&top, AccessIntent::Read).expect("changed chain reopens");
     let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
     assert_eq!(
-        reopened
-            .read_file(volume, "MARKER.TXT")
+        fs(reopened, volume).read_file("MARKER.TXT")
             .expect("changed marker reads"),
         b"changed above two levels"
     );
@@ -386,7 +396,7 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let volume = only_volume(disk);
     assert_eq!(
-        disk.read_file(volume, "MARKER.TXT")
+        fs(disk, volume).read_file("MARKER.TXT")
             .expect("reads"),
         b"read through the chain"
     );

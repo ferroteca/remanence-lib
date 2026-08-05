@@ -129,8 +129,8 @@ fn synthetic_multi_mbr(entries: &[(u8, &[u8])]) -> Vec<u8> {
 }
 
 /// A disk with one primary of `primary_type` and an extended chain of one
-/// logical volume, the container declared as `container_type`.
-fn synthetic_extended_disk(volume: &[u8], container_type: u8, primary_type: u8) -> Vec<u8> {
+/// logical volume, the extended partition declared as `extended_type`.
+fn synthetic_extended_disk(volume: &[u8], extended_type: u8, primary_type: u8) -> Vec<u8> {
     let sectors = volume.len() / 512;
     let primary_start = 2048usize;
     let ext_base = primary_start + sectors;
@@ -140,7 +140,7 @@ fn synthetic_extended_disk(volume: &[u8], container_type: u8, primary_type: u8) 
     disk[446 + 4] = primary_type;
     disk[446 + 8..446 + 12].copy_from_slice(&(primary_start as u32).to_le_bytes());
     disk[446 + 12..446 + 16].copy_from_slice(&(sectors as u32).to_le_bytes());
-    disk[462 + 4] = container_type;
+    disk[462 + 4] = extended_type;
     disk[462 + 8..462 + 12].copy_from_slice(&(ext_base as u32).to_le_bytes());
     disk[462 + 12..462 + 16].copy_from_slice(&(link_span as u32).to_le_bytes());
     disk[510] = 0x55;
@@ -316,11 +316,11 @@ fn a_type_outside_the_dos_set_takes_no_letter() {
     std::fs::remove_file(&path).ok();
 }
 
-/// An LBA-addressed extended container is one this library reads and the
+/// An LBA-addressed extended partition is one this library reads and the
 /// claimed variants do not follow, so its logical drives take no letter —
 /// and the map says so rather than leaving the caller to notice.
 #[test]
-fn an_unclaimed_extended_container_letters_none_of_its_logicals() {
+fn an_unclaimed_extended_partition_letters_none_of_its_logicals() {
     let fat = synthetic_fat16();
     let path = write_image("lba-chain", synthetic_extended_disk(&fat, 0x0f, 0x06));
     let (_session, report) = inspect(&path);
@@ -333,7 +333,7 @@ fn an_unclaimed_extended_container_letters_none_of_its_logicals() {
     assert!(
         map.provenance
             .iter()
-            .any(|line| line.contains("extended container is not type 0x05")),
+            .any(|line| line.contains("extended partition is not type 0x05")),
         "the map says why the chain took none: {:?}",
         map.provenance
     );
@@ -589,7 +589,11 @@ fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
     let marker = session
         .require_device(attachment)
         .expect("attached")
-        .read_file(volume_at(&map, 'C'), "RMNMARK.TXT")
+        .volume(volume_at(&map, 'C'))
+        .expect("the letter's identity names a volume the report issued")
+        .filesystem()
+        .expect("C: bears a filesystem")
+        .read_file("RMNMARK.TXT")
         .expect("C: reads through the identity the map returned");
     assert!(marker.starts_with(b"remanence marker:"));
 

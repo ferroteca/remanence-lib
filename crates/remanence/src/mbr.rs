@@ -18,7 +18,7 @@ const BOOT_SIGNATURE: [u8; 2] = [0x55, 0xaa];
 /// Where a partition row sits: an MBR slot, or the extended chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PartitionKind {
-    /// An MBR slot — the extended container included.
+    /// An MBR slot — the extended partition included.
     Primary,
     /// A row of the extended chain.
     Logical,
@@ -221,7 +221,7 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
 
     let mut partitions = Vec::new();
     let mut number = 0u32;
-    // (extended base, next EBR, container row index)
+    // (extended base, next EBR, extended row index)
     let mut chain: Option<(u64, u64, usize)> = None;
 
     for entry in parse_entries(&mbr) {
@@ -265,13 +265,13 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
     // Walk the extended chain: each EBR names one logical partition
     // (relative to the EBR) and optionally the next EBR (relative to the
     // extended base). A chain the walk cannot follow attaches its issue
-    // to the container row and stops: the logicals already found stay,
+    // to the extended row and stops: the logicals already found stay,
     // and nothing renumbers.
     let mut hops = 0;
-    while let Some((base, current, container)) = chain {
+    while let Some((base, current, extended)) = chain {
         hops += 1;
         if hops > 128 {
-            partitions[container].issue = Some(invalid(
+            partitions[extended].issue = Some(invalid(
                 "extended partition chain does not terminate within 128 \
                  links; its remaining logical partitions are not read",
             ));
@@ -280,7 +280,7 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
         let ebr = match read_sector(device, current) {
             Ok(sector) => sector,
             Err(error) => {
-                partitions[container].issue = Some(invalid(format!(
+                partitions[extended].issue = Some(invalid(format!(
                     "extended boot record at sector {current} could not be \
                      read ({error}); the chain's remaining logical \
                      partitions are not read"
@@ -289,7 +289,7 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
             }
         };
         if ebr[510..512] != BOOT_SIGNATURE {
-            partitions[container].issue = Some(invalid(format!(
+            partitions[extended].issue = Some(invalid(format!(
                 "extended boot record at sector {current} is missing its \
                  signature; the chain's remaining logical partitions are \
                  not read"
@@ -332,9 +332,9 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
         chain = if next.type_byte == 0x00 {
             None
         } else if is_extended(next.type_byte) {
-            Some((base, base + next.start_lba as u64, container))
+            Some((base, base + next.start_lba as u64, extended))
         } else {
-            partitions[container].issue = Some(invalid(format!(
+            partitions[extended].issue = Some(invalid(format!(
                 "type 0x{:02x} in the extended chain's link slot where an \
                  extended type or an empty entry belongs; the chain's \
                  remaining logical partitions are not read",

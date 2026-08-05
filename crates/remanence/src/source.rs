@@ -241,24 +241,6 @@ impl ImageSource {
         )
     }
 
-    /// Materializes the whole image only when its length is within
-    /// `cap` — the P27 rule that a whole layer may be held only when its
-    /// format bounds it beneath the working set. Anything larger is
-    /// refused, never loaded.
-    pub fn bytes_bounded(&self, cap: u64, what: &str) -> Result<Vec<u8>> {
-        if self.len > cap {
-            return Err(Error::invalid_image(
-                what,
-                format!(
-                    "image is {} bytes; {what} images are bounded at {cap} bytes",
-                    self.len
-                ),
-            ));
-        }
-        let mut bytes = vec![0u8; self.len as usize];
-        self.read_at(0, &mut bytes)?;
-        Ok(bytes)
-    }
 }
 
 /// A read-only [`Device`] over an [`ImageSource`], for drivers that walk

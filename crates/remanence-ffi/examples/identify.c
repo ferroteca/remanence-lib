@@ -17,13 +17,13 @@
 
 #include "remanence.h"
 
-static const char *container_kind_name(RemanenceContainerKind kind) {
+static const char *layer_kind_name(RemanenceLayerKind kind) {
     switch (kind) {
-        case REMANENCE_CONTAINER_KIND_ARCHIVE: return "archive";
-        case REMANENCE_CONTAINER_KIND_IMAGE: return "image";
-        case REMANENCE_CONTAINER_KIND_PHYSICAL_MEDIA: return "physical-media";
-        case REMANENCE_CONTAINER_KIND_FILESYSTEM: return "filesystem";
-        case REMANENCE_CONTAINER_KIND_UNKNOWN: return "unknown";
+        case REMANENCE_LAYER_KIND_ARCHIVE: return "archive";
+        case REMANENCE_LAYER_KIND_IMAGE: return "image";
+        case REMANENCE_LAYER_KIND_PHYSICAL_MEDIA: return "physical-media";
+        case REMANENCE_LAYER_KIND_FILESYSTEM: return "filesystem";
+        case REMANENCE_LAYER_KIND_UNKNOWN: return "unknown";
     }
     return "unknown";
 }
@@ -47,18 +47,18 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
     uint64_t current = 0;
     uint64_t expected = 0;
     printf("      size: ");
-    if (remanence_container_current_bytes(identification, index, &current)) {
+    if (remanence_layer_current_bytes(identification, index, &current)) {
         printf("%" PRIu64 " bytes", current);
     } else {
         printf("unknown");
     }
-    if (remanence_container_expected_bytes(identification, index, &expected)) {
+    if (remanence_layer_expected_bytes(identification, index, &expected)) {
         printf(" (expected %" PRIu64 ")", expected);
     }
     printf("\n");
 }
 
-/* The container format the adapter recognized, and the version the
+/* The image container format the adapter recognized, and the version the
  * formats that declare one carry. A version accessor answers 0 for an
  * image of any other format, so each is read only under its own format. */
 static void print_device_format(const RemanenceDevice *device) {
@@ -369,20 +369,16 @@ int main(int argc, char **argv) {
     print_assurance(device);
     printf("Modified: %s\n\n", remanence_identification_modified(identification) ? "yes" : "no");
 
-    size_t container_count = remanence_identification_container_count(identification);
-    printf("Containers (%zu):\n", container_count);
-    int has_hdos = 0;
-    for (size_t i = 0; i < container_count; ++i) {
-        RemanenceContainerKind kind = remanence_container_kind(identification, i);
-        const char *id = remanence_container_id(identification, i);
-        printf("  - [%s] %s \"%s\" (confidence %d)%s\n", container_kind_name(kind), id,
-               remanence_container_name(identification, i),
-               (int)remanence_container_confidence(identification, i),
-               remanence_container_known(identification, i) ? "" : " [unknown]");
+    size_t layer_count = remanence_identification_layer_count(identification);
+    printf("Layers (%zu):\n", layer_count);
+    for (size_t i = 0; i < layer_count; ++i) {
+        printf("  - [%s] %s \"%s\" (confidence %d)%s\n",
+               layer_kind_name(remanence_layer_kind(identification, i)),
+               remanence_layer_id(identification, i),
+               remanence_layer_name(identification, i),
+               (int)remanence_layer_confidence(identification, i),
+               remanence_layer_known(identification, i) ? "" : " [unknown]");
         print_size(identification, i);
-        if (kind == REMANENCE_CONTAINER_KIND_FILESYSTEM && strcmp(id, "hdos") == 0) {
-            has_hdos = 1;
-        }
     }
 
     size_t evidence_count = remanence_identification_evidence_count(identification);
@@ -393,25 +389,43 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* File access lives on one node. The device is asked what it
+     * *resolves* to, and the listing comes from the filesystem it
+     * answers with; a medium bearing no namespace is a named absence
+     * here rather than a failure of the identification above. */
     int status = EXIT_SUCCESS;
-    if (has_hdos) {
-        RemanenceHdosFileList *files =
-            remanence_device_list_hdos_files(device, &error_category, &error, &error_rule);
-        if (files == NULL) {
-            report_error("\nerror listing HDOS files", error_category, error, error_rule);
+    RemanenceFilesystem *filesystem =
+        remanence_device_filesystem(device, &error_category, &error, &error_rule);
+    if (filesystem == NULL) {
+        printf("\nFiles:   ");
+        report_error("none reachable", error_category, error, error_rule);
+    } else {
+        RemanenceEntryList *entries =
+            remanence_filesystem_entries(filesystem, "", &error_category, &error, &error_rule);
+        if (entries == NULL) {
+            report_error("\nerror listing the root", error_category, error, error_rule);
             status = EXIT_FAILURE;
         } else {
-            size_t file_count = remanence_hdos_file_count(files);
-            printf("\nFiles (%zu):\n", file_count);
-            for (size_t i = 0; i < file_count; ++i) {
-                printf("  %s\t%" PRIu32 " sectors\t%s\t%s\n",
-                       remanence_hdos_file_display_name(files, i),
-                       remanence_hdos_file_size_sectors(files, i),
-                       remanence_hdos_file_modified_date(files, i),
-                       remanence_hdos_file_flags(files, i));
+            size_t entry_count = remanence_entry_count(entries);
+            printf("\nFiles (%zu, %s):\n", entry_count, remanence_filesystem_kind(filesystem));
+            for (size_t i = 0; i < entry_count; ++i) {
+                printf("  %s\t%" PRIu64 " bytes%s", remanence_entry_name(entries, i),
+                       remanence_entry_size_bytes(entries, i),
+                       remanence_entry_kind(entries, i) == REMANENCE_ENTRY_KIND_DIRECTORY
+                           ? "\t<dir>"
+                           : "");
+                /* Whatever the recognizing filesystem declares beyond
+                 * name, kind and size, in its own spelling. */
+                size_t facts = remanence_entry_declared_count(entries, i);
+                for (size_t fact = 0; fact < facts; ++fact) {
+                    printf("\t%s=%s", remanence_entry_declared_key(entries, i, fact),
+                           remanence_entry_declared_value(entries, i, fact));
+                }
+                printf("\n");
             }
-            remanence_hdos_file_list_free(files);
+            remanence_entry_list_free(entries);
         }
+        remanence_filesystem_free(filesystem);
     }
 
     show_drive_letters(device);

@@ -7,7 +7,7 @@
 //! reads without the entry resident whole. These tests build their zip
 //! by hand, so they run without fixtures.
 
-use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ContainerKind};
+use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ErrorCategory, LayerKind, NamespaceRule};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
@@ -118,11 +118,11 @@ fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
 
     // The layers report the archive wrapper and the h8d-sized image.
     let identification = disk.identify().expect("a medium is attached");
-    let archive = &identification.containers[0];
-    assert_eq!(archive.kind, ContainerKind::Archive);
+    let archive = &identification.layers[0];
+    assert_eq!(archive.kind, LayerKind::Archive);
     assert_eq!(archive.id, "zip");
-    let image = &identification.containers[1];
-    assert_eq!(image.kind, ContainerKind::Image);
+    let image = &identification.layers[1];
+    assert_eq!(image.kind, LayerKind::Image);
     assert_eq!(image.id, "h8d");
 }
 
@@ -199,8 +199,8 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
 
     // The raw plane: the archive wrapper is still reported.
     let identification = disk.identify().expect("a medium is attached");
-    assert_eq!(identification.containers[0].kind, ContainerKind::Archive);
-    assert_eq!(identification.containers[0].id, "zip");
+    assert_eq!(identification.layers[0].kind, LayerKind::Archive);
+    assert_eq!(identification.layers[0].id, "zip");
 
     // The presented plane, over the very same claim — the new capability.
     let report = disk.inspect().expect("an archived image inspects");
@@ -253,11 +253,21 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
         .load_media(&path, AccessIntent::Read)
         .expect("the image itself opens; only the HDOS reader is bounded");
 
+    // The medium composes no volume, so the resolver would look for a
+    // namespace the medium bears itself — and that lookup is bounded
+    // (P27), so a medium this size is a named absence rather than a full
+    // scan.
     let error = medium
-        .list_hdos_files()
-        .expect_err("an image past the bound is refused");
+        .filesystem()
+        .expect_err("a medium past the bound is refused");
+    assert_eq!(error.category(), ErrorCategory::NotFound);
+    assert_eq!(
+        error.rule(),
+        Some(NamespaceRule::NoNamespace.as_str()),
+        "the resolver's refusals carry their rule identity (P10)"
+    );
     let message = error.to_string();
-    assert!(message.contains("bounded"), "names the bound: {message}");
+    assert!(message.contains("bound"), "names the bound: {message}");
 
     drop(session);
     std::fs::remove_file(&path).ok();

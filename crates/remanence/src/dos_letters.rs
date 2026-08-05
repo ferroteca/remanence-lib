@@ -52,8 +52,8 @@ use crate::report::{DiskReport, RegionId, RegionInfo, RegionRole, VolumeId, Volu
 /// LBA-addressed type means to a DOS that shipped before it existed.
 const DOS_PARTITION_TYPES: [u8; 3] = [0x01, 0x04, 0x06];
 
-/// The extended-container type the claimed variants follow. The
-/// LBA-addressed container (`0x0f`) is a later type, so its chain's
+/// The extended-partition type the claimed variants follow. The
+/// LBA-addressed extended partition (`0x0f`) is a later type, so its chain's
 /// logical drives take no letter under either claimed rule even though
 /// this library reads them.
 const DOS_EXTENDED_TYPE: u8 = 0x05;
@@ -393,7 +393,7 @@ impl DriveMap {
 ///
 /// The composer opens no artifact: it takes the inspection reports the
 /// caller already holds, and every report stays the caller's. It composes
-/// no file container over the result either — the letter is what a
+/// no namespace over the result either — the letter is what a
 /// consumer shows a user, and the volume identity is what it passes back
 /// into a file verb.
 #[derive(Debug, Default)]
@@ -606,7 +606,7 @@ impl<'a> DosMachine<'a> {
             ));
             if logicals > 0 && !follows_extended_chain(report) {
                 provenance.push(format!(
-                    "{device}'s extended container is not type 0x{DOS_EXTENDED_TYPE:02x}, \
+                    "{device}'s extended partition is not type 0x{DOS_EXTENDED_TYPE:02x}, \
                      which no claimed variant follows, so its logical drives \
                      take no letter"
                 ));
@@ -860,14 +860,14 @@ fn lettered_regions<'a>(
         })
 }
 
-/// Whether this disk's extended container is one the claimed variants
-/// follow. A container the library reads and DOS did not is not a chain
+/// Whether this disk's extended partition is one the claimed variants
+/// follow. An extended partition the library reads and DOS did not is not a chain
 /// DOS lettered.
 fn follows_extended_chain(report: &DiskReport) -> bool {
     report
         .regions
         .iter()
-        .any(|region| region.role == RegionRole::Container && region.declared_type == DOS_EXTENDED_TYPE)
+        .any(|region| region.role == RegionRole::Structure && region.declared_type == DOS_EXTENDED_TYPE)
 }
 
 fn volume_on_region(report: &DiskReport, region: RegionId) -> Option<VolumeId> {

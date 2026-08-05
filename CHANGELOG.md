@@ -20,6 +20,62 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **File access lives on one node.** `Filesystem` is the namespace, and
+  it is the only type that carries file verbs: `entries`, `stat`,
+  `get_file`, `read_file`, `write_file`, `resize_file` and
+  `make_directory` live there and nowhere else. A device holding a
+  partitionable medium and bearing `get_file` would be a category error
+  in the type rather than a refusal waiting to happen, so **the device
+  exposes no file access at all** — it may be asked what it *resolves*
+  to, and may not be told to act as something it isn't.
+
+  **`device.filesystem()` is the resolver**, and it is P19's
+  transparency clause as a method: it walks device → volume →
+  filesystem where every seam has exactly one supported answer, and
+  refuses naming the candidates where one does not. It creates nothing
+  and never guesses. Where several volumes bear a filesystem, selection
+  runs by the identity the inspection report issued —
+  `device.volume(id).filesystem()` — and never by a position. A volume
+  bearing no filesystem is a **named absence**, not an empty listing,
+  and where recognition was attempted and refused the answer is that
+  seam's own refusal, category and rule intact, rather than a coarser
+  one. The resolver's refusals are categorized and rule-identified
+  (P10) against a new `NamespaceRule` set: `several-candidates`,
+  `no-namespace`, `recognized-not-read`, `namespace-not-writable`.
+
+  **`get_file` answers with a `File`**, borrowed from the filesystem
+  that names it, offering the bounded streamed form (`read_at`,
+  `write_at`) beside the whole-value conveniences (`bytes`,
+  `Filesystem::read_file`) — P27's two shapes on one view. It is where
+  absence stops being an answer: `stat` asks whether something is
+  there, `get_file` asks for the file, so nothing and a directory are
+  both refused by name.
+
+  **The HDOS catalog is reached the same way.** `list_hdos_files`'s
+  selector-free signature stops being an inconsistency and becomes the
+  resolver's transparent form: an H8D composes no volume, so
+  `device.filesystem()` resolves to the namespace the medium bears
+  itself, and `entries("")` lists it. The adapter that recognized a
+  namespace is the one that opens it, so nothing in the resolver
+  branches on a filesystem identifier; an adapter that recognizes what
+  this release does not read — CP/M today — refuses by name. That
+  lookup is bounded (P27): a medium composing no volume and larger than
+  the bound the HDOS reader already declared is a named absence rather
+  than a full scan.
+
+  **One entry vocabulary, however the namespace was reached.** `Entry`
+  carries the name as stored, the kind and the size, and whatever the
+  recognizing filesystem declares beyond them travels as `EntryFact` in
+  that filesystem's own spelling and order — HDOS's catalog date, flag
+  letters and sector count are the delivered case. Nothing is
+  normalized on the way through.
+
+  `remanence_device_filesystem`, `remanence_device_volume`,
+  `remanence_volume_*`, `remanence_filesystem_*`, `remanence_file_*` and
+  `remanence_entry_*` are the C ABI's; `StorageDevice.filesystem()`,
+  `StorageDevice.volume()`, `Volume`, `Filesystem`, `File`, `Entry` and
+  `EntryFact` are Python's.
+
 - **An artifact can be asked what it is before a machine is configured
   for it.** `discover_media(path)` is a first-class library function on
   no handle at all: it claims the artifact for the read, identifies it,
@@ -287,9 +343,9 @@ rather than bridged. Read every entry below in that light.
   whether a CD-ROM is present and where its resident driver was declared
   to be — plus the inspection reports the caller already holds, applies
   one named assignment rule, and answers with the volume each letter
-  names. It opens no artifact and composes no file container over the
+  names. It opens no artifact and composes no namespace over the
   result: the letter is what a consumer shows a user, and the volume
-  identity is what it passes back into a file verb. `remanence_dos_*`
+  identity is what it passes back into the namespace node. `remanence_dos_*`
   and `remanence_drive_map_*` are the C ABI's, and `DosMachine`,
   `DriveMap`, `DriveMapping` and `dos_assignment_rules()` Python's.
 
@@ -325,6 +381,36 @@ rather than bridged. Read every entry below in that light.
   floppy slot, a CD-ROM drive, or DOS attachment order.
 
 ### Changed
+
+- **"Container" is retired from this project's own vocabulary.** It is
+  standard for five different things — an archive, an image container
+  format, a multimedia container, a Docker container, a LUKS container —
+  and can never disambiguate, so nothing this project names uses it. An
+  identification now reports the **layers of an artifact's nesting**:
+  `Layer`, `LayerKind` and `LayerLayout` in Rust, `Identification.layers`
+  in place of `.containers`, `remanence_layer_*` and
+  `remanence_identification_layer_count` on the C ABI, and the `Layer`
+  class in Python. `RegionRole::Container` becomes `RegionRole::Structure`
+  (`"structure"` in its stable spelling), because an extended partition
+  is a structural region. `Error::InvalidImage`'s `container` field
+  becomes `format` — the seam the refusal is attributed to. In-force P19
+  is retitled to "The namespace is the common file-access seam" and P23's
+  active-layer row is now **namespace**; neither changes what it claims.
+  The word survives untouched where it is somebody else's: an *image
+  container format* is the industry's term for qcow2, VDI and P64, and a
+  retirement reaches this project's own vocabulary rather than
+  quotations of the world's.
+
+- **The file verbs moved off the device onto the namespace node**, with
+  the volume identity becoming the selector between namespaces rather
+  than an argument to every verb. `StorageDevice::{entries, stat,
+  read_file, read_file_at, resize_file, write_file, write_file_at,
+  make_directory}` are gone, along with `remanence_device_*` and the
+  Python `StorageDevice` methods of the same names; each has its
+  counterpart on `Filesystem` or `File` above. `FatEntry`/`FatEntryKind`
+  become `Entry`/`EntryKind`, `RemanenceFatEntryList` and
+  `remanence_fat_entry_*` become `RemanenceEntryList` and
+  `remanence_entry_*`, and Python's `FatEntry` becomes `Entry`.
 
 - **Devices are added and media are loaded, as two acts, and a device
   family is a concrete drive.** One-act `attach` is gone. A machine takes
@@ -569,6 +655,20 @@ rather than bridged. Read every entry below in that light.
   at the raw fallback as they always have.
 
 ### Removed
+
+- **The standalone HDOS reader.** `list_hdos_files`, `read_hdos_file`
+  and `HdosFile` are gone from all three surfaces, along with
+  `StorageDevice::{list_hdos_files, read_hdos_file}`,
+  `remanence_list_hdos_files`, `remanence_read_hdos_file`,
+  `remanence_device_list_hdos_files`, `remanence_device_read_hdos_file`,
+  `RemanenceHdosFileList` with its `remanence_hdos_file_*` accessors, and
+  Python's module-level functions and `HdosFile` class. An HDOS catalog
+  is one namespace among others and is walked through `Filesystem` like
+  any other: `device.filesystem()` resolves to it, `entries("")` lists
+  it, `get_file(name)` reaches a file. What the catalog records past a
+  name, a kind and a size — the date, the flag letters, the sector
+  count — travels as declared entry facts in HDOS's own spelling rather
+  than as a second file type.
 
 - **`Disk::open` and `remanence_disk_open`.** A medium is reachable only
   through the device holding it, because a medium opened beside the

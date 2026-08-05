@@ -16,7 +16,7 @@ use crate::device_family::DeviceFamily;
 use crate::disk::DiskFormat;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::fat::FatVolume;
-use crate::filesystem;
+use crate::filesystem_catalog;
 use crate::mbr;
 use crate::media_profile::{FLEXIBLE_5_25_HARD_10, LOGICAL_BLOCK_512, MediaProfile};
 use crate::qcow2::{QCOW2_MAGIC, Qcow2, SUPPORTED_VERSION_CEILING};
@@ -545,7 +545,7 @@ impl ImageFormatAdapter for H8dAdapter {
     ) -> Result<Vec<DetectedFilesystem>> {
         let expected = H8D_DESCRIPTOR.disk.expect("H8D geometry").expected_size();
         let mut volume = SourceDevice(source);
-        let found = filesystem::detect(&mut volume)?;
+        let found = filesystem_catalog::detect(&mut volume)?;
         Ok(match (found.filesystem_id, found.filesystem_name) {
             (Some(id), Some(name)) => vec![DetectedFilesystem {
                 id: id.to_owned(),
@@ -662,7 +662,7 @@ impl ImageFormatAdapter for Qcow2Adapter {
 /// Walks the volumes a block-family virtual disk composes, and the
 /// filesystem recognized on each. This is a mechanism two image formats
 /// demonstrate rather than one format's rule (P12): it takes a presented
-/// device and its size, knows nothing about which container produced
+/// device and its size, knows nothing about which image format produced
 /// them, and leaves every format-specific observation to the adapter that
 /// called it.
 fn volumes_of(
@@ -809,7 +809,7 @@ impl ImageFormatAdapter for VdiAdapter {
         }
     }
 
-    /// Identification is the container's own layers, and a differencing
+    /// Identification is the artifact's own layers, and a differencing
     /// image identifies as the VDI it is (U5): the header is evidence
     /// before the chain is anyone's business, and walking the volumes
     /// inside one would need the parent, which only an open through a
