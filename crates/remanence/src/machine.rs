@@ -23,7 +23,11 @@
 //! meaningful than any other's. It serves the caller who is opening
 //! artifacts rather than reconstructing a machine.
 
+use std::path::Path;
+
+use crate::device::AccessIntent;
 use crate::device_family::DeviceFamily;
+use crate::discovery::{Discovery, discover_media_with_cache};
 use crate::error::{Error, Result};
 use crate::storage_device::{AttachmentId, StorageDevice};
 
@@ -127,6 +131,28 @@ impl Session {
         self.anonymous_mut().add_device(family)
     }
 
+    /// Adds a device for the artifact at `path` to the session's
+    /// anonymous machine, as [`Machine::add_device_for`] does there.
+    pub fn add_device_for(
+        &mut self,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+    ) -> Result<&mut StorageDevice> {
+        self.anonymous_mut().add_device_for(path, intent)
+    }
+
+    /// [`Session::add_device_for`] under a caller-declared session cache
+    /// bound (P27).
+    pub fn add_device_for_with_cache(
+        &mut self,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+        cache_bytes: u64,
+    ) -> Result<&mut StorageDevice> {
+        self.anonymous_mut()
+            .add_device_for_with_cache(path, intent, cache_bytes)
+    }
+
     /// Adds a device of `family` at the named slot of the anonymous
     /// machine, as [`Machine::add_device_at`] does there.
     pub fn add_device_at(
@@ -167,6 +193,39 @@ impl Session {
     pub fn require_device(&mut self, attachment: AttachmentId) -> Result<&mut StorageDevice> {
         self.anonymous_mut().require_device(attachment)
     }
+}
+
+/// The device family a discovery's format declares, or the refusal that
+/// says no format declared one.
+///
+/// The refusal names three things, because a caller who meets it has to
+/// choose a drive: what the artifact is, what the medium is, and which
+/// claimed families are served that medium. The last is derived from the
+/// families' own declarations, so it is a list of drives the two-act path
+/// will actually accept rather than a suggestion.
+fn default_family(discovery: &Discovery) -> Result<DeviceFamily> {
+    if let Some(family) = discovery.default_device() {
+        return Ok(family);
+    }
+    let accepting: Vec<&str> = discovery
+        .accepting_families()
+        .iter()
+        .map(|family| family.id())
+        .collect();
+    let drives = match accepting.len() {
+        0 => "no drive family this release claims is served that medium".to_owned(),
+        _ => format!(
+            "add the drive the machine had — {} — and load the medium into it",
+            accepting.join(", ")
+        ),
+    };
+    Err(Error::unsupported(format!(
+        "'{}' is a {} and that format declares no default device; it holds \
+         {}, so {drives}",
+        discovery.path(),
+        discovery.image_format_name(),
+        discovery.media_type_name()
+    )))
 }
 
 /// One machine within a session: a set of family-typed storage devices,
@@ -247,6 +306,63 @@ impl Machine {
 
         self.devices.push(StorageDevice::new(attachment));
         Ok(self.devices.last_mut().expect("just pushed"))
+    }
+
+    /// Adds a fresh device of the artifact's **format-declared default
+    /// family**, loads the medium into it, and answers with that device.
+    ///
+    /// This is the one convenience over discovery, and it composes the
+    /// two acts without changing the access path: it discovers the
+    /// artifact at `path`, adds a device — a fresh one, never a slot
+    /// already in the machine — and consumes the discovery into it, so
+    /// one claim is held from the question to the load (P7) and nothing
+    /// expensive runs twice.
+    ///
+    /// **A format that declares no default refuses by name**, toward the
+    /// two explicit acts: a raw image says nothing about the machine it
+    /// came from, and a default guessed from a media type would be the
+    /// library asserting a drive nobody stated (P3). The refusal names
+    /// the families the medium *could* go in, which are derived from the
+    /// families' own declarations.
+    ///
+    /// There is no media-first spelling of this. With one storage handle
+    /// both spellings would return the same device.
+    pub fn add_device_for(
+        &mut self,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+    ) -> Result<&mut StorageDevice> {
+        self.add_device_for_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// [`Machine::add_device_for`] under a caller-declared session cache
+    /// bound (P27), which the discovery is made under and the device
+    /// keeps.
+    pub fn add_device_for_with_cache(
+        &mut self,
+        path: impl AsRef<Path>,
+        intent: AccessIntent,
+        cache_bytes: u64,
+    ) -> Result<&mut StorageDevice> {
+        let discovery = discover_media_with_cache(path, intent, cache_bytes)?;
+        let family = default_family(&discovery)?;
+        let attachment = self.add_device(family)?.attachment();
+        match self
+            .require_device(attachment)
+            .expect("the device was added a statement ago")
+            .load_discovery(discovery)
+        {
+            Ok(()) => self.require_device(attachment),
+            Err(error) => {
+                // The convenience is one act to a caller, so a refused
+                // load leaves no slot behind for them to clean up. The
+                // two-act path is where a device outlives a failed load,
+                // because there the caller made the device deliberately.
+                self.remove_device(attachment)
+                    .expect("the device was added two statements ago");
+                Err(error)
+            }
+        }
     }
 
     /// Removes the device, releasing any medium's P7 claim with it and

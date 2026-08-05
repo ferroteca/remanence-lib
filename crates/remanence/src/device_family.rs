@@ -172,6 +172,22 @@ impl DeviceFamily {
         self.0.media.iter().any(|claimed| claimed.id == media.id)
     }
 
+    /// Every family a device could hold `media` in, derived by asking the
+    /// families themselves.
+    ///
+    /// It is a **query over the declarations**, not a second list: a
+    /// family states the media it accepts (P14, D19's direction), and
+    /// this reads that statement the other way round. Interior names are
+    /// absent because they accept nothing and instantiate nothing, so an
+    /// empty answer means no drive this release claims is served the
+    /// article — an outcome, not a defect in the medium.
+    pub(crate) fn accepting(media: &'static MediaProfile) -> Vec<Self> {
+        Self::concrete()
+            .into_iter()
+            .filter(|family| family.accepts(media))
+            .collect()
+    }
+
     /// The drive profile this family claims as its recording path (P22),
     /// by its stable spelling, or `None` where the family claims none.
     pub fn flux_path(self) -> Option<&'static str> {

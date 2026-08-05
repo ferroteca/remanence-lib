@@ -1042,6 +1042,228 @@ fn assurance_conditions() -> Vec<String> {
         .collect()
 }
 
+/// Identifies the artifact at `path` — a disk image, or
+/// `archive[/entry]` — under the caller's declared intent, and answers
+/// with what it is and where it could go.
+///
+/// It is on no handle at all: no session and no machine, because it
+/// consults catalogs and evidence rather than configuration, and it
+/// mutates nothing. The claim it takes is held by the returned
+/// `Discovery` until that is consumed or dropped, so `writable=True`
+/// claims the artifact exclusively and raises here when that claim
+/// cannot be secured, never falling back.
+#[pyfunction]
+#[pyo3(signature = (path, *, writable, cache_bytes = None))]
+fn discover_media(path: PathBuf, writable: bool, cache_bytes: Option<u64>) -> PyResult<Discovery> {
+    let intent = access_intent(writable);
+    let discovered = match cache_bytes {
+        Some(cache_bytes) => remanence::discover_media_with_cache(path, intent, cache_bytes),
+        None => remanence::discover_media(path, intent),
+    };
+    Ok(Discovery {
+        inner: Mutex::new(Some(discovered.map_err(to_py_err)?)),
+    })
+}
+
+/// What one artifact turned out to be, and the claim under which that
+/// was established.
+///
+/// It is a handle rather than a record because it holds two things a
+/// record could not: the claim on the artifact, and the work the
+/// recognition already did. `StorageDevice.load_discovery` **consumes**
+/// it — the state moves into the device, so nothing runs twice and the
+/// claim never lapses between the question and the load — and every
+/// attribute below raises by name once it has been.
+#[pyclass(module = "remanence")]
+pub struct Discovery {
+    /// `None` once a load has consumed it.
+    inner: Mutex<Option<remanence::Discovery>>,
+}
+
+impl Discovery {
+    /// Reads one fact off the discovery, or refuses by name where a load
+    /// has already taken it.
+    fn read<T>(&self, read: impl FnOnce(&remanence::Discovery) -> T) -> PyResult<T> {
+        let discovery = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match discovery.as_ref() {
+            Some(discovery) => Ok(read(discovery)),
+            None => Err(categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                "this discovery was consumed by a load; ask again with \
+                 discover_media",
+            )),
+        }
+    }
+
+    /// Takes the discovery for the load that consumes it.
+    fn take(&self) -> PyResult<remanence::Discovery> {
+        let mut discovery = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        discovery.take().ok_or_else(|| {
+            categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                "this discovery was consumed by a load; ask again with \
+                 discover_media",
+            )
+        })
+    }
+}
+
+#[pymethods]
+impl Discovery {
+    /// The artifact claimed — the archive itself for an image discovered
+    /// inside one.
+    #[getter]
+    fn path(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.path().to_owned())
+    }
+
+    /// The resolved image — the entry name for an image inside an
+    /// archive, else the source path.
+    #[getter]
+    fn image_path(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.image_path().display().to_string())
+    }
+
+    /// The image format's stable spelling — `"h8d"`, `"qcow2"`,
+    /// `"vdi"`, `"raw"`.
+    #[getter]
+    fn image_format(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.image_format().to_owned())
+    }
+
+    /// The image format's name, fit to show a user.
+    #[getter]
+    fn image_format_name(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.image_format_name().to_owned())
+    }
+
+    /// `"raw"`, `"qcow2"` or `"vdi"` — the container format, as
+    /// `StorageDevice.format` reports it.
+    #[getter]
+    fn format(&self) -> PyResult<&'static str> {
+        self.read(|discovery| match discovery.format() {
+            remanence::DiskFormat::Raw => "raw",
+            remanence::DiskFormat::Qcow2 { .. } => "qcow2",
+            remanence::DiskFormat::Vdi { .. } => "vdi",
+        })
+    }
+
+    /// The **exact medium**, by the media-type catalog's stable
+    /// spelling. The image-format adapter that loaded the state named
+    /// it; nothing here guessed.
+    #[getter]
+    fn media_type(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.media_type().to_owned())
+    }
+
+    /// The medium's name, fit to show a user beside the drive it goes
+    /// in.
+    #[getter]
+    fn media_type_name(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.media_type_name().to_owned())
+    }
+
+    /// Every concrete device family served this medium, by stable
+    /// spelling — the answer to "where could this go?", derived from the
+    /// families' own declarations. Empty means no drive this release
+    /// claims takes it.
+    #[getter]
+    fn device_families(&self) -> PyResult<Vec<String>> {
+        self.read(|discovery| {
+            discovery
+                .accepting_families()
+                .iter()
+                .map(|family| family.id().to_owned())
+                .collect()
+        })
+    }
+
+    /// The device family the **image format** declares for the disks it
+    /// records — the answer to "where did this come from?" — or `None`
+    /// where it declares none.
+    ///
+    /// `None` is ordinary: a raw image says nothing about its machine,
+    /// and the caller then states the drive itself in the two acts.
+    #[getter]
+    fn default_device(&self) -> PyResult<Option<String>> {
+        self.read(|discovery| {
+            discovery
+                .default_device()
+                .map(|family| family.id().to_owned())
+        })
+    }
+
+    /// The resolved image's own size in bytes — the raw plane, distinct
+    /// from `size`.
+    #[getter]
+    fn image_size_bytes(&self) -> PyResult<u64> {
+        self.read(remanence::Discovery::image_size_bytes)
+    }
+
+    /// The presented disk's size in bytes (the guest-visible size for
+    /// qcow2).
+    #[getter]
+    fn size(&self) -> PyResult<u64> {
+        self.read(remanence::Discovery::size)
+    }
+
+    /// `"read-write"` or `"read-only"` — the **effective** mode this
+    /// discovery established, which a load consuming it inherits.
+    #[getter]
+    fn mode(&self) -> PyResult<&'static str> {
+        self.read(|discovery| mode_str(discovery.mode()))
+    }
+
+    /// What this discovery established about the evidence beneath the
+    /// medium, before anything is read.
+    #[getter]
+    fn assurance(&self) -> PyResult<Assurance> {
+        self.read(|discovery| Assurance::new(discovery.assurance()))
+    }
+
+    /// Identifies the artifact's container layers and probable
+    /// filesystem — the same reading `StorageDevice.identify` gives once
+    /// a medium is loaded.
+    fn identify(&self, py: Python<'_>) -> PyResult<Identification> {
+        let identification = self.read(remanence::Discovery::identify)?;
+        let containers = identification
+            .containers
+            .iter()
+            .map(|container| Container::new(py, container))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Identification {
+            containers,
+            modified: identification.modified,
+            evidence: identification.evidence,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match inner.as_ref() {
+            Some(discovery) => format!(
+                "Discovery(path={:?}, media_type={:?}, default_device={})",
+                discovery.path(),
+                discovery.media_type(),
+                match discovery.default_device() {
+                    Some(family) => format!("{:?}", family.id()),
+                    None => "None".to_owned(),
+                }
+            ),
+            None => "Discovery(consumed)".to_owned(),
+        }
+    }
+}
+
 /// An open session: the claim and cache scope, holding the machines
 /// within it (P32).
 ///
@@ -1120,6 +1342,30 @@ impl Session {
         let added = match slot {
             Some(slot) => session.add_device_at(family, slot),
             None => session.add_device(family),
+        };
+        let attachment = added.map_err(to_py_err)?.attachment();
+        drop(session);
+        Ok(StorageDevice {
+            session: Arc::clone(&self.inner),
+            machine: None,
+            attachment,
+        })
+    }
+
+    /// Adds a device for the artifact at `path` to the session's
+    /// anonymous machine, as `Machine.add_device_for` does there.
+    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
+    fn add_device_for(
+        &self,
+        path: PathBuf,
+        writable: bool,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<StorageDevice> {
+        let intent = access_intent(writable);
+        let mut session = self.lock();
+        let added = match cache_bytes {
+            Some(cache_bytes) => session.add_device_for_with_cache(path, intent, cache_bytes),
+            None => session.add_device_for(path, intent),
         };
         let attachment = added.map_err(to_py_err)?.attachment();
         drop(session);
@@ -1236,6 +1482,43 @@ impl Machine {
         let added = match slot {
             Some(slot) => machine.add_device_at(family, slot),
             None => machine.add_device(family),
+        };
+        let attachment = added.map_err(to_py_err)?.attachment();
+        drop(session);
+        Ok(StorageDevice {
+            session: Arc::clone(&self.session),
+            machine: self.identity.clone(),
+            attachment,
+        })
+    }
+
+    /// Adds a device of the artifact's **format-declared default
+    /// family**, loads the medium at `path` into it, and returns that
+    /// device.
+    ///
+    /// It is the one convenience over discovery, and it composes the two
+    /// acts without changing the access path: one claim is held from the
+    /// question to the load, and the device it answers with is an
+    /// ordinary device in this machine's own set — a fresh one, never a
+    /// slot already there.
+    ///
+    /// **A format that declares no default raises by name**, toward the
+    /// two explicit acts (`add_device` then `StorageDevice.load_media`),
+    /// naming the families the medium could go in. A refused call leaves
+    /// no device behind.
+    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
+    fn add_device_for(
+        &self,
+        path: PathBuf,
+        writable: bool,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<StorageDevice> {
+        let intent = access_intent(writable);
+        let mut session = self.lock();
+        let machine = self.get(&mut session)?;
+        let added = match cache_bytes {
+            Some(cache_bytes) => machine.add_device_for_with_cache(path, intent, cache_bytes),
+            None => machine.add_device_for(path, intent),
         };
         let attachment = added.map_err(to_py_err)?.attachment();
         drop(session);
@@ -1426,6 +1709,24 @@ impl StorageDevice {
             None => device.load_media(path, intent),
         }
         .map_err(to_py_err)
+    }
+
+    /// Loads the medium a `Discovery` already opened into this device,
+    /// **consuming the discovery**.
+    ///
+    /// This is the load that runs nothing twice: the discovery holds the
+    /// claim taken when the artifact was identified and the work that
+    /// identification did, and both move into the device, so nothing can
+    /// change the artifact between the question and the load. The
+    /// intent, the cache bound and the assurance are the ones the
+    /// discovery established.
+    ///
+    /// **The discovery is consumed either way** — a refused load
+    /// releases its claim with it — and every attribute of it raises by
+    /// name afterwards. Asking again is `discover_media`.
+    fn load_discovery(&mut self, discovery: &Discovery) -> PyResult<()> {
+        let discovered = discovery.take()?;
+        self.get()?.load_discovery(discovered).map_err(to_py_err)
     }
 
     /// Ejects the medium, releasing its claim, and leaves the device in
@@ -3575,6 +3876,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TrackSectorLayout>()?;
     m.add_class::<FilesystemLayout>()?;
     m.add_class::<HdosFile>()?;
+    m.add_class::<Discovery>()?;
     m.add_class::<Session>()?;
     m.add_class::<Machine>()?;
     m.add_class::<StorageDevice>()?;
@@ -3595,6 +3897,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DosAssignmentRule>()?;
     m.add_function(wrap_pyfunction!(assurance_conditions, m)?)?;
     m.add_function(wrap_pyfunction!(device_families, m)?)?;
+    m.add_function(wrap_pyfunction!(discover_media, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
     m.add_function(wrap_pyfunction!(list_hdos_files, m)?)?;
     m.add_function(wrap_pyfunction!(read_hdos_file, m)?)?;

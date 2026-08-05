@@ -20,6 +20,56 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **An artifact can be asked what it is before a machine is configured
+  for it.** `discover_media(path)` is a first-class library function on
+  no handle at all: it claims the artifact for the read, identifies it,
+  and answers with the exact medium, the concrete device families served
+  that medium, and the image format's **declared default device** —
+  needing no session and no machine, because it consults catalogs and
+  evidence rather than configuration, and mutating nothing.
+
+  **What it answers with is a consumable handle, not a record.** A
+  discovery holds the claim taken when the artifact was identified and
+  the work that identification did, and `load_discovery` moves that
+  state into a device rather than opening the artifact a second time —
+  so nothing expensive runs twice and no window exists between the
+  question and the load in which the file could change. The intent, the
+  cache bound and the assurance a device then reports are the ones the
+  discovery established. A load consumes the discovery either way: a
+  refused load releases its claim with it rather than handing back a
+  half-used handle, and asking again is always allowed.
+
+  **Image formats now declare the device family whose disks they
+  record.** It is a recording-side fact the media type cannot honestly
+  hold — a ten-sector hard-sectored 5.25-inch disk is the article of more
+  than one machine's drive, while an H8D records a Heathkit one — so it
+  sits on the format: `h8d` declares the Heathkit H-17, `qcow2` and `vdi`
+  declare the hard disk, and `raw` declares nothing, because a raw image
+  says nothing about the machine it came from. Which families would
+  *accept* a medium is the other question entirely, and is derived by
+  asking the families themselves rather than kept as a second list.
+
+  **One machine-level convenience sits over discovery**, and only one:
+  `add_device_for(path)` adds a fresh device of the format-declared
+  default family, loads the medium into it, and answers with that device
+  — the same access path, composed. Where a format declares no default it
+  refuses by name toward the two explicit acts, naming the drives the
+  medium could go in, and leaves no device behind. A declaration nobody
+  makes is a refusal, not a guess. There is no media-first spelling:
+  with one storage handle it would return the same device.
+
+  In C: `remanence_discover_media`, its `_with_cache` sibling, the
+  `remanence_discovery_*` readers (including `_default_device`, null
+  where a format declares none), `remanence_discovery_free`,
+  `remanence_device_load_discovery` — which consumes and frees the
+  discovery whatever it returns — and
+  `remanence_machine_add_device_for` with its session spelling. In
+  Python: `remanence.discover_media(path, writable=…)`, the `Discovery`
+  object, `StorageDevice.load_discovery`, and `Machine.add_device_for` /
+  `Session.add_device_for`. The example C consumer gains
+  `identify --discover <path>`, and asks the artifact when it is told no
+  device family rather than assuming a hard disk.
+
 - **A medium now says what it is, from a catalog of media types.** Every
   medium the library holds names one immutable entry carrying that
   article's passive compatibility facts — a media profile — and the

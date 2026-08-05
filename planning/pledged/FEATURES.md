@@ -115,30 +115,3 @@ last of it from this project's vocabulary.
 Touches: S1, S2, S3. Supports: the U2 amendment; the P14 amendment;
 P35; the P19 amendment; in-force P7, P12, P27. Needs F48, whose
 `Filesystem` node is what an archive's content is reached through.
-
-## F51 — Discovery, declared defaults, and the one-step conveniences
-
-`discover_media(path)` lands as a first-class library function on no
-handle: the claim for the read, identification, and a report of the
-exact medium, the device families that accept it (derived from the
-families' own declarations), and the image format's declared default
-device. The discovery is a consumable claim-scope handle carrying the
-work done — parsed capture state, probe verdicts — and `load_media`
-accepts a path, a file view, or a discovery, consuming the last so
-nothing expensive runs twice and the claim never lapses between question
-and load (P7). Accepting a file view is what makes a nested artifact the
-same journey: an entry inside an archive loads into a device of its own.
-
-Image-format adapters gain the default-device declaration this rests on:
-a recording-side fact the media type cannot hold, declared by the format
-that records the ecosystem's disk. A format that declares none is
-ordinary, not deficient. One machine-level convenience then sits over
-discovery — `add_device(path)`, adding a fresh device of the declared
-default family, loading the medium into it, and returning that device —
-refusing by name where a format declares no default. There is no
-media-first spelling: with one storage handle it would return the same
-device.
-
-Touches: S1, S2, S3. Supports: the U2 amendment; the P32 amendment;
-in-force P3, P4, P7, P12 (the default is a format adapter's
-declaration), P14. Needs F50, whose two acts it composes.

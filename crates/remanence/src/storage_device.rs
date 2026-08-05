@@ -31,6 +31,7 @@ use std::path::Path;
 use crate::assurance::Assurance;
 use crate::device::{AccessIntent, AccessMode};
 use crate::device_family::DeviceFamily;
+use crate::discovery::Discovery;
 use crate::disk::{DiskFormat, MediaState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
@@ -185,13 +186,12 @@ impl StorageDevice {
         let path = path.as_ref();
         let medium = MediaState::open_with_cache(path, intent, cache_bytes)?;
 
-        // A flux artifact is refused whatever the device. A P64 records
-        // timed pulses, and the block catalog opens anything it cannot
-        // identify at the raw adapter — so without this the block layer
-        // would be declared authoritative where the artifact's own
-        // adapter declares flux, which in-force P13 forbids. It is
-        // reached through its own type, as the capture-set adapter is.
-        if let Some(foreign) = foreign_family(&medium) {
+        // A flux artifact is refused whatever the device: the block
+        // catalog opens anything it cannot identify at the raw adapter,
+        // and letting that stand would declare the block layer
+        // authoritative where the artifact's own adapter declares flux
+        // (P13). Discovery makes the same refusal at the same depth.
+        if let Some(foreign) = medium.foreign_family() {
             return Err(Error::unsupported(format!(
                 "'{}' is a {foreign}-family artifact and no device in this \
                  release holds a {foreign} medium; a {foreign} container is \
@@ -200,11 +200,51 @@ impl StorageDevice {
             )));
         }
 
+        self.accept(medium, &path.display().to_string())
+    }
+
+    /// Loads the medium a [`Discovery`] already opened, **consuming the
+    /// discovery**, and hands back nothing to hold.
+    ///
+    /// This is the load that runs nothing twice. A discovery holds the
+    /// claim taken when the artifact was identified and the work that
+    /// identification did; the state moves into the device here, so
+    /// there is no window between the question and the load in which the
+    /// artifact could have changed (P7 continuity), and the intent, the
+    /// cache bound and the assurance are the ones the discovery
+    /// established rather than a second open's.
+    ///
+    /// **The discovery is consumed either way.** A refused load — the
+    /// slot occupied, or a medium the family is not served — releases
+    /// its claim with it rather than handing back a half-used handle;
+    /// asking again is [`discover_media`](crate::discover_media), and it
+    /// is always allowed.
+    pub fn load_discovery(&mut self, discovery: Discovery) -> Result<()> {
+        let attachment = self.attachment;
+        if self.medium.is_some() {
+            return Err(Error::unsupported(format!(
+                "{attachment} already holds a medium; eject it before loading \
+                 another"
+            )));
+        }
+        let named = discovery.path().to_owned();
+        self.accept(discovery.into_medium(), &named)
+    }
+
+    /// Puts an opened medium in the slot, or refuses naming both sides.
+    ///
+    /// **A device accepts only the media its family is served** (P14),
+    /// and both loads land here so the check is the same check: a medium
+    /// belonging in another drive is refused whether the caller named the
+    /// drive or the format declared it. `named` is the artifact as the
+    /// caller reached it — the `archive/entry` path where that is what
+    /// they asked for — so a refusal quotes back what they typed.
+    fn accept(&mut self, medium: MediaState, named: &str) -> Result<()> {
+        let attachment = self.attachment;
         let media = medium.media();
         if !self.family().accepts(media) {
             return Err(Error::unsupported(format!(
-                "'{}' holds {} and {attachment} is a {}, which is {}",
-                path.display(),
+                "'{named}' holds {} and {attachment} is a {}, which is {}",
                 media.name,
                 self.family().name(),
                 self.family().served_reading()
@@ -467,22 +507,6 @@ impl StorageDevice {
         self.media_mut("rollback")?.rollback();
         Ok(())
     }
-}
-
-/// The family an artifact belongs to, when it is one this release
-/// recognizes and it is not the block family.
-///
-/// The library can only refuse what it can recognize. An artifact it
-/// cannot place at all still opens at the block catalog's raw fallback,
-/// which is the honest limit of this check rather than a hole in it: NIB
-/// and NBZ, for instance, have no recognizer until the principle that
-/// places them at the flux rung is delivered.
-fn foreign_family(medium: &MediaState) -> Option<&'static str> {
-    let mut prefix = [0u8; 8];
-    if medium.read_at(0, &mut prefix).is_err() {
-        return None;
-    }
-    crate::p64::has_signature(&prefix).then_some("flux")
 }
 
 #[cfg(test)]

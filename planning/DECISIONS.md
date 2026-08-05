@@ -58,6 +58,29 @@ removes it is the record either way.
 
 ## Decisions
 
+### D24 — The file-view load waits for the node that mints the view
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-05. **Supports** S1, S2, S3; the P19 amendment, P35; in-force
+P7.
+
+F51 said `load_media` accepts "a path, a file view, or a discovery", and
+two of the three landed with it. A **file view** is not something this
+release has: the `Filesystem` node that mints one belongs to F48 and the
+recursion journey that reaches an artifact through it belongs to F49, so
+delivering the third form inside F51 would have meant minting another
+feature's node to have an argument type for it.
+
+Nothing a caller was promised is missing meanwhile. The path form
+already carries the nested artifact — `archive/entry` resolves under the
+same claim and loads into a device of its own — so what is deferred is
+the *typed* spelling of a journey that works, and it lands with the type
+rather than ahead of it.
+
+This is recorded because F51's number retires with its delivery: without
+an entry the deferral would leave no trace at all, and the next reader of
+F48 or F49 would have nothing telling them the form is theirs to finish.
+
 ### D23 — Rulings made pledging the storage model
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

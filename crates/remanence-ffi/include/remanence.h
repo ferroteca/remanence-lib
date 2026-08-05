@@ -38,6 +38,20 @@ typedef enum {
   REMANENCE_ERROR_CATEGORY_IO = 9,
 } RemanenceErrorCategory;
 
+// The container format a disk image turned out to be.
+typedef enum {
+  REMANENCE_DISK_FORMAT_RAW,
+  REMANENCE_DISK_FORMAT_QCOW2,
+  REMANENCE_DISK_FORMAT_VDI,
+} RemanenceDiskFormat;
+
+// A medium's effective access mode: the declared intent's echo
+// (P7) where the evidence supports it, read-only where it does not (P28).
+typedef enum {
+  REMANENCE_ACCESS_MODE_READ_WRITE,
+  REMANENCE_ACCESS_MODE_READ_ONLY,
+} RemanenceAccessMode;
+
 // What role a detected container plays in the image's layering.
 typedef enum {
   REMANENCE_CONTAINER_KIND_ARCHIVE,
@@ -63,13 +77,6 @@ typedef enum {
   REMANENCE_SECTOR_LAYOUT_KIND_VARIABLE,
 } RemanenceSectorLayoutKind;
 
-// A medium's effective access mode: the declared intent's echo
-// (P7) where the evidence supports it, read-only where it does not (P28).
-typedef enum {
-  REMANENCE_ACCESS_MODE_READ_WRITE,
-  REMANENCE_ACCESS_MODE_READ_ONLY,
-} RemanenceAccessMode;
-
 // What an open established about the evidence beneath it (P28).
 typedef enum {
   // Every fact and bound the interpretation needs is evidenced.
@@ -82,13 +89,6 @@ typedef enum {
   // open handle ever reports it.
   REMANENCE_ASSURANCE_OUTCOME_REFUSED = 2,
 } RemanenceAssuranceOutcome;
-
-// The container format a disk image turned out to be.
-typedef enum {
-  REMANENCE_DISK_FORMAT_RAW,
-  REMANENCE_DISK_FORMAT_QCOW2,
-  REMANENCE_DISK_FORMAT_VDI,
-} RemanenceDiskFormat;
 
 // What a FAT directory entry is.
 typedef enum {
@@ -236,6 +236,14 @@ typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 // storage, so a cached pointer to the device itself would dangle
 // silently.
 typedef struct RemanenceDevice RemanenceDevice;
+
+// What one artifact turned out to be, and the claim under which that was
+// established.
+//
+// Free it with `remanence_discovery_free`, or hand it to
+// `remanence_device_load_discovery`, which consumes it. Every string it
+// returns is owned by it and freed with it.
+typedef struct RemanenceDiscovery RemanenceDiscovery;
 
 // A snapshot of one disk's layered inspection. Owned by the caller and
 // released with `remanence_report_free`; every string and record
@@ -500,6 +508,26 @@ bool remanence_device_load_media(RemanenceDevice *device,
                                  char **error_out,
                                  char **error_rule_out);
 
+// Loads the medium a discovery already opened into this device,
+// **consuming and freeing the discovery**.
+//
+// This is the load that runs nothing twice: the discovery holds the
+// claim taken when the artifact was identified and the work that
+// identification did, and both move into the device, so no window
+// exists between the question and the load in which the artifact could
+// change (P7). The intent, the cache bound and the assurance are the
+// ones the discovery established.
+//
+// **The discovery is freed either way** — a refused load releases its
+// claim with it — so the pointer must never be used or freed again
+// after this call, whatever it returns. Asking again is
+// `remanence_discover_media`. Returns false on failure.
+bool remanence_device_load_discovery(RemanenceDevice *device,
+                                     RemanenceDiscovery *discovery,
+                                     RemanenceErrorCategory *error_category_out,
+                                     char **error_out,
+                                     char **error_rule_out);
+
 // Ejects the medium, releasing its P7 claim, and leaves the device in
 // place. Every view taken through it stops answering, and the content
 // verbs refuse by name until another medium is loaded. Returns false
@@ -548,6 +576,96 @@ const char *remanence_device_family_media(size_t index, size_t media);
 // by stable spelling. Null where the family claims none, which is
 // ordinary rather than deficient.
 const char *remanence_device_family_flux_path(size_t index);
+
+// Identifies the artifact at `path` (UTF-8) — a disk image, or
+// `archive[/entry]` — under the caller's declared intent, and answers
+// with what it is and where it could go.
+//
+// It is on no handle at all: no session and no machine, because it
+// consults catalogs and evidence rather than configuration, and it
+// mutates nothing (P2). The claim it takes is held by the returned
+// discovery until that is consumed or freed, so a `Write` discovery
+// claims the artifact exclusively and fails here when it cannot, never
+// by falling back (P7). Returns null on failure.
+RemanenceDiscovery *remanence_discover_media(const char *path,
+                                             RemanenceAccessIntent intent,
+                                             RemanenceErrorCategory *error_category_out,
+                                             char **error_out,
+                                             char **error_rule_out);
+
+// `remanence_discover_media` under a caller-declared session cache
+// bound (P27), which a load consuming the discovery keeps.
+RemanenceDiscovery *remanence_discover_media_with_cache(const char *path,
+                                                        RemanenceAccessIntent intent,
+                                                        uint64_t cache_bytes,
+                                                        RemanenceErrorCategory *error_category_out,
+                                                        char **error_out,
+                                                        char **error_rule_out);
+
+// Frees a discovery, releasing its claim. A discovery already consumed
+// by `remanence_device_load_discovery` must not be freed.
+void remanence_discovery_free(RemanenceDiscovery *discovery);
+
+// The artifact claimed — the archive itself for an image discovered
+// inside one. Owned by the discovery; do not free.
+const char *remanence_discovery_path(const RemanenceDiscovery *discovery);
+
+// The resolved image — the entry name for an image inside an archive,
+// else the source path.
+const char *remanence_discovery_image_path(const RemanenceDiscovery *discovery);
+
+// The image format's stable spelling — `h8d`, `qcow2`, `vdi`, `raw`.
+const char *remanence_discovery_image_format(const RemanenceDiscovery *discovery);
+
+// The image format's name, fit to show a user.
+const char *remanence_discovery_image_format_name(const RemanenceDiscovery *discovery);
+
+// The detected container format, as the device reader reports it.
+RemanenceDiskFormat remanence_discovery_format(const RemanenceDiscovery *discovery);
+
+// The **exact medium**, by the media-type catalog's stable spelling
+// (P14). The image-format adapter that loaded the state named it.
+const char *remanence_discovery_media_type(const RemanenceDiscovery *discovery);
+
+// The medium's name, fit to show a user beside the drive it goes in.
+const char *remanence_discovery_media_type_name(const RemanenceDiscovery *discovery);
+
+// How many concrete device families are served this medium — the
+// answer to "where could this go?", derived from the families' own
+// declarations. Zero means no drive this release claims takes it.
+size_t remanence_discovery_device_family_count(const RemanenceDiscovery *discovery);
+
+// The stable spelling of the `index`th family served this medium. Null
+// when out of range; owned by the discovery.
+const char *remanence_discovery_device_family(const RemanenceDiscovery *discovery, size_t index);
+
+// The device family the **image format** declares for the disks it
+// records — the answer to "where did this come from?" — or null where
+// the format declares none.
+//
+// Null is ordinary: a raw image says nothing about its machine, and the
+// caller then states the drive itself in the two acts.
+const char *remanence_discovery_default_device(const RemanenceDiscovery *discovery);
+
+// The resolved image's own size in bytes — the raw plane.
+uint64_t remanence_discovery_image_size_bytes(const RemanenceDiscovery *discovery);
+
+// The presented disk's size in bytes (the guest-visible size for
+// qcow2).
+uint64_t remanence_discovery_size(const RemanenceDiscovery *discovery);
+
+// The **effective** access mode this discovery established, which a
+// load consuming it inherits (P28).
+RemanenceAccessMode remanence_discovery_mode(const RemanenceDiscovery *discovery);
+
+// What this discovery established about the evidence beneath the medium
+// (P28), before anything is read. Free with `remanence_assurance_free`.
+RemanenceAssurance *remanence_discovery_assurance(const RemanenceDiscovery *discovery);
+
+// Identifies the artifact's container layers and probable filesystem —
+// the same reading `remanence_device_identify` gives once a medium is
+// loaded. Free with `remanence_identification_free`.
+RemanenceIdentification *remanence_discovery_identify(const RemanenceDiscovery *discovery);
 
 // The artifact the medium was opened from (the archive path for archive
 // inputs). Null while the device's slot is empty.
@@ -799,6 +917,16 @@ RemanenceDevice *remanence_session_add_device_at(RemanenceSession *session,
                                                  char **error_out,
                                                  char **error_rule_out);
 
+// Adds a device for the artifact at `path` (UTF-8) to the session's
+// **anonymous machine** and returns a **borrowed** view of it, as
+// `remanence_machine_add_device_for` does in a named machine.
+RemanenceDevice *remanence_session_add_device_for(RemanenceSession *session,
+                                                  const char *path,
+                                                  RemanenceAccessIntent intent,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
+
 // Removes the device at `attachment` from the session's anonymous
 // machine, releasing any medium's P7 claim with it and freeing the slot.
 // Borrowed device views for that device become invalid.
@@ -872,6 +1000,29 @@ RemanenceDevice *remanence_machine_add_device_at(RemanenceMachine *machine,
                                                  RemanenceErrorCategory *error_category_out,
                                                  char **error_out,
                                                  char **error_rule_out);
+
+// Adds a device of the artifact's **format-declared default family** to
+// this machine, loads the medium at `path` (UTF-8) into it, and returns
+// a **borrowed** view of that device. The session owns the view; never
+// free it.
+//
+// It is the one convenience over discovery, and it composes the two
+// acts without changing the access path: one claim is held from the
+// question to the load (P7), and the device it answers with is an
+// ordinary device in this machine's own set — a fresh one, never a slot
+// already there.
+//
+// **A format that declares no default is refused by name**, toward the
+// two explicit acts (`remanence_machine_add_device` then
+// `remanence_device_load_media`), with the refusal naming the families
+// the medium could go in. A refused call leaves no device behind.
+// Returns null on failure.
+RemanenceDevice *remanence_machine_add_device_for(RemanenceMachine *machine,
+                                                  const char *path,
+                                                  RemanenceAccessIntent intent,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
 
 // Removes the device at `attachment` from this machine, releasing any
 // medium's P7 claim with it and freeing the slot. Borrowed device views

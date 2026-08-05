@@ -386,6 +386,36 @@ impl MediaState {
         self.media
     }
 
+    /// The image format that loaded this state, as the catalog declares
+    /// it — the format's own identity, and the device family it declares
+    /// for the disks it records.
+    pub(crate) fn descriptor(&self) -> &'static ImageFormatDescriptor {
+        self.descriptor
+    }
+
+    /// The family of an artifact this release recognizes as belonging to
+    /// another one — `None` where the medium is the block family this
+    /// state serves.
+    ///
+    /// The library can only refuse what it can recognize. An artifact it
+    /// cannot place at all still opens at the block catalog's raw
+    /// fallback, which is the honest limit of this check rather than a
+    /// hole in it: NIB and NBZ, for instance, have no recognizer until
+    /// the principle that places them at the flux rung is delivered.
+    ///
+    /// A P64 records timed pulses, and the block catalog opens anything
+    /// it cannot identify at the raw adapter — so without this the block
+    /// layer would be declared authoritative where the artifact's own
+    /// adapter declares flux, which in-force P13 forbids. It is reached
+    /// through its own type, as the capture-set adapter is.
+    pub(crate) fn foreign_family(&self) -> Option<&'static str> {
+        let mut prefix = [0u8; 8];
+        if self.read_at(0, &mut prefix).is_err() {
+            return None;
+        }
+        crate::p64::has_signature(&prefix).then_some("flux")
+    }
+
     pub(crate) fn format(&self) -> DiskFormat {
         debug_assert_eq!(self.active_layer, self.descriptor.initial_active_layer);
         let _composition_identity = self.device_identity.value();

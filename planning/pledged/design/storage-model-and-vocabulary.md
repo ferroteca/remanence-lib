@@ -10,9 +10,11 @@ their cardinalities, and the rule for which of them a caller ever holds —
 argued in the owner's design discussion of 2026-08-04. It serves the U2
 amendment ([../USE-CASES.md](../USE-CASES.md)) and the P14, P19 and P32
 amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md), delivered
-by F48, F49 and F51 in [../FEATURES.md](../FEATURES.md), the machine
-scope, the one storage handle, and the two-act access path over a
-lineage-bearing family catalog (F50) having landed already. Pledged, not
+by F48 and F49 in [../FEATURES.md](../FEATURES.md), the machine
+scope, the one storage handle, the two-act access path over a
+lineage-bearing family catalog (F50), and discovery with the
+format-declared default device and the one convenience over it (F51)
+having landed already. Pledged, not
 implementation approval: this is guidance toward work the project owes,
 each piece landing through its own gate, and the document is swept when
 its features deliver — a design does not outlive delivery.
@@ -407,14 +409,18 @@ lives in the report.
 
 The set is pledged beside this document: the P14, P19, and P32
 amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md),
-delivered by F48, F49 and F51 in [../FEATURES.md](../FEATURES.md) — the
-`Filesystem` node, the uniform archive open, and discovery with declared
-defaults. What is delivered: the session gained machines beneath it,
-`Disk` merged into `StorageDevice`, and the access path became the two
-acts over a family catalog carrying its lineage, with an empty device
-first-class and a medium in the wrong drive refused naming both sides.
-This document serves the entries that remain and the U2 amendment, and
-is swept when they deliver.
+delivered by F48 and F49 in [../FEATURES.md](../FEATURES.md) — the
+`Filesystem` node and the uniform archive open. What is delivered: the
+session gained machines beneath it, `Disk` merged into `StorageDevice`,
+the access path became the two acts over a family catalog carrying its
+lineage, with an empty device first-class and a medium in the wrong
+drive refused naming both sides, and `discover_media` landed on no
+handle at all — a consumable claim-scope handle a load takes the state
+out of, over image formats that now declare the device family whose
+disks they record, with `add_device_for` composing the two acts where
+one is declared and refusing by name where none is. This document
+serves the entries that remain and the U2 amendment, and is swept when
+they deliver.
 
 **Principles.**
 
@@ -450,14 +456,15 @@ is swept when they deliver.
 - The access path `machine → device → content` is delivered:
   `add_device` then `load_media`, each returning its verb's noun, over a
   family catalog carrying its lineage, with a device that exists empty
-  and a family mismatch refused naming both sides. One convenience is
-  still owed over `discover_media` — `add_device(path)`, adding a fresh
-  device of the format-declared default family and returning it — with
-  the canonical two-step beneath it. The media-first machine-level
-  spelling is dropped rather than kept as a synonym: with one handle
-  both spellings would return the same device. `discover_media` itself
-  is new library-level surface, and the format adapters'
-  default-device declaration is a new catalog fact.
+  and a family mismatch refused naming both sides. The convenience over
+  `discover_media` is delivered with it — `add_device_for(path)`, adding
+  a fresh device of the format-declared default family and returning it
+  — with the canonical two-step beneath it, and the media-first
+  machine-level spelling dropped rather than kept as a synonym: with one
+  handle both spellings would return the same device. `discover_media`
+  is library-level surface of its own, and each image format's
+  default-device declaration is a catalog fact beside the media type it
+  already named.
 - Uniform open: archives enter through the same add-device-and-load
   journey; the
   separate `archive[/entry]` path syntax and the `Archive` type's

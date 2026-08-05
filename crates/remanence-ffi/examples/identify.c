@@ -258,9 +258,51 @@ static void list_families(void) {
     }
 }
 
+/* Asks what one artifact is, before any machine has been configured for
+ * it: the exact medium, the drives that would take it, and the drive the
+ * image format declares for the disks it records. The discovery holds the
+ * claim under which all that was established, so freeing it is what ends
+ * that claim -- here, because this mode loads nothing afterwards. */
+static int show_discovery(const char *path) {
+    RemanenceErrorCategory error_category;
+    char *error = NULL;
+    char *error_rule = NULL;
+    RemanenceDiscovery *discovery = remanence_discover_media(
+        path, REMANENCE_ACCESS_INTENT_READ, &error_category, &error, &error_rule);
+    if (discovery == NULL) {
+        report_error("error", error_category, error, error_rule);
+        return EXIT_FAILURE;
+    }
+
+    printf("Source:  %s\n", remanence_discovery_path(discovery));
+    printf("Image:   %s\n", remanence_discovery_image_path(discovery));
+    printf("Format:  %s (%s)\n", remanence_discovery_image_format_name(discovery),
+           remanence_discovery_image_format(discovery));
+    printf("Medium:  %s (%s)\n", remanence_discovery_media_type_name(discovery),
+           remanence_discovery_media_type(discovery));
+    printf("Size:    %" PRIu64 " bytes\n", remanence_discovery_size(discovery));
+
+    size_t families = remanence_discovery_device_family_count(discovery);
+    printf("Drives served it (%zu):\n", families);
+    for (size_t i = 0; i < families; ++i) {
+        printf("  %s\n", remanence_discovery_device_family(discovery, i));
+    }
+    /* Two different questions: where the medium could go, above, and
+     * where it came from, here. A format declaring no default is
+     * ordinary -- a raw image says nothing about its machine. */
+    const char *declared = remanence_discovery_default_device(discovery);
+    printf("Declared by the format: %s\n", declared != NULL ? declared : "nothing");
+
+    remanence_discovery_free(discovery);
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--list") == 0) {
         return list_archive(argv[2]);
+    }
+    if (argc == 3 && strcmp(argv[1], "--discover") == 0) {
+        return show_discovery(argv[2]);
     }
     if (argc == 2 && strcmp(argv[1], "--families") == 0) {
         list_families();
@@ -268,36 +310,53 @@ int main(int argc, char **argv) {
     }
     if (argc < 2 || argc > 3) {
         fprintf(stderr, "Usage: %s <path-to-image> [device-family]\n", argv[0]);
+        fprintf(stderr, "       %s --discover <path-to-image>\n", argv[0]);
         fprintf(stderr, "       %s --list <path-to-archive>\n", argv[0]);
         fprintf(stderr, "       %s --families\n", argv[0]);
         return EXIT_FAILURE;
     }
     /* Which drive serves a medium is machine configuration, so it is this
-     * caller's to state; `hard-disk` is what this example assumes when it
-     * is not told, and an `.h8d` wants `heathkit-h17`. */
-    const char *family = argc == 3 ? argv[2] : "hard-disk";
+     * caller's to state -- and an `.h8d` wants `heathkit-h17`. Stated or
+     * not, nothing is reachable except through a device (P32). */
+    const char *family = argc == 3 ? argv[2] : NULL;
 
     RemanenceErrorCategory error_category;
     char *error = NULL;
     char *error_rule = NULL;
-    /* Nothing is reachable except through a device (P32), and it takes two
-     * acts: add the drive to a session's anonymous machine, then load the
-     * medium into it. The device is borrowed -- the session owns it, so we
-     * never free it -- and it is the one handle for the slot and its
-     * medium alike. */
     RemanenceSession *session = remanence_session_new();
-    RemanenceDevice *device = remanence_session_add_device(
-        session, family, &error_category, &error, &error_rule);
-    if (device == NULL) {
-        report_error("error adding the device", error_category, error, error_rule);
-        remanence_session_free(session);
-        return EXIT_FAILURE;
-    }
-    if (!remanence_device_load_media(device, argv[1], REMANENCE_ACCESS_INTENT_READ,
-                                     &error_category, &error, &error_rule)) {
-        report_error("error", error_category, error, error_rule);
-        remanence_session_free(session);
-        return EXIT_FAILURE;
+    RemanenceDevice *device = NULL;
+    if (family != NULL) {
+        /* The two acts: add the drive to the session's anonymous machine,
+         * then load the medium into it. The device is borrowed -- the
+         * session owns it, so we never free it -- and it is the one
+         * handle for the slot and its medium alike. */
+        device = remanence_session_add_device(session, family, &error_category, &error,
+                                              &error_rule);
+        if (device == NULL) {
+            report_error("error adding the device", error_category, error, error_rule);
+            remanence_session_free(session);
+            return EXIT_FAILURE;
+        }
+        if (!remanence_device_load_media(device, argv[1], REMANENCE_ACCESS_INTENT_READ,
+                                         &error_category, &error, &error_rule)) {
+            report_error("error", error_category, error, error_rule);
+            remanence_session_free(session);
+            return EXIT_FAILURE;
+        }
+    } else {
+        /* Told no drive, this example asks the artifact rather than
+         * assuming one: the convenience adds a device of the family the
+         * image format declares and loads the medium into it. A format
+         * declaring none refuses here, naming the drives to pass as the
+         * second argument. */
+        device = remanence_session_add_device_for(session, argv[1],
+                                                  REMANENCE_ACCESS_INTENT_READ,
+                                                  &error_category, &error, &error_rule);
+        if (device == NULL) {
+            report_error("error", error_category, error, error_rule);
+            remanence_session_free(session);
+            return EXIT_FAILURE;
+        }
     }
     printf("Device:  %s (%s)\n", remanence_device_attachment(device),
            remanence_device_family(device));

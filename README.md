@@ -10,8 +10,14 @@ drive as concrete as the one it actually had — a Commodore 1541, a
 Heathkit H-17, a hard disk — and a disk image, raw or an entry inside a
 `.zip` or `.7z` archive, is loaded into it under a single claim. A
 medium belonging in another drive is refused naming both sides, an empty
-drive is configuration in its own right, and the load identifies the
-image's container
+drive is configuration in its own right. `discover_media` answers what
+an artifact is before any of that — the exact medium, the drives served
+it, and the drive the image format declares for the disks it records —
+and hands back a discovery holding that claim, which a load consumes so
+nothing is opened twice; where a format declares a drive,
+`add_device_for` composes both acts in one, and where it declares none a
+raw image says nothing about its machine, so the caller states the
+drive. The load identifies the image's container
 layers: the archive wrapper, image format, physical media geometry, and
 probable filesystem, each with comparable confidence and human-readable
 evidence. Executable, role-specific adapters recognize and validate formats;
@@ -243,6 +249,22 @@ for entry in archive.entries() {
 let hdd0 = session.add_device(remanence::DeviceFamily::HARD_DISK)?;
 hdd0.load_media("captures.7z/track00.raw", remanence::AccessIntent::Read)?;
 
+// Asking what an artifact is, before a machine has been configured for
+// it. The discovery holds the claim under which that was established;
+// a load consumes it, so nothing is opened twice.
+let discovery = remanence::discover_media("disk.h8d", remanence::AccessIntent::Read)?;
+println!("{} in {:?}", discovery.media_type(), discovery.accepting_families());
+match discovery.default_device() {
+    Some(family) => println!("the format records a {}", family),
+    None => println!("the format declares no drive"),
+}
+let drive = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
+drive.load_discovery(discovery)?;
+
+// Or both acts at once, where the format declares the drive it
+// records — refused by name where it declares none.
+let drive = session.add_device_for("disk.h8d", remanence::AccessIntent::Read)?;
+
 // The drive letters a DOS machine would have presented: the machine
 // facts are the caller's — here its own device set, in attachment
 // order — and the assignment rule is the library's.
@@ -281,6 +303,15 @@ for c in device.identify().containers:
 for f in device.list_hdos_files():
     print(f.display_name, f.size_sectors, f.modified_date_string)
 device.eject()                      # the drive stays; the disk goes
+
+# What an artifact is, before a machine has been configured for it.
+discovery = remanence.discover_media("disk.h8d", writable=False)
+print(discovery.media_type, discovery.device_families, discovery.default_device)
+drive = session.add_device("heathkit-h17")
+drive.load_discovery(discovery)     # consumed: one claim, one open
+
+# Or both acts at once, where the format declares the drive it records.
+drive = session.add_device_for("disk.h8d", writable=False)
 
 # The letters, from the machine's own device set — or from asserted
 # facts, where the caller holds them instead.

@@ -12,6 +12,7 @@ use std::path::Path;
 
 use crate::source::{ImageSource, SourceDevice};
 use crate::device::{Device, MediumDevice};
+use crate::device_family::DeviceFamily;
 use crate::disk::DiskFormat;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::fat::FatVolume;
@@ -103,6 +104,23 @@ pub(crate) struct ImageFormatDescriptor {
     /// passive facts inline, which is how one disk comes to be
     /// described two ways by two formats.
     pub(crate) media: &'static MediaProfile,
+    /// The device family this format's images are recorded by, where the
+    /// format records one ecosystem's disk (P12).
+    ///
+    /// It is a **recording-side** fact and belongs here rather than on
+    /// the media type, which cannot honestly hold it: a ten-sector
+    /// hard-sectored 5.25-inch disk is the article of more than one
+    /// machine's drive, while an H8D records a Heathkit one. The
+    /// families a medium *could* go in are derived from the families'
+    /// own declarations instead ([`DeviceFamily::accepting`]); this is
+    /// the one a caller who names no drive gets.
+    ///
+    /// `None` is ordinary rather than deficient — a raw image says
+    /// nothing about the machine it came from — and a caller who wants
+    /// a device out of such a format states the drive itself, in the
+    /// two acts (P3: a declaration nobody makes is a refusal, not a
+    /// guess).
+    pub(crate) default_device: Option<DeviceFamily>,
     pub(crate) disk: Option<DiskDescriptor>,
 }
 
@@ -471,6 +489,11 @@ static H8D_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     // medium itself carries; the medium says how the revolution is
     // divided, and this format says what was recorded in each division.
     media: &FLEXIBLE_5_25_HARD_10,
+    // The format is written against the published H17 conventions, so
+    // the drive it records is stated rather than inferred: the same
+    // article served a North Star MDS, and the medium cannot tell the
+    // two apart.
+    default_device: Some(DeviceFamily::HEATHKIT_H17),
     disk: Some(DiskDescriptor {
         sector_size: 256,
         cylinders: 40,
@@ -555,6 +578,10 @@ static QCOW2_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     authoritative_layer: ImageLayer::Block,
     initial_active_layer: ActiveLayer::Block,
     media: &LOGICAL_BLOCK_512,
+    // The format exists to record one machine's hard disk, which is the
+    // declaration: a virtual machine's qcow2 is its drive, and the
+    // logical-block medium inside it says nothing about that.
+    default_device: Some(DeviceFamily::HARD_DISK),
     disk: None,
 };
 
@@ -723,6 +750,8 @@ static VDI_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     authoritative_layer: ImageLayer::Block,
     initial_active_layer: ActiveLayer::Block,
     media: &LOGICAL_BLOCK_512,
+    // As qcow2: the format records a virtual machine's hard disk.
+    default_device: Some(DeviceFamily::HARD_DISK),
     disk: None,
 };
 
@@ -827,6 +856,10 @@ static RAW_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     authoritative_layer: ImageLayer::Block,
     initial_active_layer: ActiveLayer::Block,
     media: &LOGICAL_BLOCK_512,
+    // A raw image is bytes and nothing else: it records no ecosystem, so
+    // it declares no drive. This is the ordinary shape of `None`, not a
+    // gap waiting to be filled in.
+    default_device: None,
     disk: None,
 };
 
@@ -881,6 +914,7 @@ mod tests {
         authoritative_layer: ImageLayer::Block,
         initial_active_layer: ActiveLayer::Block,
         media: &LOGICAL_BLOCK_512,
+        default_device: None,
         disk: None,
     };
     static TEST_B_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
@@ -890,6 +924,7 @@ mod tests {
         authoritative_layer: ImageLayer::Block,
         initial_active_layer: ActiveLayer::Block,
         media: &LOGICAL_BLOCK_512,
+        default_device: None,
         disk: None,
     };
     static TEST_A: SameProbe = SameProbe(&TEST_A_DESCRIPTOR);
@@ -926,6 +961,52 @@ mod tests {
                 "a logical-block medium answers no flexible-media question"
             );
         }
+    }
+
+    #[test]
+    fn a_declared_default_device_is_a_drive_the_medium_could_go_in() {
+        // The default is the format's declaration, but it is not free of
+        // the family catalog: a format naming a drive its own medium
+        // would be refused by is describing two different disks, and the
+        // load beneath the convenience would fail on every image.
+        for descriptor in [
+            &H8D_DESCRIPTOR,
+            &QCOW2_DESCRIPTOR,
+            &VDI_DESCRIPTOR,
+            &RAW_DESCRIPTOR,
+        ] {
+            let Some(default) = descriptor.default_device else {
+                continue;
+            };
+            assert!(
+                default.is_concrete(),
+                "{} declares {} as its default, and an interior name \
+                 instantiates nothing",
+                descriptor.id,
+                default.id()
+            );
+            assert!(
+                default.accepts(descriptor.media),
+                "{} declares {} as its default, which is {}",
+                descriptor.id,
+                default.id(),
+                default.served_reading()
+            );
+            assert!(
+                DeviceFamily::accepting(descriptor.media).contains(&default),
+                "a declared default is one of the families derived from \
+                 the declarations, never a fourth answer"
+            );
+        }
+
+        // The two examples the feature rests on, checked rather than
+        // described: the format that records an ecosystem's disk names
+        // it, and the format that records only bytes names nothing.
+        assert_eq!(
+            H8D_DESCRIPTOR.default_device,
+            Some(DeviceFamily::HEATHKIT_H17)
+        );
+        assert_eq!(RAW_DESCRIPTOR.default_device, None);
     }
 
     #[test]

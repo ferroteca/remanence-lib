@@ -12,7 +12,16 @@
 //! loads a disk image into it, optionally naming an entry inside a
 //! supported archive. That load takes one P7 claim — refusing a medium
 //! the family is not served, naming both sides — and serves both of the
-//! medium's planes through that handle:
+//! medium's planes through that handle.
+//!
+//! [`discover_media`] answers what an artifact is before any of that, on
+//! no handle at all: the exact medium, the device families served it, and
+//! the image format's declared default device. The [`Discovery`] it
+//! returns holds that claim and the work already done, and
+//! [`StorageDevice::load_discovery`] consumes it into a device so nothing
+//! runs twice; [`Machine::add_device_for`] composes the two acts over it
+//! where a format declares a default, and refuses by name where none
+//! does. Through the storage handle:
 //! [`StorageDevice::identify`] reports the container layers (archive,
 //! image, physical media, filesystem) recognized by built-in executable
 //! adapters, over the image's own bytes, while
@@ -34,6 +43,7 @@ mod cache;
 mod checksum;
 mod device;
 mod device_family;
+mod discovery;
 mod disk;
 mod dos_letters;
 mod dos_name;
@@ -81,6 +91,7 @@ pub use c1541_presentation::{
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};
 pub use device_family::DeviceFamily;
+pub use discovery::{Discovery, discover_media, discover_media_with_cache};
 pub use disk::DiskFormat;
 pub use dos_letters::{
     DosAssignmentRule, DosMachine, DriveMap, DriveMapping, LetterOutcome, MachineDevice,

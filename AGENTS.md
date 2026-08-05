@@ -22,8 +22,16 @@ ABI, or Python module.
   extents, and the effective access mode, with the read bound carried to
   where the reads happen;
   `adapters.rs` the executable image-format adapters, probe aggregation,
-  authoritative/active layer vocabulary, device identity, and built-in
-  image catalog; `media_profile.rs` the P14 seam — the passive
+  authoritative/active layer vocabulary, device identity, the built-in
+  image catalog, and each format's **declared default device** — the
+  recording-side fact a media type cannot hold, absent for a format
+  that records no ecosystem's disk;
+  `discovery.rs` the first-class `discover_media`, on no handle at all:
+  the claim, the identification, the exact medium, the families derived
+  from their own declarations as accepting it, and the format's declared
+  default — answered as a consumable handle a load takes the state out
+  of, so nothing runs twice and no window opens between the question and
+  the load; `media_profile.rs` the P14 seam — the passive
   compatibility facts of a media type, family-specific by construction
   (flexible magnetic and logical-block are claimed, with no fact in
   common), and the declarative media-type catalog they are enrolled in,
@@ -130,9 +138,12 @@ ABI, or Python module.
   being the one whose identity is null — with `storage_device.rs` the
   **one storage handle**: a durable slot, its attachment identity
   (`hdd0`), the two acts that fill it (`add_device` on the machine, then
-  `load_media`/`eject` on the device, with an empty device first-class
-  configuration and a medium in the wrong drive refused naming both
-  sides), and every content verb of the medium occupying it
+  `load_media`/`load_discovery`/`eject` on the device, with an empty
+  device first-class configuration and a medium in the wrong drive
+  refused naming both sides), the one convenience over discovery that
+  composes both acts (`add_device_for`, adding a device of the
+  format-declared default family and refusing by name where a format
+  declares none), and every content verb of the medium occupying it
   (identify/inspect/entries/stat/read/write/mkdir/commit/rollback),
   refusing by name while the slot is empty; `disk.rs` the private
   `MediaState` that handle homes — a caller never holds a medium outside
@@ -435,10 +446,12 @@ gcc crates/remanence-ffi/examples/identify.c target/debug/remanence_ffi.dll `
 Then run it beside a copy of `target/debug/remanence_ffi.dll`, against
 both a plain image and one inside an archive — the archive path is a
 distinct composition, not the same code with a longer path. The example
-takes the device family as an optional second argument and assumes
-`hard-disk` without one, so an `.h8d` is run as
-`identify <path> heathkit-h17`; `identify --families` lists the claimed
-families.
+takes the device family as an optional second argument
+(`identify <path> heathkit-h17`); given none it asks the artifact
+instead, through the convenience over discovery, so a format declaring
+no default device — a raw image — refuses there and names the drives to
+pass. `identify --discover <path>` reports what an artifact is without
+loading it, and `identify --families` lists the claimed families.
 
 **Without that `PATH` entry gcc exits 1 and prints nothing at all**: it
 is gcc's own runtime DLLs failing to resolve, so the compiler never
