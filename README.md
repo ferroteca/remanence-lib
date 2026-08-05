@@ -7,10 +7,9 @@ machines, a machine holds family-typed storage devices, and a
 `StorageDevice` is the one handle for a slot and the medium in it.
 Devices are added and media are loaded, as two acts: a machine takes a
 drive as concrete as the one it actually had — a Commodore 1541, a
-Heathkit H-17, a hard disk — and a disk image, raw or an entry inside a
-`.zip` or `.7z` archive, is loaded into it under a single claim. A
-medium belonging in another drive is refused naming both sides, an empty
-drive is configuration in its own right. `discover_media` answers what
+Heathkit H-17, a hard disk, an archive slot — and a medium is loaded into
+it under a single claim. A medium belonging in another drive is refused
+naming both sides, an empty drive is configuration in its own right. `discover_media` answers what
 an artifact is before any of that — the exact medium, the drives served
 it, and the drive the image format declares for the disks it records —
 and hands back a discovery holding that claim, which a load consumes so
@@ -33,12 +32,25 @@ never on the device. Where several volumes bear one, selection runs by
 the identity the inspection report issued. FAT12/FAT16 volumes and the
 HDOS catalog of a Heathkit `.h8d` are reached the same way.
 
-An `Archive` lists what a supported archive holds, reading its index and
-never its entry data. Each grammar sits behind its own catalog adapter,
-and a member is produced bounded: an entry stored uncompressed is read in
-place from the archive, and a coded entry decodes once into private
-session storage — one member of a solid 7z folder without materializing
-the rest.
+**An archive is a medium like any other.** A `.zip` or `.7z` loads into
+an archive-family device, and its content is the namespace that device
+resolves to — the same node a disk's filesystem is reached through, with
+no archive journey of its own. Its own vantage is that namespace: an
+archive has no partition, no volume and no sector, so the verbs that
+address a space refuse by name rather than inventing a phantom volume.
+An entry recognized as an artifact of its own is opened from the file
+view that names it and loaded into a device of its own — in a machine of
+its own where one is being reconstructed, since the host's archive was
+never part of the machine whose disk it holds.
+
+Each grammar sits behind its own catalog adapter, and an entry is
+produced bounded: one stored uncompressed is read in place from the
+claimed archive, and a coded one decodes once into private session
+storage — one member of a solid 7z folder without materializing the rest.
+Either way the child holds what it reads, so ejecting the archive under a
+disk already loaded from it takes nothing away. Archives are read and not
+written: a write would have to be encoded back into the grammar's own
+form, and no adapter claims that.
 
 A `CaptureSet` opens a KryoFlux capture of a floppy disk — one stream
 file per head per drive-step position, archived together — as the one
@@ -261,12 +273,23 @@ for line in &assurance.evidence {
     println!("  {line}");
 }
 
-let archive = remanence::Archive::open("captures.7z")?;
-for entry in archive.entries() {
-    println!("{} ({} bytes)", entry.name, entry.uncompressed_size);
+// An archive is a medium: a device of its own family, and its content
+// is the namespace that device resolves to.
+let arc0 = session.add_device(remanence::DeviceFamily::ARCHIVE_DEVICE)?;
+arc0.load_media("captures.7z", remanence::AccessIntent::Read)?;
+for entry in arc0.filesystem()?.entries("")? {
+    println!("{} ({} bytes)", entry.name, entry.size_bytes);
 }
+
+// An entry recognized as an artifact of its own is loaded into a device
+// of its own, under the claim the archive already holds.
+let member = session
+    .require_device(remanence::AttachmentId::parse("arc0")?)?
+    .filesystem()?
+    .get_file("track00.raw")?
+    .discover()?;
 let hdd0 = session.add_device(remanence::DeviceFamily::HARD_DISK)?;
-hdd0.load_media("captures.7z/track00.raw", remanence::AccessIntent::Read)?;
+hdd0.load_discovery(member)?;
 
 // Asking what an artifact is, before a machine has been configured for
 // it. The discovery holds the claim under which that was established;
@@ -343,9 +366,10 @@ drives = session.machine().compose_dos_letters()  # no variant stated:
 for mapping in drives.mappings:                   # disagreement is reported
     print(mapping.letter, mapping.outcome, mapping.volume, mapping.reason)
 
-with remanence.Archive("captures.7z") as archive:
-    for entry in archive.entries:
-        print(entry.name, entry.uncompressed_size)
+arc0 = session.add_device("archive-device")
+arc0.load_media("captures.7z", writable=False)
+for entry in arc0.filesystem().entries(""):
+    print(entry.name, entry.size_bytes)
 
 with remanence.CaptureSet("captures.7z") as capture:
     for member in capture.inspect().members:

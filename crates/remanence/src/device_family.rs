@@ -41,7 +41,7 @@ use std::fmt;
 use crate::drive_profile::{self, DriveProfile};
 use crate::error::{Error, Result};
 use crate::media_profile::{
-    FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile,
+    ARCHIVE, FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile,
 };
 
 /// One entry in the catalog: a family, its place in the lineage, and
@@ -107,6 +107,14 @@ impl DeviceFamily {
     /// interface (P15), so a model number would be an assertion the
     /// caller cannot check and the library never reads.
     pub const HARD_DISK: Self = Self(&HARD_DISK);
+
+    /// The archive slot — concrete, and **virtual**: an attachment with
+    /// no mechanism at all, which is the whole of what it is. An archive
+    /// medium is held by no drive (P14), so what it loads into is a
+    /// receiver rather than a machine's hardware, and it is a device for
+    /// the same reason every other medium's holder is: the caller never
+    /// holds a medium outside one.
+    pub const ARCHIVE_DEVICE: Self = Self(&ARCHIVE_DEVICE);
 
     /// The family's stable cross-language spelling.
     pub fn id(self) -> &'static str {
@@ -366,13 +374,27 @@ static HARD_DISK: FamilyEntry = FamilyEntry {
 
 /// The enrolled families. Adding one changes its declaration, its tests,
 /// and this list — the lineage is data, so nothing else is wired up.
-static ENROLLED: [&FamilyEntry; 6] = [
+static ARCHIVE_DEVICE: FamilyEntry = FamilyEntry {
+    id: "archive-device",
+    name: "archive slot",
+    kind_of: Some(&STORAGE_DEVICE),
+    provenance: "declared from what an archive is rather than from a drive that \
+                 exists: a virtual medium is held by nothing, so its device is \
+                 the receiver a load requires and the attachment identity its \
+                 machine knows it by, and nothing more",
+    slot_prefix: Some("arc"),
+    media: &[&ARCHIVE],
+    flux_path: None,
+};
+
+static ENROLLED: [&FamilyEntry; 7] = [
     &STORAGE_DEVICE,
     &FLOPPY_DRIVE,
     &CBM_FLOPPY_DRIVE,
     &COMMODORE_1541,
     &HEATHKIT_H17,
     &HARD_DISK,
+    &ARCHIVE_DEVICE,
 ];
 
 #[cfg(test)]

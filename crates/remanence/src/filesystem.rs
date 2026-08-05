@@ -80,6 +80,7 @@ use std::sync::Arc;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::{DeclaredFact, Issue, Provenance};
 use crate::fat::{FatEntry, FatEntryKind};
+use crate::discovery::Discovery;
 use crate::filesystem_catalog::CatalogRecognition;
 use crate::report::VolumeId;
 use crate::storage_device::StorageDevice;
@@ -214,7 +215,7 @@ pub struct EntryFact {
 }
 
 impl EntryFact {
-    fn new(key: &str, value: impl Into<String>) -> Self {
+    pub(crate) fn new(key: &str, value: impl Into<String>) -> Self {
         Self {
             key: key.to_owned(),
             value: value.into(),
@@ -262,6 +263,32 @@ pub(crate) trait Catalog: std::fmt::Debug {
     fn entries(&self, path: &str) -> Result<Vec<Entry>>;
     fn stat(&self, path: &str) -> Result<Option<Entry>>;
     fn read_file(&self, path: &str) -> Result<Vec<u8>>;
+
+    /// Exactly `buf.len()` bytes at `offset` within one item (P27).
+    ///
+    /// The default is the honest one for a catalog whose medium is
+    /// already resident within its declared bound — a slice of what is
+    /// there, rather than a second pass. A provider whose items are
+    /// spans of something larger overrides it and reads the span, so
+    /// nothing is materialized to serve part of an item.
+    fn read_file_at(&self, path: &str, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let bytes = self.read_file(path)?;
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .filter(|end| *end <= bytes.len() as u64)
+            .ok_or_else(|| {
+                Error::categorized_io(
+                    ErrorCategory::NotFound,
+                    format!(
+                        "'{path}' holds {} bytes; the requested span at \
+                         {offset} runs past it",
+                        bytes.len()
+                    ),
+                )
+            })?;
+        buf.copy_from_slice(&bytes[offset as usize..end as usize]);
+        Ok(())
+    }
 }
 
 /// The HDOS catalog, read out of the medium it occupies.
@@ -468,6 +495,26 @@ impl<'a> StorageSpace<'a> {
     /// which is why this is a query whose answer set already includes
     /// *refuse* and *absent* rather than a content verb on the device.
     pub(crate) fn resolve(device: &'a mut StorageDevice) -> Result<Self> {
+        // A namespace-native medium is what it resolves to. There is no
+        // volume to compose and nothing to recognize: the grammar that
+        // loaded the medium already read the names.
+        if let Some((kind, catalog)) = device.archive_namespace()? {
+            return Ok(Self {
+                device,
+                extent: None,
+                namespace: NamespaceState::Present(Namespace::Medium { kind, catalog }),
+            });
+        }
+        // A namespace-native medium is what it resolves to. There is no
+        // volume to compose and nothing to recognize: the grammar that
+        // loaded the medium already read the names.
+        if let Some((kind, catalog)) = device.archive_namespace()? {
+            return Ok(Self {
+                device,
+                extent: None,
+                namespace: NamespaceState::Present(Namespace::Medium { kind, catalog }),
+            });
+        }
         let report = device.inspect()?;
         let mut recognized: Vec<(VolumeId, String)> = report
             .filesystems
@@ -852,34 +899,42 @@ impl File<'_> {
             Namespace::Volume { id, .. } => {
                 self.device.read_file_at(*id, &self.path, offset, buf)
             }
-            Namespace::Medium { catalog, .. } => {
-                // The catalog already holds its medium within the
-                // declared bound, so the ranged form is a slice of what
-                // is there rather than a second pass over the medium.
-                let bytes = catalog.read_file(&self.path)?;
-                let end = offset
-                    .checked_add(buf.len() as u64)
-                    .filter(|end| *end <= bytes.len() as u64)
-                    .ok_or_else(|| {
-                        Error::categorized_io(
-                            ErrorCategory::NotFound,
-                            format!(
-                                "'{}' holds {} bytes; the requested span at \
-                                 {offset} runs past it",
-                                self.path,
-                                bytes.len()
-                            ),
-                        )
-                    })?;
-                buf.copy_from_slice(&bytes[offset as usize..end as usize]);
-                Ok(())
-            }
+            Namespace::Medium { catalog, .. } => catalog.read_file_at(&self.path, offset, buf),
+        }
+    }
+
+    /// Opens this file as an artifact of its own, answering with the
+    /// [`Discovery`] a device loads it from (P12, P25).
+    ///
+    /// **Recursion is the same journey again.** An entry recognized as
+    /// an image is not read through the namespace that names it: it is
+    /// loaded into a device of its own — in a machine of its own where a
+    /// machine is being reconstructed, because the host's archive was
+    /// never part of the machine whose disk it holds. The claim is the
+    /// one the archive already holds, so nothing is re-opened and no
+    /// window exists between naming the entry and loading it.
+    ///
+    /// This release mints a discovery from an **archive entry**; a file
+    /// on a volume-backed filesystem is refused by name, its bytes being
+    /// reached through the filesystem that names it.
+    pub fn discover(&mut self) -> Result<Discovery> {
+        match self.namespace {
+            Namespace::Volume { kind, .. } => Err(refuse(
+                SpaceRule::NotAddressable,
+                format!(
+                    "this release opens an archive entry as an artifact of its \
+                     own, and '{}' is a file on a {kind} volume: read its bytes \
+                     through this filesystem",
+                    self.path
+                ),
+            )),
+            Namespace::Medium { .. } => self.device.discover_entry(&self.path),
         }
     }
 
     /// Writes `data` at `offset` in place — the streamed form beside
-    /// [`Filesystem::write_file`]: the span must lie within the file's
-    /// current size, and [`Filesystem::resize_file`] is what changes it.
+    /// [`StorageSpace::write_file`]: the span must lie within the file's
+    /// current size, and [`StorageSpace::resize_file`] is what changes it.
     /// Buffered until commit.
     pub fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
         match self.namespace {

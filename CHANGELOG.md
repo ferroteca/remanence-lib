@@ -20,6 +20,57 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **An archive is a medium, and it enters a machine the way every medium
+  does.** A `.zip` or `.7z` loads into an **archive-family device**
+  (`DeviceFamily::ARCHIVE_DEVICE`, slot `arc0`) and its content is the
+  namespace that device resolves to — the same `StorageSpace` a disk's
+  filesystem is reached through, listing, statting and reading entries
+  with the file verbs that live on one node. The media-type catalog gains
+  the **virtual** family for it (P14's amendment): an archive carries no
+  form factor, no coercivity and no addressable unit, and the one fact
+  its family declares is the native vantage, a namespace where every
+  physical family's is a space.
+
+  **The vantage decides what the medium answers.** `inspect`, `volume`,
+  `size`, `format`, `commit` and the positioned reads address a space,
+  and an archive refuses them **by name** — saying it has no partition,
+  no volume and no sector, and where its content is reached instead —
+  rather than inventing a phantom volume to satisfy them. What every
+  medium has is the evidence plane: the artifact's own bytes still read,
+  and `image_size_bytes` still answers.
+
+  **Directories are the grammar's own hierarchy.** An entry named
+  `disks/boot.h8d` puts a `disks` in the listing, which is reading what
+  the archive recorded rather than manufacturing a pseudo-file (P19); a
+  directory the grammar records no entry of its own for says so in a
+  declared fact. Entry facts travel in the grammar's own spelling, as
+  every other provider's do.
+
+  Archives are read and not written, as they were: a write intent is
+  refused by name at the load, because a write would have to be encoded
+  back into the archive's own grammar and no adapter claims that.
+
+- **The nested artifact is the same journey again.** `File::discover`
+  opens an archive entry as an artifact of its own and answers with the
+  consumable `Discovery` a device loads it from — the third load form
+  F51 named and D24 deferred to whichever feature minted the view. The
+  claim is the one the archive already holds, so nothing is re-opened and
+  no window exists between naming the entry and loading it (P7), and the
+  child is loaded into a device of its own — in a machine of its own
+  where one is being reconstructed, the host's archive never having been
+  part of the machine whose disk it holds.
+
+  **The child holds its own backing.** A stored entry is source-backed
+  through the archive's claim and a coded one is session-backed in
+  private session storage, and either way ejecting the archive — or
+  removing its device altogether — takes nothing away from a disk already
+  loaded from it.
+
+  In C: `remanence_filesystem_discover`; in Python: `File.discover()`.
+  The claim is bounded and says so: a file on a volume-backed filesystem
+  is refused by name, its bytes being read through the filesystem that
+  names it.
+
 - **The volume and the filesystem are one node, and it addresses its own
   extent.** `StorageSpace` replaces the two types F48 delivered, carrying
   **two vantage traits on one object**: *volume* is addressable I/O —
@@ -427,6 +478,33 @@ rather than bridged. Read every entry below in that light.
   floppy slot, a CD-ROM drive, or DOS attachment order.
 
 ### Changed
+
+- **The `archive[/entry]` path syntax and the standalone `Archive`
+  listing are gone.** A path names a file; an entry is named through the
+  namespace its archive bears. `Archive` and `ArchiveEntry` leave all
+  three surfaces — with them the 12 `remanence_archive_*` C symbols and
+  the Python `Archive`/`ArchiveEntry` classes — and the archive catalog
+  seam beneath them is untouched, becoming the grammar's P12 adapter at
+  the namespace seam. Two consequences are deliberate: loading a
+  one-entry archive no longer silently opens the entry, and the
+  ambiguity refusal for a many-membered archive goes with the guess that
+  needed it. The KryoFlux capture-set adapter keeps
+  `captures.7z/subtree`, which names a subtree of members read as one
+  logical artifact rather than one medium inside an archive.
+
+- **Two format readers became fallible, because a medium may present no
+  disk.** `Discovery::format` and `Discovery::size` answer `Result`, and
+  in C `remanence_device_format` and `remanence_discovery_format` take an
+  out-parameter and return false where there is no disk image to report.
+  `remanence_discovery_size` answers zero there. The recognized format's
+  stable spelling — `image_format` — answers for both kinds, an archive
+  grammar included.
+
+- **P19 loses its serialized-artifact provider form**, which is what the
+  P19 amendment says and D25 deferred to this feature: a medium may bear
+  its namespace directly, its grammar being a P12 adapter at that seam.
+  The namespace-mapping composer's three constraints stay in P19 until
+  P35 has a machine namespace to take them.
 
 - **"Container" is retired from this project's own vocabulary.** It is
   standard for five different things — an archive, an image container

@@ -28,8 +28,17 @@
 //! logical-block media have no fact in common — a coercivity is
 //! meaningless for the second and a block size for the first — so the
 //! facts are family-specific by construction rather than one schema with
-//! most of its fields empty. Two families are claimed (P3) and a media
+//! most of its fields empty. Three families are claimed (P3) and a media
 //! type outside them is refused by name.
+//!
+//! **The third is virtual, and it proves the rule rather than bending
+//! it.** An archive is independent recorded state with no physical
+//! article behind it, held by no drive — which is exactly what P14's own
+//! sentence describes, media being the independent mutable state
+//! *between* image formats and drives. It has no form factor, no
+//! coercivity, no addressable unit and no hole to declare, so what its
+//! family declares instead is the **native vantage**: a namespace, where
+//! every physical family's is a space.
 //!
 //! **What is deliberately absent.** How many surfaces are *recorded* is
 //! the drive profile's declaration and the image format's geometry, not
@@ -61,6 +70,13 @@ pub(crate) enum MediaFamily {
     /// number, with no cylinder, head, track, recording or mechanism
     /// claim (P23).
     LogicalBlock,
+    /// **Virtual** media — independent recorded state with no physical
+    /// article behind it, held by no drive. P14's own definition already
+    /// describes it: media is the independent mutable state between
+    /// image formats and drives, and being independent of drives is the
+    /// point. Its members carry no physical fact, so what a family
+    /// declares here is its native vantage instead.
+    Virtual,
 }
 
 impl MediaFamily {
@@ -68,6 +84,7 @@ impl MediaFamily {
         match self {
             Self::FlexibleMagnetic => "flexible-magnetic",
             Self::LogicalBlock => "logical-block",
+            Self::Virtual => "virtual",
         }
     }
 }
@@ -154,11 +171,26 @@ pub(crate) struct LogicalBlock {
     pub(crate) block_bytes: u64,
 }
 
+/// The passive facts of one virtual media type.
+///
+/// There is exactly one fact, and it is not a physical one: a virtual
+/// medium has no form factor, no coercivity and no addressable unit to
+/// be compatible or incompatible with. What distinguishes its members is
+/// the **native vantage** — the one way its content is reached at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Virtual {
+    /// `"namespace"` for an archive, where every physical family's is a
+    /// space. It is stated rather than assumed because it is the whole
+    /// of what the family declares.
+    pub(crate) native_vantage: &'static str,
+}
+
 /// One media type's facts, in its own family's vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MediaFacts {
     FlexibleMagnetic(FlexibleMagnetic),
     LogicalBlock(LogicalBlock),
+    Virtual(Virtual),
 }
 
 impl MediaFacts {
@@ -166,6 +198,7 @@ impl MediaFacts {
         match self {
             Self::FlexibleMagnetic(_) => MediaFamily::FlexibleMagnetic,
             Self::LogicalBlock(_) => MediaFamily::LogicalBlock,
+            Self::Virtual(_) => MediaFamily::Virtual,
         }
     }
 }
@@ -196,14 +229,21 @@ impl MediaProfile {
     pub(crate) fn flexible_magnetic(&self) -> Option<&FlexibleMagnetic> {
         match &self.facts {
             MediaFacts::FlexibleMagnetic(facts) => Some(facts),
-            MediaFacts::LogicalBlock(_) => None,
+            _ => None,
         }
     }
 
     pub(crate) fn logical_block(&self) -> Option<&LogicalBlock> {
         match &self.facts {
             MediaFacts::LogicalBlock(facts) => Some(facts),
-            MediaFacts::FlexibleMagnetic(_) => None,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn virtual_media(&self) -> Option<&Virtual> {
+        match &self.facts {
+            MediaFacts::Virtual(facts) => Some(facts),
+            _ => None,
         }
     }
 }
@@ -265,13 +305,29 @@ pub(crate) static LOGICAL_BLOCK_512: MediaProfile = MediaProfile {
     facts: MediaFacts::LogicalBlock(LogicalBlock { block_bytes: 512 }),
 };
 
+/// The archive: independent recorded state with no physical article
+/// behind it, whose content is reached by name and not by position.
+///
+/// A zip's byte extent is its *encoding* (P13), not a model space —
+/// there is no meaningful "sector 5 of a zip" — which is why the one
+/// fact declared here is the vantage.
+pub(crate) static ARCHIVE: MediaProfile = MediaProfile {
+    id: "archive",
+    name: "archive medium",
+    provenance: "declared from what an archive is rather than from a published                  article: independent recorded state held by no drive, whose                  grammar names its content and whose bytes are its encoding",
+    facts: MediaFacts::Virtual(Virtual {
+        native_vantage: "namespace",
+    }),
+};
+
 /// The enrolled media types. Adding one changes its declaration, its
 /// tests, and this list — nothing else, because there is no behavior
 /// here to wire up.
-static ENROLLED: [&MediaProfile; 3] = [
+static ENROLLED: [&MediaProfile; 4] = [
     &FLEXIBLE_5_25_SOFT,
     &FLEXIBLE_5_25_HARD_10,
     &LOGICAL_BLOCK_512,
+    &ARCHIVE,
 ];
 
 pub(crate) fn enrolled() -> &'static [&'static MediaProfile] {
@@ -322,6 +378,34 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), count, "two entries share an id");
+    }
+
+    #[test]
+    fn the_virtual_family_declares_a_vantage_and_no_physical_fact() {
+        // P14's amendment: an archive is a medium, and its one family
+        // fact is the native vantage. Asking it a physical question is
+        // asking another family's, which is what the accessors refuse.
+        let archive = ARCHIVE.virtual_media().expect("its own family's facts");
+        assert_eq!(archive.native_vantage, "namespace");
+        assert_eq!(ARCHIVE.family(), MediaFamily::Virtual);
+        assert!(
+            ARCHIVE.flexible_magnetic().is_none(),
+            "an archive answers no coercivity question"
+        );
+        assert!(
+            ARCHIVE.logical_block().is_none(),
+            "and no addressable-unit question either"
+        );
+        assert!(
+            LOGICAL_BLOCK_512.virtual_media().is_none(),
+            "and a physical medium declares no vantage here"
+        );
+
+        // Every physical family's vantage is a space, and the split that
+        // matters is space-native against namespace-native.
+        for physical in [&FLEXIBLE_5_25_SOFT, &FLEXIBLE_5_25_HARD_10, &LOGICAL_BLOCK_512] {
+            assert_ne!(physical.family(), MediaFamily::Virtual, "{}", physical.id);
+        }
     }
 
     #[test]

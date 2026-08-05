@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Resolves a user-supplied path — a raw image, or `archive[/entry]`
-//! for any grammar the archive catalog claims — to a streamed image
-//! source plus the archive layers unwrapped along the way. The source
-//! file is opened under the P7 claim, and nothing is loaded whole
+//! Resolves what a medium is read from: a file named by path, or one
+//! archive entry reached through the namespace its medium bears. The
+//! source file is opened under the P7 claim, and nothing is loaded whole
 //! (P27): a plain image and an entry stored uncompressed are
 //! source-backed — reads stream from the claimed file through the
 //! session cache — while a coded entry is session-backed, decoded once
@@ -17,14 +16,12 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use crate::archive::{
-    ArchiveCatalog, EntrySource, normalize_entry_name, open_archive, split_archive_path,
-};
+use crate::archive::EntrySource;
 use crate::cache::{EXTENT, SessionCache};
 use crate::device::{
     AccessIntent, AccessMode, Device, FileRangeDevice, MediumDevice, open_declared, read_exact_at,
 };
-use crate::error::{Error, ErrorCategory, Result};
+use crate::error::{Error, Result};
 
 /// How far the predictive reader runs ahead of a sequential access
 /// pattern, in extents — part of the session's stated read-ahead (P27).
@@ -174,6 +171,21 @@ impl ImageSource {
         }
     }
 
+    /// A source over a claim already taken, reading the whole file.
+    ///
+    /// The archive medium's evidence plane is this: the artifact's bytes
+    /// are readable under the very claim its catalog reads through, which
+    /// is plumbing rather than a vantage anyone composes on — an
+    /// archive's own vantage is its namespace.
+    pub(crate) fn over_claim(
+        claim: Arc<File>,
+        mode: AccessMode,
+        len: u64,
+        cache_bytes: u64,
+    ) -> Self {
+        Self::new(claim, mode, Backing::Claim { offset: 0 }, len, cache_bytes)
+    }
+
     pub fn len(&self) -> u64 {
         self.len
     }
@@ -276,87 +288,26 @@ pub(crate) struct ResolvedImage {
     pub archive_layers: Vec<ArchiveLayer>,
 }
 
-/// Returns the name of the archive's only file entry, or an error when
-/// the archive is empty or ambiguous.
-fn only_file_entry_name(catalog: &dyn ArchiveCatalog, archive_path: &Path) -> Result<String> {
-    let format = catalog.descriptor().id;
-    let mut found: Option<&str> = None;
-    for entry in catalog.entries() {
-        if entry.is_dir {
-            continue;
-        }
-        if found.is_some() {
-            return Err(Error::archive(
-                format,
-                format!(
-                    "'{}' contains multiple files; specify an entry with archive/path",
-                    archive_path.display()
-                ),
-            ));
-        }
-        found = Some(&entry.name);
-    }
-
-    found
-        .map(str::to_owned)
-        .ok_or_else(|| Error::archive(format, "archive contains no files"))
-}
-
-/// Resolves one archive entry to a streamed image source, through the
-/// catalog its grammar declares.
-fn resolve_archive_entry(
-    archive_path: PathBuf,
-    entry_path: Option<PathBuf>,
-    intent: AccessIntent,
+/// Resolves one archive entry — reached through the namespace its medium
+/// bears — to a streamed image source under the archive's own claim.
+///
+/// **The backing is the entry's own, and the child holds it.** A stored
+/// entry is source-backed: its bytes are a span of the claimed archive,
+/// read in place, and the claim stays alive because this source holds a
+/// handle on it. A coded entry is session-backed: its bytes were decoded
+/// once into private session storage, and it is free-standing from that
+/// moment (P27). Either way, ejecting the archive under a disk already
+/// loaded from it takes nothing away.
+pub(crate) fn resolve_entry(
+    claim: Arc<File>,
+    mode: AccessMode,
+    layer: ArchiveLayer,
+    entry: EntrySource,
     cache_bytes: u64,
-) -> Result<ResolvedImage> {
-    if intent == AccessIntent::Write {
-        return Err(Error::read_only(format!(
-            "'{}' names an entry inside an archive, which cannot be opened for \
-             writing: a write would have to be encoded back into the archive's \
-             own grammar, and no adapter claims that",
-            archive_path.display()
-        )));
-    }
-    let claimed = open_archive(&archive_path)?;
-    let catalog = claimed.catalog.as_ref();
-    let descriptor = catalog.descriptor();
-
-    let entry_name = match &entry_path {
-        Some(entry_path) => normalize_entry_name(entry_path),
-        None => only_file_entry_name(catalog, &archive_path)?,
-    };
-    let index = catalog
-        .entries()
-        .iter()
-        .position(|entry| entry.name == entry_name)
-        .ok_or_else(|| {
-            Error::categorized_archive(
-                ErrorCategory::NotFound,
-                descriptor.id,
-                format!("entry '{entry_name}' not found"),
-            )
-        })?;
-    let entry = &catalog.entries()[index];
-    if entry.is_dir {
-        return Err(Error::categorized_archive(
-            ErrorCategory::IsDirectory,
-            descriptor.id,
-            format!("entry '{entry_name}' is a directory"),
-        ));
-    }
-
-    let layer = ArchiveLayer {
-        id: descriptor.id.to_owned(),
-        name: descriptor.name.to_owned(),
-        path: archive_path.clone(),
-        entry_name: entry_name.clone(),
-        archive_size: Some(catalog.archive_size()),
-        compressed_size: entry.compressed_size,
-        uncompressed_size: Some(entry.uncompressed_size),
-    };
-
-    let (backing, len) = match catalog.entry_source(index)? {
+) -> ResolvedImage {
+    let source_path = layer.path.clone();
+    let image_path = PathBuf::from(layer.entry_name.clone());
+    let (backing, len) = match entry {
         EntrySource::InPlace { offset, length } => (Backing::Claim { offset }, length),
         EntrySource::Spooled {
             spool,
@@ -364,18 +315,21 @@ fn resolve_archive_entry(
             length,
         } => (Backing::Spool { spool, offset }, length),
     };
-
-    Ok(ResolvedImage {
-        source_path: archive_path,
-        image_path: PathBuf::from(entry_name),
-        source: ImageSource::new(claimed.file, claimed.mode, backing, len, cache_bytes),
+    ResolvedImage {
+        source_path,
+        image_path,
+        source: ImageSource::new(claim, mode, backing, len, cache_bytes),
         archive_layers: vec![layer],
-    })
+    }
 }
 
 /// Resolves `path` to a streamed image source under the caller's
-/// declared intent (P7) and declared cache bound (P27), consulting the
-/// archive catalog first.
+/// declared intent (P7) and declared cache bound (P27).
+///
+/// **A path names a file.** An artifact inside an archive is reached
+/// through the archive's own namespace and loaded from the file view
+/// there ([`resolve_entry`]), which is the journey every other medium
+/// takes rather than a second syntax for one kind of source.
 ///
 /// The intent is declared, never laddered. Before F43 the identification
 /// path quietly degraded a failed write open to read-only while the disk
@@ -387,10 +341,6 @@ pub(crate) fn resolve_image(
     intent: AccessIntent,
     cache_bytes: u64,
 ) -> Result<ResolvedImage> {
-    if let Some((archive_path, entry_path)) = split_archive_path(path) {
-        return resolve_archive_entry(archive_path, entry_path, intent, cache_bytes);
-    }
-
     let file = open_declared(path, intent)?;
     let len = file
         .metadata()

@@ -41,7 +41,9 @@ use crate::journal;
 use crate::mbr::{self, Discovery};
 use crate::media_profile::MediaProfile;
 use crate::session::{self, Identification, Layer};
-use crate::source::{self, ImageSource};
+use crate::archive::ArchiveMedium;
+use crate::device_family::DeviceFamily;
+use crate::source::{self, ImageSource, ResolvedImage};
 
 use crate::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
@@ -200,6 +202,211 @@ pub(crate) struct MediaState {
     failed: Option<String>,
 }
 
+
+/// What occupies a device's slot: a medium of one of the two vantages
+/// the model claims.
+///
+/// **Families own their representation** (P14), and this is that rule at
+/// the state tier. A space-native medium holds an addressed disk with
+/// structure above it; a namespace-native one holds named entries and no
+/// space at all. Rather than one state with most of its fields empty,
+/// each kind is its own, and the verbs that need a space say so —
+/// asking an archive to inspect partitions is a category error answered
+/// by name, not a hole to fall into.
+#[derive(Debug)]
+pub(crate) enum MediumState {
+    /// A medium whose native vantage is a space: the block state an
+    /// image format loaded, with partitions, volumes and namespaces
+    /// above it.
+    Space(MediaState),
+    /// A medium whose native vantage is a namespace: an archive, whose
+    /// content is names and whose bytes are its encoding (P13).
+    Archive(ArchiveMedium),
+}
+
+impl MediumState {
+    /// Opens the artifact at `path` as whichever medium it is.
+    ///
+    /// **The grammar that recognizes an artifact is what settles this**
+    /// (P12): an enrolled archive grammar claiming the artifact makes it
+    /// an archive medium, and everything else goes to the image catalog
+    /// as before. Both loads and discovery come through here, so the two
+    /// never disagree about what an artifact is.
+    pub(crate) fn open(path: &Path, intent: AccessIntent, cache_bytes: u64) -> Result<Self> {
+        if crate::archive::is_archive(path) {
+            return Ok(Self::Archive(ArchiveMedium::open(
+                path,
+                intent,
+                cache_bytes,
+            )?));
+        }
+        Ok(Self::Space(MediaState::open_with_cache(
+            path,
+            intent,
+            cache_bytes,
+        )?))
+    }
+
+    /// Opens one archive entry as a medium of its own — the nested
+    /// journey, reached from the file view that names the entry.
+    pub(crate) fn open_entry(resolved: ResolvedImage, cache_bytes: u64) -> Result<Self> {
+        Ok(Self::Space(MediaState::open_resolved(
+            resolved,
+            cache_bytes,
+        )?))
+    }
+
+    /// The artifact claimed — the archive itself for an image loaded out
+    /// of one.
+    pub(crate) fn path(&self) -> &str {
+        match self {
+            Self::Space(space) => space.path(),
+            Self::Archive(archive) => archive.path(),
+        }
+    }
+
+    /// The resolved artifact — the entry name for an image loaded out of
+    /// an archive, else the source path.
+    pub(crate) fn image_path(&self) -> &Path {
+        match self {
+            Self::Space(space) => space.image_path(),
+            Self::Archive(archive) => Path::new(archive.path()),
+        }
+    }
+
+    /// The artifact's own bytes, which every medium has: the evidence
+    /// plane, distinct from any vantage above it.
+    pub(crate) fn image_size_bytes(&self) -> u64 {
+        match self {
+            Self::Space(space) => space.image_size_bytes(),
+            Self::Archive(archive) => archive.size_bytes(),
+        }
+    }
+
+    /// Reads the artifact's own bytes, streamed (P27).
+    pub(crate) fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        match self {
+            Self::Space(space) => space.read_at(offset, buf),
+            Self::Archive(archive) => archive.read_at(offset, buf),
+        }
+    }
+
+    pub(crate) fn media(&self) -> &'static MediaProfile {
+        match self {
+            Self::Space(space) => space.media(),
+            Self::Archive(archive) => archive.media(),
+        }
+    }
+
+    pub(crate) fn mode(&self) -> AccessMode {
+        match self {
+            Self::Space(space) => space.mode(),
+            Self::Archive(archive) => archive.mode(),
+        }
+    }
+
+    pub(crate) fn assurance(&self) -> &Assurance {
+        match self {
+            Self::Space(space) => space.assurance(),
+            Self::Archive(archive) => archive.assurance(),
+        }
+    }
+
+    pub(crate) fn identify(&self) -> Identification {
+        match self {
+            Self::Space(space) => space.identify(),
+            Self::Archive(archive) => archive.identify(),
+        }
+    }
+
+    pub(crate) fn is_modified(&self) -> bool {
+        match self {
+            Self::Space(space) => space.is_modified(),
+            // Read-only, so there is never anything buffered to lose.
+            Self::Archive(_) => false,
+        }
+    }
+
+    /// The recognized format's stable spelling — an image format for a
+    /// space, an archive grammar for a namespace.
+    pub(crate) fn format_id(&self) -> &'static str {
+        match self {
+            Self::Space(space) => space.descriptor().id,
+            Self::Archive(archive) => archive.format_id(),
+        }
+    }
+
+    /// That format's name, fit to show a user.
+    pub(crate) fn format_name(&self) -> &'static str {
+        match self {
+            Self::Space(space) => space.descriptor().name,
+            Self::Archive(archive) => archive.format_name(),
+        }
+    }
+
+    /// The device family the recognizing format declares for what it
+    /// records (P12), or `None` where it declares none.
+    ///
+    /// An archive grammar declares the archive slot, and does so with
+    /// certainty no image format has about a disk: a zip belongs in
+    /// nothing else.
+    pub(crate) fn default_device(&self) -> Option<DeviceFamily> {
+        match self {
+            Self::Space(space) => space.descriptor().default_device,
+            Self::Archive(_) => Some(DeviceFamily::ARCHIVE_DEVICE),
+        }
+    }
+
+    /// The family of an artifact this release recognizes and holds in no
+    /// device — flux, today.
+    pub(crate) fn foreign_family(&self) -> Option<&'static str> {
+        match self {
+            Self::Space(space) => space.foreign_family(),
+            Self::Archive(_) => None,
+        }
+    }
+
+    /// The space this medium presents, or the refusal naming the vantage
+    /// it has instead.
+    ///
+    /// Every verb that addresses a space passes through here, so a
+    /// namespace-native medium answers by name rather than by a verb
+    /// failing further in — the same discipline an empty slot already
+    /// answers a content verb with.
+    pub(crate) fn space(&self, verb: &str) -> Result<&MediaState> {
+        match self {
+            Self::Space(space) => Ok(space),
+            Self::Archive(archive) => Err(no_space(verb, archive)),
+        }
+    }
+
+    pub(crate) fn space_mut(&mut self, verb: &str) -> Result<&mut MediaState> {
+        match self {
+            Self::Space(space) => Ok(space),
+            Self::Archive(archive) => Err(no_space(verb, archive)),
+        }
+    }
+
+    /// The archive this medium is, where it is one.
+    pub(crate) fn archive(&self) -> Option<&ArchiveMedium> {
+        match self {
+            Self::Space(_) => None,
+            Self::Archive(archive) => Some(archive),
+        }
+    }
+}
+
+/// The refusal a space verb makes on a namespace-native medium.
+fn no_space(verb: &str, archive: &ArchiveMedium) -> Error {
+    Error::unsupported(format!(
+        "'{verb}' addresses a space and '{}' holds an archive medium, whose \
+         vantage is a namespace: an archive has no partition, no volume and \
+         no sector to address, and its content is reached through the \
+         filesystem this device resolves to",
+        archive.path()
+    ))
+}
+
 impl MediaState {
     /// Opens `path` at the stated default cache bound.
     ///
@@ -243,14 +450,11 @@ impl MediaState {
     ) -> Result<Self> {
         let path = path.as_ref();
         let recovery = journal::sidecar_path(path);
-        // An archive entry is read-only and never commits, so it has no
-        // journal to reconcile and no sidecar to find.
-        let is_entry = crate::archive::split_archive_path(path).is_some();
 
         let mut resolved = source::resolve_image(path, intent, cache_bytes)?;
         // The sidecar check runs under our claim, so no live commit can
         // be mid-flight — a sidecar here is an interrupted one (P9).
-        if !is_entry && recovery.exists() {
+        if recovery.exists() {
             match intent {
                 AccessIntent::Write => {
                     let mut host = resolved.source.medium_device(path.display().to_string());
@@ -265,6 +469,28 @@ impl MediaState {
                 }
             }
         }
+        Self::over(resolved, recovery, cache_bytes)
+    }
+
+    /// Opens the medium an already-resolved source holds — the entry
+    /// journey, where the artifact was reached through a namespace
+    /// rather than named by path.
+    ///
+    /// An archive entry is read-only and never commits, so it has no
+    /// journal to reconcile and no sidecar to find; everything above the
+    /// backing is the same open a path takes, which is what makes a
+    /// nested artifact the same journey rather than a second one.
+    pub(crate) fn open_resolved(resolved: ResolvedImage, cache_bytes: u64) -> Result<Self> {
+        let recovery = journal::sidecar_path(&resolved.image_path);
+        Self::over(resolved, recovery, cache_bytes)
+    }
+
+    /// The open both journeys share: the format adapter over the
+    /// resolved backing, the assurance gate before anything is exposed,
+    /// and the layers the artifact was reached through.
+    fn over(resolved: ResolvedImage, recovery: PathBuf, cache_bytes: u64) -> Result<Self> {
+        let path = resolved.source_path.clone();
+        let path = path.as_path();
         let mode = resolved.source.mode();
 
         // One claim, two planes: the adapter opens the presented disk over
@@ -307,7 +533,7 @@ impl MediaState {
             assurance,
             bound,
             // The artifact claimed, which for an archived image is the
-            // archive rather than the `archive/entry` path as given.
+            // archive rather than the entry loaded out of it.
             path: resolved.source_path.display().to_string(),
             journal_path: recovery,
             failed: None,

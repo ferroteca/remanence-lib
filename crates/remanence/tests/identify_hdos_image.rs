@@ -24,6 +24,28 @@ fn attach(
     Ok((session, attachment))
 }
 
+/// The nested journey: the archive into a slot of its own, the entry
+/// named through the namespace it bears, and the disk it holds loaded
+/// into the drive the format records.
+fn attach_entry(
+    archive: impl AsRef<std::path::Path>,
+    entry: &str,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = Session::new();
+    session
+        .add_device(DeviceFamily::ARCHIVE_DEVICE)?
+        .load_media(archive, AccessIntent::Read)?;
+    let discovery = session
+        .require_device(AttachmentId::parse("arc0")?)?
+        .filesystem()?
+        .get_file(entry)?
+        .discover()?;
+    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
+    let attachment = device.attachment();
+    device.load_discovery(discovery)?;
+    Ok((session, attachment))
+}
+
 mod common;
 
 const IMAGE_NAME: &str = "HDOS_1-0_Issue_#50-00-00_890-1.h8d";
@@ -99,10 +121,11 @@ fn identifies_hdos_fixture_image() {
 }
 
 #[test]
-fn identifies_single_image_inside_zip_fixture() {
+fn identifies_the_image_inside_the_zip_fixture() {
     let zip_path = private_copy(ZIP_NAME, "single");
 
-    let (mut disk_session, disk_at) = attach(&zip_path, AccessIntent::Read).expect("disk opens");
+    let (mut disk_session, disk_at) =
+        attach_entry(&zip_path, IMAGE_NAME).expect("the entry loads");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     let identification = disk.identify().expect("a medium is attached");
 
@@ -121,19 +144,35 @@ fn identifies_single_image_inside_zip_fixture() {
 }
 
 #[test]
-fn identifies_explicit_image_inside_zip_fixture() {
+fn the_zip_itself_is_an_archive_medium_and_not_the_disk_inside_it() {
+    // The path names a file, and this file is an archive: loading it
+    // loads the archive, whose content is a namespace. Which member is
+    // wanted is asked of that namespace rather than guessed at because
+    // there happens to be exactly one.
     let zip_path = private_copy(ZIP_NAME, "explicit");
-    let image_path = zip_path.join(IMAGE_NAME);
 
-    let (mut disk_session, disk_at) = attach(&image_path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
-    let identification = disk.identify().expect("a medium is attached");
+    let mut session = Session::new();
+    let device = session
+        .add_device(DeviceFamily::ARCHIVE_DEVICE)
+        .expect("the slot is added");
+    device
+        .load_media(&zip_path, AccessIntent::Read)
+        .expect("the archive loads");
 
-    let layout = archive_layout(&identification);
-    assert_eq!(layout.entry_name, IMAGE_NAME);
-    assert_eq!(identification.layers.len(), 4);
-    assert_hdos_identification(&identification);
+    let identification = device.identify().expect("a medium is attached");
+    assert_eq!(identification.layers.len(), 1);
+    assert_eq!(identification.layers[0].kind, LayerKind::Archive);
+    assert_eq!(identification.layers[0].name, "ZIP archive");
 
-    drop(disk_session);
+    let entries = device
+        .filesystem()
+        .expect("an archive is its namespace")
+        .entries("")
+        .expect("the root lists");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, IMAGE_NAME);
+    assert_eq!(entries[0].size_bytes, 102_400);
+
+    drop(session);
     std::fs::remove_file(&zip_path).ok();
 }

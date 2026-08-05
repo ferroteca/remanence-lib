@@ -62,7 +62,13 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
  * formats that declare one carry. A version accessor answers 0 for an
  * image of any other format, so each is read only under its own format. */
 static void print_device_format(const RemanenceDevice *device) {
-    switch (remanence_device_format(device)) {
+    RemanenceDiskFormat format;
+    if (!remanence_device_format(device, &format)) {
+        /* A medium that is no disk image -- an archive -- presents no
+         * disk to state the format or the size of. */
+        return;
+    }
+    switch (format) {
         case REMANENCE_DISK_FORMAT_QCOW2:
             printf("Format:  qcow2 (version %" PRIu32 ")\n",
                    remanence_device_qcow2_version(device));
@@ -206,38 +212,67 @@ static void show_drive_letters(RemanenceDevice *device) {
     remanence_report_free(report);
 }
 
-/* Lists what an archive holds, without reading any entry's data. */
+/* Lists what an archive holds, without reading any entry's data.
+ *
+ * An archive is a medium like any other: it loads into a device of its
+ * own family, and its content is the namespace that device resolves
+ * to -- so this is the same walk a disk's filesystem takes, with no
+ * archive journey of its own. */
 static int list_archive(const char *path) {
     RemanenceErrorCategory error_category;
     char *error = NULL;
     char *error_rule = NULL;
-    RemanenceArchive *archive =
-        remanence_archive_open(path, &error_category, &error, &error_rule);
-    if (archive == NULL) {
+
+    RemanenceSession *session = remanence_session_new();
+    RemanenceDevice *device = remanence_session_add_device(
+        session, "archive-device", &error_category, &error, &error_rule);
+    if (device == NULL) {
+        report_error("error adding the archive slot", error_category, error, error_rule);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
+    if (!remanence_device_load_media(device, path, REMANENCE_ACCESS_INTENT_READ,
+                                     &error_category, &error, &error_rule)) {
         report_error("error", error_category, error, error_rule);
+        remanence_session_free(session);
         return EXIT_FAILURE;
     }
 
-    printf("Archive: %s\n", remanence_archive_path(archive));
-    printf("Format:  %s (%s)\n", remanence_archive_format_name(archive),
-           remanence_archive_format_id(archive));
-    printf("Size:    %" PRIu64 " bytes\n\n", remanence_archive_size_bytes(archive));
+    printf("Archive: %s\n", remanence_device_path(device));
+    printf("Device:  %s (%s)\n", remanence_device_attachment(device),
+           remanence_device_family(device));
+    printf("Size:    %" PRIu64 " bytes\n\n", remanence_device_image_size_bytes(device));
 
-    size_t entry_count = remanence_archive_entry_count(archive);
-    printf("Entries (%zu):\n", entry_count);
-    for (size_t i = 0; i < entry_count; ++i) {
-        uint64_t compressed = 0;
-        printf("  %s%s\t%" PRIu64 " bytes",
-               remanence_archive_entry_name(archive, i),
-               remanence_archive_entry_is_dir(archive, i) ? "/" : "",
-               remanence_archive_entry_uncompressed_size(archive, i));
-        if (remanence_archive_entry_compressed_size(archive, i, &compressed)) {
-            printf("\t(%" PRIu64 " packed)", compressed);
-        }
-        printf("\n");
+    RemanenceSpace *namespace =
+        remanence_device_filesystem(device, &error_category, &error, &error_rule);
+    if (namespace == NULL) {
+        report_error("error reaching the namespace", error_category, error, error_rule);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
+    printf("Format:  %s\n", remanence_filesystem_kind(namespace));
+
+    RemanenceEntryList *entries = remanence_filesystem_entries(
+        namespace, "", &error_category, &error, &error_rule);
+    if (entries == NULL) {
+        report_error("error listing the archive", error_category, error, error_rule);
+        remanence_space_free(namespace);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
     }
 
-    remanence_archive_free(archive);
+    size_t entry_count = remanence_entry_count(entries);
+    printf("Entries (%zu):\n", entry_count);
+    for (size_t i = 0; i < entry_count; ++i) {
+        printf("  %s%s\t%" PRIu64 " bytes\n",
+               remanence_entry_name(entries, i),
+               remanence_entry_kind(entries, i) == REMANENCE_ENTRY_KIND_DIRECTORY ? "/" : "",
+               remanence_entry_size_bytes(entries, i));
+    }
+
+    remanence_entry_list_free(entries);
+    remanence_space_free(namespace);
+    remanence_session_free(session);
     return EXIT_SUCCESS;
 }
 

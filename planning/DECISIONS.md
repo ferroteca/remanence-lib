@@ -58,6 +58,91 @@ removes it is the record either way.
 
 ## Decisions
 
+### D27 — Rulings made delivering the uniform archive open
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-05. **Supports** S1, S2, S3; the U2 amendment, the P14
+amendment, the P19 amendment; in-force P7, P12, P13, P19, P27.
+
+Rulings made folding the archive journey into the storage model. The
+delivery itself is recorded by the commit; these are the calls made in
+its course, including the two the feature existed to settle.
+
+**The archive slot is visible in its machine's attachment namespace.**
+The alternative — a virtual slot kept behind the report — was weighed
+and rejected for D23's reason one tier down: it would make the archive
+the one device kind a caller cannot see, paid for at every seam that
+lists devices, and it buys nothing. What the restriction would have been
+written for is already handled by family: a namespace composer passes an
+archive device over because an archive has no partition or volume for an
+assignment rule to reach, and the mapping's provenance says it did.
+`arc0` is an ordinary attachment identity.
+
+**The backing relationship is settled by what the child holds, not by an
+outliving rule.** A stored entry is source-backed through the archive's
+own claim and a coded one is session-backed in private session storage
+(P27) — the delivered split, unchanged. What this feature adds is that
+the child *holds* its backing: the claim or the spool is refcounted into
+the medium loaded from it, so ejecting the archive, or removing its
+device altogether, takes nothing away from a disk already loaded. The
+draft's "that machine must outlive the child" is therefore not a rule
+the code needs, and stating it would have described a constraint the
+implementation does not have.
+
+**The two vantages are two states, not one state with empty fields.**
+P14's "families own their representation" is applied at the state tier:
+a space-native medium and a namespace-native one are separate kinds
+behind one `MediumState`, and every verb that addresses a space passes
+through one accessor that refuses on the other **by name** — naming the
+vantage, not failing further in. That is what made the archive medium
+additive rather than a rewrite of the block state, and it is why an
+archive reports no phantom volume (D26) without anything having to
+suppress one.
+
+**A path names a file.** The `archive[/entry]` syntax is gone from the
+medium journey: an entry is reached through the namespace its archive
+bears and loaded from the file view that names it, which is the same
+journey every other medium takes. Two consequences were accepted
+deliberately. Loading a one-entry archive no longer silently opens the
+entry — the old convenience guessed, and the namespace asks instead. And
+the ambiguity refusal for a many-membered archive is gone with the guess
+that needed it.
+
+**The capture-set adapter keeps `captures.7z/subtree`.** That spelling
+names a subtree of *members* read as one logical artifact — one disk per
+stream per head per step position — not one medium named inside an
+archive, and the flux family reaches it through its own type as P13
+requires. It is not the syntax this feature retired.
+
+**The file-view load lands as `File::discover`, and the claim it mints
+from is bounded.** D24 deferred the third load form to whichever feature
+minted the view; this is it. It answers with the delivered consumable
+`Discovery`, so the nested artifact travels through exactly the path
+`load_discovery` already served — no second load form, and the claim is
+the archive's own, held continuously from naming the entry to loading
+it (P7). The claim is stated as an **archive entry**: a file on a
+volume-backed filesystem is refused by name, because backing a medium
+from a cluster chain is new capability rather than a spelling, and P3
+would rather refuse than half-answer.
+
+**In-force P19's serialized-artifact provider form dissolves**, which is
+what D25 deferred to here. A medium may bear its namespace directly —
+an archive, a flat catalog on an unpartitioned disk — its grammar being
+a P12 adapter at that seam. The composer's three constraints stay in
+P19: P35 is still unbuilt, and D25's reasoning for leaving them is
+unchanged.
+
+**Weighed and declined:** recognizing an archive by its leading bytes
+rather than by the extension its grammar answers to (a ZIP's signature
+sits behind whatever stub precedes it, so signature recognition would
+refuse the self-extracting archives the catalog reads today); giving
+`identify` an archive-medium *media* layer beside the grammar layer (the
+layer kind for a medium is spelled `physical-media`, and a virtual
+medium has no physical anything — the media type is answered where it
+belongs, on the handle); and keeping `Archive` as a read-only listing
+beside the medium (two ways to walk one namespace is the second
+interface the one-node claim exists to refuse).
+
 ### D26 — Volume and filesystem are two traits on one object, not two types
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

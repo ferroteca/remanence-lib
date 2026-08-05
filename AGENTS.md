@@ -60,10 +60,13 @@ ABI, or Python module.
   `session.rs` the layered
   identification model — the layers of an artifact's nesting, reached
   through the one storage handle; `hdos.rs` the HDOS directory lister and file
-  extractor, private behind the namespace node; `archive.rs` the archive-catalog seam — the
-  `ArchiveCatalog` trait, the public `Archive` listing, and the
-  enrollment each grammar is reached by — with `source.rs` resolving
-  `archive[/entry]` paths through it under the claim;
+  extractor, private behind the namespace node; `archive.rs` the archive **medium** and the
+  catalog seam beneath it — the `ArchiveCatalog` trait and the
+  enrollment each grammar is reached by, the `ArchiveMedium` an
+  archive-family device holds, and the namespace it presents through the
+  same `Catalog` seam a flat on-medium catalog does — with `source.rs`
+  resolving a file named by path, or one entry named through the file
+  view that reaches it, under the archive's own claim;
   `zip.rs` + `inflate.rs` the self-contained ZIP catalog and streaming
   DEFLATE decompressor, and `sevenzip.rs` + `lzma.rs` the 7z catalog
   and streaming LZMA/LZMA2 decompressors — archives are read in place by

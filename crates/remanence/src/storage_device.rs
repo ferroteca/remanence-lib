@@ -36,11 +36,12 @@
 use std::fmt;
 use std::path::Path;
 
+use crate::archive::ArchiveMedium;
 use crate::assurance::Assurance;
 use crate::device::{AccessIntent, AccessMode};
 use crate::device_family::DeviceFamily;
 use crate::discovery::Discovery;
-use crate::disk::{DiskFormat, MediaState};
+use crate::disk::{DiskFormat, MediaState, MediumState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
 use crate::filesystem::{Catalog, StorageSpace};
@@ -131,7 +132,7 @@ impl fmt::Display for AttachmentId {
 #[derive(Debug)]
 pub struct StorageDevice {
     attachment: AttachmentId,
-    medium: Option<MediaState>,
+    medium: Option<MediumState>,
 }
 
 impl StorageDevice {
@@ -160,10 +161,17 @@ impl StorageDevice {
         self.medium.is_some()
     }
 
-    /// Loads the medium at `path` — a disk image, or `archive[/entry]` —
-    /// into this device under the caller's declared intent (P7), and
-    /// hands back nothing to hold: the device is the one storage handle,
-    /// and the medium's facts answer on it.
+    /// Loads the medium at `path` — a disk image, or an archive — into
+    /// this device under the caller's declared intent (P7), and hands
+    /// back nothing to hold: the device is the one storage handle, and
+    /// the medium's facts answer on it.
+    ///
+    /// A path names a file. An artifact *inside* an archive is loaded
+    /// from the file view that names it
+    /// ([`crate::File::discover`] into
+    /// [`StorageDevice::load_discovery`]), which is the journey every
+    /// other medium takes rather than a second syntax for one kind of
+    /// source.
     ///
     /// **A device accepts only the media its family is served** (P14).
     /// The image-format adapter that loads the state names the medium,
@@ -193,7 +201,7 @@ impl StorageDevice {
             )));
         }
         let path = path.as_ref();
-        let medium = MediaState::open_with_cache(path, intent, cache_bytes)?;
+        let medium = MediumState::open(path, intent, cache_bytes)?;
 
         // A flux artifact is refused whatever the device: the block
         // catalog opens anything it cannot identify at the raw adapter,
@@ -246,9 +254,8 @@ impl StorageDevice {
     /// and both loads land here so the check is the same check: a medium
     /// belonging in another drive is refused whether the caller named the
     /// drive or the format declared it. `named` is the artifact as the
-    /// caller reached it — the `archive/entry` path where that is what
-    /// they asked for — so a refusal quotes back what they typed.
-    fn accept(&mut self, medium: MediaState, named: &str) -> Result<()> {
+    /// caller reached it, so a refusal quotes back what they named.
+    fn accept(&mut self, medium: MediumState, named: &str) -> Result<()> {
         let attachment = self.attachment;
         let media = medium.media();
         if !self.family().accepts(media) {
@@ -278,7 +285,7 @@ impl StorageDevice {
 
     /// The medium, taken out of the slot, or a refusal naming the empty
     /// one.
-    pub(crate) fn take_medium(&mut self) -> Result<MediaState> {
+    pub(crate) fn take_medium(&mut self) -> Result<MediumState> {
         let attachment = self.attachment;
         self.medium.take().ok_or_else(|| {
             Error::not_found(format!(
@@ -291,7 +298,7 @@ impl StorageDevice {
     /// naming the empty slot. Every content verb below passes through
     /// here, so an empty device answers by name rather than by a verb
     /// failing further in.
-    fn media(&self, verb: &str) -> Result<&MediaState> {
+    fn media(&self, verb: &str) -> Result<&MediumState> {
         let attachment = self.attachment;
         self.medium.as_ref().ok_or_else(|| {
             Error::not_found(format!(
@@ -301,7 +308,7 @@ impl StorageDevice {
         })
     }
 
-    fn media_mut(&mut self, verb: &str) -> Result<&mut MediaState> {
+    fn media_mut(&mut self, verb: &str) -> Result<&mut MediumState> {
         let attachment = self.attachment;
         self.medium.as_mut().ok_or_else(|| {
             Error::not_found(format!(
@@ -311,6 +318,20 @@ impl StorageDevice {
         })
     }
 
+    /// The addressed space a verb needs, or the refusal naming what is
+    /// there instead — an empty slot, or a medium whose vantage is a
+    /// namespace.
+    ///
+    /// Two refusals, one route. Every space verb passes through here, so
+    /// neither answer depends on the verb remembering to check.
+    fn space(&self, verb: &str) -> Result<&MediaState> {
+        self.media(verb)?.space(verb)
+    }
+
+    fn space_mut(&mut self, verb: &str) -> Result<&mut MediaState> {
+        self.media_mut(verb)?.space_mut(verb)
+    }
+
     /// The artifact the medium was opened from — the archive itself for an
     /// image opened from inside one, rather than the `archive/entry` path
     /// as given.
@@ -318,8 +339,8 @@ impl StorageDevice {
         Ok(self.media("path")?.path())
     }
 
-    /// The resolved image — the entry name for an image opened from
-    /// inside an archive, else the source path.
+    /// The resolved artifact — the entry name for an image loaded out
+    /// of an archive, else the source path.
     pub fn image_path(&self) -> Result<&Path> {
         Ok(self.media("image_path")?.image_path())
     }
@@ -376,12 +397,12 @@ impl StorageDevice {
 
     /// The image container format the medium's image turned out to be.
     pub fn format(&self) -> Result<DiskFormat> {
-        Ok(self.media("format")?.format())
+        Ok(self.space("format")?.format())
     }
 
     /// The presented disk's size (the guest-visible size for qcow2).
     pub fn size(&self) -> Result<u64> {
-        Ok(self.media("size")?.size())
+        Ok(self.space("size")?.size())
     }
 
     /// Whether uncommitted changes exist.
@@ -405,7 +426,7 @@ impl StorageDevice {
     /// refusal — a disk in no format this release knows is a fact about
     /// the disk. An image that cannot be *read* still fails.
     pub fn inspect(&mut self) -> Result<DiskReport> {
-        self.media_mut("inspect")?.inspect()
+        self.space_mut("inspect")?.inspect()
     }
 
     /// The filesystem this device resolves to, or the refusal that says
@@ -430,26 +451,61 @@ impl StorageDevice {
     /// addressable because a volume composed it, and bearing a namespace
     /// only where one was recognized on it.
     pub fn volume(&mut self, id: VolumeId) -> Result<StorageSpace<'_>> {
-        self.media("volume")?;
+        self.space("volume")?;
         StorageSpace::select(self, id)
     }
 
     /// Reads within a space's extent, the offset already resolved against
     /// the presented disk by the space that owns the bound.
     pub(crate) fn read_space_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        self.media_mut("read_at")?.read_space_at(offset, buf)
+        self.space_mut("read_at")?.read_space_at(offset, buf)
     }
 
     /// Writes within a space's extent, buffered until commit like every
     /// other write (P2).
     pub(crate) fn write_space_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        self.media_mut("write_at")?.write_space_at(offset, data)
+        self.space_mut("write_at")?.write_space_at(offset, data)
+    }
+
+    /// The namespace an archive medium bears, where this device holds
+    /// one.
+    ///
+    /// An archive's content *is* its namespace, so nothing is probed for
+    /// and nothing is refused: the grammar that recognized the artifact
+    /// already read the index this presents.
+    pub(crate) fn archive_namespace(&mut self) -> Result<Option<(&'static str, Box<dyn Catalog>)>> {
+        Ok(self
+            .media("filesystem")?
+            .archive()
+            .map(ArchiveMedium::namespace))
+    }
+
+    /// A discovery over one entry of the archive this device holds — the
+    /// nested journey, reached from the file view that names the entry.
+    ///
+    /// The entry is read through the archive's own claim, so the child is
+    /// opened without re-opening anything and the artifact cannot change
+    /// between the naming and the load (P7).
+    pub(crate) fn discover_entry(&mut self, name: &str) -> Result<Discovery> {
+        let attachment = self.attachment;
+        let archive = self.media("discover")?.archive().ok_or_else(|| {
+            Error::unsupported(format!(
+                "{attachment} holds no archive medium, and this release mints \
+                 a discovery from an archive entry alone"
+            ))
+        })?;
+        let cache_bytes = archive.cache_bytes();
+        let resolved = archive.resolve_entry(name)?;
+        Ok(Discovery::over(MediumState::open_entry(
+            resolved,
+            cache_bytes,
+        )?))
     }
 
     /// Which enrolled adapter claims the namespace this medium bears
     /// directly, for the resolver above.
     pub(crate) fn recognize_namespace(&mut self) -> Result<CatalogRecognition> {
-        self.media_mut("filesystem")?.recognize_namespace()
+        self.space_mut("filesystem")?.recognize_namespace()
     }
 
     /// Opens the namespace `adapter` recognized — the adapter that
@@ -458,24 +514,24 @@ impl StorageDevice {
         &mut self,
         adapter: &'static dyn FilesystemAdapter,
     ) -> Result<Box<dyn Catalog>> {
-        self.media_mut("filesystem")?.open_namespace(adapter)
+        self.space_mut("filesystem")?.open_namespace(adapter)
     }
 
     /// Lists a directory in the volume identified by `volume_id`
     /// ("" = root; "A/B" descends).
     pub(crate) fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
-        self.media_mut("entries")?.entries(volume_id, path)
+        self.space_mut("entries")?.entries(volume_id, path)
     }
 
     /// Answers one path in the volume identified by `volume_id` with its
     /// entry, or `None` when nothing exists at that path.
     pub(crate) fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
-        self.media_mut("stat")?.stat(volume_id, path)
+        self.space_mut("stat")?.stat(volume_id, path)
     }
 
     /// Copies a file's bytes out of the volume identified by `volume_id`.
     pub(crate) fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
-        self.media_mut("read_file")?.read_file(volume_id, path)
+        self.space_mut("read_file")?.read_file(volume_id, path)
     }
 
     /// Reads part of a file — the streamed form (P27).
@@ -486,7 +542,7 @@ impl StorageDevice {
         offset: u64,
         buf: &mut [u8],
     ) -> Result<()> {
-        self.media_mut("read_file_at")?
+        self.space_mut("read_file_at")?
             .read_file_at(volume_id, path, offset, buf)
     }
 
@@ -498,7 +554,7 @@ impl StorageDevice {
         path: &str,
         size: u64,
     ) -> Result<()> {
-        self.media_mut("resize_file")?
+        self.space_mut("resize_file")?
             .resize_file(volume_id, path, size)
     }
 
@@ -511,7 +567,7 @@ impl StorageDevice {
         offset: u64,
         data: &[u8],
     ) -> Result<()> {
-        self.media_mut("write_file_at")?
+        self.space_mut("write_file_at")?
             .write_file_at(volume_id, path, offset, data)
     }
 
@@ -523,14 +579,14 @@ impl StorageDevice {
         path: &str,
         contents: &[u8],
     ) -> Result<()> {
-        self.media_mut("write_file")?
+        self.space_mut("write_file")?
             .write_file(volume_id, path, contents)
     }
 
     /// Ensures a directory exists in the volume identified by
     /// `volume_id`. Buffered until commit.
     pub(crate) fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
-        self.media_mut("make_directory")?
+        self.space_mut("make_directory")?
             .make_directory(volume_id, path)
     }
 
@@ -544,13 +600,13 @@ impl StorageDevice {
     /// new one. A write-through refusal (P6) likewise surfaces before a
     /// single byte of the file has moved.
     pub fn commit(&mut self) -> Result<()> {
-        self.media_mut("commit")?.commit()
+        self.space_mut("commit")?.commit()
     }
 
     /// Discards everything buffered; the image is untouched. Unaltered
     /// cached extents stay resident — they still mirror the image.
     pub fn rollback(&mut self) -> Result<()> {
-        self.media_mut("rollback")?.rollback();
+        self.space_mut("rollback")?.rollback();
         Ok(())
     }
 }

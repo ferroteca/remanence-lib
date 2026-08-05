@@ -1,25 +1,55 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The archive path streams (pledged P27): a stored entry is read in
-//! place from the claimed archive, a compressed entry decodes once into
-//! private disk storage, and either way the disk serves bounded
-//! reads without the entry resident whole. These tests build their zip
-//! by hand, so they run without fixtures.
+//! The archive journey streams (P27): a stored entry is read in place
+//! from the claimed archive, a compressed entry decodes once into
+//! private session storage, and either way the device serves bounded
+//! reads without the entry resident whole.
+//!
+//! The journey itself is the model's: the archive is a medium loaded
+//! into an archive-family device, its entries are the namespace that
+//! device resolves to, and an entry recognized as an artifact of its own
+//! is loaded into a device of its own. These tests build their zip by
+//! hand, so they run without fixtures.
 
-use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, ErrorCategory, LayerKind, SpaceRule};
+use remanence::{
+    AccessIntent, AttachmentId, DeviceFamily, EntryKind, ErrorCategory, LayerKind, Session,
+    SpaceRule,
+};
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
 /// session alive for as long as they use the medium.
-fn attach(
+fn archive_session(
     path: impl AsRef<std::path::Path>,
     intent: AccessIntent,
-) -> remanence::Result<(Session, AttachmentId)> {
+) -> remanence::Result<Session> {
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
-    let attachment = device.attachment();
+    let device = session.add_device(DeviceFamily::ARCHIVE_DEVICE)?;
     device.load_media(path, intent)?;
+    Ok(session)
+}
+
+/// The nested journey: the archive into its own device, the entry named
+/// through the namespace that device bears, and the artifact it holds
+/// loaded into a drive **in a machine of its own** — the host's archive
+/// was never part of the machine whose disk it holds.
+fn load_entry(
+    path: impl AsRef<std::path::Path>,
+    entry: &str,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = archive_session(path, AccessIntent::Read)?;
+    let discovery = session
+        .require_device(AttachmentId::parse("arc0")?)?
+        .filesystem()?
+        .get_file(entry)?
+        .discover()?;
+    session.add_machine("h89")?;
+    let device = session
+        .require_machine("h89")?
+        .add_device(DeviceFamily::HEATHKIT_H17)?;
+    let attachment = device.attachment();
+    device.load_discovery(discovery)?;
     Ok((session, attachment))
 }
 
@@ -104,8 +134,12 @@ fn temp_zip(tag: &str, bytes: &[u8]) -> std::path::PathBuf {
 }
 
 fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
-    let (mut disk_session, disk_at) = attach(path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = load_entry(path, "disk.h8d").expect("the entry loads");
+    let disk = disk_session
+        .require_machine("h89")
+        .expect("the machine is there")
+        .require_device(disk_at)
+        .expect("the medium is attached");
     assert_eq!(disk.image_size_bytes().expect("a medium is attached"), expected.len() as u64);
 
     // Bounded reads round-trip, at the front and across the tail.
@@ -148,24 +182,42 @@ fn a_deflated_entry_decodes_into_session_storage_and_streams() {
 }
 
 #[test]
-fn the_zip_catalog_lists_its_entries_without_touching_their_data() {
+fn the_archive_lists_its_entries_without_touching_their_data() {
+    // The listing is the namespace the archive medium bears, reached
+    // through the one node that carries file verbs — no second journey,
+    // and no entry's data touched to produce it.
     let expected = payload();
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("listing", &zip);
 
-    let archive = Archive::open(&path).expect("the archive opens");
-    assert_eq!(archive.format_id(), "zip");
-    assert_eq!(archive.format_name(), "ZIP archive");
-    assert_eq!(archive.size_bytes(), zip.len() as u64);
+    let mut session = archive_session(&path, AccessIntent::Read).expect("the archive loads");
+    let arc = AttachmentId::parse("arc0").expect("parses");
+    let device = session.require_device(arc).expect("the device is there");
+    assert_eq!(device.image_size_bytes().expect("occupied"), zip.len() as u64);
 
-    let entries = archive.entries();
+    let mut namespace = device.filesystem().expect("an archive is its namespace");
+    assert_eq!(namespace.kind().expect("a kind"), "zip");
+    assert!(namespace.has_namespace());
+    assert!(
+        !namespace.is_addressable(),
+        "an archive has no addressed extent beneath its names"
+    );
+
+    let entries = namespace.entries("").expect("the root lists");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "disk.h8d");
-    assert!(!entries[0].is_dir);
-    assert_eq!(entries[0].uncompressed_size, IMAGE_LEN as u64);
-    assert_eq!(entries[0].compressed_size, Some(IMAGE_LEN as u64));
+    assert_eq!(entries[0].kind, EntryKind::File);
+    assert_eq!(entries[0].size_bytes, IMAGE_LEN as u64);
+    assert!(
+        entries[0]
+            .declared
+            .iter()
+            .any(|fact| fact.key == "compressed-size" && fact.value == IMAGE_LEN.to_string()),
+        "the grammar's own facts travel with the entry: {:?}",
+        entries[0].declared
+    );
 
-    drop(archive);
+    drop(session);
     std::fs::remove_file(&path).ok();
 }
 
@@ -177,7 +229,7 @@ fn a_lying_uncompressed_size_is_refused_by_name() {
     let zip = build_zip("disk.h8d", 8, &compressed, IMAGE_LEN as u32 + 1);
     let path = temp_zip("lying", &zip);
 
-    let error = attach(&path, AccessIntent::Read).expect_err("the size lie is refused");
+    let error = load_entry(&path, "disk.h8d").expect_err("the size lie is refused");
     assert!(error.to_string().contains("expected"), "names the mismatch: {error}");
     std::fs::remove_file(&path).ok();
 }
@@ -194,8 +246,12 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("inspects", &zip);
 
-    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("the archived image opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = load_entry(&path, "disk.h8d").expect("the entry loads");
+    let disk = disk_session
+        .require_machine("h89")
+        .expect("the machine is there")
+        .require_device(disk_at)
+        .expect("the medium is attached");
 
     // The raw plane: the archive wrapper is still reported.
     let identification = disk.identify().expect("a medium is attached");
@@ -214,20 +270,21 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
 }
 
 #[test]
-fn an_archive_entry_refuses_a_write_open_naming_the_reason() {
-    // The honest half of the merge: gaining the disk verbs over an
-    // archive entry must not imply gaining writes to one. A write would
-    // have to be encoded back into the archive's own grammar, and no
-    // adapter claims that (P13), so the refusal names it rather than
-    // degrading to read-only.
+fn an_archive_refuses_a_write_open_naming_the_reason() {
+    // Read-only, as archives are: a write would have to be encoded back
+    // into the archive's own grammar and no adapter claims that (P13),
+    // so the refusal names it rather than degrading to read-only.
     let expected = payload();
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("nowrite", &zip);
 
-    let error = attach(&path, AccessIntent::Write).expect_err("a write open is refused");
+    let error = archive_session(&path, AccessIntent::Write).expect_err("a write open is refused");
     let message = error.to_string();
     assert!(message.contains("archive"), "names the archive: {message}");
-    assert!(message.contains("writing"), "names the refusal: {message}");
+    assert!(
+        message.contains("does not write"),
+        "names the refusal: {message}"
+    );
 
     std::fs::remove_file(&path).ok();
 }

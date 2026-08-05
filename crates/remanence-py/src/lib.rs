@@ -1019,7 +1019,7 @@ fn assurance_conditions() -> Vec<String> {
 }
 
 /// Identifies the artifact at `path` — a disk image, or
-/// `archive[/entry]` — under the caller's declared intent, and answers
+/// an archive — under the caller's declared intent, and answers
 /// with what it is and where it could go.
 ///
 /// It is on no handle at all: no session and no machine, because it
@@ -1057,6 +1057,14 @@ pub struct Discovery {
 }
 
 impl Discovery {
+    /// A discovery over one already minted by the core — the nested
+    /// journey, where a file view named the artifact.
+    fn over(discovery: remanence::Discovery) -> Self {
+        Self {
+            inner: Mutex::new(Some(discovery)),
+        }
+    }
+
     /// Reads one fact off the discovery, or refuses by name where a load
     /// has already taken it.
     fn read<T>(&self, read: impl FnOnce(&remanence::Discovery) -> T) -> PyResult<T> {
@@ -1120,10 +1128,13 @@ impl Discovery {
     }
 
     /// `"raw"`, `"qcow2"` or `"vdi"` — the image container format, as
-    /// `StorageDevice.format` reports it.
+    /// `StorageDevice.format` reports it. A medium that is no disk
+    /// image — an archive — refuses by name; its grammar is
+    /// `image_format`.
     #[getter]
     fn format(&self) -> PyResult<&'static str> {
-        self.read(|discovery| match discovery.format() {
+        let format = self.read(remanence::Discovery::format)?.map_err(to_py_err)?;
+        Ok(match format {
             remanence::DiskFormat::Raw => "raw",
             remanence::DiskFormat::Qcow2 { .. } => "qcow2",
             remanence::DiskFormat::Vdi { .. } => "vdi",
@@ -1186,7 +1197,7 @@ impl Discovery {
     /// qcow2).
     #[getter]
     fn size(&self) -> PyResult<u64> {
-        self.read(remanence::Discovery::size)
+        self.read(remanence::Discovery::size)?.map_err(to_py_err)
     }
 
     /// `"read-write"` or `"read-only"` — the **effective** mode this
@@ -1662,7 +1673,7 @@ impl StorageDevice {
         Ok(self.get()?.is_occupied())
     }
 
-    /// Loads the medium at `path` — a disk image, or `archive[/entry]` —
+    /// Loads the medium at `path` — a disk image, or an archive —
     /// into this device, and hands back nothing to hold: the device is
     /// the one storage handle, and the medium's facts answer on it.
     ///
@@ -2273,6 +2284,29 @@ impl File {
         self.entry.clone()
     }
 
+    /// Opens this file as an artifact of its own, returning the
+    /// `Discovery` a device loads it from.
+    ///
+    /// **Recursion is the same journey again.** An entry recognized as
+    /// an image is not read through the namespace that names it: it is
+    /// loaded into a device of its own — in a machine of its own where
+    /// one is being reconstructed. The claim is the one the archive
+    /// already holds, so nothing is re-opened.
+    ///
+    /// This release mints a discovery from an **archive entry**; a file
+    /// on a volume-backed filesystem is refused by name.
+    fn discover(&self) -> PyResult<Discovery> {
+        let path = self.path.clone();
+        let discovery = with_filesystem(
+            &self.session,
+            &self.machine,
+            self.attachment,
+            self.volume,
+            |filesystem| filesystem.get_file(&path)?.discover(),
+        )?;
+        Ok(Discovery::over(discovery))
+    }
+
     /// The whole file, copied out.
     fn bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let path = self.path.clone();
@@ -2326,129 +2360,6 @@ impl File {
             "File(path={:?}, size_bytes={})",
             self.path, self.entry.size_bytes
         )
-    }
-}
-
-/// One entry an archive holds.
-///
-/// `compressed_size` is `None` where the grammar attributes no packed
-/// size to a single entry — a member of a solid 7z folder is compressed
-/// together with its neighbours, so no share of the packed bytes is its
-/// own.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ArchiveEntry {
-    /// The entry's path inside the archive, `/`-separated.
-    pub name: String,
-    pub is_dir: bool,
-    pub compressed_size: Option<u64>,
-    pub uncompressed_size: u64,
-}
-
-#[pymethods]
-impl ArchiveEntry {
-    fn __repr__(&self) -> String {
-        format!(
-            "ArchiveEntry(name={:?}, is_dir={}, uncompressed_size={})",
-            self.name, self.is_dir, self.uncompressed_size
-        )
-    }
-}
-
-impl ArchiveEntry {
-    fn new(entry: &remanence::ArchiveEntry) -> Self {
-        Self {
-            name: entry.name.clone(),
-            is_dir: entry.is_dir,
-            compressed_size: entry.compressed_size,
-            uncompressed_size: entry.uncompressed_size,
-        }
-    }
-}
-
-/// An archive's entries, read under the claim this listing holds.
-///
-/// Opening claims the archive file — writes denied to every other
-/// process — until the object is closed or dropped. Only the archive's
-/// own index is read; entry data is never touched.
-#[pyclass(module = "remanence")]
-pub struct Archive {
-    inner: Option<remanence::Archive>,
-}
-
-impl Archive {
-    fn get(&self) -> PyResult<&remanence::Archive> {
-        self.inner
-            .as_ref()
-            .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "archive is closed"))
-    }
-}
-
-#[pymethods]
-impl Archive {
-    /// Opens the archive at `path`. A path naming no archive format this
-    /// library reads is refused by name, never guessed at.
-    #[new]
-    fn new(path: PathBuf) -> PyResult<Self> {
-        remanence::Archive::open(path)
-            .map(|inner| Self { inner: Some(inner) })
-            .map_err(to_py_err)
-    }
-
-    /// The path the archive was opened from.
-    #[getter]
-    fn path(&self) -> PyResult<String> {
-        Ok(self.get()?.path().display().to_string())
-    }
-
-    /// The archive format's stable identifier: `"zip"` or `"7z"`.
-    #[getter]
-    fn format_id(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.format_id())
-    }
-
-    /// The archive format's human-readable name.
-    #[getter]
-    fn format_name(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.format_name())
-    }
-
-    /// `"read-write"` or `"read-only"`: which mode the deny-write claim
-    /// on the archive file was obtained in.
-    #[getter]
-    fn access_mode(&self) -> PyResult<&'static str> {
-        Ok(mode_str(self.get()?.access_mode()))
-    }
-
-    /// The archive file's own size in bytes.
-    #[getter]
-    fn size_bytes(&self) -> PyResult<u64> {
-        Ok(self.get()?.size_bytes())
-    }
-
-    /// Every entry the archive holds, in the archive's own order.
-    #[getter]
-    fn entries(&self) -> PyResult<Vec<ArchiveEntry>> {
-        Ok(self.get()?.entries().iter().map(ArchiveEntry::new).collect())
-    }
-
-    /// Releases the claim on the archive file.
-    fn close(&mut self) {
-        self.inner = None;
-    }
-
-    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __exit__(
-        &mut self,
-        _exception_type: Bound<'_, PyAny>,
-        _exception: Bound<'_, PyAny>,
-        _traceback: Bound<'_, PyAny>,
-    ) -> bool {
-        self.inner = None;
-        false
     }
 }
 
@@ -4074,8 +3985,6 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", version)?;
     m.add("DEFAULT_CACHE_BYTES", remanence::DEFAULT_CACHE_BYTES)?;
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
-    m.add_class::<Archive>()?;
-    m.add_class::<ArchiveEntry>()?;
     m.add_class::<CaptureSet>()?;
     m.add_class::<CaptureSetReport>()?;
     m.add_class::<CaptureSetMember>()?;

@@ -33,13 +33,18 @@ use std::path::Path;
 use crate::assurance::Assurance;
 use crate::device::{AccessIntent, AccessMode};
 use crate::device_family::DeviceFamily;
-use crate::disk::{DiskFormat, MediaState};
+use crate::disk::{DiskFormat, MediumState};
 use crate::error::{Error, Result};
 use crate::session::Identification;
 
-/// Identifies the artifact at `path` — a disk image, or
-/// `archive[/entry]` — under the caller's declared intent, and answers
-/// with what it is and where it could go.
+/// Identifies the artifact at `path` — a disk image, or an archive —
+/// under the caller's declared intent, and answers with what it is and
+/// where it could go.
+///
+/// A path names a file. An artifact *inside* an archive is discovered
+/// through the namespace its archive bears, by
+/// [`crate::File::discover`], under the claim the archive already
+/// holds.
 ///
 /// The claim taken here is held by the returned [`Discovery`] until it is
 /// consumed or dropped, so a `Write` discovery claims the artifact
@@ -64,7 +69,7 @@ pub fn discover_media_with_cache(
     cache_bytes: u64,
 ) -> Result<Discovery> {
     let path = path.as_ref();
-    let medium = MediaState::open_with_cache(path, intent, cache_bytes)?;
+    let medium = MediumState::open(path, intent, cache_bytes)?;
     if let Some(foreign) = medium.foreign_family() {
         return Err(Error::unsupported(format!(
             "'{}' is a {foreign}-family artifact and no device in this \
@@ -90,18 +95,18 @@ pub fn discover_media_with_cache(
 /// continuity that are lost.
 #[derive(Debug)]
 pub struct Discovery {
-    medium: MediaState,
+    medium: MediumState,
 }
 
 impl Discovery {
-    /// The artifact claimed — the archive itself for an image discovered
-    /// inside one, rather than the `archive/entry` path as given.
+    /// The artifact claimed — the archive itself for an image
+    /// discovered inside one, which is where the claim sits.
     pub fn path(&self) -> &str {
         self.medium.path()
     }
 
-    /// The resolved image — the entry name for an image inside an
-    /// archive, else the source path.
+    /// The resolved artifact — the entry name for an image discovered
+    /// inside an archive, else the source path.
     pub fn image_path(&self) -> &Path {
         self.medium.image_path()
     }
@@ -112,24 +117,32 @@ impl Discovery {
         self.medium.image_size_bytes()
     }
 
-    /// The presented disk's size (the guest-visible size for qcow2).
-    pub fn size(&self) -> u64 {
-        self.medium.size()
+    /// The presented disk's size (the guest-visible size for qcow2), or
+    /// the refusal naming a medium that presents no disk.
+    ///
+    /// An archive has a namespace and no space, so it answers here by
+    /// name; its artifact's own extent is
+    /// [`Discovery::image_size_bytes`], which every medium has.
+    pub fn size(&self) -> Result<u64> {
+        Ok(self.medium.space("size")?.size())
     }
 
-    /// The image format the artifact turned out to be.
-    pub fn format(&self) -> DiskFormat {
-        self.medium.format()
+    /// The image container format the artifact turned out to be, or the
+    /// refusal naming a medium that is no disk image. An archive's
+    /// grammar is [`Discovery::image_format`].
+    pub fn format(&self) -> Result<DiskFormat> {
+        Ok(self.medium.space("format")?.format())
     }
 
-    /// That format's stable spelling — `h8d`, `qcow2`, `vdi`, `raw`.
+    /// The recognized format's stable spelling — `h8d`, `qcow2`, `vdi`,
+    /// `raw`, or an archive grammar's `zip` or `7z`.
     pub fn image_format(&self) -> &'static str {
-        self.medium.descriptor().id
+        self.medium.format_id()
     }
 
     /// That format's name, fit to show a user.
     pub fn image_format_name(&self) -> &'static str {
-        self.medium.descriptor().name
+        self.medium.format_name()
     }
 
     /// The **exact medium**, by the media-type catalog's stable spelling
@@ -163,7 +176,7 @@ impl Discovery {
     /// The caller then states the drive itself, which is the two-act path
     /// and always available.
     pub fn default_device(&self) -> Option<DeviceFamily> {
-        self.medium.descriptor().default_device
+        self.medium.default_device()
     }
 
     /// The **effective** access mode this discovery established: the
@@ -190,7 +203,14 @@ impl Discovery {
 
     /// The medium, taken out of the discovery by the load that consumes
     /// it. The claim moves with the state; nothing is re-opened.
-    pub(crate) fn into_medium(self) -> MediaState {
+    pub(crate) fn into_medium(self) -> MediumState {
         self.medium
+    }
+
+    /// A discovery over a medium already opened — the nested journey,
+    /// where the artifact was reached through a namespace rather than
+    /// named by path.
+    pub(crate) fn over(medium: MediumState) -> Self {
+        Self { medium }
     }
 }

@@ -9,13 +9,16 @@ The object model of remanence's storage world — its nodes, their names,
 their cardinalities, and the rule for which of them a caller ever holds —
 argued in the owner's design discussion of 2026-08-04. It serves the U2
 amendment ([../USE-CASES.md](../USE-CASES.md)) and the P14, P19 and P32
-amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md), delivered
-by F49 in [../FEATURES.md](../FEATURES.md), the machine
-scope, the one storage handle, the two-act access path over a
-lineage-bearing family catalog (F50), discovery with the
-format-declared default device and the one convenience over it (F51),
-and the `Filesystem` node with the container retirement it paid
-having landed already. Pledged, not
+amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md). **Every
+feature it was written to guide has landed**: the machine scope, the one
+storage handle, the two-act access path over a lineage-bearing family
+catalog, discovery with the format-declared default device and the one
+convenience over it, the `Filesystem` node with the container retirement
+it paid, the volume/filesystem node's two vantages, and the uniform
+archive open. What remains of it is guidance toward the pledged norms
+still unarmed — P35's machine namespace above all — and by this
+project's own rule a design does not outlive delivery, so the sweep is
+due. Pledged, not
 implementation approval: this is guidance toward work the project owes,
 each piece landing through its own gate, and the document is swept when
 its features deliver — a design does not outlive delivery.
@@ -422,9 +425,8 @@ lives in the report.
 ## What this maps onto
 
 The set is pledged beside this document: the P14, P19, and P32
-amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md),
-delivered by F49 in [../FEATURES.md](../FEATURES.md) — the uniform
-archive open. What is delivered: the
+amendments and P35 in [../ARCHITECTURE.md](../ARCHITECTURE.md). No
+feature it named is outstanding. What is delivered: the
 session gained machines beneath it, `Disk` merged into `StorageDevice`,
 the access path became the two acts over a family catalog carrying its
 lineage, with an empty device first-class and a medium in the wrong
@@ -514,9 +516,6 @@ and the U2 amendment keeps U2's number.
   from a path without naming a family — and each is its own later
   proposal, weighed as the machine-level one-step was: admissible where
   it declares, refused where it would guess.
-- Do archive media occupy visible slots (`arc0`) in the attachment
-  namespace, or does the virtual slot stay entirely behind the report?
-  F49 settles it.
 
 ## Deliberately not proposed
 

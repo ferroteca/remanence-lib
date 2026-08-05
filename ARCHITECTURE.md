@@ -414,13 +414,15 @@ neither calls valid non-file data empty nor manufactures pseudo-files to
 force it through P19, and opening specifically for file access returns a
 named absence or refusal when no file-bearing interpretation is claimed.
 
-Three provider forms meet here. Serialized-artifact adapters consume byte
-streams; filesystem adapters (P18) consume volumes; namespace-composition
-adapters consume namespaces plus explicit drive, mount, folder, or
-volume mappings. Composition preserves the identity and provenance of its
-sources rather than flattening or copying them, so a namespace may be
-backed by a whole volume, by part of a storage graph, or by several
-mounted filesystems.
+Three provider forms meet here. **A medium may bear its namespace
+directly** — an archive, a flat catalog on an unpartitioned disk — the
+grammar that recognizes the artifact being a P12 adapter at this seam
+rather than a serialized form of its own; filesystem adapters (P18)
+consume volumes; namespace-composition adapters consume namespaces plus
+explicit drive, mount, folder, or volume mappings. Composition preserves
+the identity and provenance of its sources rather than flattening or
+copying them, so a namespace may be backed by a whole volume, by part of
+a storage graph, or by several mounted filesystems.
 
 A **namespace-mapping composer** *derives* the mapping the third form
 consumes, from composed volumes with their identities plus the machine

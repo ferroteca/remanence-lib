@@ -9,19 +9,41 @@
 
 use std::path::{Path, PathBuf};
 
-use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, Archive, LayerKind, ErrorCategory};
+use remanence::{
+    AccessIntent, AttachmentId, DeviceFamily, ErrorCategory, LayerKind, Session,
+};
 
-/// Attaches `path` to a fresh session and returns both, because a medium
-/// is reachable only through the device holding it (P32). Tests keep the
-/// session alive for as long as they use the medium.
-fn attach(
-    path: impl AsRef<std::path::Path>,
-    intent: AccessIntent,
-) -> remanence::Result<(Session, AttachmentId)> {
+/// Loads the archive into a device of its own — the journey every
+/// medium takes (P32).
+fn archive_session(path: impl AsRef<Path>) -> remanence::Result<Session> {
     let mut session = Session::new();
+    let device = session.add_device(DeviceFamily::ARCHIVE_DEVICE)?;
+    device.load_media(path, AccessIntent::Read)?;
+    Ok(session)
+}
+
+/// The archive slot every one of these tests reaches its namespace
+/// through.
+fn arc0() -> AttachmentId {
+    AttachmentId::parse("arc0").expect("parses")
+}
+
+/// The nested journey: one member named through the archive's namespace,
+/// loaded into a drive of its own. A KryoFlux stream is a raw member, so
+/// the drive it goes in is the hard disk the block catalog serves.
+fn load_member(
+    path: impl AsRef<Path>,
+    member: &str,
+) -> remanence::Result<(Session, AttachmentId)> {
+    let mut session = archive_session(path)?;
+    let discovery = session
+        .require_device(arc0())?
+        .filesystem()?
+        .get_file(member)?
+        .discover()?;
     let device = session.add_device(DeviceFamily::HARD_DISK)?;
     let attachment = device.attachment();
-    device.load_media(path, intent)?;
+    device.load_discovery(discovery)?;
     Ok((session, attachment))
 }
 
@@ -63,29 +85,34 @@ fn private_copy(tag: &str) -> PathBuf {
     target
 }
 
-fn entry_path(archive: &Path, member: &str) -> PathBuf {
-    archive.join(member)
-}
+
 
 #[test]
-fn the_catalog_lists_every_member_in_archive_order() {
+fn the_namespace_lists_every_member_in_archive_order() {
     let path = private_copy("list");
-    let archive = Archive::open(&path).expect("the archive opens");
+    let mut session = archive_session(&path).expect("the archive loads");
+    let device = session.require_device(arc0()).expect("the device is there");
+    assert_eq!(device.image_size_bytes().expect("occupied"), ARCHIVE_BYTES);
 
-    assert_eq!(archive.format_id(), "7z");
-    assert_eq!(archive.format_name(), "7z archive");
-    assert_eq!(archive.size_bytes(), ARCHIVE_BYTES);
+    let mut namespace = device.filesystem().expect("an archive is its namespace");
+    assert_eq!(namespace.kind().expect("a kind"), "7z");
+    let entries = namespace.entries("").expect("the root lists");
 
-    let entries = archive.entries();
     assert_eq!(entries.len(), MEMBER_COUNT);
     assert_eq!(entries[0].name, FIRST_MEMBER);
-    assert_eq!(entries[0].uncompressed_size, FIRST_MEMBER_BYTES);
-    assert!(!entries[0].is_dir);
+    assert_eq!(entries[0].size_bytes, FIRST_MEMBER_BYTES);
     // One solid folder holds every member, so no member owns a share of
-    // the packed bytes.
-    assert_eq!(entries[0].compressed_size, None);
+    // the packed bytes and none declares one.
+    assert!(
+        !entries[0]
+            .declared
+            .iter()
+            .any(|fact| fact.key == "compressed-size"),
+        "a solid folder attributes no packed size to a member: {:?}",
+        entries[0].declared
+    );
     assert_eq!(entries[1].name, SECOND_MEMBER);
-    assert_eq!(entries[1].uncompressed_size, SECOND_MEMBER_BYTES);
+    assert_eq!(entries[1].size_bytes, SECOND_MEMBER_BYTES);
     assert_eq!(entries[MEMBER_COUNT - 1].name, LAST_MEMBER);
 
     // Archive order, not sorted order: the members read back in the
@@ -94,10 +121,9 @@ fn the_catalog_lists_every_member_in_archive_order() {
     for (index, entry) in entries.iter().enumerate() {
         let (step, head) = (index / 2, index % 2);
         assert_eq!(entry.name, format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){step:02}.{head}.raw"));
-        assert!(!entry.is_dir);
     }
 
-    drop(archive);
+    drop(session);
     std::fs::remove_file(&path).ok();
 }
 
@@ -106,7 +132,7 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
     let path = private_copy("member");
     // The second member: reached by decoding past the first, which is
     // what a solid folder costs, and no further.
-    let (mut disk_session, disk_at) = attach(entry_path(&path, SECOND_MEMBER), AccessIntent::Read).expect("the member opens");
+    let (mut disk_session, disk_at) = load_member(&path, SECOND_MEMBER).expect("the member opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     assert_eq!(disk.image_size_bytes().expect("a medium is attached"), SECOND_MEMBER_BYTES);
 
@@ -139,7 +165,7 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     // spools, is what says so.
     let path = private_copy("long");
     let (mut disk_session, disk_at) =
-        attach(entry_path(&path, LAST_MEMBER), AccessIntent::Read).expect("the last member opens");
+        load_member(&path, LAST_MEMBER).expect("the last member opens");
     let disk = disk_session.require_device(disk_at).expect("the medium is attached");
     assert_eq!(disk.image_size_bytes().expect("a medium is attached"), LAST_MEMBER_BYTES);
 
@@ -163,7 +189,7 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
 #[test]
 fn a_member_the_archive_does_not_hold_is_refused_by_name() {
     let path = private_copy("missing");
-    let error = attach(entry_path(&path, "track99.raw"), AccessIntent::Read).expect_err("the member is absent");
+    let error = load_member(&path, "track99.raw").expect_err("the member is absent");
     assert_eq!(error.category(), ErrorCategory::NotFound);
     assert!(error.to_string().contains("track99.raw"), "{error}");
     std::fs::remove_file(&path).ok();
@@ -180,23 +206,54 @@ fn a_corrupted_solid_folder_fails_closed() {
     bytes[1000] ^= 0x01;
     std::fs::write(&path, &bytes).expect("the copy rewrites");
 
-    let archive = Archive::open(&path).expect("the header is untouched");
-    assert_eq!(archive.entries().len(), MEMBER_COUNT);
-    drop(archive);
+    let mut session = archive_session(&path).expect("the header is untouched");
+    assert_eq!(
+        session
+            .require_device(arc0())
+            .expect("the device is there")
+            .filesystem()
+            .expect("a namespace")
+            .entries("")
+            .expect("the root lists")
+            .len(),
+        MEMBER_COUNT
+    );
+    drop(session);
 
-    let error = attach(entry_path(&path, FIRST_MEMBER), AccessIntent::Read)
+    let error = load_member(&path, FIRST_MEMBER)
         .expect_err("a corrupted member is refused, never delivered");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
-fn an_archive_holding_many_members_names_the_ambiguity() {
-    let path = private_copy("ambiguous");
-    let error = attach(&path, AccessIntent::Read).expect_err("168 members is ambiguous");
-    assert!(
-        error.to_string().contains("contains multiple files"),
-        "{error}"
+fn an_archive_of_many_members_is_one_medium_with_many_names() {
+    // There is no ambiguity left to name. Loading the archive loads the
+    // archive, and which member is wanted is asked of its namespace —
+    // the question the old one-file-or-refuse path had to guess at.
+    let path = private_copy("many");
+    let mut session = archive_session(&path).expect("the archive loads");
+    let device = session.require_device(arc0()).expect("the device is there");
+    assert_eq!(
+        device
+            .filesystem()
+            .expect("a namespace")
+            .entries("")
+            .expect("the root lists")
+            .len(),
+        MEMBER_COUNT
     );
+
+    // And a member is reached by naming it, one of a hundred and
+    // sixty-eight.
+    let entry = device
+        .filesystem()
+        .expect("a namespace")
+        .stat(LAST_MEMBER)
+        .expect("the member is asked for")
+        .expect("and is there");
+    assert_eq!(entry.size_bytes, LAST_MEMBER_BYTES);
+
+    drop(session);
     std::fs::remove_file(&path).ok();
 }

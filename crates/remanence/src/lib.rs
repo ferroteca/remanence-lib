@@ -32,17 +32,24 @@
 //! resolves device → volume → filesystem where every seam has exactly
 //! one supported answer and refuses naming the candidates where one does
 //! not; [`StorageDevice::volume`] selects by the identity the inspection
-//! report issued where several exist. The verbs — [`Filesystem::entries`],
-//! [`Filesystem::stat`], [`Filesystem::get_file`] and their kin — live on
-//! the [`Filesystem`] the resolver answers with, and the device carries
-//! none of them.
+//! report issued where several exist. The verbs — [`StorageSpace::entries`],
+//! [`StorageSpace::stat`], [`StorageSpace::get_file`] and their kin — live
+//! on the [`StorageSpace`] the resolver answers with, and the device
+//! carries none of them.
+//!
+//! **An archive is a medium like any other.** It loads into an
+//! archive-family device ([`DeviceFamily::ARCHIVE_DEVICE`]) and its
+//! content is walked through the [`StorageSpace`] that device resolves
+//! to — a namespace with no addressed extent beneath it, ZIP and 7z
+//! being the claimed grammars. An entry recognized as an artifact of its
+//! own is opened by [`File::discover`] and loaded into a device of its
+//! own, which is the one recursion this model has.
 //!
 //! Every open also states what it established about the evidence beneath
 //! it ([`StorageDevice::assurance`]): a source short of what its own
 //! interpretation declares is read as far as it truthfully goes,
 //! read-only, with the shortfall named rather than hidden or thrown away
-//! whole (P28). An [`Archive`] lists what a supported archive holds — ZIP
-//! and 7z.
+//! whole (P28).
 
 mod adapters;
 mod archive;
@@ -87,7 +94,6 @@ mod vdi;
 mod volume;
 mod zip;
 
-pub use archive::{Archive, ArchiveEntry};
 pub use assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
 pub use c1541_mastering::{
     DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan, MasteringPlanReport,

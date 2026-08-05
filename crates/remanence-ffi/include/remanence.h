@@ -210,9 +210,6 @@ typedef enum {
   REMANENCE_LETTER_OUTCOME_UNDETERMINED = 3,
 } RemanenceLetterOutcome;
 
-// An open archive listing, holding the claim on its file.
-typedef struct RemanenceArchive RemanenceArchive;
-
 // One open's assurance state (P28). Free with
 // `remanence_assurance_free`; the strings it returns are owned by it.
 typedef struct RemanenceAssurance RemanenceAssurance;
@@ -501,8 +498,12 @@ const char *remanence_device_family(const RemanenceDevice *device);
 bool remanence_device_is_occupied(const RemanenceDevice *device);
 
 // Loads the medium at `path` (UTF-8) — a disk image, or
-// `archive[/entry]` — into this device, and hands back nothing to hold:
-// the device is the one storage handle.
+// an archive — into this device, and hands back nothing to hold: the
+// device is the one storage handle.
+//
+// A path names a file. An artifact *inside* an archive is loaded from
+// the file view that names it: `remanence_filesystem_discover`, then
+// `remanence_device_load_discovery`.
 //
 // A device accepts only the media its family is served (P14), and a
 // mismatch is refused naming both sides. A `Write` intent claims the
@@ -586,7 +587,7 @@ const char *remanence_device_family_media(size_t index, size_t media);
 const char *remanence_device_family_flux_path(size_t index);
 
 // Identifies the artifact at `path` (UTF-8) — a disk image, or
-// `archive[/entry]` — under the caller's declared intent, and answers
+// an archive — under the caller's declared intent, and answers
 // with what it is and where it could go.
 //
 // It is on no handle at all: no session and no machine, because it
@@ -629,7 +630,11 @@ const char *remanence_discovery_image_format(const RemanenceDiscovery *discovery
 const char *remanence_discovery_image_format_name(const RemanenceDiscovery *discovery);
 
 // The image container format, as the device reader reports it.
-RemanenceDiskFormat remanence_discovery_format(const RemanenceDiscovery *discovery);
+//
+// A medium that is no disk image — an archive — has none, and reports
+// false here; its grammar is `remanence_discovery_image_format`.
+bool remanence_discovery_format(const RemanenceDiscovery *discovery,
+                                RemanenceDiskFormat *format_out);
 
 // The **exact medium**, by the media-type catalog's stable spelling
 // (P14). The image-format adapter that loaded the state named it.
@@ -659,7 +664,9 @@ const char *remanence_discovery_default_device(const RemanenceDiscovery *discove
 uint64_t remanence_discovery_image_size_bytes(const RemanenceDiscovery *discovery);
 
 // The presented disk's size in bytes (the guest-visible size for
-// qcow2).
+// qcow2), or zero for a medium that presents no disk — an archive,
+// whose artifact's own extent is
+// `remanence_discovery_image_size_bytes`.
 uint64_t remanence_discovery_size(const RemanenceDiscovery *discovery);
 
 // The **effective** access mode this discovery established, which a
@@ -1097,7 +1104,7 @@ size_t remanence_assurance_condition_count(void);
 const char *remanence_assurance_condition_name(size_t index);
 
 // The image container format.
-RemanenceDiskFormat remanence_device_format(const RemanenceDevice *device);
+bool remanence_device_format(const RemanenceDevice *device, RemanenceDiskFormat *format_out);
 
 // The qcow2 version, or 0 for an image of any other format.
 uint32_t remanence_device_qcow2_version(const RemanenceDevice *device);
@@ -1247,6 +1254,26 @@ RemanenceFile *remanence_filesystem_get_file(const RemanenceSpace *filesystem,
                                              char **error_out,
                                              char **error_rule_out);
 
+// Opens the file at `path` as an artifact of its own, answering with
+// the discovery a device loads it from.
+//
+// **Recursion is the same journey again.** An entry recognized as an
+// image is not read through the namespace that names it: it is loaded
+// into a device of its own — in a machine of its own where one is being
+// reconstructed, the host's archive never having been part of the
+// machine whose disk it holds. The claim is the one the archive already
+// holds, so nothing is re-opened.
+//
+// This release mints a discovery from an **archive entry**; a file on a
+// volume-backed filesystem is refused by name. Free the result with
+// `remanence_discovery_free`, or consume it with
+// `remanence_device_load_discovery`. Returns null on failure.
+RemanenceDiscovery *remanence_filesystem_discover(const RemanenceSpace *filesystem,
+                                                  const char *path,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
+
 // Copies a file's bytes out — the whole-value convenience beside
 // `remanence_file_read_at`. Free with `remanence_file_data_free`.
 RemanenceFileData *remanence_filesystem_read_file(const RemanenceSpace *filesystem,
@@ -1348,54 +1375,6 @@ bool remanence_device_commit(RemanenceDevice *device,
 
 // Discards everything buffered; the image is untouched.
 void remanence_device_rollback(RemanenceDevice *device);
-
-// Opens the archive at `path` (UTF-8) and reads its entry list. A path
-// naming no archive format this library reads is refused by name.
-// Returns null on failure and stores a message in `error_out` (free with
-// `remanence_string_free`).
-RemanenceArchive *remanence_archive_open(const char *path,
-                                         RemanenceErrorCategory *error_category_out,
-                                         char **error_out,
-                                         char **error_rule_out);
-
-// Frees an archive handle, releasing its claim on the file.
-void remanence_archive_free(RemanenceArchive *archive);
-
-// The path the archive was opened from.
-const char *remanence_archive_path(const RemanenceArchive *archive);
-
-// The archive format's stable identifier, e.g. "zip" or "7z".
-const char *remanence_archive_format_id(const RemanenceArchive *archive);
-
-// The archive format's human-readable name.
-const char *remanence_archive_format_name(const RemanenceArchive *archive);
-
-// Which P7 mode the open obtained on the archive file.
-RemanenceAccessMode remanence_archive_access_mode(const RemanenceArchive *archive);
-
-// The archive file's own size in bytes.
-uint64_t remanence_archive_size_bytes(const RemanenceArchive *archive);
-
-// Number of entries the archive holds.
-size_t remanence_archive_entry_count(const RemanenceArchive *archive);
-
-// One entry's `/`-separated path inside the archive, or null when out
-// of range.
-const char *remanence_archive_entry_name(const RemanenceArchive *archive, size_t index);
-
-// Whether the entry is a directory.
-bool remanence_archive_entry_is_dir(const RemanenceArchive *archive, size_t index);
-
-// The entry's size once decoded, as the archive declares it; 0 when out
-// of range.
-uint64_t remanence_archive_entry_uncompressed_size(const RemanenceArchive *archive, size_t index);
-
-// The entry's packed size; returns false when the grammar attributes
-// none to a single entry — a member of a solid 7z folder — or when the
-// index is out of range.
-bool remanence_archive_entry_compressed_size(const RemanenceArchive *archive,
-                                             size_t index,
-                                             uint64_t *out);
 
 // Opens the KryoFlux capture set held by `path` (UTF-8) — an archive
 // this library reads, optionally followed by the subtree inside it that
