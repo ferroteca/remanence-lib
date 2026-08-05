@@ -4,7 +4,7 @@
 //! Presenting the mastered capture as a 1541 hardware bitstream, and
 //! then as the family's encoded bytestream.
 //!
-//! The claim under test is P23's and P30's together: the layers above a
+//! The claim under test is P23's, P33's and P30's together: the layers above a
 //! flux medium are materialized under rules the drive profile declares,
 //! each transition carries what produced everything beneath it, and
 //! neither layer assigns synchronization, headers, sectors or files to

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The C1541 presentation (F32, P23): materializing a hardware bitstream
+//! The C1541 presentation (F32, P23, P33): materializing a hardware bitstream
 //! from a flux medium under declared mechanics and read-channel rules,
 //! and then the family's encoded bytestream from that bitstream.
 //!
@@ -27,7 +27,7 @@
 //! having located one it says nothing whatever about what follows it.
 //!
 //! **There is no way back down.** Returning to a medium is a separate,
-//! explicit mastering operation governed by P13 and P29, and this
+//! explicit mastering operation governed by P33, P13 and P29, and this
 //! feature does not perform one: a bitstream is not lowered into pulses
 //! and a bytestream is not lowered into bits.
 //!
@@ -265,7 +265,7 @@ impl C1541Bitstream {
     }
 
     /// Materializes the family's encoded bytestream from this bitstream
-    /// under a declared group code (P23).
+    /// under a declared group code (P23, P33).
     ///
     /// The bitstream is untouched and stays exactly what it was; the
     /// bytestream is separate session state with its own provenance,
@@ -1150,13 +1150,13 @@ fn describe_codec(
 
 impl crate::c1541_mastering::MasteredMedium {
     /// Materializes the family's hardware bitstream from this medium
-    /// under declared mechanics and read-channel rules (P23, P30).
+    /// under declared mechanics and read-channel rules (P23, P30, P33).
     ///
     /// The medium is untouched and stays exactly what it was: the
     /// bitstream is separate session state, carrying this medium's own
     /// reduction policy as provenance beneath the channel that produced
     /// it. There is no way back down — returning to a medium is a
-    /// separate, explicit mastering operation (P13).
+    /// separate, explicit mastering operation (P33).
     pub fn materialize_c1541_bitstream(
         &self,
         policy: ReadChannelPolicy,
@@ -1168,7 +1168,7 @@ impl crate::c1541_mastering::MasteredMedium {
 
 impl crate::p64::P64Image {
     /// Materializes the family's hardware bitstream from the medium this
-    /// container holds at rest (P23, P30).
+    /// container holds (P23, P30, P33).
     ///
     /// The container is read and nothing else. What the bitstream says
     /// about how its medium came to exist is what the container said:

@@ -276,7 +276,19 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
-- **A refusal may now name the rule it broke, beside its category.**
+- **P23 splits: what an active layer is stays P23, how it changes becomes
+  P33.** No rule changed and no surface moved — the two halves fail
+  independently, so they are two principles. P23 keeps the closed
+  active-layer vocabulary, the one-per-independently-mutable-instance
+  rule, and what cannot be an active layer; new **P33** takes the
+  family-owned ladder, the least-physically-expressive initial choice,
+  the requested and atomic descent, and the rule that a layer never rises
+  again. P23 keeps its number because the citations in this changelog and
+  in the C header are its state half. P29 widens in the same act:
+  materializing a layer downward *is* a mastering act whose destination
+  is an active layer rather than an artifact, so mastering now derives a
+  new representation rather than a new artifact, and generate-flux's
+  requirements are P29's rather than a second copy of them (D14, D21).
   `Error::rule()` returns a stable machine-readable identity where the
   refusal came from an enumerated set of rules a format, namespace, or
   grammar defines, and `None` where no such set applies — which is the

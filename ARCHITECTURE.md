@@ -523,7 +523,8 @@ presentations read and, when permitted, write. The active layer is runtime
 artifact or media state — not an image-format choice, not a derived cache,
 and not the hardware emulation layer. Several presentations over one
 instance share it; they never maintain independently mutable file, sector,
-track, and flux copies of the same state.
+track, and flux copies of the same state. P33 governs how an instance's
+active layer is chosen and changed; this principle states what one is.
 
 Here **durable** means the representation survives runtime interactions as
 the instance's continuing mutable truth and is the source offered to P2
@@ -554,9 +555,7 @@ declared framing landmark and claiming nothing about what follows it.
 P13, read by inspection and by mastering, and it never carries a session's
 mutable truth, because a drive writing to a capture would have to choose
 which of several disagreeing observations to overwrite (D14). A capture
-becomes a medium by mastering (P29) — whether the destination is a new
-artifact or an active layer inside the session — never by an unnamed
-normalization.
+becomes a medium by mastering (P29), never by an unnamed normalization.
 
 Encoded tracks, bitcells, nibbles, and filesystem structures may be
 authoritative image layers or derived representations, but they are not
@@ -578,63 +577,10 @@ session's mutable truth. They may coincide or differ, and changing the
 active layer neither promotes synthetic state into recovered evidence nor
 changes the authoritative image layer.
 
-#### Transitions between active layers
-
-The magnetic ladder reads: flux capture → flux medium → hardware bitstream
-→ encoded bytestream → CHS → filesystem. Block is terminal and disjoint
-from all of it; no active-layer transition crosses between the block and
-flux families in either direction, and derived filesystem or file access
-over either family is a presentation over existing active state rather
-than an intermediate conversion.
-
-For a disk, the initial active layer is the least physically expressive
-durable media layer which faithfully serves every presentation requested
-when the composition is formed. A Commodore DOS device over a standard
-sector image can use CHS as its active layer, generating no track, flux,
-head, or rotation state; an LBA device uses block and cannot be lowered
-merely because another family knows CHS or flux.
-
-A request for service below the active layer must materialize a new one
-first. For a programmed-hardware floppy seam below CHS this is an explicit
-**generate-flux** transition, which uses the applicable image metadata,
-authoritative state, media profile, hardware profile, and mastering rules
-to produce the most honest flux and marker state the evidence permits:
-
-- every known timing, ordering, defect, weak-event semantic, and marker is
-  preserved at its known fidelity;
-- only detail required by the lower model and absent from the source is
-  synthesized, with its provenance retained;
-- ambiguity remains ambiguity unless an explicit deterministic policy is
-  part of the composition; and
-- a missing or contradictory rule refuses the lower service rather than
-  manufacturing unjustified precision.
-
-**Generate-flux is generate-medium**: it synthesizes a flux medium and
-never a capture, because fabricating instrument evidence from sectors
-would be a false provenance claim (D14). It materializes circular,
-track-relative media state and not runtime pulse occurrences; mechanism
-state — head position, motor speed, rotational phase, settling,
-read-channel history — never becomes part of the active media layer.
-
-Every transition is atomic for the instance. Once the new state is
-validated it replaces the old active layer as the single durable mutable
-session state, existing higher presentations are rebound as derived views
-and their caches invalidated, and they may decode upward but cannot
-continue mutating the former copy. The active layer does not rise again
-during that open lifetime merely because a lower presentation closes;
-returning to a higher representation requires closing the composition or a
-family-permitted explicit conversion which names its loss. Each transition
-carries the profile, the codec, and the source's own policy as provenance.
-None of flux medium, hardware bitstream, or encoded bytestream is writable
-today, which is why a medium and the bitstream above it may both be held
-without either becoming a second mutable instance.
-
-Writes always land in the active layer. Commit remains governed by P2 and
-P13: the original image may be updated only when every change projects
-back to its authoritative layer and encoding without unclaimed loss, so a
-sector-authoritative image whose active flux acquired an unrepresentable
-change has that writable composition refused in advance rather than
-silently flattened. Each of these layers caches under P27.
+Writes land in the active layer, and commit remains governed by P2 and
+P13: the original image is updated only when every change projects back to
+its authoritative layer and encoding without unclaimed loss. Each active
+layer caches under P27.
 
 ### P27 — Sessions stream; memory holds a bounded working set
 
@@ -746,18 +692,22 @@ every interpretation is armed, and arming another is a feature.
 
 ### P29 — Mastering is declared, reproducible, and states its loss
 
-**Mastering** is deriving a new artifact from evidence Remanence already
-holds: solving several capture runs into one circular medium, choosing
-among channels and observations, projecting one timebase onto another, and
-encoding the result into a format that cannot carry everything the
-evidence holds. P13 already permits the act; this principle says what the
-act must carry, because a conversion that reduces evidence silently is
-indistinguishable from one that preserves it.
+**Mastering** is deriving a new representation from evidence Remanence
+already holds: solving several capture runs into one circular medium,
+choosing among channels and observations, projecting one timebase onto
+another, and expressing the result where the destination cannot carry
+everything the evidence holds. **Only the destination varies** — usually a
+new artifact, equally an active layer materialized inside a session
+(P33) — and the policy inputs, the plan, and the declared-loss account are
+the same either way (D14). P13 already permits the act; this principle
+says what the act must carry, because a conversion that reduces evidence
+silently is indistinguishable from one that preserves it.
 
 **Mastering is requested, never incidental.** It is not a side effect of
 opening, attaching, presenting, or saving. The sources are read and
 nothing else — their layers and provenance are unchanged — and the result
-is a separate artifact with its own authoritative layer.
+is separate state, carrying its own authoritative layer where it is an
+artifact.
 
 **Every reduction is a named policy input.** Which channel supplies
 evidence; which observation of a location is used and how several are
@@ -774,12 +724,13 @@ image-format adapter owns its grammar, version claim, encoding, and named
 refusals (P8, P12). A profile does not decide what a container can hold,
 and an adapter does not decide which revolution the disk was.
 
-**The loss is declared before the write.** A mastering operation resolves
-in two stages: a plan which computes the whole transformation and writes
-nothing, and an execution which writes. The plan enumerates, in the
-source's own terms, everything the destination will not carry. A count is
-not an account; loss reported after the fact does not satisfy this; and a
-reduction the plan did not declare is a defect, not a detail.
+**The loss is declared before anything is produced.** A mastering
+operation resolves in two stages: a plan which computes the whole
+transformation and produces nothing, and an execution which produces the
+result. The plan enumerates, in the source's own terms, everything the
+destination will not carry. A count is not an account; loss reported after
+the fact does not satisfy this; and a reduction the plan did not declare
+is a defect, not a detail.
 
 **The result is derived and says so.** Mastered content carries
 selected-and-projected or synthetic provenance under P13, never
@@ -792,7 +743,7 @@ makes it vary is refused rather than shipped as approximately repeatable.
 
 P2, P6, and P9 apply unchanged: the sources are never mutated, nothing is
 written until every check has passed, and an interruption leaves a
-complete destination artifact or none. This principle pledges no
+complete destination or none. This principle pledges no
 destination format and creates no public evidence iterator: the mastering
 plan and its declared-loss account are the surface, and the evidence stays
 behind them.
@@ -837,3 +788,60 @@ descriptor with behavior, and central orchestration neither branches on a
 profile identifier nor interprets string-named family rules. This
 principle pledges no family and creates no public flux, pulse, or
 capture-run iterator: the verdict and its evidence are the surface.
+
+### P33 — Active-layer descent is requested, atomic, and never reversed
+
+P23 states what an active layer is; this principle states which one an
+instance starts at and how it may change.
+
+**The ladder is family-owned and one-directional.** The magnetic ladder
+reads: flux capture → flux medium → hardware bitstream → encoded
+bytestream → CHS → filesystem. Block is terminal and disjoint from all of
+it. No descent crosses between the block and flux families in either
+direction, and derived filesystem or file access over either family is a
+presentation over existing active state rather than an intermediate
+conversion.
+
+**A composition starts as high as it can.** For a disk, the initial active
+layer is the least physically expressive durable media layer which
+faithfully serves every presentation requested when the composition is
+formed. A Commodore DOS device over a standard sector image can use CHS,
+generating no track, flux, head, or rotation state; an LBA device uses
+block and cannot be lowered merely because another family knows CHS or
+flux.
+
+**Descent is requested, never incidental.** Service below the active layer
+requires a new one to be materialized first, and nothing about opening,
+attaching, or presenting descends on its own initiative. Materializing
+downward is a P29 mastering act whose destination is an active layer
+rather than an artifact, so P29's named policy inputs, its plan, and its
+declared-loss account govern it unchanged (D14). **Generate-flux is
+generate-medium**: it synthesizes a flux medium and never a capture,
+because fabricating instrument evidence from sectors would be a false
+provenance claim. It materializes circular, track-relative media state and
+not runtime pulse occurrences — mechanism state such as head position,
+motor speed, rotational phase, settling, and read-channel history never
+becomes part of the active media layer.
+
+**Every descent is atomic**: it is whole or it refuses, leaving the old
+active layer in place. Once the new state is validated it replaces the old
+one as the single durable mutable session state; existing higher
+presentations are rebound as derived views and their caches invalidated,
+and they may decode upward but cannot continue mutating the former copy.
+Each descent carries the profile, the codec, and the source's own policy
+as provenance.
+
+**The layer never rises again.** It does not rise during that open
+lifetime merely because a lower presentation closes, since doing so could
+discard state the higher layer cannot express. Returning to a higher
+representation requires closing the composition, or a family-permitted
+explicit conversion which names its loss; no such conversion exists
+between block and flux. None of flux medium, hardware bitstream, or
+encoded bytestream is writable today, which is why a medium and the
+bitstream above it may both be held without either becoming a second
+mutable instance.
+
+A descent changes where writes land, never what the artifact records.
+P13's authoritative layer is unchanged by it, and a writable composition
+whose lowered state would acquire a change that layer cannot represent is
+refused in advance rather than silently flattened.

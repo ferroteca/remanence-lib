@@ -58,6 +58,96 @@ removes it is the record either way.
 
 ## Decisions
 
+### D21 — P23 splits into what an active layer is and how it changes; generate-flux was P29 all along
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-04. **Supports** P13, P22, P23, P27, P29, P30, P33.
+
+The first of the three principles D20 reported as resisting compression.
+P23 was 2101 words before that pass and 1147 after, which is what a
+principle looks like when it is two.
+
+**Two rules were sharing a heading, and they fail independently.** What an
+active layer *is* — one per independently mutable instance, the closed
+six-member vocabulary, what cannot be one, one layer per instance in a
+nested graph — is violated by two mutable copies of one state, or by a
+session active at a representation outside the vocabulary. How an instance
+*moves* — the ladder, the initial choice, materializing downward,
+atomicity, no return — is violated by lowering an LBA device, by a partial
+descent, or by the layer rising when a lower presentation closes. Neither
+failure implies the other, which is the test that made this a split rather
+than a trim.
+
+**P23 keeps the state half and its number; the transition half is P33.**
+The direction was settled by evidence, not preference. P23 has 77
+citations across 21 files, and the code's are almost entirely the state
+half — "the layer active for this composition" in `report.rs`, in the
+generated C header and its Rust origin, and the module headers of
+`hardware_bitstream.rs` and `encoded_bytestream.rs`. Three of the
+citations are in released CHANGELOG.md entries, which AGENTS.md forbids
+editing. Retiring P23 and issuing two fresh numbers — the rule README
+states for *features*, whose handles evaporate on delivery — would have
+orphaned all of it, and vision handles are permanent for exactly this
+reason. Only `c1541_presentation.rs` and its integration test needed
+their citations widened, and both were already citing P30 beside P23.
+
+**Generate-flux was P29 restated, and D14 had already said so.** P23's
+four generate-flux bullets map one-to-one onto P29: "ambiguity remains
+ambiguity unless an explicit deterministic policy" and "a missing or
+contradictory rule refuses" are both P29's *a reduction that no policy
+names is a refusal, not a default*; "only detail absent from the source is
+synthesized, with its provenance retained" is *the result is derived and
+says so*; and "every known timing preserved at its known fidelity" is the
+declared-loss account. D14 had already ruled that mastering's destination
+"may be a new artifact or an active layer inside the session… Only the
+destination differs; the inputs, the plan, and the declared-loss account
+are the same." So the bullets were deleted and P33 cites P29 instead.
+
+**P29 widened to match what it was already governing.** Its opening said
+mastering derives "a new artifact"; it now derives a new *representation*,
+with the destination named as the only thing that varies. "The loss is
+declared before the write" becomes "before anything is produced", and the
+interruption clause reads "a complete destination or none", because an
+in-session destination is written to no file. No requirement of P29
+changed — the principle simply stopped describing only half of its own
+scope.
+
+**Why this was invisible to the D20 pass.** The restatement was wearing
+bullets. D20's rule catches a principle that re-explains a neighbour in
+prose; it did not catch one that restates a neighbour's requirements as an
+apparently operational checklist. That is the shape to look for in the two
+principles still outstanding.
+
+**Weighed and declined:** retiring P23 and issuing P33 and P34 to the two
+halves (orphans 77 citations, three of them in immutable released
+changelog text, to buy a symmetry nothing needs); giving the transition
+half to P13 (P13 governs what the *artifact* records and can persist,
+P33 what a *session* currently carries — the same distinction P23's own
+authoritative-versus-active paragraph draws, and collapsing it here would
+undo that); folding the transition half entirely into P29 rather than
+issuing P33 (mastering governs the honesty of a descent, but not the
+ladder, the initial-layer choice, the atomicity of rebinding, or the
+one-way rule, none of which are reductions); and keeping the generate-flux
+bullets under P33 as operational detail (that is the duplication D20 just
+ruled against, and D14 had already collapsed the distinction they rested
+on).
+
+**Landed as:** P23 1147 → 698 words, new P33 at 482, P29 442 → 482, in
+root [ARCHITECTURE.md](../ARCHITECTURE.md); citations widened in
+`c1541_presentation.rs` and its integration test; a CHANGELOG entry under
+Unreleased, because P-numbers appear in released entries and a reader
+reconciling them needs to know P23 narrowed. SEQUENCES advances P to 34
+and D to 22. No S1–S3 surface is touched: the split renumbers rules
+without changing what any of them claims, and the C header's own P23
+citation stays correct.
+
+**Also corrected in passing:** `c1541_presentation.rs` described a
+container as holding a medium "at rest", a term D2 retired from
+library-side prose. The line was being edited for its citation anyway.
+
+**Reopens if:** P23 at 698 words is found to be two rules again — the
+vocabulary table is a fifth of it, and the remainder is one claim.
+
 ### D20 — A principle in force states the rule; the argument lives here
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
