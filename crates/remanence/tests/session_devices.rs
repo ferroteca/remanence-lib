@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The storage-device tier (P32): a session holds a dynamic set of
+//! The storage-device tier (P32): a machine holds a dynamic set of
 //! family-typed devices, each a durable slot distinct from the medium in
-//! it. These tests build their images by hand, so they run without
+//! it. These reach that set through the session's own verbs, which are
+//! its anonymous machine's; the machine scope itself is `machines.rs`.
+//! These tests build their images by hand, so they run without
 //! fixtures.
 
 use std::path::PathBuf;
