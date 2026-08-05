@@ -78,6 +78,54 @@ storage model design
 ([design/storage-model-and-vocabulary.md](design/storage-model-and-vocabulary.md)).
 F48–F51 read better after it but do not require it.
 
+### The cut
+
+Measured before planning: 8 `remanence_session_*` and 27
+`remanence_disk_*` C symbols; the Python `Session` and `Disk` classes; 11
+integration-test files holding roughly 130 call sites; 20 references in
+`examples/identify.c`; and on the Rust side `machine.rs` (205 lines),
+`storage_device.rs` (206), `disk.rs` (1755).
+
+1. **Insert `Machine` in the core.** `Session` holds machines plus one
+   anonymous machine; `Machine` owns the device vec, the attachment
+   identities and the attachment order, and carries an identity of its
+   own, null for the anonymous one. `Session::attach*` keep their exact
+   signatures and land in the anonymous machine, so this step changes no
+   behavior — which is what makes it provable.
+2. **Merge `Disk` into `StorageDevice`.** `Disk` becomes a **private
+   `MediaState`**, its internals almost untouched, and its public method
+   surface moves onto `StorageDevice`, refusing by name where the slot is
+   empty. `Session::medium(a) -> &mut Disk` is deleted; callers use the
+   already-delivered `require_device(a)`, which makes the test churn a
+   mechanical substitution rather than a rewrite.
+3. **The C ABI.** `remanence_disk_*` becomes `remanence_device_*`,
+   `remanence_session_medium` goes, `remanence_machine_*` arrives.
+   Regenerate the header and recompile the example. No collision with the
+   existing `remanence_report_device_*` family.
+4. **Python.** Mirror it: the `Disk` class becomes the device class,
+   `Machine` is added.
+5. **Prose.** AGENTS.md's module map, D2's "disk stack" naming, and the
+   doc comments that speak the old shape.
+
+Three calls already made, so they are not re-litigated at implementation:
+`Disk` becomes a private `MediaState` rather than being flattened into
+`StorageDevice`, keeping the diff on the public surface; `Session::attach*`
+survives this feature because F50 replaces it, so one interim spelling
+lives for one feature; and Python's `Disk` becomes `StorageDevice` to
+match Rust.
+
+**Verification.** `cargo build` (which regenerates the header), then
+`cargo test` — **424 passing, unchanged**, which is the strongest signal
+available here, since no behavior moves and any delta is therefore a
+defect. Then recompile `identify.c` and run it against both a plain image
+and an archived one, build and smoke-test the Python module, and
+`git diff --check`.
+
+**Not in this feature:** `add_device`/`load_media` and concrete device
+families (F50), discovery and declared defaults (F51), the `Filesystem`
+node and the container purge (F48), archives (F49). `DeviceFamily` stays
+the delivered enum here.
+
 ## F48 — The Filesystem node
 
 Move file verbs onto the one namespace node: `Filesystem`, with
