@@ -48,3 +48,170 @@ nothing crosses the C boundary differently. Supports: S2, P5, P10 — no
 U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
+
+## F53 — The media pool and the held medium
+
+The structural heart of the media-first storage model
+([design/media-first-storage-model.md](design/media-first-storage-model.md)):
+the session gains the **media pool**, and the medium becomes the
+pool-owned, user-holdable content handle. `Session::load_media(path,
+format, intent)` is the declared reading — a concrete format id (`zip`,
+`7z`, `h8d`, `qcow2`, `vdi`, `raw`, `p64`), checked by that one
+adapter, refused by name where the evidence cannot bear the
+declaration — answering `&mut Medium`, unlinked. Every content verb the
+device carried moves onto the medium (identify, inspect, read_at,
+commit, rollback, and the file plumbing beneath); `StorageDevice` slims
+to slot and family with `insert(media_id)` / `eject()` / `medium()` —
+insert checks the family against the media type naming both sides,
+eject **severs only**, the claim and buffered writes surviving in the
+pool. `release_media` is the one state-destroying verb. Archive media
+enter by the same door (`Format::Zip`), and an empty device stays
+first-class configuration (U22).
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P7,
+P14, P19, P21, P23, P27; U22, U23.
+
+## F54 — Lookups answer with absence; lifecycle is create, lookup, release
+
+In-memory lookups — `machine`, `device`, `medium` — answer `Option`,
+absence being an answer rather than a manufactured error; the
+`require_*` forms are deleted, a caller who wants a demand writing it.
+The removal verbs unify as `release_*`: `release_machine` cascades
+(eject each device — sever, media stay pooled — then release the
+devices, then the machine), `release_device` ejects first,
+`release_media` severs its own link then ends the claim. Creation
+refusals stand (duplicate identity, taken slot, empty identity). C
+lookups return null without touching the error outs; Python returns
+`None`.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P5, P10;
+U3's absence discipline generalized. Needs F53.
+
+## F55 — The question tier leaves the surfaces
+
+The armed discovery mechanism is demoted, not deferred: `discover_media`
+and its cache sibling, the consumable `Discovery`, `load_discovery`,
+`add_device_for` and its cache sibling, and the image-format
+`default_device` declaration with its C and Python readers leave S1–S3
+whole. The ask-first journey returns to
+[../proposed/design/question-tier.md](../proposed/design/question-tier.md)
+to be argued as one thing — ranked verdicts, policy templates, gated
+derivation chains. `load_media` is the replacement entry, so nothing a
+use case needs is lost meanwhile.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P3 (a
+mechanism that would guess is refused until it can declare). Needs F53.
+
+## F56 — The partition pool and the vantage doors
+
+Partitions become the medium's evidence pool: `partition(n)` by the
+scheme's own ordinal, `partitions()`, the `partition_scheme` attribute,
+and the **direct partition** — the library's composition of the whole
+content where no scheme exists, declared as synthetic in provenance and
+never as evidence, extent-less over namespace-native media. A partition
+carries its raw type byte beside a reading (U4), `active()`, and
+`as_type(...)` as a declared reading checked against the byte. The
+vantage doors land: `volume()` and `filesystem()`, each `Option`, both
+handing out the **one** `StorageSpace` the partition composes, with
+composition (P17) and recognition (P18) running at pool population.
+The `medium.filesystem()` resolver and `volume(id)` selector are
+deleted; in-force P19's transparency clause is amended in the same
+change — uniformity of the walk replaces resolve-without-selecting —
+and `DiskReport` demotes to a derived view.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P16,
+P17, P18, P19 (as amended here), P21; U4. Needs F53.
+
+## F57 — Media types compose articles
+
+The media catalog gains its concrete level: **media types** —
+`zip-archive`, `sevenzip-archive`, `h17-disk`, `chs-hd-disk`,
+`lba-hd-disk`, `c1541-disk`, and the blank kinds — composing the
+delivered passive **articles** (`flexible-5.25-soft`,
+`flexible-5.25-hard-10`, `logical-block-512`, `virtual`).
+`media_type()` answers the concrete type; `article()` the substrate;
+D19's three facts keep their three homes, the recording living in the
+type. `Format::Qcow2 { disk }` and `Format::Vdi { disk }` declare which
+hard disk the image records (`chs-hd`, `lba-hd`). Device-family
+accepts-lists name concrete types, so a 1541 refuses an H17 disk it
+could physically hold but never serve.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P3, P14
+(gaining the two-level catalog); U23. Needs F53.
+
+## F58 — Discovered geometry and recording coordinates
+
+Geometry becomes discovered instance evidence with provenance: the
+format's declaration where one exists, the FAT BPB's recorded
+sectors-per-track and heads, MBR end-tuple inference, extent
+arithmetic — and **`Undetermined`** where sources disagree, reported
+with both readings and settled by neither. `get_sector` / `put_sector`
+answer on geometry-bearing types in the recording's own coordinates,
+refuse by name toward the evidence state otherwise, and writes buffer
+until commit (P2). Nothing is ever declared onto an existing medium.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P4;
+U4. Needs F57.
+
+## F59 — Collection sources, and the flux family folds in
+
+`load_media` gains its source shapes: a collection of host paths, a
+`File` from another medium's namespace, and a collection of `File`s —
+each format declaring which shape it reads. `Format::KryoFlux { disk }`
+is the first collection-sourced format: member grammar, completeness,
+stream grammar and the profile claim checked whole, then the reduction
+under the profile's declared `Materialization` defaults — a choice no
+family convention can make refuses by name and the answer grows the
+declaration (P29, nothing unnamed). The result is a `c1541-disk` with
+the verdicts, policy and declared-loss account as provenance.
+`Format::P64` loads the served form straight in. `bitstream()` and
+`bytestream()` become argument-free — the type carries the channel and
+codec (P30 reached through the type) — and the standalone `CaptureSet`
+and `P64Image` roots fold into the model, closing the second root.
+Capture-inspection reporting and plan preview stay out, with the
+question tier.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P7, P13,
+P22, P27, P29, P30, P31; U23. Needs F53, F57.
+
+## F60 — Authored media
+
+`new_media(kind)` creates blank media whole: the blank article kinds
+and `ChsDisk { geometry }`, session-backed, authored provenance —
+authorship being the third fact class, the author's facts becoming the
+medium's original facts. The authored-to-recorded arc (a partition
+editor consuming authored geometry into MBR end-tuples and BPBs)
+remains reserved in the partition pool's create/release slots.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P13,
+P27. Needs F57, F58.
+
+## F61 — The 1541 sector layer
+
+The ladder's missing rung: sector recognition above the encoded
+bytestream — headers, data blocks, checksums, the recording's own
+(track, sector) addressing served from it — as a presentation derived
+under the type's declared rules, every claim carrying its evidence and
+every unreadable sector a named refusal rather than a filled block.
+This deliberately ends the bytestream's "no byte is a header, a sector
+or a file" at the seam above it, where a new layer states what it
+derives.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P10,
+P23, P30. Needs F59.
+
+## F62 — The CBM DOS filesystem
+
+The P18 adapter over the sector layer: the track-18 directory in
+directory order (U4), the BAM header as the space's label (disk name
+and ID as recorded), PETSCII names raw beside their readings, and the
+CBM facts — PRG/SEQ/USR/REL, the locked and splat flags, size in
+blocks — as declared entry facts, byte sizes chain-established. The
+filesystem door answers on a `c1541-disk` bearing it and answers
+`None` honestly for the protected and the blank, everything beneath
+staying readable. `LOAD"$"` — the directory as the drive's ROM
+synthesizes it — is explicitly out of scope: that is the future
+Commodore DOS device seam (P15), not this adapter.
+
+Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P18,
+P19; U4. Needs F56, F61.
