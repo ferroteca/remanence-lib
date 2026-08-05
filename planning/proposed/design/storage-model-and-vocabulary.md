@@ -95,6 +95,18 @@ The classifier between an image and an archive is one question: **is
 there a meaningful sector or block N?** An `.iso` has one — it is a
 disk-family image whose space bears ISO 9660. A `.zip` does not.
 
+That classifier is one instance of a question this model asks at every
+level: **can a session serve one location by key, from the artifact as
+it stands?** Addressability by key is also what separates an image from
+a capture at the magnetic rungs — a G64 writes each track's length down
+and serves by track, while a NIB's fixed windows overlap a revolution
+with the wrap recorded nowhere, so nothing is servable without analysis
+(D15). The two axes stay orthogonal: the *rung* says what an artifact
+records — flux, bits, bytes — and *addressability* says whether it is
+an image or a capture at that rung. Pledged P31 names this test
+*servability*; addressability is this model's word for the same axis,
+and when P31 arms, its test should take this name.
+
 The media-kind table, by native vantage:
 
 | Media kind | Native vantage | Below it |
