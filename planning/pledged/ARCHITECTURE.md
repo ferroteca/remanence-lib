@@ -1012,3 +1012,211 @@ position and time — P15's seam applies timestamped control changes and returns
 causally ordered transitions rather than answering reads at addresses — so they
 carry no nature at all. They are active layers under P23 and proposed P24,
 beneath a device whose nature describes the addressed presentation above them.
+
+## P14 amendment — an archive is a medium, and its family is virtual
+
+In-force P14 claims two media families, flexible magnetic and
+logical-block, both physical articles. This amendment adds a third kind
+of family: **virtual** media, whose first member is the **archive** —
+zip, 7z, tar and their kin — the independent recorded state P14's own
+definition already describes, held by no drive and backed by no article.
+
+An archive medium's profile carries no physical fact: no form factor, no
+coercivity, no addressable unit. Its one family fact is its native
+vantage — **namespace**, where every physical family's is a space. Its
+format adapter loads and saves its state as any adapter does, and the
+named-entry state it loads is the medium's recorded content, the mutable
+truth a session holds — P23's row for it already says so.
+
+Nothing else in P14 moves: three facts keep their three homes, the
+catalog stays declarative, and a media type outside it still refuses by
+name. What the amendment forecloses is treating the archive as anything
+else: not a device, not a container node, not a filesystem on a phantom
+volume — a medium, loaded into a virtual slot (P32 amendment), whose
+content is walked through the one namespace node (P35).
+
+## P19 amendment — the namespace converges, and the composer moves to P35
+
+In-force P19 carries the file-access seam and, lodged inside it, the
+namespace-mapping composer with its three constraints. This amendment
+slims P19 to the claim its title makes and re-homes the composer in P35,
+which owns the machine namespace the composer exists to serve.
+
+What P19 keeps: one file-access interface however reached — a
+volume-backed filesystem, an archive medium's own content, and the
+machine-composed namespace all present it — with the layers, identities,
+and evidence that produced each result retained; transparency when every
+seam has exactly one supported answer, and explicit exposure or refusal
+when it does not; honest absence — valid non-file content is never
+called empty and never forced through the seam as pseudo-files; and the
+rule that selecting a file yields a byte stream only independent P12
+recognition can make more of.
+
+What P19 loses: the "serialized-container adapter" provider form — an
+archive is a medium (P14 amendment) whose grammar is a P12 adapter at
+the namespace seam, not a fourth kind of thing — and the
+namespace-mapping composer with its three constraints, which are P35's.
+The pledged P19 amendment ("a file-bearing interpretation states the
+scope of its claim") is untouched by this one and folds into the slimmed
+text as written.
+
+## P32 amendment — devices are added, media are loaded, and families form a lineage
+
+**A session holds machines; a machine holds devices.** Pledged P32 makes
+the session itself the device set and states that nothing groups
+sessions into a machine. This amendment inserts the machine rather than
+renaming anything: the **session** keeps the meaning the principles
+already give it — the P7 claims, the P27 cache budget and private
+session storage — and a **machine** is one device set within it, owning
+the attachment identities, the attachment order, and the configuration
+U22 and P35 reason over. What P32 says about devices is unchanged; only
+the scope that holds them moves one level in.
+
+The layer earns itself where artifacts nest. An archive on the host was
+never part of the machine whose disk it contains, so reading
+`games.zip/boot.h8d` need not put both in one machine's configuration —
+and because every machine sits in one session, a disk's medium may be
+source-backed through the claim the session already holds, with no
+lifetime question between them. A machine's namespace composes over its
+own devices and no others, so a composer never letters a slot that
+belongs elsewhere.
+
+**A session has one anonymous machine, and it composes no namespace.**
+Devices may be added to it directly, deterministically — it is one
+machine, not one conjured per call — and it serves the caller who is
+opening artifacts rather than reconstructing a machine. Asking it for a
+namespace is a named refusal, because devices nobody grouped are not a
+machine's configuration, and composing over them would derive a mapping
+from an accidental grouping — the unstated evidence P35 refuses. **The
+anonymous machine is for artifact access; a named machine is for machine
+reconstruction**, so wanting drive letters means declaring which machine
+is meant, which U22 already requires of the caller. It is not "machine
+zero": it carries no attachment order anyone should reason over, and
+moving a device from it into a named machine is a reconfiguration rather
+than a rename.
+
+**The two acts get their verbs, and one handle carries both.** A device
+is **added** — machine configuration, possibly empty, the drive U22
+letters whether or not a disk is in it — and a medium is **loaded** into
+it, which is P14's own verb for what a format adapter does to media
+state. The device homes that media state: a caller never holds a medium
+outside a device, so the storage handle is the device, and the medium
+remains a model node whose facts are attributed on that handle rather
+than a second object to hold. Slot-side facts — attachment identity,
+family, occupancy, `load_media` and `eject` — answer for the device;
+content-side facts — media type and profile, active layer, assurance,
+identification, volumes, dirty state, commit and rollback — answer for
+the medium in it, and refuse by name when the slot is empty. Keeping the
+nodes distinct in the data is what preserves D19's pair, where the
+medium states an index hole and the drive states no sensor for it. The
+handle survives eject and reload; views taken through it invalidate when
+the medium beneath them leaves.
+
+**Discovery is first-class, and machine-free.** `discover_media(path)`
+claims the artifact for the read, identifies it, and answers with a
+report — the exact medium, the concrete device families that accept it,
+and the declared default, each carrying its evidence (P4) — mutating
+nothing (P2). It is a library-level function on no handle at all,
+because it consults catalogs and evidence, never machine configuration;
+the machine's one-step conveniences use it beneath them, and a caller
+uses it directly as the question asked before deciding what to add.
+
+**Discovery is consumable, because it is expensive and because the
+claim must not lapse.** Discovering a flux capture parses streams and
+probes drive profiles; that work is held in the discovery, and
+`load_media` accepts a discovery as it accepts a path, consuming it —
+the parsed state moves into the loaded medium and nothing is done
+twice. This is P29's plan-and-execute shape one seam over: the plan
+computes, the execution consumes the plan. The claim taken at discovery
+is held until the discovery is consumed or dropped, so there is no
+window between the question and the load in which the artifact could
+change — P7 continuity, not merely economy. A discovery is a claim
+scope, which is exactly what the storage model's handle rule says earns
+a handle; dropped unconsumed, it releases its claim and discards its
+work.
+
+**The one-step convenience is declaration, not guess.**
+`machine.add_device(path)` is `discover_media` plus two declarations:
+discovery recognizes the artifact (P12) and reports the exact medium,
+the concrete device families that accept it — derived by asking the
+families, which declare the media they accept, D19's direction
+unchanged — and the **default device the image format declares**, a
+recording-side fact the media type cannot honestly hold: a ten-sector
+hard-sectored 5.25-inch disk is the article of both a Heathkit H-17 and
+a North Star MDS, but an H8D records a Heathkit disk. The call adds a
+fresh device of the declared default family and loads into it, returning
+that device — stated in the contract, never a silent reuse of an
+existing slot — and a format that declares no default, as a raw image
+declares nothing about its machine, refuses by name toward the two
+explicit acts. A declaration nobody makes is a refusal, not a guess
+(P3). There is no media-first machine-level spelling: with one storage
+handle it would return the same device this one does.
+
+**Device families form a stated lineage.** A family entry is as
+concrete as the machine fact it asserts — a Commodore 1541, not "some
+floppy" — and the catalog states each entry's lineage: a Commodore 1541
+is a CBM floppy drive where shared characteristics warrant the
+grouping, which is a floppy drive. The lineage is data in the family
+catalog, never a type hierarchy, mirroring P30's profile catalog one
+seam down and P14's media-type catalog beside it. **Interior names
+classify; only concrete entries instantiate.** A device added as "some
+floppy" exists in no machine, declares nothing `load_media` could check
+a medium against, and letters nothing U22 could reason over — vagueness
+in a machine fact is the refusal the CHS/LBA split below already makes,
+one rung up the lineage. What P32 already states is unchanged by this:
+identification and file access need none of a concrete device's
+mechanics — the device must be real, not exercised.
+
+**A CHS hard drive and an LBA hard drive are separate devices**, not
+separate families. The pledged P32 amendment already settles this: a
+device declares an **addressing nature** when it is created, as machine
+configuration the caller supplies, and that amendment deliberately
+declines to confine a family to one nature because a hard drive answers
+both depending on the command issued. This amendment adds nothing there
+and depends on it — the lineage names what a drive *is*, the nature
+names how it is *addressed*, and the two are independent.
+
+**The archive occupies a virtual slot.** An archive medium (P14
+amendment) loads into an archive-family device with no mechanism: the
+receiver `load_media` requires, the attachment identity the machine
+knows it by, and nothing more. Whether that slot is visible in the
+attachment namespace or stays behind the report is an open question the
+storage model design carries.
+
+## P35 — The machine namespace composes filesystems under a consumed or derived mapping
+
+A **machine namespace** (`MachineFilesystem`) is one navigable
+namespace over a machine's several filesystems — drive letters, mount
+trees — presenting the same file-access interface every filesystem
+presents (P19), and adding exactly one thing of its own: the mapping
+that names each child.
+
+The mapping has two sources and a strict precedence. **Where the
+installed system persists its mapping, it is consumed**: Windows drive
+letters, a Unix fstab — read as evidence, never derived. **Where the
+system persists nothing, the mapping is derived** — a DOS machine's
+letters were assigned at boot by a rule over machine configuration, and
+nothing on the disks records the result — under three constraints:
+
+- **The rule is an enumerated claim (P3).** The composer names the rule
+  it applied, claims the system variants it implements and refuses the
+  rest by name, and reports a mapping the claimed variants disagree on
+  as undetermined rather than settled by the more common rule.
+- **Evidence outranks a rule.** A persisted mapping governs, and
+  derivation is never a fallback for a persisted mapping that could not
+  be read.
+- **A derived mapping is not evidence.** The asserted machine facts and
+  the applied rule travel with the result as provenance (P4), and
+  whatever the rule cannot settle is undetermined at the granularity it
+  failed to establish — never filled from position, size, order, label,
+  or which volume happened to read cleanly.
+
+The machine namespace is a view, never an instance (P23): its mutations
+project into the filesystems that compose it, and it holds no mutable
+truth of its own. The mapping's machine facts — slot, family,
+attachment order — are the machine's own configuration (P32), read from
+the device set where the claimed families live there.
+
+Pledged U16 is the consumed case; in-force U22 is the derived case,
+served today by the composer in-force P19 carries and this principle
+re-homes.

@@ -58,6 +58,114 @@ removes it is the record either way.
 
 ## Decisions
 
+### D23 — Rulings made pledging the storage model
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-05. **Supports** S1, S2, S3; P7, P14, P19, P27, P32, P35.
+
+The promotion itself is recorded by the commit that moved the documents,
+not here. These are the rulings made in its course, which the moved text
+settles only by being written that way.
+
+**The pledge is scoped to the families claimed today.** The model
+describes shapes other families would take, and those illustrations
+pledge nothing: optical and tape media (proposed P24, P26) and volumes
+composed across several regions (P17's deferred future) stay proposed,
+and the design document says so in its own scope paragraph. The trim was
+not cosmetic — a pledged item resting on a proposed one is pledged too
+early, so the media-kind table, the two trees, and the spine's volume
+line were narrowed until nothing pledged depended on anything proposed.
+
+**F47 was split at the pledge and its number retired.** The sprint bound
+bites at the pledge, and one feature carrying the two-act access path,
+concrete device families, discovery, format-declared defaults, and the
+one-step convenience was two. It became **F50** (the two acts and the
+lineage-bearing family catalog) and **F51** (discovery, the declared
+default, and the convenience over it), F51 needing F50. README's rule
+for features governs: a split retires the parent's number and issues
+fresh ones.
+
+**The CHS/LBA clause was wrong and is struck.** The draft read "CHS and
+LBA hard drives are separate partitionable *families*", which
+contradicts the already-pledged P32 amendment: a device declares an
+**addressing nature** when it is created, and that amendment
+*deliberately declines* to confine a family to one nature, because a
+hard drive answers both depending on the command issued. The owner's
+own words had been "separate partitionable **devices**" — the pledged
+mechanism exactly — and the drafting drifted. Both the new amendment and
+the design document now defer to the pledged one instead of restating a
+rival rule.
+
+**One storage handle, two model nodes.** The device/medium split was
+argued three times and survives as *model*, because U23 and D19's three
+facts, U22's letters, and U24's flippy each need two nodes. It does not
+survive as two *handles*: a caller never holds a medium outside a device
+— discovery returns a discovery, every load goes into a device, a child
+artifact gets its own device — so `Disk` merges into `StorageDevice`,
+which homes the media state of whatever occupies it. The facts stay
+attributed on the one handle, which is what keeps D19's pair sayable:
+the medium states an index hole, the drive states no sensor for it.
+`get_sector`-on-device-or-medium, an open question at the time, dissolves
+rather than being answered — evidence the seam was an artifact of two
+handles rather than of the model.
+
+**A session holds machines; a machine holds devices.** Pledged P32 made
+the session the device set. Nesting broke that: an archive on the host
+was never part of the machine whose disk it contains, so
+`games.zip/boot.h8d` is an archive device in one machine and a drive in
+another. Inserting the machine keeps each device set holding only its own
+machine's configuration — which is why a P35 composer cannot letter an
+archive slot, structurally rather than by a rule — while the session
+keeps the meaning the principles already give it (P7 claims, P27 budget
+and private storage) and owns both machines' lifetimes, so a stored
+archive entry may back a drive elsewhere in the same session without a
+lifetime question. P32's "nothing groups sessions into a machine" is
+untouched: the containment runs the other way.
+
+**A session has one anonymous machine, and it composes no namespace.**
+Devices may be added to a session directly, landing in it — one machine,
+not one conjured per call, so the unanswerable "which device?" that
+killed the media-first one-step does not arise. What it may not do is
+compose a namespace: devices nobody grouped are not a machine's
+configuration, and lettering them would derive a mapping from an
+accidental grouping, which is exactly the unstated evidence P35's third
+constraint refuses. That single restriction states the distinction the
+session/machine layering was reaching for — **the anonymous machine is
+for artifact access, a named machine for machine reconstruction** — and
+it subsumes the nested-artifact answer, since a composer cannot be
+confused by an archive slot it can never reach. It is not "machine
+zero": no attachment order it carries should be reasoned over, and
+moving a device from it into a named machine is a reconfiguration, not a
+rename.
+
+**Further conveniences are deliberately not pledged.** The explicit walk
+is what the model owes past the anonymous machine, which is a structural
+rule rather than a shortcut. The room is real — a default machine for a
+single-machine session, a filesystem straight from a session — and each
+is its own later proposal, weighed as the machine-level one-step was:
+admissible where it declares, refused where it would guess. The
+media-first machine-level spelling is dropped rather than kept, since
+with one storage handle it would return the same device its device-first
+twin does.
+
+**Weighed and declined:** pledging the model whole, illustrations
+included (it would have made pledged text rest on proposed principles);
+keeping `Disk` as a `Medium` type beside the device (no journey produces
+one, and the delegation it would require is the merge with extra
+ceremony); renaming `Session` to `Machine` as the earlier draft had it
+(the nesting case needs both words, and both already carry their meaning
+in P7, P27, U22 and P35); loading a nested entry into a named machine
+that also holds the host's archive (it would put a host-side wrapper in
+an emulated machine's configuration and hand its composer a slot to
+letter); and an anonymous machine with no restriction on it (the
+restriction is the whole of what makes it safe — without refusing to
+compose, it would assert a grouping the caller never declared).
+
+**Reopens if:** a claimed family needs a medium handle no device holds —
+the mastering path is the candidate, since a `MasteredMedium` is a medium
+in no device today, and this ruling deliberately leaves the flux handles
+where they are.
+
 ### D22 — P27 splits: the resource rule keeps the title, thread invisibility becomes P34
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

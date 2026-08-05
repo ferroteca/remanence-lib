@@ -10,6 +10,72 @@ SPDX-License-Identifier: GPL-3.0-only
 > on full delivery. Numbers come from the one global U-sequence and are never
 > reused.
 
+## U2 amendment — browsing is a plain walk down, whatever holds the files
+
+In-force U2 claims the browse-and-extract journey over a vintage volume —
+HDOS today. This amendment restates the journey's shape; it claims no new
+format, and writing stays U3's journey.
+
+Getting a file out of a floppy image is a walk down the scopes that
+actually exist: a session to work in, the drive the disk belonged in,
+the image in that drive, its filesystem, my file.
+
+```
+session = Session()
+drive   = session.add_device(heathkit_h17)
+drive.load_media("games.h8d")
+fs      = drive.filesystem()
+file    = fs.get_file("CHESS.ABS")
+```
+
+I never named a machine, and that is the point: I am opening an
+artifact, not reconstructing a computer. My drive went into the
+session's anonymous machine, which holds devices and composes no
+namespace — if I asked it for drive letters it would refuse and tell me
+to declare the machine I mean, because devices I never grouped are not a
+machine's configuration. When I *am* reconstructing a machine, I say so
+and add one (U22).
+
+The drive is mine to state, and I state the one my machine had — the
+H-17, the hard-sectored Heathkit drive — not "some floppy". Which device
+serves a medium is a fact about my machine, not about the image, and
+stating it concretely is what gives `load_media` something to check: an
+H8D is a ten-sector hard-sectored 5.25-inch disk, and a drive family
+that spins soft-sectored media refuses it by name rather than reading it
+wrongly. There is no "generic floppy" to add: the lineage's interior
+names classify drives and answer questions, but only a concrete entry
+instantiates, because only a concrete drive declares anything. Stating
+the drive is also how one exists empty.
+
+I hold the drive and nothing else. The disk in it is not a second thing
+to carry: the drive answers for what it holds, and answers by name that
+it holds nothing when it is empty. Swapping disks changes what my drive
+reports without changing what I hold.
+
+The filesystem is resolved, never guessed: `drive.filesystem()` walks
+down to the one filesystem when every layer between has exactly one
+supported answer, and that is why I name no volume here. When the image
+holds two volumes, the resolver refuses by naming both, and I select by
+the identity the report issued — never by a position. When the volume
+bears no filesystem, the answer is a named absence, not an empty
+listing. When the source falls short of its own declaration, I get the
+bounded, evidence-stated degraded reading rather than an all-or-nothing
+loss.
+
+An archive is the same journey, not a parallel one: loaded into its own
+device, `load_media("games.zip")` gives that device a medium whose
+content *is* a namespace — its `filesystem()` always answers — and the
+same `get_file` walks it. When one of those entries is itself a disk
+image, it goes into a drive of its own and I keep reading — the archive
+on my host was never part of any machine the disk belonged to, and
+nothing here is composing a machine's namespace to be confused by that.
+Reading never mutates anything.
+
+*(Deliberately unchanged: the write journey is U3's; typed sector and
+block access is the emulator family's demand (U9–U12); HDOS remains the
+claimed catalog today. The model this journey falls out of is
+[design/storage-model-and-vocabulary.md](design/storage-model-and-vocabulary.md).)*
+
 ## U7 — A C64 emulator delegates the hardware behind the 1541 disk VIA
 
 I am writing a C64 emulator that executes the 1541's 6502 code and emulates

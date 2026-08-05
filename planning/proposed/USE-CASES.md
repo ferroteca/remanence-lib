@@ -11,59 +11,6 @@ SPDX-License-Identifier: GPL-3.0-only
 > from the one global U-sequence and are never reused.
 
 
-## U2 amendment — browsing is five plain moves, whatever holds the files
-
-In-force U2 claims the browse-and-extract journey over a vintage volume —
-HDOS today. This amendment restates the journey's shape; it claims no new
-format, and writing stays U3's journey.
-
-Getting a file out of a floppy image is five plain moves: I create a
-machine, I add a drive, I load the image into it, I resolve its
-filesystem, I ask for the file — `machine → device → media` is the access
-path, and the filesystem is the one thing that hands out files.
-
-```
-machine = Machine()
-drive   = machine.add_device(heathkit_h17)
-medium  = drive.load_media("games.h8d")
-fs      = medium.filesystem()
-file    = fs.get_file("CHESS.ABS")
-```
-
-The drive is mine to state, and I state the one my machine had — the
-H-17, the hard-sectored Heathkit drive — not "some floppy". Which device
-serves a medium is a fact about my machine, not about the image, and
-stating it concretely is what gives `load_media` something to check: an
-H8D is a ten-sector hard-sectored 5.25-inch disk, and a drive family
-that spins soft-sectored media refuses it by name rather than reading it
-wrongly. There is no "generic floppy" to add: the lineage's interior
-names classify drives and answer questions, but only a concrete entry
-instantiates, because only a concrete drive declares anything. Stating
-the drive is also how one exists empty. The filesystem is resolved,
-never guessed:
-`medium.filesystem()` walks down to the one filesystem when every layer
-between has exactly one supported answer, and that is why I name no
-volume here. Past that, nothing asks me to hold a handle that does not
-affect what I asked for: the device holds the disk, the medium holds the
-content, and the filesystem answers for the names.
-
-When the image holds two volumes, the resolver refuses by naming both,
-and I select by the identity the report issued — never by a position.
-When the volume bears no filesystem, the answer is a named absence, not
-an empty listing. When the source falls short of its own declaration, I
-get the bounded, evidence-stated degraded reading rather than an
-all-or-nothing loss.
-
-An archive is the same journey, not a parallel one: loaded into its own
-device, `load_media("games.zip")` hands me a medium whose content *is* a
-namespace — its `filesystem()` always answers — and the same `get_file`
-walks it. Reading never mutates anything.
-
-*(Deliberately unchanged: the write journey is U3's; typed sector and
-block access is the emulator family's demand (U9–U12); HDOS remains the
-claimed catalog today. The model this journey falls out of is
-[design/storage-model-and-vocabulary.md](design/storage-model-and-vocabulary.md).)*
-
 ## U8 — I edit a DOS-readable file without flattening a mixed-structure disk
 
 I have a copy-protected P64 image with an intentionally mixed structure.
