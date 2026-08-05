@@ -147,7 +147,8 @@ vantage and what lies below it, and does so in its own principle.
 | **medium** | The content side: what a device holds. A model node and data on the device handle, not a type of its own (see surface impact). |
 | **disk, floppy, tape, disc** | Family vocabulary of the media tree, never generic terms. |
 | **archive** | The virtual media kind — namespace-native. Already the surface's own word (`Archive`, the archive catalog). |
-| **volume** | The space vantage of the volume/filesystem node. Only this sense: a rar "volume" (`.part2.rar`) is an artifact member here, and a tape-set "volume" is a medium. |
+| **volume** | The addressable vantage of the `StorageSpace` node, and a trait rather than a type. Only this sense: a rar "volume" (`.part2.rar`) is an artifact member here, and a tape-set "volume" is a medium. |
+| **filesystem** | The namespace vantage of the same node, likewise a trait. The word still names the concept generally — a volume-backed filesystem, an archive's namespace, a machine-composed one — with the qualifier carrying the difference. |
 | **filesystem** | The namespace-vantage word generally — a volume-backed filesystem (FAT), an archive's namespace, and the machine-composed namespace are its kinds, distinguished by qualifier, not by the word. As a type, the one node that carries file verbs. |
 | **Session** | The outermost scope, keeping the name and the meaning the principles already give it: the P7 claims, the P27 cache budget and private session storage, and the set of machines within it. |
 | **Machine** | One device set inside a session, carrying an identity — attachment identities, attachment order, the configuration U22 and P35 reason over. A reconstructed computer is one; the session's anonymous machine is the one whose identity is null, and behaves as any other. Machines in a session do not know about each other. |
@@ -182,7 +183,7 @@ known, no downcasts.
 
 These traits are internal Rust structure — the crate's organization, not
 the public shape. **The surface carries node-kind types** — `Machine`,
-`StorageDevice`, `Medium`, `Volume`, `Filesystem`, `File` — with the
+`StorageDevice`, `StorageSpace`, `File` — with the
 family as data on the handle and every capability an enumerated claim
 whose refusal is named (P3, P10): the one mechanism that presents
 identically in Rust, C, and Python (P5). The delivered surface already
@@ -304,26 +305,38 @@ becoming the other.
   `partition(1)` names a format fact rather than inventing a position.
   One node kind takes an ordinal because its format defines one; the
   other refuses it because nothing does.
-- `Filesystem` — the namespace node, and **the one type that carries
-  file verbs**: `get_file` lives here and nowhere else. A device does
-  not carry file access, because a device holding a partitionable
-  medium bearing `get_file` would be a category error in the type, not
-  a refusal waiting to happen. Three providers reach the type: a volume
-  that bears one (`volume.filesystem()`, 0..1 — swap is a named
-  absence), a device holding an archive medium, whose content *is* one
-  (`device.filesystem()`, always), and the machine's composed namespace
+- `StorageSpace` — the volume/filesystem node, **one object carrying two
+  vantage traits**: addressable I/O (the volume vantage — reads and
+  writes by position within the space it names) and namespace I/O (the
+  filesystem vantage — `get_file` and its kin, which live here and
+  nowhere else). A device carries no file access, because a device
+  holding a partitionable medium and bearing `get_file` would be a
+  category error in the type rather than a refusal waiting to happen.
+  An object implements what it has: a FAT volume both traits, swap and
+  unformatted space the addressable one alone, an archive's content and
+  a machine's composed namespace the namespace one alone — so the 0..1
+  is trait presence rather than prose, and no phantom volume is invented
+  for a namespace with no space beneath it (D26). Three providers reach
+  it: a volume that bears a namespace, a device holding an archive
+  medium whose content *is* one, and the machine's composed namespace
   (`machine.filesystem()` → `MachineFilesystem`). Where the medium is
-  space-native, `device.filesystem()` is a **resolver**: it walks
-  volume → filesystem where every seam has exactly one supported answer
-  and refuses naming the candidates otherwise — in-force P19's
-  transparency clause as a method. It creates nothing and never
-  guesses. **A device may be asked what it resolves to; it may not be
-  told to act as something it isn't** — the line between a query whose
-  answer set already includes *refuse* and *absent*, and a content verb
-  that presumes. A `Filesystem` is a view over its provider's state,
-  never an instance: mutations project into the active layer (P23), and
-  over an archive the named-entry state is what it presents. Its kind —
-  FAT, zip, HDOS, machine-composed — is data, not a type.
+  space-native, `device.filesystem()` is a **resolver**: it walks volume
+  → namespace where every seam has exactly one supported answer and
+  refuses naming the candidates otherwise — in-force P19's transparency
+  clause as a method. It creates nothing and never guesses. **A device
+  may be asked what it resolves to; it may not be told to act as
+  something it isn't** — the line between a query whose answer set
+  already includes *refuse* and *absent*, and a content verb that
+  presumes. A `StorageSpace` is a view over its provider's state, never
+  an instance: mutations project into the active layer (P23), and over
+  an archive the named-entry state is what it presents. Its kind — FAT,
+  zip, HDOS, machine-composed — is data, not a type. **Where a
+  composition is reached from is the smallest scope that can compose
+  it**: a namespace on one device's medium from that device, a volume
+  spanning that device's partitions from the device, and — when
+  multi-device composition is claimed — a volume spanning devices from
+  the machine, which is already where P35 puts a namespace composed over
+  several filesystems.
 - Files — values reached by path; a file view is borrowed from its
   filesystem, never an instance, and offers bounded/streamed forms with
   whole-value conveniences beside them (P27).
@@ -477,7 +490,9 @@ they deliver.
   separate `archive[/entry]` path syntax and the `Archive` type's
   standalone journey fold into the model (the archive catalog itself is
   untouched — it becomes the family's adapter).
-- File verbs moved to the `Filesystem` node and are delivered:
+- File verbs moved to the namespace node and are delivered (F52 merges
+  that node and the volume into one `StorageSpace` carrying both
+  vantages as traits):
   `get_file` lives there and
   nowhere else — the device exposes none — with `device.filesystem()`
   resolving-or-refusing and `device.volume(id).filesystem()` selecting

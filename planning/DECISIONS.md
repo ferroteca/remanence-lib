@@ -58,6 +58,85 @@ removes it is the record either way.
 
 ## Decisions
 
+### D26 — Volume and filesystem are two traits on one object, not two types
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-05. **Supports** S1, S2, S3; P17, P18, P19.
+
+A ruling on the shape F48 delivered, made while weighing whether the
+filesystem node could be embedded in the volume as the medium was
+embedded in the device.
+
+**The type merge was refused first, and for a good reason.** Embedding
+`Filesystem` into `Volume` fails the test the device/medium merge passed.
+That merge worked because no caller ever holds a medium outside a device;
+this one breaks because two of the three providers have no volume at all —
+an archive's content is a namespace with no space beneath it, and a
+machine's composed namespace is assembled over several filesystems. A
+merged type would have had to invent a phantom volume for each, which is
+the invention refused when a zip's byte extent was ruled *encoding* rather
+than a model space. The reverse merge fails too: absorbing volume into
+filesystem makes swap and unformatted space unrepresentable, and P19's
+honest absence is the 0 in the 0..1.
+
+**Traits dissolve what the type merge could not.** One object,
+`StorageSpace`, implementing addressable I/O, namespace I/O, or both,
+carries every case without a phantom in either direction — and it is the
+rule already applied one level up, where a device's vantages are
+capability traits a family implements as it claims rather than a
+hierarchy. What the prose asserted — one node, two vantages — the type
+system now carries, and the 0..1 becomes trait presence with F48's
+delivered `no-namespace` refusal already fitting.
+
+**The capability, not the tidiness, is why it is a feature.** Addressed
+reads today are whole-medium only; a volume's boot sector, its
+unallocated extents, and the bytes behind a listed file all require
+computing offsets against the medium by hand. The addressable trait
+closes that on the object that already hands over the files.
+
+**An earlier flag was withdrawn.** It had been recorded that F48 should
+have spelled selection `device.filesystem(volume_id)`, on the ground that
+the handle rule makes volumes values rather than handles. That reasoning
+assumed a single device: a volume spanning partitions across several
+devices is not a selector on any one of them, so it needs a handle. F48's
+shape was right, and the gap it leaves is scope rather than handle-ness.
+
+**The machine is the scope for anything spanning devices, and that stays
+unpledged.** A composition is reached from the smallest scope that can
+compose it — a namespace on one device's medium from that device, a
+volume spanning that device's partitions from the device, a volume
+spanning devices from the machine, and a namespace composed over several
+filesystems from the machine, which is where P35 already puts it. The
+rule is recorded here because it settles where future compositions hang;
+the surface is not pledged, because multi-device volume composition is
+not claimed (P17 defers it, U14 is proposed), and a machine-level
+enumeration added today would flatten over devices without delivering a
+capability — surface ahead of demand.
+
+**Two boundary readings settled in passing.** A multi-partition volume
+with no filesystem is ordinary and real — an LVM logical volume formatted
+as swap, a spanned volume never formatted, raw database extents across
+several disks — so the 0..1 needs no special case at the composed level.
+A LaserDisc's analog program is **not** such a case: it is not a volume
+at all, frames and time codes addressing program content rather than
+storage. The test is whether it is an addressable space of the kind a
+filesystem could occupy, which swap is and an analog program is not. One
+disc can be both, since LV-ROM digital data carried in a program-channel
+mapping is a genuine addressed extent that may bear a filesystem
+(proposed F22). The 0 in 0..1 is for a space that could bear a namespace
+and does not — never for content that was never a space.
+
+**Weighed and declined:** merging the types in either direction (above);
+naming the object `Volume` and accepting the stretch (an archive's
+namespace typed as a volume undoes the strictness the vocabulary rulings
+bought); leaving it as two types with the hop (the prose would keep
+claiming one node while the surface showed two, and the addressable
+capability would still be missing); and pledging the machine-scope
+surface now (above).
+
+**Folded into:** F52 in [pledged/FEATURES.md](pledged/FEATURES.md) and
+the storage model design.
+
 ### D25 — The namespace node lands whole; the P19 amendment lands as far as the code honors it
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

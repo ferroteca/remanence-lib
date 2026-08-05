@@ -93,3 +93,66 @@ waits for the machine namespace that principle claims.
 Touches: S1, S2, S3. Supports: the U2 amendment; the P14 amendment;
 P35; the P19 amendment; in-force P7, P12, P19, P27. The `Filesystem`
 node an archive's content is reached through is delivered.
+
+## F52 — StorageSpace: one object, two vantage traits
+
+F48 delivered `Volume` and `Filesystem` as two types with a hop between
+them (`device.volume(id).filesystem()`). The storage model says they are
+**one node seen from two vantages**, and this feature makes the types say
+it: one object, **`StorageSpace`**, carrying two capability traits —
+**addressable I/O** (the volume vantage: reads and writes by position
+within the space it names) and **namespace I/O** (the filesystem vantage:
+entries, stat, get_file and the rest F48 already delivered).
+
+**Traits succeed where a type merge fails.** Merging the two *types* was
+weighed and refused, because two of the three providers have no volume at
+all — an archive's content is a namespace with no space beneath it, and a
+machine namespace is composed over several filesystems — so a merged type
+would have had to invent a phantom volume for each. An object implementing
+what it claims has no such problem, and it is the rule this project
+already applies one level up, where a device's vantages are capability
+traits rather than a hierarchy:
+
+| StorageSpace over | addressable | namespace |
+|---|---|---|
+| a FAT volume | yes | yes |
+| swap, an unformatted volume, a raw database extent | yes | — |
+| an archive medium's content | — | yes |
+| a machine's composed namespace (P35) | — | yes |
+
+**The 0..1 stops being prose and becomes trait presence.** "A volume bears
+at most one filesystem" is carried by the type rather than asserted beside
+it, and asking namespace questions of an addressable-only space is the
+`no-namespace` refusal F48 already enrolled. The delivered `NamespaceRule`
+set fits unchanged.
+
+**Addressable I/O scoped to a space is the new capability**, and it is the
+reason this is a feature rather than a tidy-up. Today the only addressed
+reads are whole-medium; there is no way to read a volume's boot sector,
+its unallocated extents, or the bytes behind a file just listed, without
+computing offsets against the medium by hand. The addressable trait closes
+that on the same object that hands over the files, which is the work this
+project exists for. Writes follow the delivered rules unchanged: they land
+in the active layer (P23) and commit through P2.
+
+Naming: `StorageSpace` rhymes with `StorageDevice`, which is the point —
+the two nouns a caller holds. The compound is its own term even though
+bare "space" is the addressable vantage's word, exactly as D19 kept "hard
+disk" as a device-family name while "disk" stayed media-centric. The
+vantages keep their words: *volume* is the space vantage, *filesystem* the
+namespace vantage, and the object needs neither name because it is both.
+
+`device.volume(id)` and `device.filesystem()` both answer with a
+`StorageSpace` — the first selecting, the second resolving — and the hop
+between them disappears. The resolver's behavior, its refusals, and the
+transparency clause it implements are F48's and are unchanged.
+
+Touches: S1, S2, S3 — `Volume` and `Filesystem` become one type across
+all three, the C ABI keeping `remanence_volume_*` and
+`remanence_filesystem_*` as the two function families over one opaque
+handle, capability-checked, so the vantages stay legible at the seam
+where types are thinnest. Supports: in-force P17, P18, P19, P10 (the
+capability refusals are categorized and rule-identified), P27 (the
+addressable reads are bounded and streamed); the storage model design.
+Independent of F45 and F49; F49's archive namespaces present as
+`StorageSpace` without namespace-only being a special case.
