@@ -52,6 +52,8 @@ FIXTURES_DIR = REPO_ROOT / "crates" / "remanence" / "tests" / "fixtures"
 DOWNLOADS_DIR = REPO_ROOT / "testing-prep" / "downloads"
 RIG_DIR = REPO_ROOT / "testing-prep" / "test-rigs"
 
+# See also: https://archive.org/details/flux_capacity
+
 HDOS_URL = "https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip"
 # The SEBHC archive publishes no hash; this pin records the archive as
 # first fetched (2026-07-31), so a changed upstream is caught, not
