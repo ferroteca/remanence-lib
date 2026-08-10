@@ -64,6 +64,20 @@
 //! answers with the [`RemanenceImage`] itself rather than a root of its
 //! own.
 //!
+//! **An image, or the medium a P64 holds, is then read the way a drive
+//! reads it**, one declared rung at a time:
+//! [`RemanenceImage::materialize_c1541_bitstream`] clocks the family's
+//! pulses into a [`C1541Bitstream`],
+//! [`C1541Bitstream::materialize_c1541_bytestream`] resolves that into
+//! the [`C1541Bytestream`] a declared group code makes of it, and
+//! [`C1541Bytestream::recognize_c1541_sectors`] reads the recording's
+//! own records out of those bytes under the family's declared grammar.
+//! The two lower rungs assign nothing above a byte; the third is where
+//! that ends, and it ends by stating what it derives — every record
+//! carrying its evidence, and [`C1541Sectors::read_sector`] refusing by
+//! name (its own [`SectorRule`] set) rather than filling in a block the
+//! recording does not hold.
+//!
 //! Every open also states what it established about the evidence beneath
 //! it ([`StorageDevice::assurance`]): a source short of what its own
 //! interpretation declares is read as far as it truthfully goes,
@@ -74,6 +88,7 @@ mod adapters;
 mod archive;
 mod assurance;
 mod c1541_presentation;
+mod c1541_sectors;
 mod c64_renditions;
 mod cache;
 mod checksum;
@@ -124,6 +139,10 @@ pub use c1541_presentation::{
     AlignmentPolicy, BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport,
     C1541Bitstream, C1541Bytestream, DensityPolicy, GcrCodecPolicy, ReadChannelPolicy,
     UnassignedSymbolPolicy, UnzonedPolicy, WeakPulsePolicy,
+};
+pub use c1541_sectors::{
+    C1541Sectors, ChecksumFailurePolicy, ContestedAddress, SectorClaim, SectorLocation,
+    SectorPolicy, SectorReport, SectorRule, UnpairedRecordPolicy,
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode};

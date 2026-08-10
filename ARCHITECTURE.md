@@ -22,8 +22,11 @@ One core, two bindings:
   **namespace composer** above that stack, which derives a DOS
   drive-letter mapping rather than consuming one. And the **magnetic
   family** beside it, never crossing into it: the flux-capture and
-  flux-medium models, the drive-profile seam, the C1541 mastering profile
-  and presentation, and the P64 container.
+  flux-medium models, the drive-profile seam, the gap-first
+  reconstruction and the remanence image it answers with, the C1541
+  presentation ladder above that image — bitstream, bytestream, and the
+  sectors the recording states for itself — the C64 renditions, and the
+  P64 container.
   [AGENTS.md](AGENTS.md) maps these onto modules.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
   accessor functions, borrowed strings owned by their handle. The header

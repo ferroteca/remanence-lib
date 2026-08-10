@@ -561,10 +561,12 @@ This section places the 1541 public cut above the drive electronics but
 below the disk VIA, matching U7; the principle is pledged, so no in-force
 section states it. It specifies the common hardware layer without
 introducing a drive catalog. The delivered layer adds no hardware emulation
-and no emulator presentation: the read channel and group code that arrived
-with the two layers above the medium are declared profile rules (P30) and a
-presentation over durable state (P23), not the timed-causality layer this
-principle specifies. The delivery cut does not otherwise change.
+and no emulator presentation: the read channel, the group code and the
+record grammar that arrived with the layers above the medium are declared
+profile rules (P30) and presentations over durable state (P23), not the
+timed-causality layer this principle specifies — and a sector read by a
+declared grammar is no closer to one than a byte was. The delivery cut does
+not otherwise change.
 
 ## P25 — Artifact mappings make nesting recursive
 

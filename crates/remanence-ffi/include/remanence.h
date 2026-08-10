@@ -138,6 +138,23 @@ typedef enum {
   REMANENCE_UNASSIGNED_SYMBOL_POLICY_DECLARE_LOSS = 1,
 } RemanenceUnassignedSymbolPolicy;
 
+// What a block whose stated checksum disagrees with its own bytes
+// becomes.
+typedef enum {
+  // The recognition stops and names the location and the address.
+  REMANENCE_CHECKSUM_FAILURE_POLICY_REFUSE = 0,
+  // The claim is kept, stated unreadable with both checksums on it,
+  // and counted.
+  REMANENCE_CHECKSUM_FAILURE_POLICY_DECLARE_LOSS = 1,
+} RemanenceChecksumFailurePolicy;
+
+// What a header block the recording does not follow with a data block
+// becomes.
+typedef enum {
+  REMANENCE_UNPAIRED_RECORD_POLICY_REFUSE = 0,
+  REMANENCE_UNPAIRED_RECORD_POLICY_DECLARE_LOSS = 1,
+} RemanenceUnpairedRecordPolicy;
+
 // What the device's leading structure turned out to be. The report states
 // this rather than leaving a caller to reconstruct it from empty lists.
 typedef enum {
@@ -198,6 +215,10 @@ typedef struct RemanenceC1541Bitstream RemanenceC1541Bitstream;
 
 // An encoded bytestream, held in the session.
 typedef struct RemanenceC1541Bytestream RemanenceC1541Bytestream;
+
+// The recording's own sectors, held in the session. The payloads stay
+// behind this handle and are read by the address the recording states.
+typedef struct RemanenceC1541Sectors RemanenceC1541Sectors;
 
 // An open capture set, holding the claim on its archive.
 typedef struct RemanenceCaptureSet RemanenceCaptureSet;
@@ -412,6 +433,68 @@ typedef struct {
   uint64_t longest_landmark_bits;
   uint64_t unframed_bits;
 } RemanenceBytestreamLocation;
+
+// The complete declared policy for one bytestream-to-sector
+// recognition. There is no default: both fields are decisions about
+// evidence.
+typedef struct {
+  RemanenceChecksumFailurePolicy checksum_failure;
+  RemanenceUnpairedRecordPolicy unpaired_record;
+} RemanenceSectorPolicy;
+
+// One location the sector layer read, and what it found there.
+typedef struct {
+  uint64_t half_track_numerator;
+  uint64_t half_track_denominator;
+  bool has_surface;
+  uint64_t surface;
+  // What the family's density map claims one location in this zone
+  // holds, where a declared zone covers it at all.
+  bool has_records_declared;
+  uint32_t records_declared;
+  uint64_t headers;
+  uint64_t records;
+  uint64_t readable;
+  uint64_t failed_checksum;
+  uint64_t runs_without_a_record;
+} RemanenceSectorLocation;
+
+// One record the recognition read, and the evidence for every claim it
+// makes. The rule and the refusal behind an unreadable claim are read
+// with `remanence_c1541_sectors_claim_rule` and `..._claim_refusal`.
+typedef struct {
+  uint64_t half_track_numerator;
+  uint64_t half_track_denominator;
+  bool has_surface;
+  uint64_t surface;
+  // The bit of the location's own bitstream the header opens at.
+  uint64_t at_bit;
+  // The address the header states for itself, as recorded.
+  uint8_t track;
+  uint8_t sector;
+  uint8_t id_high;
+  uint8_t id_low;
+  // Stated beside computed, for each block the record holds.
+  uint8_t header_checksum_stated;
+  uint8_t header_checksum_computed;
+  bool has_data;
+  uint64_t data_at_bit;
+  uint8_t data_checksum_stated;
+  uint8_t data_checksum_computed;
+  // Bytes of either block holding a pattern the family's table does
+  // not assign, which are not bytes.
+  uint64_t unresolved_bytes;
+  // Whether the family's own declaration covers the address stated.
+  bool within_declaration;
+  bool readable;
+} RemanenceSectorClaim;
+
+// One address more than one readable claim states.
+typedef struct {
+  uint8_t track;
+  uint8_t sector;
+  uint32_t readable_claims;
+} RemanenceContestedAddress;
 
 // One index hole, as the image holds it: an exact fraction of a turn
 // for the centre and another for the extent. Nothing radial is stored.
@@ -1912,6 +1995,103 @@ size_t remanence_c1541_bytestream_evidence_count(const RemanenceC1541Bytestream 
 
 const char *remanence_c1541_bytestream_evidence(const RemanenceC1541Bytestream *bytestream,
                                                 size_t index);
+
+// Recognizes the recording's own sectors out of a bytestream, under the
+// family's declared record grammar. The bytestream is untouched.
+// Returns null on failure and stores a message in `error_out` (free
+// with `remanence_string_free`).
+RemanenceC1541Sectors *remanence_c1541_bytestream_recognize_sectors(const RemanenceC1541Bytestream *bytestream,
+                                                                    const RemanenceSectorPolicy *policy,
+                                                                    uint64_t cache_bytes,
+                                                                    RemanenceErrorCategory *error_category_out,
+                                                                    char **error_out,
+                                                                    char **error_rule_out);
+
+// Frees a sector-layer handle, discarding its private session storage.
+void remanence_c1541_sectors_free(RemanenceC1541Sectors *sectors);
+
+// Reads one sector by the address the recording states for it, into
+// `buffer_out`, which must be `remanence_c1541_sectors_payload_bytes`
+// long.
+//
+// It answers only where the recording is unambiguous: one readable
+// claim, or several holding the same bytes. Every other outcome is a
+// refusal naming its rule — an address no record states, an address no
+// claim of which reads, or one several readable claims disagree about.
+// Nothing is repaired and no block is filled in. Returns false on
+// failure and stores a message in `error_out`.
+bool remanence_c1541_sectors_read(const RemanenceC1541Sectors *sectors,
+                                  uint8_t track,
+                                  uint8_t sector,
+                                  uint8_t *buffer_out,
+                                  size_t length,
+                                  RemanenceErrorCategory *error_category_out,
+                                  char **error_out,
+                                  char **error_rule_out);
+
+// How many bytes of payload one sector carries.
+uint32_t remanence_c1541_sectors_payload_bytes(const RemanenceC1541Sectors *sectors);
+
+const char *remanence_c1541_sectors_profile_id(const RemanenceC1541Sectors *sectors);
+
+// The record grammar every rule the recognition applied came from.
+const char *remanence_c1541_sectors_grammar_id(const RemanenceC1541Sectors *sectors);
+
+const char *remanence_c1541_sectors_grammar_name(const RemanenceC1541Sectors *sectors);
+
+uint64_t remanence_c1541_sectors_backing_bytes(const RemanenceC1541Sectors *sectors);
+
+uint64_t remanence_c1541_sectors_resident_bytes(const RemanenceC1541Sectors *sectors);
+
+size_t remanence_c1541_sectors_location_count(const RemanenceC1541Sectors *sectors);
+
+// Copies one location's counts into `out`. Returns false when `index`
+// is past the end.
+bool remanence_c1541_sectors_location(const RemanenceC1541Sectors *sectors,
+                                      size_t index,
+                                      RemanenceSectorLocation *out);
+
+size_t remanence_c1541_sectors_claim_count(const RemanenceC1541Sectors *sectors);
+
+// Copies one claim into `out`. Returns false when `index` is past the
+// end.
+bool remanence_c1541_sectors_claim(const RemanenceC1541Sectors *sectors,
+                                   size_t index,
+                                   RemanenceSectorClaim *out);
+
+// Which rule of the sector-layer set stands in the way of this claim,
+// or an empty string for one that reads.
+const char *remanence_c1541_sectors_claim_rule(const RemanenceC1541Sectors *sectors, size_t index);
+
+// Why this claim does not read, in the layer's own terms, or an empty
+// string for one that does.
+const char *remanence_c1541_sectors_claim_refusal(const RemanenceC1541Sectors *sectors,
+                                                  size_t index);
+
+size_t remanence_c1541_sectors_contested_count(const RemanenceC1541Sectors *sectors);
+
+// Copies one contested address into `out`. Returns false when `index`
+// is past the end.
+bool remanence_c1541_sectors_contested(const RemanenceC1541Sectors *sectors,
+                                       size_t index,
+                                       RemanenceContestedAddress *out);
+
+size_t remanence_c1541_sectors_declared_loss_count(const RemanenceC1541Sectors *sectors);
+
+const char *remanence_c1541_sectors_declared_loss_code(const RemanenceC1541Sectors *sectors,
+                                                       size_t index);
+
+const char *remanence_c1541_sectors_declared_loss_detail(const RemanenceC1541Sectors *sectors,
+                                                         size_t index);
+
+uint64_t remanence_c1541_sectors_declared_loss_amount(const RemanenceC1541Sectors *sectors,
+                                                      size_t index);
+
+// The grammar and policy that produced it, and everything the
+// bytestream said beneath it, in that order.
+size_t remanence_c1541_sectors_evidence_count(const RemanenceC1541Sectors *sectors);
+
+const char *remanence_c1541_sectors_evidence(const RemanenceC1541Sectors *sectors, size_t index);
 
 // Inspects the medium in an occupied device and returns its layered
 // report. Null on failure,

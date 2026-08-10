@@ -115,6 +115,24 @@ no byte is a header, a data field, a sector or a file, and the framing
 landmark the codec locates says where bytes begin and nothing about what
 follows it.
 
+**The rung above them is where that ends** — and it ends by a layer
+stating what it derives rather than by either of those two having
+quietly meant more. The **sector layer** reads the recording's own
+records out of the bytestream under the grammar the family declares:
+which byte opens a header block and which a data block, how long each
+is, where the header states its track, its sector and the disk
+identity, and which bytes each checksum covers. Pairing is grammatical
+rather than measured — the family writes one sync ahead of each block,
+so a record's data block is the block the recording carries next — and
+every claim comes back with where it sits, the address it states for
+itself, both stated checksums beside both computed ones, and how many
+of its bytes the codec could not resolve. Reading by the recording's
+own track and sector answers where one readable claim, or several
+agreeing ones, hold it; an address nothing states, an address no claim
+of which reads, and an address readable claims disagree about are each
+a refusal naming the rule it broke. Nothing is repaired and no block is
+filled in.
+
 An image can be saved as a P64, and a P64 opened back.
 The container's grammar and its own adaptive range coder are the
 adapter's claim, stated in the module from the published format
@@ -416,6 +434,15 @@ bytes_ = bits.materialize_c1541_bytestream(remanence.GcrCodecPolicy(
 for track in bytes_.inspect().locations:
     print(track.half_track_numerator, track.bytes, track.resolved_bytes,
           track.alignments, track.unframed_bits)
+
+# And the sectors the recording states for itself, above those bytes.
+sectors = bytes_.recognize_c1541_sectors(remanence.SectorPolicy(
+    checksum_failure="declare-loss", unpaired_record="declare-loss"))
+for claim in sectors.inspect().claims:
+    print(claim.track, claim.sector, claim.readable, claim.rule,
+          claim.header_checksum_stated, claim.header_checksum_computed)
+print(sectors.read_sector(18, 0)[:3])   # the BAM: 18, 1, and DOS 'A'
+
 
 # Each rendition states its loss before it writes anything.
 for loss in image.describe_p64().declared_loss:

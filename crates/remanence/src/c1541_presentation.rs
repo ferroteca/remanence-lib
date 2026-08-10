@@ -312,10 +312,8 @@ impl C1541Bytestream {
     }
 
     /// The bytestream itself. The bytes stay behind the public surface:
-    /// no consumer of one is delivered — a hardware presentation is
-    /// what will serve them — and this layer's own test is what reads
-    /// them.
-    #[cfg(test)]
+    /// the sector layer above reads them into the recording's own
+    /// records, and no consumer is handed a byte.
     pub(crate) fn inner(&self) -> &EncodedBytestream {
         &self.bytestream
     }

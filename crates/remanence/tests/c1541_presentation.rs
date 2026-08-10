@@ -1,14 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Presenting a reconstructed disk as a 1541 hardware bitstream, and
-//! then as the family's encoded bytestream.
+//! Presenting a reconstructed disk as a 1541 hardware bitstream, then
+//! as the family's encoded bytestream, and then as the sectors the
+//! recording states for itself.
 //!
 //! The claim under test is P23's, P33's and P30's together: the layers above a
 //! flux medium are materialized under rules the drive profile declares,
 //! each transition carries what produced everything beneath it, and
-//! neither layer assigns synchronization, headers, sectors or files to
-//! what it holds.
+//! neither of the two layers below the sector one assigns
+//! synchronization, headers, sectors or files to what it holds. The
+//! third rung is where that ends, and it ends by stating what it
+//! derives: every record it recognizes carries its evidence, and a
+//! sector that does not read is a named refusal rather than a filled
+//! block (P4, P10).
 //!
 //! The journey is the real one — a KryoFlux capture of a C64 disk,
 //! reduced gap-first to the remanence image and then read by a declared
@@ -22,9 +27,10 @@
 use std::sync::OnceLock;
 
 use remanence::{
-    AlignmentPolicy, BitstreamReport, BytestreamReport, CaptureSet, DensityPolicy, ErrorCategory,
-    GcrCodecPolicy, ReadChannelPolicy, ReconstructionPolicy, RecordingSelection,
-    UnassignedSymbolPolicy, UnzonedPolicy, WeakPulsePolicy,
+    AlignmentPolicy, BitstreamReport, BytestreamReport, C1541Sectors, CaptureSet,
+    ChecksumFailurePolicy, DensityPolicy, ErrorCategory, GcrCodecPolicy, ReadChannelPolicy,
+    ReconstructionPolicy, RecordingSelection, SectorPolicy, SectorRule, UnassignedSymbolPolicy,
+    UnpairedRecordPolicy, UnzonedPolicy, WeakPulsePolicy,
 };
 
 mod common;
@@ -59,6 +65,13 @@ fn codec() -> GcrCodecPolicy {
     }
 }
 
+fn grammar() -> SectorPolicy {
+    SectorPolicy {
+        checksum_failure: ChecksumFailurePolicy::DeclareLoss,
+        unpaired_record: UnpairedRecordPolicy::DeclareLoss,
+    }
+}
+
 struct Presented {
     bitstream: BitstreamReport,
     /// The same transition run twice from the same medium and policy.
@@ -71,6 +84,12 @@ struct Presented {
     /// What the codec said when the policy refused a pattern the
     /// family's table does not assign.
     unassigned: Option<(ErrorCategory, String)>,
+    /// The third rung, which outlives the bytestream it was recognized
+    /// out of: its payloads are its own session state.
+    sectors: C1541Sectors,
+    /// What the recognition said when the policy refused a block whose
+    /// stated checksum its own bytes do not compute.
+    failed_checksum: Option<(ErrorCategory, Option<String>, String)>,
 }
 
 fn presented() -> &'static Presented {
@@ -106,6 +125,26 @@ fn presented() -> &'static Presented {
             .err()
             .map(|error| (error.category(), error.to_string()));
 
+        let sectors = bytestream
+            .recognize_c1541_sectors(grammar(), 1 << 20)
+            .expect("the family's record grammar reads the recording's own sectors");
+        let failed_checksum = bytestream
+            .recognize_c1541_sectors(
+                SectorPolicy {
+                    checksum_failure: ChecksumFailurePolicy::Refuse,
+                    ..grammar()
+                },
+                1 << 20,
+            )
+            .err()
+            .map(|error| {
+                (
+                    error.category(),
+                    error.rule().map(str::to_owned),
+                    error.to_string(),
+                )
+            });
+
         let presented = Presented {
             bitstream: bitstream.inspect().clone(),
             repeated: repeated.inspect().clone(),
@@ -115,6 +154,8 @@ fn presented() -> &'static Presented {
             bytestream_backing: bytestream.backing_bytes(),
             bytestream_resident: bytestream.resident_bytes(),
             unassigned,
+            sectors,
+            failed_checksum,
         };
         drop(bytestream);
         drop(repeated);
@@ -350,12 +391,13 @@ fn a_pattern_the_family_assigns_nothing_to_is_refused_or_kept_as_its_bits() {
 }
 
 #[test]
-fn neither_layer_is_held_whole_in_memory() {
-    // Both are addressed out of private session storage under a declared
-    // bound (P27), and producing them made neither resident.
+fn no_layer_is_held_whole_in_memory() {
+    // Each is addressed out of private session storage under a declared
+    // bound (P27), and producing them made none of them resident.
     let presented = presented();
     assert!(presented.bitstream_backing > 0);
     assert!(presented.bytestream_backing > 0);
+    assert!(presented.sectors.backing_bytes() > 0);
     assert!(
         presented.bitstream_resident <= 1 << 20,
         "{} bytes resident",
@@ -366,4 +408,227 @@ fn neither_layer_is_held_whole_in_memory() {
         "{} bytes resident",
         presented.bytestream_resident
     );
+    assert!(
+        presented.sectors.resident_bytes() <= 1 << 20,
+        "{} bytes resident",
+        presented.sectors.resident_bytes()
+    );
+}
+
+/// The 35-track grid CBM DOS defines, as the family declares it: the
+/// four zones with their track boundaries and sector counts.
+const ZONES: [(u8, u8, u8); 4] = [(1, 17, 21), (18, 24, 19), (25, 30, 18), (31, 35, 17)];
+
+#[test]
+fn the_recording_states_its_own_sectors_and_the_family_declares_how_many() {
+    let report = presented().sectors.inspect();
+
+    assert_eq!(report.profile_id, "c1541");
+    assert_eq!(report.grammar_id, "cbm-dos-record");
+    assert_eq!(report.grammar_name, "CBM DOS sector record");
+    assert_eq!(report.payload_bytes, 256);
+    // Every location the bytestream held is read; a half-track holding
+    // no record would be reported holding none rather than left out.
+    assert_eq!(report.locations.len(), LOCATIONS);
+
+    // The load-bearing claim: what the recording holds is what the
+    // family's density map says it should, track by track, and the count
+    // was never assumed — the headers were found and the zone's figure
+    // is what they are compared against. Two locations of this disk
+    // depart, and they depart as the numbers they are.
+    let exact = report
+        .locations
+        .iter()
+        .filter(|location| location.records_declared == Some(location.headers as u32))
+        .count();
+    assert!(
+        exact + 2 >= report.locations.len(),
+        "{} of {} locations hold exactly what their zone declares",
+        exact,
+        report.locations.len()
+    );
+    for location in &report.locations {
+        assert!(location.records <= location.headers, "{location:?}");
+        assert!(location.readable <= location.records, "{location:?}");
+        // A departure is a location whose recording is not the ordinary
+        // one, and it says so in counts rather than by being absent.
+        if location.records_declared != Some(location.headers as u32) {
+            assert!(
+                location.runs_without_a_record > 0 || location.failed_checksum > 0,
+                "{location:?}"
+            );
+        }
+    }
+
+    // The fat track is read at two step positions, so seventeen
+    // addresses are stated twice. The layer reports that and resolves
+    // none of it: whether the two agree is decided when one is read.
+    assert!(!report.contested.is_empty(), "{:?}", report.contested);
+    for contested in &report.contested {
+        assert!(contested.readable_claims >= 2, "{contested:?}");
+        // They agree here — one recording picked up at two radii — so
+        // the address still answers rather than refusing.
+        assert_eq!(
+            presented()
+                .sectors
+                .read_sector(contested.track, contested.sector)
+                .expect("two readings of one recording agree")
+                .len(),
+            256
+        );
+    }
+}
+
+#[test]
+fn every_claim_carries_its_evidence_and_an_unreadable_one_names_its_rule() {
+    let report = presented().sectors.inspect();
+    assert!(report.claims.len() > 600, "{} claims", report.claims.len());
+
+    let mut unreadable = 0;
+    for claim in &report.claims {
+        // The address is what the header states for itself, and the two
+        // checksums stand beside each other rather than collapsing into
+        // a verdict.
+        assert_eq!(claim.surface, Some(0));
+        assert_eq!(claim.readable, claim.rule.is_none());
+        if claim.readable {
+            assert!(claim.has_data, "{claim:?}");
+            assert_eq!(claim.unresolved_bytes, 0, "{claim:?}");
+            assert_eq!(
+                claim.header_checksum_stated, claim.header_checksum_computed,
+                "{claim:?}"
+            );
+            assert_eq!(
+                claim.data_checksum_stated, claim.data_checksum_computed,
+                "{claim:?}"
+            );
+            continue;
+        }
+        unreadable += 1;
+        // And a claim that does not read names the rule that stands in
+        // the way (P10) and says what was expected and found (P6).
+        let rule = claim.rule.as_deref().expect("checked above");
+        assert!(
+            SectorRule::from_identity(rule).is_some(),
+            "{rule} is not in the set"
+        );
+        assert!(claim.refusal.as_ref().is_some_and(|why| why.len() > 20), "{claim:?}");
+    }
+    assert!(
+        unreadable > 0,
+        "a real recording holds records that do not read"
+    );
+
+    // The account of what this layer does not carry of the bytestream:
+    // the gaps and tails between records, and every record it could not
+    // read, each stated as what it was rather than counted.
+    let by_code = |code: &str| {
+        report
+            .declared_loss
+            .iter()
+            .find(|loss| loss.code == code)
+            .unwrap_or_else(|| panic!("{code} is not accounted for: {:?}", report.declared_loss))
+    };
+    assert!(by_code("byte-outside-a-record").count > 1000);
+    assert!(by_code("block-failed-checksum").count > 0);
+    assert!(by_code("run-without-a-record").count > 0);
+    for loss in &report.declared_loss {
+        assert!(loss.detail.len() > 20, "{loss:?}");
+        assert!(loss.count > 0, "{loss:?}");
+    }
+}
+
+#[test]
+fn a_sector_reads_by_the_address_the_recording_states_for_it() {
+    let sectors = &presented().sectors;
+
+    // The disk's own block-availability map, read out of flux through
+    // four layers: it links to track 18 sector 1 and states CBM DOS
+    // version 'A', which is what a C64 would find there.
+    let bam = sectors.read_sector(18, 0).expect("track 18 sector 0 reads");
+    assert_eq!(bam.len(), 256);
+    assert_eq!(&bam[..3], &[18, 1, 0x41]);
+
+    // Most of the 683-block grid the recording defines comes back, and
+    // every address that does not is a refusal naming its rule rather
+    // than a block of zeros.
+    let mut read = 0u32;
+    let mut not_stated = 0u32;
+    let mut not_readable = 0u32;
+    for (first, last, sectors_on) in ZONES {
+        for track in first..=last {
+            for sector in 0..sectors_on {
+                match sectors.read_sector(track, sector) {
+                    Ok(payload) => {
+                        assert_eq!(payload.len(), 256);
+                        read += 1;
+                    }
+                    Err(error) => {
+                        let rule = error.rule().expect("a sector refusal names its rule");
+                        match SectorRule::from_identity(rule) {
+                            Some(SectorRule::NoSuchAddress) => {
+                                assert_eq!(error.category(), ErrorCategory::NotFound);
+                                not_stated += 1;
+                            }
+                            Some(SectorRule::AddressNotReadable) => {
+                                // The recording holds it and it does not
+                                // read: imperfect evidence, not a host
+                                // failure and not a contradiction.
+                                assert_eq!(error.category(), ErrorCategory::Unavailable);
+                                not_readable += 1;
+                            }
+                            other => panic!("{other:?} from {error}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(read > 640, "{read} of the grid's 683 blocks read");
+    assert!(
+        not_stated > 0 && not_readable > 0,
+        "this disk states neither every block nor a readable one for every \
+         address it does state: {not_stated} unstated, {not_readable} unreadable"
+    );
+
+    // A track the family's own density map does not reach is refused as
+    // that rather than as a missing block.
+    let error = sectors.read_sector(36, 0).expect_err("there is no track 36");
+    assert_eq!(error.rule(), Some(SectorRule::NoSuchAddress.as_str()));
+    assert!(error.to_string().contains("no track 36"), "{error}");
+}
+
+#[test]
+fn the_grammar_and_the_whole_ladder_beneath_it_are_stated() {
+    let report = presented().sectors.inspect();
+
+    let says = |fragment: &str| {
+        assert!(
+            report.evidence.iter().any(|line| line.contains(fragment)),
+            "{fragment:?} is not in {:?}",
+            report.evidence
+        );
+    };
+    // The grammar every rule came from, and the pairing rule stated as
+    // the grammatical thing it is.
+    says("CBM DOS sector record");
+    says("carries next after its header");
+    // The seam itself: this layer says it is where the silence ends,
+    // and the layer below is still saying it assigns nothing.
+    says("this is where the bytestream's silence ends");
+    says("the bytestream beneath it: no byte here is a header");
+    // And the reduction that produced the disk is readable from up here.
+    says("served projection of a remanence image");
+    says("the medium beneath it: recordings: measured");
+
+    // The strict policy stops on the first block whose stated checksum
+    // its own bytes do not compute, and names where it is.
+    let (category, rule, message) = presented()
+        .failed_checksum
+        .as_ref()
+        .expect("a real recording holds a block that fails its own checksum");
+    assert_eq!(*category, ErrorCategory::InvalidImage);
+    assert_eq!(rule.as_deref(), Some(SectorRule::BlockFailedChecksum.as_str()));
+    assert!(message.contains("half-track"), "{message}");
+    assert!(message.contains("the policy refuses"), "{message}");
 }

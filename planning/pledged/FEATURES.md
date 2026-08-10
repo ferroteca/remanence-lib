@@ -230,23 +230,9 @@ create/release slots.
 Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P13,
 P27; U32. Needs F57, F58.
 
-## F61 — The 1541 sector layer
-
-The ladder's missing rung: sector recognition above the encoded
-bytestream — headers, data blocks, checksums, the recording's own
-(track, sector) addressing served from it — as a presentation derived
-under the type's declared rules, every claim carrying its evidence and
-every unreadable sector a named refusal rather than a filled block.
-This deliberately ends the bytestream's "no byte is a header, a sector
-or a file" at the seam above it, where a new layer states what it
-derives.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P10,
-P23, P30; U26. Needs F59.
-
 ## F62 — The CBM DOS filesystem
 
-The P18 adapter over the sector layer: the track-18 directory in
+The P18 adapter over the delivered sector layer: the track-18 directory in
 directory order (U4), the BAM header as the space's label (disk name
 and ID as recorded), PETSCII names raw beside their readings, and the
 CBM facts — PRG/SEQ/USR/REL, the locked and splat flags, size in
@@ -258,4 +244,4 @@ synthesizes it — is explicitly out of scope: that is the future
 Commodore DOS device seam (P15), not this adapter.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P18,
-P19; U4, U26. Needs F56, F61.
+P19; U4, U26. Needs F56.

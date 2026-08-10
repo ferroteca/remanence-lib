@@ -103,6 +103,19 @@ ABI, or Python module.
   points are a remanence image and a P64 container**: an image carries
   no clock, so the image's entry stands on the served projection of it
   rather than on the image directly;
+  `c1541_sectors.rs` the rung above them — the **seam where the
+  bytestream's silence ends**, and it ends by a new layer stating what
+  it derives: the family's declared record grammar (which byte opens
+  each block, how long it is, where the header states track, sector and
+  disk identity, which bytes each checksum covers) recognized over the
+  bytestream's own runs, one record per framing the layer below
+  declared, pairing grammatical rather than metric, every claim
+  carrying both checksums stated beside computed, and reads by the
+  recording's own (track, sector) refusing by name — its own `SectorRule`
+  set — where nothing states an address, where no claim of one reads, or
+  where several readable claims disagree. It is derived rather than a
+  seventh active layer, and its payloads stream to private session
+  storage as they are recognized;
   `p64.rs` the P64 image-format adapter, claimed in
   both directions — the container grammar and its own range coder, the
   version gate and the structural refusals, decode of a stored medium

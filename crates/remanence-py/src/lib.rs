@@ -3402,8 +3402,329 @@ impl C1541Bytestream {
         self.inner.resident_bytes()
     }
 
+    /// Recognizes the recording's own sectors out of this bytestream,
+    /// under the family's declared record grammar. The bytestream is
+    /// untouched.
+    #[pyo3(signature = (policy, *, cache_bytes = None))]
+    fn recognize_c1541_sectors(
+        &self,
+        policy: &SectorPolicy,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<C1541Sectors> {
+        let inner = self
+            .inner
+            .recognize_c1541_sectors(
+                policy.to_core()?,
+                cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
+            )
+            .map_err(to_py_err)?;
+        let report = SectorReport::new(inner.inspect());
+        Ok(C1541Sectors { inner, report })
+    }
+
     fn __repr__(&self) -> String {
         format!("C1541Bytestream(locations={})", self.inner.locations())
+    }
+}
+
+/// The complete declared policy for one bytestream-to-sector
+/// recognition. Both fields are `"refuse"` or `"declare-loss"`.
+#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct SectorPolicy {
+    pub checksum_failure: String,
+    pub unpaired_record: String,
+}
+
+#[pymethods]
+impl SectorPolicy {
+    #[new]
+    #[pyo3(signature = (*, checksum_failure, unpaired_record))]
+    fn new(checksum_failure: String, unpaired_record: String) -> Self {
+        Self {
+            checksum_failure,
+            unpaired_record,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SectorPolicy(checksum_failure={:?}, unpaired_record={:?})",
+            self.checksum_failure, self.unpaired_record
+        )
+    }
+}
+
+impl SectorPolicy {
+    fn to_core(&self) -> PyResult<remanence::SectorPolicy> {
+        Ok(remanence::SectorPolicy {
+            checksum_failure: match self.checksum_failure.as_str() {
+                "refuse" => remanence::ChecksumFailurePolicy::Refuse,
+                "declare-loss" => remanence::ChecksumFailurePolicy::DeclareLoss,
+                other => {
+                    return Err(unadmitted(
+                        "checksum failure",
+                        other,
+                        &["refuse", "declare-loss"],
+                    ));
+                }
+            },
+            unpaired_record: match self.unpaired_record.as_str() {
+                "refuse" => remanence::UnpairedRecordPolicy::Refuse,
+                "declare-loss" => remanence::UnpairedRecordPolicy::DeclareLoss,
+                other => {
+                    return Err(unadmitted(
+                        "unpaired record",
+                        other,
+                        &["refuse", "declare-loss"],
+                    ));
+                }
+            },
+        })
+    }
+}
+
+/// One location the sector layer read, and what it found there.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct SectorLocation {
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub surface: Option<u64>,
+    /// What the family's density map claims one location in this zone
+    /// holds, where a declared zone covers it at all.
+    pub records_declared: Option<u32>,
+    pub headers: u64,
+    pub records: u64,
+    pub readable: u64,
+    pub failed_checksum: u64,
+    pub runs_without_a_record: u64,
+}
+
+#[pymethods]
+impl SectorLocation {
+    fn __repr__(&self) -> String {
+        format!(
+            "SectorLocation(half_track={}/{}, readable={}/{})",
+            self.half_track_numerator,
+            self.half_track_denominator,
+            self.readable,
+            self.headers
+        )
+    }
+}
+
+/// One record the recognition read, and the evidence for every claim it
+/// makes. `rule` and `refusal` are None for a claim that reads.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct SectorClaim {
+    pub half_track_numerator: u64,
+    pub half_track_denominator: u64,
+    pub surface: Option<u64>,
+    pub at_bit: u64,
+    pub track: u8,
+    pub sector: u8,
+    pub id_high: u8,
+    pub id_low: u8,
+    pub header_checksum_stated: u8,
+    pub header_checksum_computed: u8,
+    pub has_data: bool,
+    pub data_at_bit: u64,
+    pub data_checksum_stated: u8,
+    pub data_checksum_computed: u8,
+    pub unresolved_bytes: u64,
+    pub within_declaration: bool,
+    pub readable: bool,
+    pub rule: Option<String>,
+    pub refusal: Option<String>,
+}
+
+#[pymethods]
+impl SectorClaim {
+    fn __repr__(&self) -> String {
+        format!(
+            "SectorClaim(track={}, sector={}, readable={})",
+            self.track, self.sector, self.readable
+        )
+    }
+}
+
+/// One address more than one readable claim states.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ContestedAddress {
+    pub track: u8,
+    pub sector: u8,
+    pub readable_claims: u32,
+}
+
+#[pymethods]
+impl ContestedAddress {
+    fn __repr__(&self) -> String {
+        format!(
+            "ContestedAddress(track={}, sector={}, readable_claims={})",
+            self.track, self.sector, self.readable_claims
+        )
+    }
+}
+
+/// What one bytestream-to-sector recognition produced.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct SectorReport {
+    pub profile_id: String,
+    pub grammar_id: String,
+    pub grammar_name: String,
+    pub payload_bytes: u32,
+    pub locations: Vec<SectorLocation>,
+    pub claims: Vec<SectorClaim>,
+    /// Addresses more than one readable claim states. Reported rather
+    /// than resolved; whether those claims agree is decided on a read.
+    pub contested: Vec<ContestedAddress>,
+    pub declared_loss: Vec<DeclaredLoss>,
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl SectorReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "SectorReport(grammar_id={:?}, claims={})",
+            self.grammar_id,
+            self.claims.len()
+        )
+    }
+}
+
+impl SectorReport {
+    fn new(report: &remanence::SectorReport) -> Self {
+        Self {
+            profile_id: report.profile_id.clone(),
+            grammar_id: report.grammar_id.clone(),
+            grammar_name: report.grammar_name.clone(),
+            payload_bytes: report.payload_bytes,
+            locations: report
+                .locations
+                .iter()
+                .map(|location| SectorLocation {
+                    half_track_numerator: location.half_track_numerator,
+                    half_track_denominator: location.half_track_denominator,
+                    surface: location.surface,
+                    records_declared: location.records_declared,
+                    headers: location.headers,
+                    records: location.records,
+                    readable: location.readable,
+                    failed_checksum: location.failed_checksum,
+                    runs_without_a_record: location.runs_without_a_record,
+                })
+                .collect(),
+            claims: report
+                .claims
+                .iter()
+                .map(|claim| SectorClaim {
+                    half_track_numerator: claim.half_track_numerator,
+                    half_track_denominator: claim.half_track_denominator,
+                    surface: claim.surface,
+                    at_bit: claim.at_bit,
+                    track: claim.track,
+                    sector: claim.sector,
+                    id_high: claim.id_high,
+                    id_low: claim.id_low,
+                    header_checksum_stated: claim.header_checksum_stated,
+                    header_checksum_computed: claim.header_checksum_computed,
+                    has_data: claim.has_data,
+                    data_at_bit: claim.data_at_bit,
+                    data_checksum_stated: claim.data_checksum_stated,
+                    data_checksum_computed: claim.data_checksum_computed,
+                    unresolved_bytes: claim.unresolved_bytes,
+                    within_declaration: claim.within_declaration,
+                    readable: claim.readable,
+                    rule: claim.rule.clone(),
+                    refusal: claim.refusal.clone(),
+                })
+                .collect(),
+            contested: report
+                .contested
+                .iter()
+                .map(|contested| ContestedAddress {
+                    track: contested.track,
+                    sector: contested.sector,
+                    readable_claims: contested.readable_claims,
+                })
+                .collect(),
+            declared_loss: report
+                .declared_loss
+                .iter()
+                .map(|loss| DeclaredLoss {
+                    code: loss.code.clone(),
+                    detail: loss.detail.clone(),
+                    count: loss.count,
+                })
+                .collect(),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// The recording's own sectors, held in the session. The payloads stay
+/// behind this surface and are read by the address the recording states
+/// for them.
+#[pyclass(module = "remanence")]
+pub struct C1541Sectors {
+    inner: remanence::C1541Sectors,
+    report: SectorReport,
+}
+
+#[pymethods]
+impl C1541Sectors {
+    /// The recognition that produced these sectors, every claim's
+    /// evidence, and everything the layer does not carry of the
+    /// bytestream beneath it.
+    fn inspect(&self) -> SectorReport {
+        self.report.clone()
+    }
+
+    /// Reads one sector by the address the recording states for it.
+    ///
+    /// It answers only where the recording is unambiguous: one readable
+    /// claim, or several holding the same bytes. Every other outcome
+    /// raises, with `rule` naming which rule of the sector layer's set
+    /// stands in the way. Nothing is repaired and no block is filled in.
+    fn read_sector<'py>(
+        &self,
+        py: Python<'py>,
+        track: u8,
+        sector: u8,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let payload = self.inner.read_sector(track, sector).map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &payload))
+    }
+
+    /// How many records the recognition read.
+    #[getter]
+    fn claims(&self) -> u64 {
+        self.inner.claims()
+    }
+
+    /// How many locations it read them out of.
+    #[getter]
+    fn locations(&self) -> u64 {
+        self.inner.locations()
+    }
+
+    #[getter]
+    fn backing_bytes(&self) -> u64 {
+        self.inner.backing_bytes()
+    }
+
+    #[getter]
+    fn resident_bytes(&self) -> u64 {
+        self.inner.resident_bytes()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("C1541Sectors(claims={})", self.inner.claims())
     }
 }
 
@@ -4422,6 +4743,12 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BitstreamLocation>()?;
     m.add_class::<BytestreamReport>()?;
     m.add_class::<BytestreamLocation>()?;
+    m.add_class::<SectorPolicy>()?;
+    m.add_class::<C1541Sectors>()?;
+    m.add_class::<SectorReport>()?;
+    m.add_class::<SectorLocation>()?;
+    m.add_class::<SectorClaim>()?;
+    m.add_class::<ContestedAddress>()?;
     m.add_class::<P64Image>()?;
     m.add_class::<RemanenceImage>()?;
     m.add_class::<RemanenceImageReport>()?;

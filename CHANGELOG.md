@@ -62,6 +62,56 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **The 1541 sector layer: the recording's own sectors, above the
+  encoded bytestream.** `C1541Bytestream::recognize_c1541_sectors` takes
+  a declared `SectorPolicy` and reads the records the recording states
+  for itself — header blocks, data blocks, both checksums, and the
+  `(track, sector)` addressing served from them. It is the rung the
+  ladder was missing, and it is **where the two layers below stop saying
+  nothing about what their bytes mean**: they still assign no byte to a
+  header or a sector, and this layer states what it derives instead of
+  either of them having quietly meant more.
+
+  **Every rule is the drive profile's** (P30). The C1541 entry gains a
+  declared record grammar: which byte opens each block, how long each
+  is, where the header states the track, the sector and the two
+  disk-identity bytes, which span each checksum covers and how it is
+  computed, and where the payload sits. Nothing is derived from what is
+  being read, and a framed byte that opens neither block opens nothing.
+  Pairing is grammatical rather than metric — the family writes one sync
+  ahead of each block, so a record's data block is the block the
+  recording carries next after its header — and the circle is closed, so
+  a header at the end of a location pairs with a data block at its
+  start.
+
+  **Every claim carries its evidence** (P4): where it sits, the address
+  the header states, both stated checksums beside both computed ones,
+  how many of its bytes the codec left unresolved, whether the family's
+  own declaration covers the address at all, and — where it does not
+  read — which rule stands in the way and why. `read_sector` answers
+  only where the recording is unambiguous, and every other outcome is a
+  refusal naming its rule from the layer's own `SectorRule` set (P10):
+  an address no record states, an address no claim of which reads, or
+  one that several readable claims disagree about. Nothing is repaired
+  and no block is ever filled in — which is the difference between this
+  surface and the d64 rendition, whose grid has to put *something* in
+  every one of its 683 slots.
+
+  The layer is derived rather than a seventh active layer, and it holds
+  no recording whole: its payloads stream into private session storage
+  as they are recognized and are read back a bounded section at a time
+  (P27).
+
+  In C: `remanence_c1541_bytestream_recognize_sectors` with
+  `RemanenceSectorPolicy`, `remanence_c1541_sectors_read` into a
+  caller's buffer, and the `remanence_c1541_sectors_*` accessors over
+  the locations, the claims with their rules and refusals, the contested
+  addresses, the declared-loss account and the evidence. In Python:
+  `C1541Bytestream.recognize_c1541_sectors` with `SectorPolicy`,
+  answering a `C1541Sectors` whose `read_sector` returns `bytes`, with
+  `SectorReport`, `SectorLocation`, `SectorClaim` and
+  `ContestedAddress`.
+
 - **A KryoFlux capture reduces to a remanence image on the strength of
   all the evidence, not the choice of one revolution.**
   `CaptureSet::plan_reconstruction` takes a declared policy — which

@@ -272,8 +272,98 @@ impl GroupCodec {
     }
 }
 
+/// How the family computes the checksum a block states over its own
+/// bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChecksumRule {
+    /// Every checked byte exclusive-ored together.
+    Xor,
+}
+
+impl ChecksumRule {
+    pub(crate) fn over(self, bytes: &[u8]) -> u8 {
+        match self {
+            Self::Xor => bytes.iter().fold(0u8, |sum, byte| sum ^ byte),
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Xor => "the exclusive-or of every checked byte",
+        }
+    }
+}
+
+/// One block of the family's record, as it is written.
+///
+/// The mark is read like any other byte and introduces nothing on its
+/// own: the layer below located a framing landmark and said nothing
+/// whatever about what follows it, so what makes these bytes a header
+/// is this declaration and the reading above it, never the landmark.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BlockShape {
+    pub(crate) id: &'static str,
+    /// The byte the family opens the block with, which is what says
+    /// which of its blocks this is.
+    pub(crate) mark: u8,
+    /// The whole block, the mark included.
+    pub(crate) bytes: u32,
+    /// Which byte states the checksum, and the half-open span of the
+    /// block the family takes it over.
+    pub(crate) checksum_at: u32,
+    pub(crate) checked_from: u32,
+    pub(crate) checked_to: u32,
+}
+
+/// The family's record grammar: the blocks one sector is written as,
+/// where its header states the address, and where the payload sits.
+///
+/// A record's data block is the block the recording carries next after
+/// its header — the family writes one sync ahead of each — so pairing
+/// is grammatical rather than a distance anybody tuned.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RecordGrammar {
+    pub(crate) id: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) checksum: ChecksumRule,
+    pub(crate) header: BlockShape,
+    pub(crate) data: BlockShape,
+    /// Where the header states the address, as byte offsets into it.
+    pub(crate) track_at: u32,
+    pub(crate) sector_at: u32,
+    /// The two identity bytes the header carries, in the order the
+    /// family writes them.
+    pub(crate) id_high_at: u32,
+    pub(crate) id_low_at: u32,
+    /// The payload's half-open span within the data block.
+    pub(crate) payload_from: u32,
+    pub(crate) payload_to: u32,
+    pub(crate) provenance: &'static str,
+}
+
+impl RecordGrammar {
+    /// The block a byte opens, or `None` for one that opens neither. A
+    /// framed byte the grammar does not name opens no block, and this
+    /// says so rather than choosing the nearer of the two marks.
+    pub(crate) fn block_of(&self, mark: u8) -> Option<&BlockShape> {
+        if mark == self.header.mark {
+            Some(&self.header)
+        } else if mark == self.data.mark {
+            Some(&self.data)
+        } else {
+            None
+        }
+    }
+
+    /// How many bytes of payload one data block carries.
+    pub(crate) fn payload_bytes(&self) -> u32 {
+        self.payload_to.saturating_sub(self.payload_from)
+    }
+}
+
 /// The half of a profile the medium-to-bitstream and
-/// bitstream-to-bytestream materializations read.
+/// bitstream-to-bytestream materializations read, and the record
+/// grammar the sector layer above them recognizes under.
 ///
 /// It sits beside the recognition and materialization halves for the
 /// same reason they sit together: these are facts about one drive, and
@@ -283,6 +373,7 @@ impl GroupCodec {
 pub(crate) struct Presentation {
     pub(crate) read_channel: ReadChannel,
     pub(crate) codec: GroupCodec,
+    pub(crate) record: RecordGrammar,
 }
 
 /// One family's recording conventions, and the published description
@@ -456,6 +547,39 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
                          value is recorded as one of sixteen five-bit symbols, chosen so \
                          that no symbol and no pair of them runs more than two zeros or \
                          four ones together",
+        },
+        record: RecordGrammar {
+            id: "cbm-dos-record",
+            name: "CBM DOS sector record",
+            checksum: ChecksumRule::Xor,
+            header: BlockShape {
+                id: "header",
+                mark: 0x08,
+                bytes: 8,
+                checksum_at: 1,
+                checked_from: 2,
+                checked_to: 6,
+            },
+            data: BlockShape {
+                id: "data",
+                mark: 0x07,
+                bytes: 260,
+                checksum_at: 257,
+                checked_from: 1,
+                checked_to: 257,
+            },
+            track_at: 3,
+            sector_at: 2,
+            id_high_at: 5,
+            id_low_at: 4,
+            payload_from: 1,
+            payload_to: 257,
+            provenance: "declared from the published CBM DOS recording conventions: a \
+                         sector is written as an eight-byte header block opening 0x08, \
+                         holding the sector, the track and the two disk-identity bytes \
+                         with their checksum, and then — after a gap and a second sync — \
+                         a 260-byte data block opening 0x07, holding 256 payload bytes \
+                         and their checksum",
         },
     },
 };
@@ -1695,6 +1819,52 @@ mod tests {
             longest < C1541.presentation.read_channel.alignment_one_bits,
             "the table can record a run of {longest} ones, which the landmark claims \
              data cannot"
+        );
+    }
+
+    #[test]
+    fn the_record_grammar_is_declared_whole_and_states_its_own_spans() {
+        // The layer above the bytestream reads sectors under these
+        // numbers and holds none of its own. Each is a published fact of
+        // CBM DOS, and the two marks are distinct because a byte opening
+        // both blocks would make the grammar unreadable.
+        let record = &C1541.presentation.record;
+        assert_eq!(record.header.mark, 0x08);
+        assert_eq!(record.data.mark, 0x07);
+        assert_ne!(record.header.mark, record.data.mark);
+        assert_eq!(record.block_of(0x08).map(|block| block.id), Some("header"));
+        assert_eq!(record.block_of(0x07).map(|block| block.id), Some("data"));
+        // A framed byte the grammar does not name opens no block, rather
+        // than resolving to the nearer of the two marks.
+        assert!(record.block_of(0x00).is_none());
+        assert!(record.block_of(0x55).is_none());
+
+        // Every declared span sits inside the block it is a span of, and
+        // the payload is the 256 bytes CBM DOS carries.
+        for block in [&record.header, &record.data] {
+            assert!(block.checksum_at < block.bytes, "{block:?}");
+            assert!(block.checked_from < block.checked_to, "{block:?}");
+            assert!(block.checked_to <= block.bytes, "{block:?}");
+        }
+        for offset in [
+            record.track_at,
+            record.sector_at,
+            record.id_high_at,
+            record.id_low_at,
+        ] {
+            assert!(offset < record.header.bytes);
+        }
+        assert!(record.payload_to <= record.data.bytes);
+        assert_eq!(record.payload_bytes(), 256);
+
+        // The header's checksum covers exactly the four bytes it
+        // addresses by, so a header that checksums is a header whose
+        // address was read.
+        assert_eq!(record.header.checked_from, 2);
+        assert_eq!(record.header.checked_to, 6);
+        assert_eq!(
+            ChecksumRule::Xor.over(&[0x03, 0x12, 0x50, 0x43]),
+            0x03 ^ 0x12 ^ 0x50 ^ 0x43
         );
     }
 
