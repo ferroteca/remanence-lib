@@ -58,6 +58,84 @@ removes it is the record either way.
 
 ## Decisions
 
+### D28 — U23 is withdrawn from the in-force list: its journey runs, but not in the shape it is owed
+
+**Decided** Paul Galbraith, 2026-08-10. **Supports** U23, U25, U26;
+in-force P13, P29, P30; F59.
+
+U23 asked how a user accomplishes what it claims, and the answer was
+that they do — through a surface that exists for captures alone. The
+entry is therefore **moved from root [USE-CASES.md](../USE-CASES.md) to
+[pledged/USE-CASES.md](pledged/USE-CASES.md)**, which is a withdrawal
+rather than a delivery: it will return to the root list when the shape
+below is built, keeping its number.
+
+**What the journey should be**, in four steps, fixing the shape and not
+the spelling:
+
+1. `load_media("abc.7z")`, which answers with an **archive medium**,
+   because an archive is a medium and its content is a namespace.
+2. Take that namespace's files as a collection and `load_media` them —
+   the second act, materializing the archive's contents into a floppy
+   image through the same verb every other medium arrives through.
+3. Get a disk back, reached the way every other medium is reached.
+4. Save it as a P64 by naming the destination format.
+
+**Step 1 is built. Steps 2, 3 and 4 are not.** `load_media` takes one
+path and no collection; there is no disk kind a capture loads into, the
+capture set being its own root outside the device model; and every write
+verb the library has is format-specific and hangs on the root that
+produced it. Steps 2 and 3 are the media-first fold F59 already pledges,
+and are what U25 and U26 narrate one link earlier. Step 4 — **one verb
+taking a destination format, rather than one verb per format** — is
+pledged nowhere and is what U23 uniquely adds past them.
+
+**Withdrawal was the honest move, not a rewrite in place.** The root
+list is an implementation claim and a divergence from it is a bug, so an
+entry whose journey the code performs *differently* cannot stay there by
+having its prose adjusted to match what was built. That would make the
+list describe the code instead of the code answering to the list, which
+is the whole of what arming a use case means.
+
+**Two clauses of the withdrawn entry do not survive into the pledge.**
+Its claim that the reduction's every input is a named policy input the
+caller states was never wholly true — the source-position-to-half-track
+map has no policy field and is the profile's declaration (P30) — and the
+media-first shape does not want it to be: U25 runs the reduction under
+the profile's declared defaults, the caller growing their declaration
+only where a family convention cannot decide. What the entry demands
+past that stands unchanged: both accounts read before the write, loss in
+the source's own terms, provenance that does not overstate itself,
+determinism, and refusals that name the rule they broke.
+
+**Consequence for F65.** The gap-first reconstruction's pledge ends
+"the selected-observation reduction it succeeds retires with its
+delivery", and that retirement was blocked while U23 was armed, because
+the armed entry named the mastering profile as an owner. The block is
+now lifted in kind but not in fact: pledged U23's *body* still names it,
+so the retirement waits on U23 being rewritten around the four steps
+above — where the reduction's policy is the profile's, not the
+caller's — rather than on nothing at all.
+
+**Step 2 does not fold into step 1, and the reason is structural.**
+Step 1's call is already spoken for: it answers with the archive,
+because an archive is a medium in its own right. Making the same verb
+sometimes answer with the disk inside instead would give one call two
+answers chosen by inspecting content, which is the discovery the
+declared tier exists to keep out. Materializing a floppy out of an
+archive's contents is a second act because it is one, and the caller
+taking it is the caller declaring what they have.
+
+**Weighed and declined:** amending U23 in place to describe the built
+surface (see above — it inverts what the root list is for); leaving it
+armed and treating the mismatch as prose to be clarified (the journey
+differs in its shape, not its wording, and no clarification reaches
+that); splitting step 4 out as a use case of its own (it has no journey
+without steps 2 and 3, and a use case that cannot be walked is not one);
+and folding step 2 into step 1 (above — the verb is already spoken for,
+and overloading it buys one call at the cost of the rule that the caller
+declares and the library checks).
+
 ### D27 — Rulings made delivering the uniform archive open
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

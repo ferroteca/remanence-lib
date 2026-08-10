@@ -464,6 +464,151 @@ Neither should grow a second orchestration path to serve the other.
 - Partial-block writes, short successful transfers, or implicit block-size
   guessing.
 
+## U23 — I save a KryoFlux capture of a C64 disk as a P64 image
+
+> **Withdrawn from the in-force list, 2026-08-10 (D28), and owed in a
+> different shape than the one narrated below.** The journey the entry
+> describes runs today, but only through a surface of its own: a
+> `CaptureSet` root outside the device model, a mastering policy the
+> caller states in full, and a `write_p64` verb that belongs to the
+> mastered medium. **The shape it is owed in is media-first**, and
+> three of its four steps are unbuilt. The steps below fix the shape,
+> not the spelling: where the model already holds a type or a verb that
+> fits, that one is used rather than a new name coined beside it.
+>
+> 1. `load_media("abc.7z")` — **and what comes back is an archive
+>    medium**, because an archive is a medium: it loads into an
+>    archive-family device and its content is the namespace that device
+>    resolves to. *Built.*
+> 2. Take that namespace's files as a collection and `load_media` them
+>    — the second act, materializing the archive's contents into a
+>    floppy image, through the same verb every other medium arrives
+>    through and with the members backed by the archive's own cache
+>    layer. *Unbuilt: the collection-sourced load is F59's, and
+>    `load_media` takes one path today.*
+>
+>    **Step 2 does not fold into step 1, and the reason is structural
+>    rather than a matter of taste.** Step 1's call is already spoken
+>    for — it answers with the archive. Making the same call sometimes
+>    answer with the floppy inside instead would give one verb two
+>    answers chosen by inspecting content, which is the discovery the
+>    declared tier exists to keep out. Materializing a floppy out of an
+>    archive's contents is a second act because it *is* a second act,
+>    and the caller taking it is the caller declaring what they have.
+> 3. Get a **disk** back — a medium of the flux family, reached the way
+>    every other medium is reached — rather than a root peculiar to
+>    captures. *Unbuilt.*
+> 4. Save it as a P64 by **naming the destination format**: one verb
+>    taking the format, rather than one verb per format. *Unbuilt, and
+>    pledged nowhere — every write verb today is format-specific and
+>    hangs on the root that produced it.*
+>
+> Steps 1 through 3 are what [U25](#u25--i-master-a-1541-disk-from-the-captures-on-my-filesystem-and-read-its-first-byte)
+> and U26 already pledge, one link earlier; what U23 adds past them is
+> the **destination** — the P64 written off a loaded disk, and the two
+> accounts read before it exists. The body below is the entry
+> as it stood when it was in force. Its *demands* stand: both accounts
+> before the write, loss in the source's own terms, provenance that
+> does not overstate itself, determinism, and refusals that name the
+> rule. Its *surface* does not, and neither does its claim that the
+> reduction's every input is the caller's — the media-first shape runs
+> the reduction under the profile's declared defaults, as U25 states.
+
+I have a KryoFlux capture of a Commodore 64 floppy: raw stream files,
+one per drive-step position, captured from both of the disk's sides
+and delivered inside 7z archives — the second being the unrecorded
+back of a single-sided disk, which the capture cannot tell me and the
+drive family can. It is capture evidence, not a disk image. Each
+stream holds several recorded revolutions, flux before the first index
+and after the last, index and control/OOB records beside the flux, and
+a transfer result — and nothing in it says which revolution "the" disk
+was, or which channel to believe. I want a P64 out of it: one file,
+addressed by 1541 half-track, holding timed pulses with strength. I am
+asking for a transformation, not a reading of the capture, and I am
+told exactly what it will do and exactly what it cannot carry
+**before** it writes anything.
+
+Opening the set takes the P7 claim on every member artifact for the
+operation's lifetime and reads nothing else. Inspecting it reports the
+set as the capture-set adapter recognized it — members and their
+catalog identities, sides, source track positions, capture runs,
+observations, markers, transfer results, and issues — so I name a side
+and a policy by an identity the library already reported, never by an
+index I invented. The C1541 profile declares that the family records
+one surface, so naming the side confirms a declared fact rather than
+choosing between two beliefs about one surface. Planning computes the
+whole transformation and writes nothing: it reports the mastered
+medium's shape, the provenance every part of it will carry, and the
+complete declared-loss account. Writing the artifact is the only step
+that touches the filesystem; it creates the destination under its own
+claim, and an existing destination is a named refusal rather than an
+overwrite.
+
+Two owners, and neither infers the other's answer. The **C1541
+mastering profile** owns the physical reduction: which side supplies
+evidence; which observation of a source position is used and how
+several are reconciled; how the set's source drive-step positions map
+onto 1541 half-tracks; how each observation's exact timebase projects
+into the destination's rotation-relative timebase, which for a 1541 is
+the drive's 16 MHz reference clock across one 300 RPM rotation; and
+how disagreement, weakness, and absence across observations become
+pulse strength. Every one of those is a named policy input, and a
+reduction no policy names is a refusal, not a default. The **P64
+image-format adapter** owns its grammar and its capability claim: what
+the container can hold, the version it claims, how a mastered medium
+encodes into it, and what it refuses by name. Each states its own
+crossing in its own terms, so I read two accounts in sequence rather
+than one assembled by whichever of them ran last.
+
+P64 cannot carry a KryoFlux capture. That is not a defect of either
+format, and it is not something I should discover from a smaller file.
+Before the write, the reduction enumerates what it drops in the
+source's own terms — the unselected side; the observations of each
+position not selected; flux recorded before the first index and after
+the last; marker channels and control/OOB records with no P64
+expression; retained foreign records, capture metadata, and transfer
+results; and any timing resolution the destination's timebase cannot
+express — and the container enumerates what it cannot express of what
+survives: the declared policy itself, each half-track's provenance,
+the located origin, the seam, and the medium's own statement that it
+was derived at all. A count is not an account, and loss reported after
+the fact would not do.
+
+The saved image says what it is. Its pulses carry
+selected-and-projected provenance, not recovered-evidence provenance,
+and nothing in it is presented as an observation of the original
+recording that was not one. The same capture set, the same policy and
+the same seed produce the same mastered medium and — the P64 encoding
+being deterministic — the same destination bytes.
+
+The journey runs on the prepared Pinball Construction Set disk-one
+capture set: both sides, 84 stream members each, opened through the 7z
+catalog and recognized as one capture set. I inspect it, name a side
+and a selection policy, read the declared-loss account, and write the
+P64; reopening the result through the adapter's own decode presents
+the same half-tracks, at the same angles, with the same strengths. An
+incomplete, duplicate, or contradictory capture set is refused before
+mastering begins. Past that: a source position no declared half-track
+map covers; a position that holds no observation the selection policy
+names; a position whose content its neighbour also holds, until I
+declare which it is; a timebase the destination cannot express; a
+mastered medium the P64 claim cannot encode; and an existing
+destination path. Each names the rule it broke and leaves no file
+behind.
+
+*(This entry claims that the declared reduction is performed
+faithfully, reproducibly, and with its loss named. It does not claim
+that any particular protected title loads in an emulator from the
+result: whether protection survives is a property of the capture and
+the chosen policy, and the library reports what it did rather than
+promising an outcome it cannot see. Nothing here descends below flux
+or interprets what the pulses mean — no GCR, no sectors, no
+filesystem, no files — the sources are never edited or consumed, and
+no public flux, pulse, or capture-run iterator is offered: the
+transformation is the surface and the evidence stays behind it.
+Consuming the image is a separate journey that meets this one at the
+file.)*
+
 ## The media-first walks — U25 through U34
 
 **No discovery, complete user specification — the defining attribute of

@@ -3,12 +3,21 @@
 
 //! Saving the prepared capture set as a P64, and opening the result.
 //!
-//! This is U23's journey end to end: the capture set is opened, the
-//! C1541 profile reduces it to one flux medium under a declared policy,
-//! and the P64 adapter reports what its container will and will not
-//! carry before it writes anything. Then the artifact is reopened
-//! through the adapter's own decode, which is the conformance claim —
-//! both ends are a flux medium, so the comparison is a same-layer one.
+//! End to end: the capture set is opened, the C1541 profile reduces it
+//! to one flux medium under a declared policy, and the P64 adapter
+//! reports what its container will and will not carry before it writes
+//! anything. Then the artifact is reopened through the adapter's own
+//! decode, which is the conformance claim — both ends are a flux
+//! medium, so the comparison is a same-layer one.
+//!
+//! This is the journey U23 asks for, reached through the surface that
+//! exists for captures alone rather than the media-first one the
+//! withdrawn entry is owed in (D28): the capture set is its own root,
+//! the reduction's policy is the caller's in full, and the write verb
+//! belongs to the mastered medium. What is checked here is what that
+//! surface does today — both accounts before the write, the loss named,
+//! the round trip lossless, the refusals by name — all of which the
+//! pledged entry still demands of whatever shape replaces it.
 //!
 //! What is deliberately absent is a pulse iterator. The transformation
 //! is the surface, and everything below is compared by what the two
