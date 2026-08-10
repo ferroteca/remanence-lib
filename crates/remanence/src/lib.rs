@@ -45,6 +45,14 @@
 //! own is opened by [`File::discover`] and loaded into a device of its
 //! own, which is the one recursion this model has.
 //!
+//! **The flux family's physical stratum is reached through its own
+//! type.** [`RemanenceImage`] opens a `.remanence` artifact and answers
+//! the physical facts of one disk, and the C64 renditions are mastered
+//! off it: [`RemanenceImage::write_d64`], [`RemanenceImage::write_g64`]
+//! and [`RemanenceImage::write_p64`], each paired with a `describe_`
+//! verb that computes everything and writes nothing, and each stating
+//! what its destination did not carry (P29).
+//!
 //! Every open also states what it established about the evidence beneath
 //! it ([`StorageDevice::assurance`]): a source short of what its own
 //! interpretation declares is read as far as it truthfully goes,
@@ -105,6 +113,7 @@ pub use c1541_mastering::{
     DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan, MasteringPlanReport,
     MasteringPolicy, ObservationPolicy, OriginPolicy, ProjectionPolicy, PulseStrengthPolicy,
 };
+pub use c64_renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
 pub use c1541_presentation::{
     AlignmentPolicy, BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport,
     C1541Bitstream, C1541Bytestream, DensityPolicy, GcrCodecPolicy, ReadChannelPolicy,

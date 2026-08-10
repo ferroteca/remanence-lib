@@ -138,6 +138,60 @@ pub(crate) fn create_claimed(path: &Path) -> Result<File> {
     })
 }
 
+/// Puts `bytes` at `path` as a whole new artifact, or leaves the
+/// destination as it found it.
+///
+/// An existing destination is a named refusal rather than an overwrite,
+/// and the bytes are on the medium before the name exists — built beside
+/// the destination and renamed into place — so what `path` names is
+/// either the whole artifact or nothing (P6, P7, P9).
+pub(crate) fn place_new_artifact(path: &Path, bytes: &[u8]) -> Result<()> {
+    if path.try_exists().unwrap_or(false) {
+        return Err(Error::io(format!(
+            "cannot write '{}': something is already there, and a destination this \
+             library did not create is never overwritten",
+            path.display()
+        )));
+    }
+    let staging = staging_path(path);
+    let file = create_claimed(&staging)?;
+    let built = write_all_at(&file, 0, bytes)
+        .map_err(|error| Error::io(format!("cannot write '{}': {error}", staging.display())))
+        .and_then(|()| {
+            file.sync_all().map_err(|error| {
+                Error::io(format!(
+                    "cannot commit '{}' to storage: {error}",
+                    staging.display()
+                ))
+            })
+        });
+    drop(file);
+    if let Err(error) = built {
+        let _ = std::fs::remove_file(&staging);
+        return Err(error);
+    }
+    std::fs::rename(&staging, path).map_err(|error| {
+        let _ = std::fs::remove_file(&staging);
+        Error::io(format!(
+            "cannot put the written artifact in place at '{}': {error}",
+            path.display()
+        ))
+    })
+}
+
+/// Where an artifact is built: beside its destination, so moving it into
+/// place is a rename within one filesystem rather than a copy.
+fn staging_path(destination: &Path) -> std::path::PathBuf {
+    let name = destination.file_name().map_or_else(
+        || "artifact".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.subsec_nanos());
+    destination.with_file_name(format!(".{name}.part-{}-{nonce}", std::process::id()))
+}
+
 #[cfg(windows)]
 fn create_exclusive(path: &Path) -> std::io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;

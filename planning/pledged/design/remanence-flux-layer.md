@@ -5,10 +5,10 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # The remanence flux layer
 
-The design behind F65 and F66: the gap-first reconstruction that fills
-the **remanence image**, and the renditions read off it. Pledged at the
-owner's direction, 2026-08-09. The image itself and its `.remanence`
-artifact have since been delivered, and the code is their norm.
+The design behind F65: the gap-first reconstruction that fills the
+**remanence image**. Pledged at the owner's direction, 2026-08-09. The
+image itself, its `.remanence` artifact and the C64 renditions read off
+it have since been delivered, and the code is their norm.
 
 **Provenance.** The model and the algorithms are ported from the
 owner's own flux-capture research implementation (Java, private,
@@ -38,12 +38,11 @@ they are not rivals:
   strength. It remains the layer the presentation ladder
   (bitstream → bytestream) and the P64 adapter's decode stand on.
 
-The reduction (F65) runs capture → remanence image. Renditions (F66)
-run remanence image → artifact, and the p64 rendition passes through
-a served projection — one multiply per point — on its way to the
-delivered encode path. The media-first fold (F59) later takes the
-whole family under `load_media`; nothing here moves the surface
-shape it pledges.
+The reduction this design serves runs capture → remanence image, and
+stops there: what is read off the image afterwards — the d64, g64 and
+p64 renditions — is delivered, and the code is its norm. The
+media-first fold (F59) later takes the whole family under
+`load_media`; nothing here moves the surface shape it pledges.
 
 ## The reduction, staged
 
@@ -100,14 +99,10 @@ medians, warp normal equations); every *declared* fact and every
 *stored* fact stays integer or exact rational. That boundary — floats
 measure, integers state — is the lineage's own and is kept.
 
-## The renditions
-
-As F66 states them. The GCR sector reading (sync scan, 4-to-5 group
-code, header/data checksums, wrap-tolerant, repair-free) is
-crate-private machinery: the reconstruction uses it to anchor and to
-survey, the d64 rendition uses it to fill blocks, and neither is the
-F61 surface. The g64 zone figures and the p64 index bridge reuse the
-profile's declarations (P30) rather than restating them.
+The GCR sector reading the reduction anchors and surveys with (sync
+scan, 4-to-5 group code, header/data checksums, wrap-tolerant,
+repair-free) is delivered crate-private machinery and is reached
+rather than restated; it is not the F61 surface.
 
 ## Deferred, deliberately
 
@@ -124,5 +119,5 @@ profile's declarations (P30) rather than restating them.
   orientations) — the declared tier lands first; unguided belongs
   beside the question tier's argument.
 - The served projection as a general verb (remanence image → flux
-  medium for the presentation ladder) — the p64 rendition carries
-  the one projection F66 needs.
+  medium for the presentation ladder) — the delivered p64 rendition
+  carries the one projection anything needs so far.

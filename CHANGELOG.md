@@ -20,6 +20,65 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **The C64 renditions are mastered off the remanence image: d64, g64 and
+  p64.** A `RemanenceImage` renders to all three — P29 acting where only
+  the destination varies — and each is claimed twice: `describe_d64`,
+  `describe_g64` and `describe_p64` compute everything and write nothing,
+  and `write_d64`, `write_g64` and `write_p64` compute the same thing and
+  put it somewhere. **The account a description carries is the account
+  the write carries**, so a caller reads what a destination will not hold
+  before anything exists to hold it.
+
+  **g64**: each orbit clocked by the phase-locked half-window at its
+  measured cell — or at its zone's nominal where the measured figure is
+  not a recording's, since clocking an unformatted band at its own "cell"
+  would run several revolutions long — packed under the `GCR-1541`
+  grammar with one speed zone per half-track. **d64**: the recording's
+  own sectors read by the family's group code — headers, data blocks,
+  checksums, blocks allowed to wrap the origin, nothing repaired and
+  nothing rejected — laid into the CBM DOS 683-block grid, addressed by
+  the header's own track and sector, first write wins, whole tracks
+  before the half-tracks between them so a fat track's shoulder never
+  outbids its centre. An incomplete disk carries the error map, which is
+  the declared-loss account made flesh. **p64**: one multiply from angle
+  to cycle — 2²⁸ divisions onto 3,200,000 cycles, rounded to nearest,
+  collisions nudged and recorded as such — over the coherent points only,
+  served through the already-delivered P64 encode path.
+
+  **An orbit with no pulse is absent rather than empty.** The p64
+  projection skips it: an absent half-track claims never-written, where
+  an empty chunk would claim formatted-then-erased, and those are
+  different claims about the same disk.
+
+  **Every rendition states its loss in the image's own terms.** Blocks
+  the recording never yielded and sectors that failed their own checksum;
+  transitions the image declines to read, which a clocked bit has no
+  spelling for; orbits the 96 tpi grid cannot place and orbits past the
+  grammar's last slot; a measured cell replaced by its zone's nominal;
+  the plateau and guard widths no C64 format has a field for; and the
+  centre radius each format replaces with a slot number. A destination
+  that can hold no track at all is a named refusal rather than an empty
+  artifact, an existing destination is a named refusal rather than an
+  overwrite, and an interruption leaves the destination absent rather
+  than half an artifact.
+
+  The GCR sector reading beneath the d64 is crate-private analysis
+  machinery, deliberately: it serves the renditions and is **not** the
+  user-facing sector surface, which remains the media-first shape's own
+  rung.
+
+  In C: `remanence_image_describe_d64` / `_write_d64` and their
+  `remanence_d64_report_*` accessors over the blocks read, the missing
+  blocks and the account; `remanence_image_describe_g64` / `_write_g64`
+  with `remanence_g64_report_*` over the half-tracks and the account; and
+  `remanence_image_describe_p64` / `_write_p64`, which answer the
+  delivered `RemanenceP64Report`. The example consumer gains
+  `identify --renditions <path> <stem>`, and `identify --remanence`
+  describes all three without writing them. In Python:
+  `RemanenceImage.describe_d64`/`write_d64` and their g64 and p64
+  counterparts, with the `D64Report`, `D64Block`, `G64Report` and
+  `G64HalfTrack` records beside them.
+
 - **The flux family's physical stratum is a surface, and its artifact is
   claimed in both directions.** `RemanenceImage::open` reads a
   `.remanence` artifact — the library's own flux format — and answers

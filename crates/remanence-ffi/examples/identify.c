@@ -339,6 +339,30 @@ static int show_discovery(const char *path) {
  * the boundary is the image's shape; the points beneath it stay in the
  * library, streamed from private session storage under the declared
  * bound. */
+/* A count is not an account: each entry says what was left behind and how
+ * much of it there was. */
+static void print_d64_loss(const RemanenceD64Report *report) {
+    size_t losses = remanence_d64_report_declared_loss_count(report);
+    printf("  not carried (%zu):%s\n", losses, losses == 0 ? " nothing" : "");
+    for (size_t i = 0; i < losses; ++i) {
+        printf("    %s: %s (%" PRIu64 ")\n",
+               remanence_d64_report_declared_loss_code(report, i),
+               remanence_d64_report_declared_loss_detail(report, i),
+               remanence_d64_report_declared_loss_amount(report, i));
+    }
+}
+
+static void print_g64_loss(const RemanenceG64Report *report) {
+    size_t losses = remanence_g64_report_declared_loss_count(report);
+    printf("  not carried (%zu):%s\n", losses, losses == 0 ? " nothing" : "");
+    for (size_t i = 0; i < losses; ++i) {
+        printf("    %s: %s (%" PRIu64 ")\n",
+               remanence_g64_report_declared_loss_code(report, i),
+               remanence_g64_report_declared_loss_detail(report, i),
+               remanence_g64_report_declared_loss_amount(report, i));
+    }
+}
+
 static int show_remanence_image(const char *path, const char *destination) {
     RemanenceErrorCategory error_category;
     char *error = NULL;
@@ -443,6 +467,125 @@ static int show_remanence_image(const char *path, const char *destination) {
         }
     }
 
+    /* The C64 renditions, computed and not written. P29 acts where only
+     * the destination varies, so each states what it will not carry
+     * before anything exists to carry it. */
+    RemanenceD64Report *d64 =
+        remanence_image_describe_d64(image, &error_category, &error, &error_rule);
+    if (d64 == NULL) {
+        report_error("no d64", error_category, error, error_rule);
+    } else {
+        printf("d64:     %" PRIu32 " of %" PRIu32 " blocks, %" PRIu32
+               " failed checksums, %" PRIu64 " bytes\n",
+               remanence_d64_report_blocks_read(d64),
+               remanence_d64_report_blocks_defined(d64),
+               remanence_d64_report_failed_checksums(d64),
+               remanence_d64_report_artifact_bytes(d64));
+        print_d64_loss(d64);
+        remanence_d64_report_free(d64);
+    }
+
+    RemanenceG64Report *g64 =
+        remanence_image_describe_g64(image, &error_category, &error, &error_rule);
+    if (g64 == NULL) {
+        report_error("no g64", error_category, error, error_rule);
+    } else {
+        size_t slots = remanence_g64_report_half_track_count(g64);
+        printf("g64:     %zu half-tracks, %" PRIu64 " bytes\n", slots,
+               remanence_g64_report_artifact_bytes(g64));
+        for (size_t i = 0; i < slots; ++i) {
+            RemanenceG64HalfTrack slot;
+            if (remanence_g64_report_half_track(g64, i, &slot) && (i < 2 || i + 1 == slots)) {
+                printf("  slot %" PRIu64 ": %" PRIu64 " bits at zone %u%s\n", slot.index,
+                       slot.bits, slot.speed_zone,
+                       slot.clocked_at_nominal ? " (clocked at nominal)" : "");
+            } else if (i == 2) {
+                printf("  ...\n");
+            }
+        }
+        print_g64_loss(g64);
+        remanence_g64_report_free(g64);
+    }
+
+    RemanenceP64Report *p64 =
+        remanence_image_describe_p64(image, &error_category, &error, &error_rule);
+    if (p64 == NULL) {
+        report_error("no p64", error_category, error, error_rule);
+    } else {
+        uint64_t pulses = 0;
+        size_t slots = remanence_p64_half_track_count(NULL, p64);
+        for (size_t i = 0; i < slots; ++i) {
+            RemanenceP64HalfTrack slot;
+            if (remanence_p64_half_track(NULL, p64, i, &slot)) {
+                pulses += slot.pulses;
+            }
+        }
+        printf("p64:     %zu half-tracks, %" PRIu64 " pulses\n", slots, pulses);
+        remanence_p64_report_free(p64);
+    }
+
+    remanence_image_free(image);
+    return status;
+}
+
+/* Writes all three C64 renditions off one remanence artifact. Each is a
+ * P29 destination and each states its own loss; an existing destination
+ * refuses by name rather than being overwritten. */
+static int write_renditions(const char *path, const char *stem) {
+    RemanenceErrorCategory error_category;
+    char *error = NULL;
+    char *error_rule = NULL;
+    RemanenceImage *image =
+        remanence_image_open(path, &error_category, &error, &error_rule);
+    if (image == NULL) {
+        report_error("error", error_category, error, error_rule);
+        return EXIT_FAILURE;
+    }
+
+    char destination[1024];
+    int status = EXIT_SUCCESS;
+
+    snprintf(destination, sizeof destination, "%s.d64", stem);
+    RemanenceD64Report *d64 = remanence_image_write_d64(image, destination, &error_category,
+                                                        &error, &error_rule);
+    if (d64 == NULL) {
+        report_error("d64", error_category, error, error_rule);
+        status = EXIT_FAILURE;
+    } else {
+        printf("Wrote:   %s (%" PRIu64 " bytes, %" PRIu32 " of %" PRIu32 " blocks)\n",
+               remanence_d64_report_path(d64), remanence_d64_report_artifact_bytes(d64),
+               remanence_d64_report_blocks_read(d64),
+               remanence_d64_report_blocks_defined(d64));
+        print_d64_loss(d64);
+        remanence_d64_report_free(d64);
+    }
+
+    snprintf(destination, sizeof destination, "%s.g64", stem);
+    RemanenceG64Report *g64 = remanence_image_write_g64(image, destination, &error_category,
+                                                        &error, &error_rule);
+    if (g64 == NULL) {
+        report_error("g64", error_category, error, error_rule);
+        status = EXIT_FAILURE;
+    } else {
+        printf("Wrote:   %s (%" PRIu64 " bytes, %zu half-tracks)\n",
+               remanence_g64_report_path(g64), remanence_g64_report_artifact_bytes(g64),
+               remanence_g64_report_half_track_count(g64));
+        print_g64_loss(g64);
+        remanence_g64_report_free(g64);
+    }
+
+    snprintf(destination, sizeof destination, "%s.p64", stem);
+    RemanenceP64Report *p64 = remanence_image_write_p64(image, destination, &error_category,
+                                                        &error, &error_rule);
+    if (p64 == NULL) {
+        report_error("p64", error_category, error, error_rule);
+        status = EXIT_FAILURE;
+    } else {
+        printf("Wrote:   %s (%zu half-tracks)\n", destination,
+               remanence_p64_half_track_count(NULL, p64));
+        remanence_p64_report_free(p64);
+    }
+
     remanence_image_free(image);
     return status;
 }
@@ -457,6 +600,9 @@ int main(int argc, char **argv) {
     if ((argc == 3 || argc == 4) && strcmp(argv[1], "--remanence") == 0) {
         return show_remanence_image(argv[2], argc == 4 ? argv[3] : NULL);
     }
+    if (argc == 4 && strcmp(argv[1], "--renditions") == 0) {
+        return write_renditions(argv[2], argv[3]);
+    }
     if (argc == 2 && strcmp(argv[1], "--families") == 0) {
         list_families();
         return EXIT_SUCCESS;
@@ -466,6 +612,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "       %s --discover <path-to-image>\n", argv[0]);
         fprintf(stderr, "       %s --list <path-to-archive>\n", argv[0]);
         fprintf(stderr, "       %s --remanence <path-to-artifact> [write-to]\n", argv[0]);
+        fprintf(stderr, "       %s --renditions <path-to-artifact> <destination-stem>\n",
+                argv[0]);
         fprintf(stderr, "       %s --families\n", argv[0]);
         return EXIT_FAILURE;
     }

@@ -4124,6 +4124,161 @@ impl RemanenceWriteReport {
     }
 }
 
+/// One CBM DOS block, by the address the recording states for it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct D64Block {
+    pub track: u8,
+    pub sector: u8,
+}
+
+#[pymethods]
+impl D64Block {
+    fn __repr__(&self) -> String {
+        format!("D64Block(track={}, sector={})", self.track, self.sector)
+    }
+}
+
+/// What a d64 rendition carried, or will carry, of one image.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct D64Report {
+    /// Where the artifact was written, or `None` for a rendition
+    /// computed and not written.
+    pub path: Option<String>,
+    /// What the artifact occupies on storage: 683 blocks, and the error
+    /// map beside them wherever the disk is incomplete.
+    pub artifact_bytes: u64,
+    pub blocks_read: u32,
+    /// What the CBM DOS grid defines, which is 683 whatever was read.
+    pub blocks_defined: u32,
+    /// Sectors whose header or data failed its own checksum — recorded
+    /// and left out, never repaired.
+    pub failed_checksums: u32,
+    /// Every block the recording did not yield, in grid order. The
+    /// artifact's error map says the same thing in the format's own
+    /// spelling.
+    pub missing: Vec<D64Block>,
+    /// What the destination did not carry, in the image's own terms.
+    pub declared_loss: Vec<DeclaredLoss>,
+}
+
+#[pymethods]
+impl D64Report {
+    fn __repr__(&self) -> String {
+        format!(
+            "D64Report(blocks_read={}/{}, missing={})",
+            self.blocks_read,
+            self.blocks_defined,
+            self.missing.len()
+        )
+    }
+}
+
+impl D64Report {
+    fn new(report: &remanence::D64Report) -> Self {
+        Self {
+            path: report.path.clone(),
+            artifact_bytes: report.artifact_bytes,
+            blocks_read: report.blocks_read,
+            blocks_defined: report.blocks_defined,
+            failed_checksums: report.failed_checksums,
+            missing: report
+                .missing
+                .iter()
+                .map(|block| D64Block {
+                    track: block.track,
+                    sector: block.sector,
+                })
+                .collect(),
+            declared_loss: declared_loss(&report.declared_loss),
+        }
+    }
+}
+
+/// One half-track slot a g64 carries.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct G64HalfTrack {
+    /// The g64's own slot: 0 is track 1, and the odd indices are the
+    /// half-tracks between the whole ones.
+    pub index: u64,
+    /// How many channel bits the slot carries.
+    pub bits: u64,
+    /// Which of the 1541's four rates it was packed at.
+    pub speed_zone: u8,
+    /// Whether the orbit was clocked at its zone's nominal cell because
+    /// its own measured figure was not a recording's.
+    pub clocked_at_nominal: bool,
+}
+
+#[pymethods]
+impl G64HalfTrack {
+    fn __repr__(&self) -> String {
+        format!(
+            "G64HalfTrack(index={}, bits={}, speed_zone={})",
+            self.index, self.bits, self.speed_zone
+        )
+    }
+}
+
+/// What a g64 rendition carried, or will carry, of one image.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct G64Report {
+    /// Where the artifact was written, or `None` for a rendition
+    /// computed and not written.
+    pub path: Option<String>,
+    /// What the artifact occupies on storage.
+    pub artifact_bytes: u64,
+    /// Every slot the artifact carries, ascending.
+    pub half_tracks: Vec<G64HalfTrack>,
+    /// What the destination did not carry, in the image's own terms.
+    pub declared_loss: Vec<DeclaredLoss>,
+}
+
+#[pymethods]
+impl G64Report {
+    fn __repr__(&self) -> String {
+        format!(
+            "G64Report(half_tracks={}, declared_loss={})",
+            self.half_tracks.len(),
+            self.declared_loss.len()
+        )
+    }
+}
+
+impl G64Report {
+    fn new(report: &remanence::G64Report) -> Self {
+        Self {
+            path: report.path.clone(),
+            artifact_bytes: report.artifact_bytes,
+            half_tracks: report
+                .half_tracks
+                .iter()
+                .map(|half_track| G64HalfTrack {
+                    index: half_track.index,
+                    bits: half_track.bits,
+                    speed_zone: half_track.speed_zone,
+                    clocked_at_nominal: half_track.clocked_at_nominal,
+                })
+                .collect(),
+            declared_loss: declared_loss(&report.declared_loss),
+        }
+    }
+}
+
+fn declared_loss(account: &[remanence::DeclaredLoss]) -> Vec<DeclaredLoss> {
+    account
+        .iter()
+        .map(|loss| DeclaredLoss {
+            code: loss.code.clone(),
+            detail: loss.detail.clone(),
+            count: loss.count,
+        })
+        .collect()
+}
+
 /// One remanence image, opened from a `.remanence` artifact.
 ///
 /// The image is the flux family's physical stratum — what the medium
@@ -4234,6 +4389,77 @@ impl RemanenceImage {
         })
     }
 
+    /// Computes the d64 this image renders to, writing nothing. Read it
+    /// before writing: the write adds nothing to the account.
+    fn describe_d64(&self) -> PyResult<D64Report> {
+        self.get()?
+            .describe_d64()
+            .map(|report| D64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
+    /// Writes this image into a new d64 at `path` and reports what the
+    /// artifact carried.
+    ///
+    /// The recording's own sectors are read by the family's group code
+    /// and laid into the CBM DOS 683-block grid, addressed by the
+    /// header's own track and sector. Nothing is repaired and nothing is
+    /// rejected, and an incomplete disk carries the error map — this
+    /// rendition's declared-loss account made flesh. An existing
+    /// destination is a named refusal rather than an overwrite.
+    fn write_d64(&self, path: PathBuf) -> PyResult<D64Report> {
+        self.get()?
+            .write_d64(path)
+            .map(|report| D64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
+    /// Computes the g64 this image renders to, writing nothing.
+    fn describe_g64(&self) -> PyResult<G64Report> {
+        self.get()?
+            .describe_g64()
+            .map(|report| G64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
+    /// Writes this image into a new g64 at `path` and reports what the
+    /// artifact carried.
+    ///
+    /// Every on-grid orbit is clocked at its measured cell — or at its
+    /// zone's nominal where the measured figure is not a recording's —
+    /// and packed under the `GCR-1541` grammar, one speed zone per
+    /// half-track. An existing destination is a named refusal rather
+    /// than an overwrite.
+    fn write_g64(&self, path: PathBuf) -> PyResult<G64Report> {
+        self.get()?
+            .write_g64(path)
+            .map(|report| G64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
+    /// Computes what a p64 will and will not carry of this image,
+    /// writing nothing.
+    fn describe_p64(&self) -> PyResult<P64Report> {
+        self.get()?
+            .describe_p64()
+            .map(|report| P64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
+    /// Writes this image into a new p64 at `path` and reports what the
+    /// container carried.
+    ///
+    /// One multiply carries an angle to a cycle over the coherent points
+    /// only, and an orbit with no pulse is skipped rather than written
+    /// empty: an absent half-track claims never-written, where an empty
+    /// chunk would claim formatted-then-erased.
+    fn write_p64(&self, path: PathBuf) -> PyResult<P64Report> {
+        self.get()?
+            .write_p64(path)
+            .map(|report| P64Report::new(&report))
+            .map_err(to_py_err)
+    }
+
     /// Releases the claim on the artifact and discards the private
     /// session storage its points decoded into.
     fn close(&mut self) {
@@ -4314,6 +4540,10 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RemanenceHole>()?;
     m.add_class::<RemanenceOrbit>()?;
     m.add_class::<RemanenceWriteReport>()?;
+    m.add_class::<D64Report>()?;
+    m.add_class::<D64Block>()?;
+    m.add_class::<G64Report>()?;
+    m.add_class::<G64HalfTrack>()?;
     m.add_class::<P64Report>()?;
     m.add_class::<P64HalfTrack>()?;
     m.add_class::<MasteredLocation>()?;

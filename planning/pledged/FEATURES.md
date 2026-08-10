@@ -292,28 +292,3 @@ one family, one reduction discipline.
 
 Touches: S1, S2, S3. Supports: the design; in-force P4, P22, P27,
 P29, P30, P31; U25, U26.
-
-## F66 — The C64 renditions: d64, g64 and p64 from the remanence image
-
-Mastered renditions off the remanence-backed image — P29 acts where
-only the destination varies, each stating its loss. **g64**: each
-orbit clocked by the phase-locked half-window at its measured cell,
-snapped to the zone nominal where an unformatted band's own figure
-would run several revolutions long, packed under the `GCR-1541`
-grammar with one speed zone per half-track. **d64**: the recording's
-own sectors read by the family's group code — headers, data blocks,
-checksums, blocks allowed to wrap the origin, nothing repaired and
-nothing rejected — laid into the CBM DOS 683-block grid, an
-incomplete disk carrying the error map as its declared-loss account
-made flesh. That sector reading is crate-private analysis machinery
-serving the reconstruction and this rendition; it is not the F61
-sector surface, which remains the user-facing rung in the media-first
-shape. **p64**: one multiply from angle to cycle (2²⁸ divisions onto
-3,200,000 cycles, rounded to nearest, collisions nudged and
-recorded), coherent points only, an orbit with no pulses skipped
-rather than written empty — absent claims never-written where an
-empty chunk would claim erased — served through the delivered P64
-encode path.
-
-Touches: S1, S2, S3. Supports: the design; in-force P13, P29, P30;
-U25, U26. Needs F65.

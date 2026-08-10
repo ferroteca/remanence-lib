@@ -149,14 +149,16 @@ ABI, or Python module.
   or declared, the fat track merged under measured agreement, the
   plan/execute split and the declared-loss account, survey facts
   riding provenance with their basis stated; `c64_renditions.rs` the
-  d64, g64 and p64 renditions off the remanence-backed image (F66,
-  pledged) — clocking, the crate-private GCR group code and
-  sector reading (analysis machinery, deliberately not the F61
-  surface), the CBM DOS 683-block grid with the error map as the
-  d64's declared-loss account, the `GCR-1541` grammar, and the served
-  projection into the delivered P64 encode path — with
-  `deflate.rs` beside `inflate.rs` as the compression pair the core
-  owns;
+  d64, g64 and p64 renditions off the remanence image — each claimed
+  twice, as a `describe_` that computes everything and writes nothing
+  and a `write_` that does both, and each stating what its
+  destination did not carry (P29): clocking, the crate-private GCR
+  group code and sector reading (analysis machinery, deliberately
+  **not** the F61 sector surface), the CBM DOS 683-block grid with
+  the error map as the d64's declared-loss account made flesh, the
+  `GCR-1541` grammar, and the served projection into the delivered
+  P64 encode path — with `deflate.rs` beside `inflate.rs` as the
+  compression pair the core owns;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the device stack, the discovery ladder for
   identification sessions), and the host-write capture a durable
@@ -534,8 +536,11 @@ no default device — a raw image — refuses there and names the drives to
 pass. `identify --discover <path>` reports what an artifact is without
 loading it, `identify --remanence <path> [write-to]` reads a
 `.remanence` artifact through its own type — there is no device to
-load a flux artifact into — and writes it back where a destination is
-given, and `identify --families` lists the claimed families.
+load a flux artifact into — writes it back where a destination is
+given, and describes the three C64 renditions without writing them,
+`identify --renditions <path> <stem>` writes all three beside each
+other with their accounts, and `identify --families` lists the
+claimed families.
 
 **Without that `PATH` entry gcc exits 1 and prints nothing at all**: it
 is gcc's own runtime DLLs failing to resolve, so the compiler never

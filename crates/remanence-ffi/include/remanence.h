@@ -224,6 +224,9 @@ typedef struct RemanenceC1541Bytestream RemanenceC1541Bytestream;
 // An open capture set, holding the claim on its archive.
 typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 
+// What a d64 rendition carried, or will carry, of one image.
+typedef struct RemanenceD64Report RemanenceD64Report;
+
 // A borrowed view of one storage device — the slot, its family, and the
 // state of the medium in it.
 //
@@ -267,6 +270,9 @@ typedef struct RemanenceFile RemanenceFile;
 
 // Bytes read out of a volume or catalog.
 typedef struct RemanenceFileData RemanenceFileData;
+
+// What a g64 rendition carried, or will carry, of one image.
+typedef struct RemanenceG64Report RemanenceG64Report;
 
 // The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
@@ -486,6 +492,26 @@ typedef struct {
   // How many spans the image declines to read.
   uint64_t unaligned_spans;
 } RemanenceImageOrbit;
+
+// One CBM DOS block, by the address the recording states for it.
+typedef struct {
+  uint8_t track;
+  uint8_t sector;
+} RemanenceD64Block;
+
+// One half-track slot a g64 carries.
+typedef struct {
+  // The g64's own slot: 0 is track 1, and the odd indices are the
+  // half-tracks between the whole ones.
+  uint64_t index;
+  // How many channel bits the slot carries.
+  uint64_t bits;
+  // Which of the 1541's four rates it was packed at.
+  uint8_t speed_zone;
+  // Whether the orbit was clocked at its zone's nominal cell because
+  // its own measured figure was not a recording's.
+  bool clocked_at_nominal;
+} RemanenceG64HalfTrack;
 
 #ifdef __cplusplus
 extern "C" {
@@ -2495,6 +2521,137 @@ const char *remanence_image_write_declared_loss_detail(const RemanenceImageWrite
 // How much of it there was, in whatever the detail counts.
 uint64_t remanence_image_write_declared_loss_amount(const RemanenceImageWriteReport *report,
                                                     size_t index);
+
+// Computes the d64 this image renders to, writing nothing. Read it
+// before writing: the write adds nothing to the account. Returns null
+// on failure; free the report with `remanence_d64_report_free`.
+RemanenceD64Report *remanence_image_describe_d64(const RemanenceImage *image,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
+
+// Writes the image into a new d64 at `path` (UTF-8) and reports what
+// the artifact carried. The recording's own sectors are read by the
+// family's group code and laid into the CBM DOS 683-block grid;
+// nothing is repaired and nothing is rejected, and an incomplete disk
+// carries the error map. An existing destination is a named refusal
+// rather than an overwrite. Returns null on failure.
+RemanenceD64Report *remanence_image_write_d64(const RemanenceImage *image,
+                                              const char *path,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
+
+// Frees a d64 report.
+void remanence_d64_report_free(RemanenceD64Report *report);
+
+// Where the artifact was written, or null for a rendition computed and
+// not written.
+const char *remanence_d64_report_path(const RemanenceD64Report *report);
+
+// What the artifact occupies on storage: 683 blocks, and the error map
+// beside them wherever the disk is incomplete.
+uint64_t remanence_d64_report_artifact_bytes(const RemanenceD64Report *report);
+
+// How many blocks the recording yielded.
+uint32_t remanence_d64_report_blocks_read(const RemanenceD64Report *report);
+
+// What the CBM DOS grid defines, which is 683 whatever was read.
+uint32_t remanence_d64_report_blocks_defined(const RemanenceD64Report *report);
+
+// Sectors whose header or data failed its own checksum — recorded and
+// left out, never repaired.
+uint32_t remanence_d64_report_failed_checksums(const RemanenceD64Report *report);
+
+// How many blocks the recording did not yield.
+size_t remanence_d64_report_missing_count(const RemanenceD64Report *report);
+
+// One missing block, in grid order. False when out of range.
+bool remanence_d64_report_missing(const RemanenceD64Report *report,
+                                  size_t index,
+                                  RemanenceD64Block *out);
+
+// How many kinds of loss the crossing did not carry.
+size_t remanence_d64_report_declared_loss_count(const RemanenceD64Report *report);
+
+// One loss entry's stable code, or null when out of range.
+const char *remanence_d64_report_declared_loss_code(const RemanenceD64Report *report, size_t index);
+
+// What was lost, in the image's own terms. A count is not an account.
+const char *remanence_d64_report_declared_loss_detail(const RemanenceD64Report *report,
+                                                      size_t index);
+
+// How much of it there was, in whatever the detail counts.
+uint64_t remanence_d64_report_declared_loss_amount(const RemanenceD64Report *report, size_t index);
+
+// Computes the g64 this image renders to, writing nothing. Returns null
+// on failure; free the report with `remanence_g64_report_free`.
+RemanenceG64Report *remanence_image_describe_g64(const RemanenceImage *image,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
+
+// Writes the image into a new g64 at `path` (UTF-8) and reports what
+// the artifact carried. Every on-grid orbit is clocked at its measured
+// cell — or at its zone's nominal where the measured figure is not a
+// recording's — and packed under the `GCR-1541` grammar, one speed
+// zone per half-track. An existing destination is a named refusal
+// rather than an overwrite. Returns null on failure.
+RemanenceG64Report *remanence_image_write_g64(const RemanenceImage *image,
+                                              const char *path,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
+
+// Frees a g64 report.
+void remanence_g64_report_free(RemanenceG64Report *report);
+
+// Where the artifact was written, or null for a rendition computed and
+// not written.
+const char *remanence_g64_report_path(const RemanenceG64Report *report);
+
+// What the artifact occupies on storage.
+uint64_t remanence_g64_report_artifact_bytes(const RemanenceG64Report *report);
+
+// How many half-track slots the artifact carries.
+size_t remanence_g64_report_half_track_count(const RemanenceG64Report *report);
+
+// One carried half-track, ascending. False when out of range.
+bool remanence_g64_report_half_track(const RemanenceG64Report *report,
+                                     size_t index,
+                                     RemanenceG64HalfTrack *out);
+
+// How many kinds of loss the crossing did not carry.
+size_t remanence_g64_report_declared_loss_count(const RemanenceG64Report *report);
+
+// One loss entry's stable code, or null when out of range.
+const char *remanence_g64_report_declared_loss_code(const RemanenceG64Report *report, size_t index);
+
+// What was lost, in the image's own terms.
+const char *remanence_g64_report_declared_loss_detail(const RemanenceG64Report *report,
+                                                      size_t index);
+
+// How much of it there was, in whatever the detail counts.
+uint64_t remanence_g64_report_declared_loss_amount(const RemanenceG64Report *report, size_t index);
+
+// Computes what a p64 will and will not carry of this image, writing
+// nothing. The report is the delivered P64 one, and is freed with
+// `remanence_p64_report_free`. Returns null on failure.
+RemanenceP64Report *remanence_image_describe_p64(const RemanenceImage *image,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
+
+// Writes the image into a new p64 at `path` (UTF-8) and reports what
+// the container carried: one multiply from angle to cycle over the
+// coherent points, an orbit with no pulse left absent rather than
+// written empty. An existing destination is a named refusal rather
+// than an overwrite. Returns null on failure.
+RemanenceP64Report *remanence_image_write_p64(const RemanenceImage *image,
+                                              const char *path,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
 
 #ifdef __cplusplus
 }  // extern "C"

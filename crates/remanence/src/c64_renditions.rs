@@ -1,26 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The C64 renditions (F66): d64, g64 and p64 mastered off a
-//! remanence-backed image — P29 acts where only the destination
-//! varies, each stating its loss.
+//! The C64 renditions: d64, g64 and p64 mastered off a remanence
+//! image — P29 acts where only the destination varies, each stating
+//! its loss.
+//!
+//! Each rendition is claimed twice: `describe_*` computes everything
+//! and writes nothing, and `write_*` computes the same thing and puts
+//! it somewhere. The account a description carries is the account the
+//! write carries, so a caller reads what a destination will not hold
+//! before anything exists.
 //!
 //! The GCR machinery here — the 4-to-5 group code, the sync scan, the
 //! header and data blocks with their checksums — is crate-private
 //! analysis serving the reconstruction and these renditions. It is
-//! deliberately not the F61 sector surface, which remains the
-//! user-facing rung in the media-first shape. Nothing is repaired and
+//! deliberately **not** the user-facing sector surface, which is a rung
+//! of the media-first shape and arrives there. Nothing is repaired and
 //! nothing is rejected: a failed checksum is recorded, and what enters
 //! a rendition is decided by the rendition's own rules.
 #![allow(dead_code)]
 
 use std::path::Path;
 
+use crate::device;
 use crate::error::{Error, Result};
-use crate::evidence::Provenance;
+use crate::evidence::{DeclaredLoss, LossAccount, Provenance};
 use crate::flux_analysis::cell_of;
 use crate::remanence_image::{ANGULAR_DIVISIONS, Orbit, REMANENCE, RemanenceImage};
-use crate::remanence_reconstruction::RemanenceDisk;
 
 /// The 1541's reference frame, as the delivered P64 adapter declares
 /// it: 16 MHz over 300 rpm.
@@ -482,26 +488,66 @@ pub(crate) fn g64_bytes(tracks: &[G64Track]) -> Result<Vec<u8>> {
     Ok(file)
 }
 
-/// What a rendition reports beside its artifact.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct G64Report {
-    pub tracks: u32,
+/// One half-track slot a g64 carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct G64HalfTrack {
+    /// The g64's own slot: 0 is track 1, and the odd indices are the
+    /// half-tracks between the whole ones.
+    pub index: u64,
+    /// How many channel bits the slot carries.
     pub bits: u64,
-    /// Half-tracks clocked at their zone nominal because their own
-    /// measured figure was not a recording's.
-    pub clocked_at_nominal: u32,
-    pub skipped_points: u64,
-    pub notes: Vec<String>,
+    /// Which of the 1541's four rates it was packed at.
+    pub speed_zone: u8,
+    /// Whether the orbit was clocked at its zone's nominal cell because
+    /// its own measured figure was not a recording's — an unformatted
+    /// band's own figure would run several revolutions long.
+    pub clocked_at_nominal: bool,
 }
 
+/// What a g64 rendition carried, and what it did not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct G64Report {
+    /// Where the artifact was written, or `None` for a rendition
+    /// computed and not written.
+    pub path: Option<String>,
+    /// What the artifact occupies on storage.
+    pub artifact_bytes: u64,
+    /// Every slot the artifact carries, ascending.
+    pub half_tracks: Vec<G64HalfTrack>,
+    /// What the destination did not carry, in the image's own terms
+    /// (P29). A count is not an account, so each entry says what it was.
+    pub declared_loss: Vec<DeclaredLoss>,
+}
+
+/// One CBM DOS block, by the address the recording states for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct D64Block {
+    pub track: u8,
+    pub sector: u8,
+}
+
+/// What a d64 rendition carried, and what it did not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct D64Report {
+    /// Where the artifact was written, or `None` for a rendition
+    /// computed and not written.
+    pub path: Option<String>,
+    /// What the artifact occupies on storage: 683 blocks, and the
+    /// error map beside them wherever the disk is incomplete.
+    pub artifact_bytes: u64,
     pub blocks_read: u32,
+    /// What the CBM DOS grid defines, which is 683 whatever was read.
     pub blocks_defined: u32,
     /// Sectors whose header or data failed its own checksum — recorded
     /// and left out, never repaired.
     pub failed_checksums: u32,
-    pub missing: Vec<(u8, u8)>,
+    /// Every block the recording did not yield, in grid order. The
+    /// artifact's error map says the same thing in the format's own
+    /// spelling.
+    pub missing: Vec<D64Block>,
+    /// What the destination did not carry, in the image's own terms
+    /// (P29).
+    pub declared_loss: Vec<DeclaredLoss>,
 }
 
 /// One orbit's coherent angles and the cell its recording implies.
@@ -516,60 +562,109 @@ fn clocked_orbit(image: &RemanenceImage, orbit: &Orbit) -> Result<(Vec<i64>, f64
     Ok((angles, cell))
 }
 
-impl RemanenceDisk {
-    /// The g64 rendition: every on-grid orbit clocked at its measured
-    /// cell — or the zone nominal where the measured figure is not a
-    /// recording's, since clocking noise at its own "cell" would run
-    /// several revolutions long — packed under the `GCR-1541` grammar.
+/// Every orbit the 96 tpi half-track grid can place, in ascending
+/// slot order, with the ones it cannot counted into the account.
+fn on_grid_orbits<'a>(
+    image: &'a RemanenceImage,
+    loss: &mut LossAccount,
+) -> Vec<(&'a Orbit, u64)> {
+    let mut placed = Vec::new();
+    for orbit in image.orbits() {
+        match grid_step_of(orbit.key().radius_microns()) {
+            Some(step) => placed.push((orbit, step)),
+            None => loss.add(
+                "orbit-off-grid",
+                "orbits whose centre radius sits off the 96 tpi grid; a C64 rendition \
+                 addresses half-track slots and has nowhere to put a band between them",
+                1,
+            ),
+        }
+    }
+    placed.sort_by_key(|(_, step)| *step);
+    placed
+}
+
+impl RemanenceImage {
+    /// Computes the g64 this image renders to, writing nothing. Read it
+    /// before writing: the write adds nothing to the account.
+    pub fn describe_g64(&self) -> Result<G64Report> {
+        self.g64_artifact().map(|(_, report)| report)
+    }
+
+    /// Writes this image into a new g64 at `path` and reports what the
+    /// artifact carried.
+    ///
+    /// Every on-grid orbit is clocked at its measured cell — or at its
+    /// zone's nominal where the measured figure is not a recording's,
+    /// since clocking an unformatted band at its own "cell" would run
+    /// several revolutions long — and packed under the `GCR-1541`
+    /// grammar, one speed zone per half-track.
+    ///
+    /// The image is untouched, an existing destination is a named
+    /// refusal rather than an overwrite, and an interruption leaves the
+    /// destination absent rather than half an artifact.
     pub fn write_g64(&self, path: impl AsRef<Path>) -> Result<G64Report> {
-        let (tracks, report) = self.g64_tracks()?;
-        let bytes = g64_bytes(&tracks)?;
-        write_whole(path.as_ref(), &bytes)?;
+        let path = path.as_ref();
+        let (bytes, mut report) = self.g64_artifact()?;
+        device::place_new_artifact(path, &bytes)?;
+        report.path = Some(path.display().to_string());
         Ok(report)
     }
 
-    fn g64_tracks(&self) -> Result<(Vec<G64Track>, G64Report)> {
-        let image = self.image();
+    fn g64_artifact(&self) -> Result<(Vec<u8>, G64Report)> {
+        let mut loss = LossAccount::new();
         let mut tracks = Vec::new();
-        let mut notes = Vec::new();
-        let mut bits = 0u64;
-        let mut skipped_points = 0u64;
-        let mut clocked_at_nominal = 0u32;
-        for orbit in image.orbits() {
-            let Some(step) = grid_step_of(orbit.key().radius_microns()) else {
-                notes.push(format!(
-                    "orbit at {} microns sits off the 96 tpi grid; the g64 grammar \
-                     cannot place it",
-                    orbit.key().radius_microns()
-                ));
-                continue;
-            };
+        let mut half_tracks = Vec::new();
+        for (orbit, step) in on_grid_orbits(self, &mut loss) {
             if step >= G64_HALF_TRACKS as u64 {
+                loss.add(
+                    "orbit-beyond-grammar",
+                    "orbits inside the innermost slot the g64 numbers; the grammar \
+                     holds 84 half-tracks and states no place past them",
+                    1,
+                );
                 continue;
             }
-            let (angles, measured) = clocked_orbit(image, orbit)?;
-            skipped_points += orbit.points() - angles.len() as u64;
+            let (angles, measured) = clocked_orbit(self, orbit)?;
+            let skipped = orbit.points() - angles.len() as u64;
+            if skipped > 0 {
+                loss.add(
+                    "points-not-coherent",
+                    "transitions the image declines to read; a clocked bit is either \
+                     recorded or not, so indeterminacy has no spelling here",
+                    skipped,
+                );
+            }
             if angles.len() < 2 {
-                notes.push(format!(
-                    "half-track {step} holds {} transitions; nothing to clock",
-                    angles.len()
-                ));
+                loss.add(
+                    "orbit-not-clocked",
+                    "orbits holding too few coherent transitions to clock at all",
+                    1,
+                );
                 continue;
             }
             let zone = speed_zone_for(measured);
+            let nominal = nominal_cell(zone.into());
             let mut clock_cell = measured;
-            if (measured - nominal_cell(zone.into())).abs() > nominal_cell(zone.into()) * 0.1 {
-                clock_cell = nominal_cell(zone.into());
-                clocked_at_nominal += 1;
-                notes.push(format!(
-                    "half-track {step} clocked at zone {zone} nominal; its measured \
-                     cell {} is not a recording's",
-                    measured.round()
-                ));
+            let clocked_at_nominal = (measured - nominal).abs() > nominal * 0.1;
+            if clocked_at_nominal {
+                clock_cell = nominal;
+                loss.add(
+                    "cell-snapped-to-nominal",
+                    "half-tracks clocked at their zone's nominal cell because their own \
+                     measured figure is not a recording's; the measured figure does not \
+                     survive into the artifact",
+                    1,
+                );
             }
             let stream = clock(&angles, clock_cell);
-            bits += stream.len();
             let bit_length = stream.len() as usize;
+            half_tracks.push(G64HalfTrack {
+                index: step,
+                bits: stream.len(),
+                speed_zone: zone,
+                clocked_at_nominal,
+            });
             tracks.push(G64Track {
                 index: step,
                 data: stream.into_bytes(),
@@ -577,44 +672,87 @@ impl RemanenceDisk {
                 speed_zone: zone,
             });
         }
+        if tracks.is_empty() {
+            return Err(Error::invalid_image(
+                REMANENCE,
+                "the image holds no orbit the g64 grammar can place, and a rendition \
+                 carrying no track is not an artifact of this disk",
+            ));
+        }
+        loss.add(
+            "write-geometry",
+            "the plateau and guard widths every carried orbit states; the g64 records a \
+             clocked bit and has no field for how wide the crystal wrote it",
+            tracks.len() as u64,
+        );
+        loss.add(
+            "measured-radius",
+            "each orbit's centre radius in microns, which the g64 replaces with the slot \
+             number of the step a 96 tpi drive would find it at",
+            tracks.len() as u64,
+        );
+        let bytes = g64_bytes(&tracks)?;
         let report = G64Report {
-            tracks: tracks.len() as u32,
-            bits,
-            clocked_at_nominal,
-            skipped_points,
-            notes,
+            path: None,
+            artifact_bytes: bytes.len() as u64,
+            half_tracks,
+            declared_loss: loss.into_entries(),
         };
-        Ok((tracks, report))
+        Ok((bytes, report))
     }
 
-    /// The d64 rendition: the recording's own sectors — every orbit
-    /// clocked and decoded, a block admitted where both its header and
-    /// its data pass their own checksums, addressed by the header's
-    /// own track and sector. First write wins, whole tracks before
-    /// half-tracks. An incomplete disk carries the error map.
+    /// Computes the d64 this image renders to, writing nothing.
+    pub fn describe_d64(&self) -> Result<D64Report> {
+        self.d64_artifact().map(|(_, report)| report)
+    }
+
+    /// Writes this image into a new d64 at `path` and reports what the
+    /// artifact carried.
+    ///
+    /// The recording's own sectors are read by the family's group code
+    /// — headers, data blocks, checksums, blocks allowed to wrap the
+    /// origin — and laid into the CBM DOS 683-block grid, addressed by
+    /// the header's own track and sector. Nothing is repaired and
+    /// nothing is rejected: a block is admitted where both its header
+    /// and its data pass their own checksums, first write wins, and
+    /// whole tracks are read before the half-tracks between them so a
+    /// fat track's shoulder never outbids its centre. An incomplete
+    /// disk carries the error map, which is this rendition's
+    /// declared-loss account made flesh.
     pub fn write_d64(&self, path: impl AsRef<Path>) -> Result<D64Report> {
-        let (builder, report) = self.d64_blocks()?;
-        write_whole(path.as_ref(), &builder.into_bytes())?;
+        let path = path.as_ref();
+        let (bytes, mut report) = self.d64_artifact()?;
+        device::place_new_artifact(path, &bytes)?;
+        report.path = Some(path.display().to_string());
         Ok(report)
     }
 
-    fn d64_blocks(&self) -> Result<(D64Builder, D64Report)> {
-        let image = self.image();
+    fn d64_artifact(&self) -> Result<(Vec<u8>, D64Report)> {
+        let mut loss = LossAccount::new();
         let mut builder = D64Builder::new();
         let mut failed = 0u32;
+        let mut read_orbits = 0u64;
         // Whole tracks first — the recording's own grid — then the
-        // half-tracks between them, so a fat track's shoulder never
-        // outbids its center.
-        let mut orbits: Vec<(&Orbit, u64)> = image
-            .orbits()
-            .filter_map(|orbit| {
-                grid_step_of(orbit.key().radius_microns()).map(|step| (orbit, step))
-            })
-            .collect();
+        // half-tracks between them.
+        let mut orbits = on_grid_orbits(self, &mut loss);
         orbits.sort_by_key(|(_, step)| (step % 2, *step));
         for (orbit, _) in orbits {
-            let (angles, cell) = clocked_orbit(image, orbit)?;
+            let (angles, cell) = clocked_orbit(self, orbit)?;
+            let skipped = orbit.points() - angles.len() as u64;
+            if skipped > 0 {
+                loss.add(
+                    "points-not-coherent",
+                    "transitions the image declines to read; the group code reads a \
+                     clocked bit and indeterminacy has no spelling in it",
+                    skipped,
+                );
+            }
             if angles.len() < 2 || cell <= 0.0 {
+                loss.add(
+                    "orbit-not-clocked",
+                    "orbits holding too few coherent transitions to clock at all",
+                    1,
+                );
                 continue;
             }
             let stream = clock(&angles, cell);
@@ -622,6 +760,7 @@ impl RemanenceDisk {
             if bit_length == 0 {
                 continue;
             }
+            read_orbits += 1;
             let track = GcrTrack::new(stream.into_bytes(), bit_length);
             for sector in track.decode() {
                 let Some(data) = sector.data else {
@@ -635,49 +774,87 @@ impl RemanenceDisk {
                 builder.put(sector.header.track, sector.header.sector, &data.bytes);
             }
         }
+        if failed > 0 {
+            loss.add(
+                "sector-failed-checksum",
+                "sectors whose header or data failed the checksum the recording states \
+                 for it; recorded here, never repaired, and never laid into the grid",
+                u64::from(failed),
+            );
+        }
+        let missing: Vec<D64Block> = builder
+            .missing()
+            .into_iter()
+            .map(|(track, sector)| D64Block { track, sector })
+            .collect();
+        if !missing.is_empty() {
+            loss.add(
+                "block-not-read",
+                "blocks the CBM DOS grid defines that the recording did not yield; the \
+                 artifact's error map names every one of them",
+                missing.len() as u64,
+            );
+        }
+        loss.add(
+            "recording-structure",
+            "what each read orbit holds besides its blocks — sync, gaps, sector order, \
+             the half-tracks between the whole ones, and any recording outside the \
+             35-track grid; the d64 is 683 numbered blocks and states none of it",
+            read_orbits,
+        );
+        let blocks_read = builder.filled() as u32;
+        let bytes = builder.into_bytes();
         let report = D64Report {
-            blocks_read: builder.filled() as u32,
+            path: None,
+            artifact_bytes: bytes.len() as u64,
+            blocks_read,
             blocks_defined: cbm_dos::total_sectors() as u32,
             failed_checksums: failed,
-            missing: builder.missing(),
+            missing,
+            declared_loss: loss.into_entries(),
         };
-        Ok((builder, report))
+        Ok((bytes, report))
     }
 
-    /// The p64 rendition: one multiply from angle to cycle, coherent
-    /// points only, an orbit with no pulses skipped rather than
-    /// written empty — an absent half-track claims never-written,
-    /// which is what `Unaligned` means, where an empty chunk would
-    /// claim formatted-then-erased — served through the delivered P64
-    /// encode path.
-    pub fn write_p64(&self, path: impl AsRef<Path>) -> Result<crate::P64Report> {
-        let medium = self.served_medium()?;
-        crate::p64::write_new_artifact(&medium, path.as_ref())
-    }
-
+    /// Computes what a p64 will and will not carry of this image,
+    /// writing nothing.
     pub fn describe_p64(&self) -> Result<crate::P64Report> {
-        let medium = self.served_medium()?;
-        crate::p64::describe(&medium, None)
+        let (medium, projection) = self.served_medium()?;
+        let mut report = crate::p64::describe(&medium, None)?;
+        account_for_projection(&mut report, projection);
+        Ok(report)
     }
 
-    /// The remanence artifact itself: the image encoded whole under
-    /// its own grammar (F64).
-    pub fn write_remanence(&self, path: impl AsRef<Path>) -> Result<()> {
-        let bytes = crate::remanence_format::to_bytes(self.image())?;
-        write_whole(path.as_ref(), &bytes)
+    /// Writes this image into a new p64 at `path` and reports what the
+    /// container carried.
+    ///
+    /// One multiply carries an angle to a cycle — 2²⁸ divisions onto
+    /// 3,200,000 cycles, rounded to nearest, a rounding collision
+    /// nudged to the next cycle and recorded as such — over the
+    /// coherent points only. An orbit with no pulse is skipped rather
+    /// than written empty: an absent half-track claims never-written,
+    /// where an empty chunk would claim formatted-then-erased. The
+    /// bytes go out through the delivered P64 encode path.
+    pub fn write_p64(&self, path: impl AsRef<Path>) -> Result<crate::P64Report> {
+        let (medium, projection) = self.served_medium()?;
+        let mut report = crate::p64::write_new_artifact(&medium, path.as_ref())?;
+        account_for_projection(&mut report, projection);
+        Ok(report)
     }
 
-    /// The served projection this rendition path needs: the image's
+    /// The served projection the p64 rendition needs: the image's
     /// coherent points at the 1541's reference frame, full strength —
     /// the remanence model deliberately carries no per-pulse strength,
-    /// uncertainty living in the report instead.
-    fn served_medium(&self) -> Result<crate::flux_medium::FluxMedium> {
+    /// uncertainty living in the report instead. Answered beside the
+    /// account of what the projection itself left behind.
+    fn served_medium(&self) -> Result<(crate::flux_medium::FluxMedium, LossAccount)> {
         use crate::flux_capture::TimeBase;
         use crate::flux_medium::{
             Derivation, LocationKey, MediumBuilder, OriginRule, OriginStatement, Pulse,
             RotationalFrame, Strength,
         };
-        let image = self.image();
+        let image = self;
+        let mut loss = LossAccount::new();
         let frame = RotationalFrame::new(
             "c1541",
             TimeBase::new("c1541", 16_000_000, 1)?,
@@ -703,21 +880,24 @@ impl RemanenceDisk {
 
         // Ascending half-track keys are descending radii: outermost
         // first.
-        let mut orbits: Vec<(&Orbit, u64)> = image
-            .orbits()
-            .filter_map(|orbit| {
-                grid_step_of(orbit.key().radius_microns()).map(|step| (orbit, step))
-            })
-            .filter(|(_, step)| *step + 2 <= 85)
-            .collect();
-        orbits.sort_by_key(|(_, step)| *step);
+        let mut nudged = 0u64;
         let mut added = false;
-        for (orbit, step) in orbits {
+        for (orbit, step) in on_grid_orbits(image, &mut loss) {
+            if step + 2 > 85 {
+                loss.add(
+                    "orbit-beyond-grammar",
+                    "orbits inside the innermost half-track the container numbers",
+                    1,
+                );
+                continue;
+            }
             let points = image.points(orbit)?;
             let mut pulses: Vec<Pulse> = Vec::new();
             let mut previous: i64 = -1;
+            let mut skipped = 0u64;
             for point in &points {
                 if !point.magnetization().is_coherent() {
+                    skipped += 1;
                     continue;
                 }
                 let scaled = (u128::from(point.angle()) * u128::from(CYCLES_PER_ROTATION)
@@ -728,6 +908,7 @@ impl RemanenceDisk {
                 // delivered container refuses non-advancing pulses.
                 if position <= previous {
                     position = previous + 1;
+                    nudged += 1;
                     if position as u64 >= CYCLES_PER_ROTATION {
                         return Err(Error::invalid_image(
                             REMANENCE,
@@ -742,7 +923,25 @@ impl RemanenceDisk {
                 pulses.push(Pulse::new(position as u64, Strength::certain(2)));
                 previous = position;
             }
+            if skipped > 0 {
+                loss.add(
+                    "points-not-coherent",
+                    "transitions the image declines to read; the container stores a \
+                     pulse or nothing, and indeterminacy has no spelling in it",
+                    skipped,
+                );
+            }
             if pulses.is_empty() {
+                // Skipped rather than written empty: an absent
+                // half-track claims never-written, where an empty chunk
+                // would claim formatted-then-erased.
+                loss.add(
+                    "orbit-not-served",
+                    "orbits holding no coherent transition, left absent rather than \
+                     written empty; an empty chunk would claim erased where the image \
+                     claims never-written",
+                    1,
+                );
                 continue;
             }
             let key = LocationKey::fraction("c1541", step + 2, 2, Some(0))?;
@@ -755,25 +954,53 @@ impl RemanenceDisk {
                 "the image holds no on-grid orbit with any coherent point to serve",
             ));
         }
+        if nudged > 0 {
+            loss.add(
+                "pulse-nudged",
+                "pulses whose rounded cycle collided with the one before it and were \
+                 advanced by one; the angle they were rounded from does not survive",
+                nudged,
+            );
+        }
+        loss.add(
+            "write-geometry",
+            "the plateau and guard widths the image states; a container of pulse \
+             positions has no field for how wide the crystal wrote them",
+            1,
+        );
+        loss.add(
+            "measured-radius",
+            "each orbit's centre radius in microns, which the projection replaces with \
+             the half-track a 96 tpi drive would find it at",
+            1,
+        );
         let (mut medium, sink, total) = builder.seal()?;
         medium.attach_backing(
             Box::new(sink.into_source()),
             total,
             crate::cache::DEFAULT_CACHE_BYTES,
         );
-        Ok(medium)
+        Ok((medium, loss))
     }
 }
 
-fn write_whole(path: &Path, bytes: &[u8]) -> Result<()> {
-    if path.exists() {
-        return Err(Error::invalid_image(
-            REMANENCE,
-            format!("destination {path:?} already exists; a rendition never overwrites"),
-        ));
+/// Folds the projection's own account into the container's, so one
+/// report states everything the crossing from image to p64 left behind.
+/// Both accounts are in code order and the fold keeps them that way.
+fn account_for_projection(report: &mut crate::P64Report, projection: LossAccount) {
+    for entry in projection.into_entries() {
+        match report
+            .declared_loss
+            .iter_mut()
+            .find(|held| held.code == entry.code)
+        {
+            Some(held) => held.count += entry.count,
+            None => report.declared_loss.push(entry),
+        }
     }
-    std::fs::write(path, bytes)
-        .map_err(|error| Error::io(format!("failed to write the rendition: {error}")))
+    report
+        .declared_loss
+        .sort_by(|left, right| left.code.cmp(&right.code));
 }
 
 #[cfg(test)]
@@ -802,7 +1029,7 @@ mod tests {
     /// through the group code, clocked back out of the decoder.
     fn encoded_track(track: u8, sector: u8, payload: &[u8; 256]) -> (Vec<u8>, usize) {
         let mut stream = Bitstream::new();
-        let mut write_byte = |stream: &mut Bitstream, byte: u8| {
+        let write_byte = |stream: &mut Bitstream, byte: u8| {
             for group in [gcr::encode_nibble(byte >> 4), gcr::encode_nibble(byte)] {
                 for bit in (0..5).rev() {
                     if group & (1 << bit) != 0 {
@@ -925,7 +1152,8 @@ mod tests {
             .expect("the plan executes");
 
         // ---- d64: block-for-block against the lineage ----
-        let (builder, report) = disk.d64_blocks().expect("the d64 assembles");
+        let image = disk.image();
+        let (mine, report) = image.d64_artifact().expect("the d64 assembles");
         assert!(
             report.blocks_read >= 600,
             "the reference disk reads most of its 683 blocks: {}",
@@ -937,12 +1165,11 @@ mod tests {
         } else {
             vec![true; 683]
         };
-        let mine = builder.into_bytes();
         let mut shared = 0usize;
         let mut index = 0usize;
         for track in 1..=cbm_dos::TRACKS {
             for sector in 0..cbm_dos::sectors_on(track).expect("every track is zoned") {
-                let held_here = !report.missing.contains(&(track, sector));
+                let held_here = !report.missing.contains(&D64Block { track, sector });
                 if held_here && golden_present[index] {
                     let at = index * SECTOR_SIZE;
                     assert_eq!(
@@ -962,9 +1189,9 @@ mod tests {
 
         // ---- g64: the same half-tracks at the same zones ----
         if let Ok(golden_g64) = std::fs::read(&golden_g64_path) {
-            let (tracks, _) = disk.g64_tracks().expect("the g64 assembles");
+            let g64 = image.describe_g64().expect("the g64 assembles");
             assert_eq!(&golden_g64[..8], b"GCR-1541");
-            for track in &tracks {
+            for track in &g64.half_tracks {
                 let offset_at = 12 + track.index as usize * 4;
                 let golden_offset = u32::from_le_bytes(
                     golden_g64[offset_at..offset_at + 4].try_into().unwrap(),
@@ -994,7 +1221,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_file(&scratch);
-        let written = disk.write_p64(&scratch).expect("the p64 writes");
+        let written = image.write_p64(&scratch).expect("the p64 writes");
         let reopened =
             crate::P64Image::open(&scratch).expect("the delivered adapter reads it back");
         let restored: u64 = reopened
