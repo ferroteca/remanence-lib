@@ -440,6 +440,16 @@ pub(crate) fn inflate(data: &[u8], expected_size: usize) -> Option<Vec<u8>> {
     inflate_into(&mut source, &mut sink).then_some(sink.out)
 }
 
+/// [`inflate`] for a caller that holds a ceiling rather than an
+/// expected size: the output grows as the stream demands instead of
+/// being reserved whole up front, so a generous cap does not become a
+/// generous allocation.
+pub(crate) fn inflate_bounded(data: &[u8], cap: usize) -> Option<Vec<u8>> {
+    let mut source = SliceByteSource::new(data);
+    let mut sink = VecSink { out: Vec::new(), cap };
+    inflate_into(&mut source, &mut sink).then_some(sink.out)
+}
+
 /// Decompresses a raw DEFLATE stream read from `length` bytes of `file`
 /// at `offset` into `spool`, holding only the LZ77 window and a bounded
 /// input chunk in memory (P27). Returns `Ok(Some(total))` with

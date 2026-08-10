@@ -961,6 +961,14 @@ impl CaptureSet {
     ) -> Result<crate::MasteringPlan> {
         crate::c1541_mastering::plan(&self.capture, policy)
     }
+
+    /// The capture model this set opened — the evidence the flux
+    /// reductions consume. Reached by the remanence reduction's tests
+    /// today; the surface verbs arrive with the F63–F66 exposure.
+    #[allow(dead_code)]
+    pub(crate) fn capture(&self) -> &FluxCapture {
+        &self.capture
+    }
 }
 
 fn report_member(

@@ -1093,7 +1093,7 @@ fn read_half_track(
 
 /// What the container will and will not carry of `medium`, computed and
 /// written nowhere.
-fn describe(medium: &FluxMedium, destination: Option<&Path>) -> Result<P64Report> {
+pub(crate) fn describe(medium: &FluxMedium, destination: Option<&Path>) -> Result<P64Report> {
     if medium.profile() != C1541.id {
         return Err(refuse(format!(
             "the medium is addressed by the '{}' profile and this container is the \
@@ -1269,7 +1269,7 @@ fn describe(medium: &FluxMedium, destination: Option<&Path>) -> Result<P64Report
 /// interruption leaves the destination absent rather than half a file
 /// (P9), and a destination that already exists is a named refusal rather
 /// than an overwrite (P7).
-fn write_new_artifact(medium: &FluxMedium, path: &Path) -> Result<P64Report> {
+pub(crate) fn write_new_artifact(medium: &FluxMedium, path: &Path) -> Result<P64Report> {
     let report = describe(medium, Some(path))?;
     if path.try_exists().unwrap_or(false) {
         return Err(Error::io(format!(

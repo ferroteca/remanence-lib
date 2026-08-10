@@ -112,6 +112,43 @@ ABI, or Python module.
   byte-addressed device, and block and flux are disjoint families (P13),
   so a flux artifact is reached through its own type as the capture-set
   adapter is;
+  `remanence_image.rs` the flux family's physical stratum (F63,
+  pledged) — the remanence image: form factor, holes as angular data,
+  and per surface the orbits, each an ordered circular array of packed
+  32-bit points (28-bit angle high, magnetization and widths flags
+  low) held as cache-backed chunks over the family's
+  section-addressable backing, with the model's own invariants
+  (alternation, the rewrite splice, one radius one recording), the
+  refinement where only ignorance may be overwritten, and the reversal
+  where spans reverse rather than points; `remanence_format.rs` the
+  `.remanence` artifact (F64, pledged), claimed in both directions —
+  magic, binary sentinel, version gate, then one zlib-framed DEFLATE
+  payload of varint angle deltas with the magnetization byte elided
+  wherever alternation derives it — read through `inflate.rs` under
+  new zlib framing and written through `deflate.rs`, the library's own
+  RFC 1951 encoder (deterministic within this implementation;
+  cross-implementation byte identity deliberately unclaimed);
+  `flux_analysis.rs` the gap-first reconstruction's numeric core (F65,
+  pledged) over plain arrays — the cell lattice from a comb
+  periodogram with per-context peak-shift medians and the alternation
+  parity, the gap correspondence's resynchronising walk, the
+  gap-first integration whose closure solves the cell exactly, the
+  coherence rule, the fat-track comparison, and the orbit clock —
+  floats measure, integers state; `remanence_reconstruction.rs` the
+  P29 reduction from an opened capture to a remanence image under a
+  declared policy: every revolution of every location aligned and
+  integrated, recordings measured by the count-spread discriminator
+  or declared, the fat track merged under measured agreement, the
+  plan/execute split and the declared-loss account, survey facts
+  riding provenance with their basis stated; `c64_renditions.rs` the
+  d64, g64 and p64 renditions off the remanence-backed image (F66,
+  pledged) — clocking, the crate-private GCR group code and
+  sector reading (analysis machinery, deliberately not the F61
+  surface), the CBM DOS 683-block grid with the error map as the
+  d64's declared-loss account, the `GCR-1541` grammar, and the served
+  projection into the delivered P64 encode path — with
+  `deflate.rs` beside `inflate.rs` as the compression pair the core
+  owns;
   `device.rs` the block-device seam, the P7 claims
   (declared intent for the device stack, the discovery ladder for
   identification sessions), and the host-write capture a durable
@@ -367,6 +404,18 @@ compiled into the wheel.
   was copied or ported. `crates/remanence/src/sevenzip.rs` reads the 7z
   container from the same published description. Keep the attribution
   comments in both files.
+- The remanence image model, the `.remanence` grammar, the gap-first
+  reconstruction, and the C64 renditions
+  (`remanence_image.rs`, `remanence_format.rs`, `flux_analysis.rs`,
+  `remanence_reconstruction.rs`, `c64_renditions.rs`) are ported from
+  the owner's own private, unpublished flux-capture research
+  implementation — owner-authored throughout, so title to every line
+  is already the project's. `deflate.rs` is an original RFC 1951/1950
+  encoder written for this port. The golden fixtures those modules'
+  tests compare against (`pinball-construction-set-c64.*` under
+  `tests/fixtures/`) are that research implementation's own rendered
+  outputs, copied in by hand, never fetched, and never tracked — the
+  tests skip with a note when they are absent.
 - `crates/remanence/tests/fixtures/` holds the test fixtures.
   `testing-prep/prep_fixtures.py` (run with `uv run --group
   testing-prep`; testing-prep/test-rigs/README.md) prepares them: it downloads the
