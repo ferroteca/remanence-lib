@@ -1148,21 +1148,27 @@ fn describe_codec(
 
 // ------------------------------------------------------- the entry points
 
-impl crate::c1541_mastering::MasteredMedium {
-    /// Materializes the family's hardware bitstream from this medium
-    /// under declared mechanics and read-channel rules (P23, P30, P33).
+impl crate::RemanenceImage {
+    /// Materializes the family's hardware bitstream from what this image
+    /// holds, under declared mechanics and read-channel rules (P23, P30,
+    /// P33).
     ///
-    /// The medium is untouched and stays exactly what it was: the
-    /// bitstream is separate session state, carrying this medium's own
-    /// reduction policy as provenance beneath the channel that produced
-    /// it. There is no way back down — returning to a medium is a
-    /// separate, explicit mastering operation (P33).
+    /// The image is the physical stratum and carries no clock — a cell
+    /// length is a property of a *recording*, recoverable from the
+    /// image, never a field of it — so the ladder stands on the served
+    /// projection of it, the same one multiply per point the p64
+    /// rendition uses, at the family's reference frame. The image is
+    /// untouched and stays exactly what it was: the bitstream is
+    /// separate session state, carrying the image's own provenance
+    /// beneath the channel that produced it. There is no way back down
+    /// (P33).
     pub fn materialize_c1541_bitstream(
         &self,
         policy: ReadChannelPolicy,
         cache_bytes: u64,
     ) -> Result<C1541Bitstream> {
-        materialize_bitstream(self.medium(), policy, cache_bytes)
+        let (medium, _) = self.served_medium()?;
+        materialize_bitstream(&medium, policy, cache_bytes)
     }
 }
 

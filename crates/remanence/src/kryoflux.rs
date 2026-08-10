@@ -946,22 +946,6 @@ impl CaptureSet {
         crate::drive_profile::recognition(&self.capture, Some(profile_id))
     }
 
-    /// Plans the reduction of this capture to one 1541 flux medium
-    /// under a declared policy (P29).
-    ///
-    /// Nothing is written and nothing is mutated: the plan computes the
-    /// whole transformation, reports the medium it will produce, and
-    /// enumerates everything the destination will not carry in the
-    /// source own terms. A reduction the policy does not name is a
-    /// refusal rather than a default, so the plan either accounts for
-    /// the whole capture or does not exist.
-    pub fn plan_c1541_mastering(
-        &self,
-        policy: crate::MasteringPolicy,
-    ) -> Result<crate::MasteringPlan> {
-        crate::c1541_mastering::plan(&self.capture, policy)
-    }
-
     /// Plans the gap-first reconstruction of this capture into one
     /// remanence image under a declared policy (P29).
     ///

@@ -469,9 +469,9 @@ Neither should grow a second orchestration path to serve the other.
 > **Withdrawn from the in-force list, 2026-08-10 (D28), and rewritten
 > around the shape it is owed in.** The journey below is media-first and
 > is not what runs today: today it runs through a surface built for
-> captures alone — a `CaptureSet` root outside the device model, a
-> reduction whose every input the caller states, and a `write_p64` verb
-> belonging to the mastered medium. Of the four steps below, the first
+> captures alone — a `CaptureSet` root outside the device model, a plan
+> and an image reached from it, and a `write_p64` verb belonging to that
+> image. Of the four steps below, the first
 > is built and the rest are not: `load_media` takes one path and no
 > collection (the collection-sourced load is F59's), there is no disk
 > kind a capture loads into, and every write verb is format-specific and

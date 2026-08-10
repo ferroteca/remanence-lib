@@ -3,21 +3,20 @@
 
 //! Saving the prepared capture set as a P64, and opening the result.
 //!
-//! End to end: the capture set is opened, the C1541 profile reduces it
-//! to one flux medium under a declared policy, and the P64 adapter
-//! reports what its container will and will not carry before it writes
-//! anything. Then the artifact is reopened through the adapter's own
-//! decode, which is the conformance claim — both ends are a flux
-//! medium, so the comparison is a same-layer one.
+//! End to end: the capture set is opened, the gap-first reduction turns
+//! it into a remanence image, and the P64 adapter reports what its
+//! container will and will not carry before it writes anything. Then the
+//! artifact is reopened through the adapter's own decode, which is the
+//! conformance claim — both ends are a flux medium, so the comparison is
+//! a same-layer one.
 //!
 //! This is the journey U23 asks for, reached through the surface that
-//! exists for captures alone rather than the media-first one the
-//! withdrawn entry is owed in (D28): the capture set is its own root,
-//! the reduction's policy is the caller's in full, and the write verb
-//! belongs to the mastered medium. What is checked here is what that
-//! surface does today — both accounts before the write, the loss named,
-//! the round trip lossless, the refusals by name — all of which the
-//! pledged entry still demands of whatever shape replaces it.
+//! exists today rather than the media-first one the withdrawn entry is
+//! owed in (D28): the capture set is its own root and the write verb
+//! belongs to the image. What is checked here is what that surface
+//! does — both accounts before the write, the loss named, the round
+//! trip lossless, the refusals by name — all of which the pledged entry
+//! still demands of whatever shape replaces it.
 //!
 //! What is deliberately absent is a pulse iterator. The transformation
 //! is the surface, and everything below is compared by what the two
@@ -27,8 +26,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use remanence::{
-    CaptureSet, DuplicatePolicy, MasteringPolicy, ObservationPolicy, OriginPolicy, P64Image,
-    P64Report, ProjectionPolicy, PulseStrengthPolicy,
+    CaptureSet, P64Image, P64Report, ReconstructionPolicy, RecordingSelection,
 };
 
 mod common;
@@ -36,18 +34,14 @@ mod common;
 const ARCHIVE: &str = "Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z";
 /// The 1541's reference clock across one 300 RPM rotation.
 const CYCLES_PER_ROTATION: u64 = 3_200_000;
-/// 35 recorded tracks, less the two the caller leaves out below.
-const HALF_TRACKS: usize = 33;
+/// The recordings the reduction admits from a whole side, the fat track
+/// merged rather than asserted.
+const HALF_TRACKS: usize = 36;
 
-fn policy() -> MasteringPolicy {
-    MasteringPolicy {
+fn policy() -> ReconstructionPolicy {
+    ReconstructionPolicy {
         side: 0,
-        observation: ObservationPolicy::Selected { ordinal: 0 },
-        duplicate: DuplicatePolicy::Omit,
-        projection: ProjectionPolicy::DeclareLoss,
-        pulse_strength: PulseStrengthPolicy::Declared { state: 2 },
-        origin: OriginPolicy::Declared,
-        seed: 0x0123_4567_89ab_cdef,
+        recordings: RecordingSelection::Measured,
     }
 }
 
@@ -79,39 +73,40 @@ fn saved() -> &'static Saved {
         ));
         std::fs::copy(common::ensure_fixture(ARCHIVE), &source).expect("fixture copies");
         let set = CaptureSet::open(&source).expect("the set opens");
-        let mastered = set
-            .plan_c1541_mastering(policy())
-            .expect("the plan resolves")
+        let image = set
+            .plan_reconstruction(&policy())
+            .expect("the reduction plans")
             .execute(1 << 20)
-            .expect("the medium is produced");
+            .expect("the image is produced");
 
-        let claimed = mastered.describe_p64().expect("the claim is computed");
+        let claimed = image.describe_p64().expect("the claim is computed");
 
         let destination = scratch("saved");
         std::fs::remove_file(&destination).ok();
-        let written = mastered.write_p64(&destination).expect("the artifact writes");
+        let written = image.write_p64(&destination).expect("the artifact writes");
 
         let occupied_path = scratch("occupied");
         std::fs::write(&occupied_path, b"someone else's file").expect("it is occupied");
-        let occupied = mastered
+        let occupied = image
             .write_p64(&occupied_path)
             .expect_err("an existing destination is refused")
             .to_string();
         let survivor = std::fs::read(&occupied_path).expect("it is still there");
 
-        let image = P64Image::open_with_cache(&destination, 1 << 20).expect("the artifact reopens");
+        let container =
+            P64Image::open_with_cache(&destination, 1 << 20).expect("the artifact reopens");
         let saved = Saved {
             claimed,
             written,
-            reopened: image.inspect().clone(),
+            reopened: container.inspect().clone(),
             artifact_bytes: std::fs::metadata(&destination).expect("it is there").len(),
-            resident: image.resident_bytes(),
+            resident: container.resident_bytes(),
             occupied,
             survivor,
         };
 
+        drop(container);
         drop(image);
-        drop(mastered);
         drop(set);
         std::fs::remove_file(&destination).ok();
         std::fs::remove_file(&occupied_path).ok();
@@ -148,14 +143,37 @@ fn the_container_states_what_it_will_carry_before_the_artifact_exists() {
                 )
             })
     };
-    // The whole declared policy, each half-track's own provenance, the
-    // seam every one of them located, the rule that placed the circle's
-    // start, and the medium's statement that it was derived at all.
-    assert_eq!(by_code("reduction-policy").count, 6);
+    // The whole declared policy — the reduction's own account, which
+    // travels into the medium ahead of the projection's two notes and
+    // which a P64 records nothing of — each half-track's own provenance,
+    // the rule that placed the circle's start, and the medium's
+    // statement that it was derived at all.
+    assert!(
+        by_code("reduction-policy").count > 2,
+        "the reduction's account reaches the medium and is declared lost: {:?}",
+        by_code("reduction-policy")
+    );
     assert_eq!(by_code("location-provenance").count, HALF_TRACKS as u64);
-    assert_eq!(by_code("medium-fact").count, HALF_TRACKS as u64);
     by_code("located-origin");
     by_code("derivation");
+    // The image's own facts the projection replaces: the centre radius
+    // in microns becomes the half-track a 96 tpi drive would find it at,
+    // and the write geometry has no field in a container of pulse
+    // positions.
+    by_code("measured-radius");
+    by_code("write-geometry");
+    // There is no `medium-fact` entry, and that is the honest answer
+    // rather than a gap: a remanence image states no write protection or
+    // other medium-level fact for the projection to carry or lose.
+    assert!(
+        !saved
+            .claimed
+            .declared_loss
+            .iter()
+            .any(|loss| loss.code == "medium-fact"),
+        "{:?}",
+        saved.claimed.declared_loss
+    );
 
     // And the claim itself is stated beside the account (P4).
     assert!(
@@ -187,19 +205,25 @@ fn the_artifact_reopens_as_the_same_half_tracks_it_was_written_from() {
     // strengths, through the adapter's own decode.
     assert_eq!(saved.reopened.half_tracks, saved.written.half_tracks);
 
-    // Tracks 1 to 35 less the two the caller left out, each addressed by
-    // twice its family position with the side in bit 7.
+    // Every recording the reduction admitted, addressed by twice its
+    // family position with the side in bit 7 — and the half-tracks
+    // between the whole ones address as the odd indices, which is what
+    // the fat track's fringe reads land on.
     let first = &saved.reopened.half_tracks[0];
     assert_eq!(first.half_track_numerator, 1);
     assert_eq!(first.half_track_denominator, 1);
     assert_eq!(first.index, 2);
     assert_eq!(first.side, 0);
-    assert_eq!(saved.reopened.half_tracks[HALF_TRACKS - 1].index, 66);
+    assert_eq!(saved.reopened.half_tracks[HALF_TRACKS - 1].index, 70);
     for track in &saved.reopened.half_tracks {
-        assert_eq!(u64::from(track.index), track.half_track_numerator * 2);
+        assert_eq!(
+            u64::from(track.index),
+            track.half_track_numerator * 2 / track.half_track_denominator
+        );
         assert!(track.pulses > 20_000, "{track:?}");
-        // The policy declared one strength for every pulse, and the
-        // crossing carried that rather than deciding something finer.
+        // The image carries no per-pulse strength — uncertainty rides
+        // the report instead — so the projection states one strength for
+        // every pulse rather than inventing something finer.
         assert_eq!(track.strong_pulses, track.pulses);
         assert_eq!(track.weak_pulses, 0);
         assert_eq!(track.absent_pulses, 0);

@@ -91,16 +91,7 @@ ABI, or Python module.
   read-channel and group-code declarations, the
   C1541 entry, and the probe that recognizes a capture from interval
   statistics alone and reports a ranked verdict with its evidence;
-  `c1541_mastering.rs` the **selected-observation** reduction from
-  capture to medium under a declared policy (P29) — a plan that
-  computes everything and writes nothing, the declared-loss account it
-  carries, and the execution that produces the medium. **No use case
-  demands it any longer** — U23 named it while it was in force, and the
-  pledged rewrite runs the reduction under the profile's declared
-  defaults instead — so what remains of it is F65's outstanding clause,
-  which retires it in favour of the gap-first reconstruction below. Both
-  stand until that lands, two reductions of one capture to two
-  destinations, each declaring its own policy; `hardware_bitstream.rs` and
+  `hardware_bitstream.rs` and
   `encoded_bytestream.rs` the two P23 layers above the medium — circular
   track-relative clocked bit state, every bit saying whether it was
   recorded or resolved by a declared rule, and the byte sequence a
@@ -108,11 +99,14 @@ ABI, or Python module.
   file to any of them — with `c1541_presentation.rs` the family's read
   channel and GCR codec above both: the declared policy inputs of each
   transition, the clocking, the framing, and the account of what each
-  layer does not carry from the one below;
+  layer does not carry from the one below. **The ladder's two entry
+  points are a remanence image and a P64 container**: an image carries
+  no clock, so the image's entry stands on the served projection of it
+  rather than on the image directly;
   `p64.rs` the P64 image-format adapter, claimed in
   both directions — the container grammar and its own range coder, the
   version gate and the structural refusals, decode of a stored medium
-  into the flux-medium layer, and encode of a mastered one into a new
+  into the flux-medium layer, and encode of a projected image into a new
   artifact under a claim stated before the file exists. It sits outside
   `adapters.rs`'s catalog deliberately: that catalog's adapters open a
   byte-addressed device, and block and flux are disjoint families (P13),

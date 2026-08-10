@@ -73,7 +73,6 @@
 mod adapters;
 mod archive;
 mod assurance;
-mod c1541_mastering;
 mod c1541_presentation;
 mod c64_renditions;
 mod cache;
@@ -120,10 +119,6 @@ mod volume;
 mod zip;
 
 pub use assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
-pub use c1541_mastering::{
-    DuplicatePolicy, MasteredLocation, MasteredMedium, MasteringPlan, MasteringPlanReport,
-    MasteringPolicy, ObservationPolicy, OriginPolicy, ProjectionPolicy, PulseStrengthPolicy,
-};
 pub use c64_renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
 pub use c1541_presentation::{
     AlignmentPolicy, BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport,

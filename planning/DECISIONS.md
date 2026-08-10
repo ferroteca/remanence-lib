@@ -58,6 +58,46 @@ removes it is the record either way.
 
 ## Decisions
 
+### D29 — What the swept flux-layer design deferred, kept where a design cannot go
+
+**Decided** Paul Galbraith, 2026-08-10. **Supports** in-force P22, P29,
+P30; U25, U26.
+
+The remanence flux layer's design served F63 through F66, all now
+delivered, so it is swept with the last handle that carried it — a
+design is guidance toward work not yet done, and what was done is the
+code. Its body described delivered surfaces and goes with it. **Its
+deferrals do not**: a deferral is the reason a choice was *not* made,
+which outlives the design and belongs here.
+
+Four stand, none of them blocked, none of them pledged:
+
+- **The divergence sidecar** — the reconstruction's account as its own
+  text artifact beside the image. The account rides the in-memory report
+  until a journey needs the file.
+- **Flip-side pooling and the flippy transform's fitted origin** — the
+  pipeline's seams admit a second capture group, and the work arrives
+  when a flippy fixture does. The repository holds one disk captured
+  twice in opposite directions, which is the evidence that would drive
+  it.
+- **Sector-anchored angle merging and checksum-selected arcs** — the
+  anchoring licence was written into the delivered reduction; the
+  machinery lands when fixtures demand it.
+- **The unguided orchestration** — survey, recognise, rebuild both
+  orientations without the caller naming a side. It belongs beside the
+  question tier's argument rather than ahead of it.
+
+A fifth is **overtaken rather than deferred**: the served projection as
+a general verb (remanence image → flux medium). It now has two callers
+— the p64 rendition and the presentation ladder's image entry — and is
+still crate-private and still not a general verb, which remains the
+right shape until something outside the crate needs one.
+
+**Weighed and declined:** keeping the design file on the strength of its
+deferral list alone (planning holds no delivered surface, and the list
+is four bullets that fit here); and promoting the four to features
+(none is argued yet, and pledging is what argument earns).
+
 ### D28 — U23 is withdrawn from the in-force list: its journey runs, but not in the shape it is owed
 
 **Decided** Paul Galbraith, 2026-08-10. **Supports** U23, U25, U26;

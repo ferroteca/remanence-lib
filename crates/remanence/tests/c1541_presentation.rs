@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Presenting the mastered capture as a 1541 hardware bitstream, and
+//! Presenting a reconstructed disk as a 1541 hardware bitstream, and
 //! then as the family's encoded bytestream.
 //!
 //! The claim under test is P23's, P33's and P30's together: the layers above a
@@ -11,16 +11,19 @@
 //! what it holds.
 //!
 //! The journey is the real one — a KryoFlux capture of a C64 disk,
-//! mastered under a declared policy and then read by a declared drive —
-//! so the numbers below are what a 1541 makes of an actual recording
-//! rather than what a synthetic one was built to produce.
+//! reduced gap-first to the remanence image and then read by a declared
+//! drive — so the numbers below are what a 1541 makes of an actual
+//! recording rather than what a synthetic one was built to produce.
+//!
+//! The image carries no clock, so the ladder stands on the served
+//! projection of it rather than on the image directly: one multiply per
+//! point, at the family's reference frame.
 
 use std::sync::OnceLock;
 
 use remanence::{
-    AlignmentPolicy, BitstreamReport, BytestreamReport, CaptureSet, DensityPolicy,
-    DuplicatePolicy, ErrorCategory, GcrCodecPolicy, MasteringPolicy, ObservationPolicy,
-    OriginPolicy, ProjectionPolicy, PulseStrengthPolicy, ReadChannelPolicy,
+    AlignmentPolicy, BitstreamReport, BytestreamReport, CaptureSet, DensityPolicy, ErrorCategory,
+    GcrCodecPolicy, ReadChannelPolicy, ReconstructionPolicy, RecordingSelection,
     UnassignedSymbolPolicy, UnzonedPolicy, WeakPulsePolicy,
 };
 
@@ -29,18 +32,14 @@ mod common;
 const ARCHIVE: &str = "Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z";
 /// The 1541's reference clock across one 300 RPM rotation.
 const CYCLES_PER_ROTATION: u64 = 3_200_000;
-/// 35 recorded tracks, less the two the mastering policy left out.
-const LOCATIONS: usize = 33;
+/// The recordings the reduction admits from a whole side, the fat
+/// track merged rather than asserted.
+const LOCATIONS: usize = 36;
 
-fn mastering() -> MasteringPolicy {
-    MasteringPolicy {
+fn reconstruction() -> ReconstructionPolicy {
+    ReconstructionPolicy {
         side: 0,
-        observation: ObservationPolicy::Selected { ordinal: 0 },
-        duplicate: DuplicatePolicy::Omit,
-        projection: ProjectionPolicy::DeclareLoss,
-        pulse_strength: PulseStrengthPolicy::Declared { state: 2 },
-        origin: OriginPolicy::Declared,
-        seed: 0x0123_4567_89ab_cdef,
+        recordings: RecordingSelection::Measured,
     }
 }
 
@@ -81,16 +80,16 @@ fn presented() -> &'static Presented {
             std::env::temp_dir().join(format!("remanence-presentation-{}.7z", std::process::id()));
         std::fs::copy(common::ensure_fixture(ARCHIVE), &path).expect("fixture copies");
         let set = CaptureSet::open(&path).expect("the set opens");
-        let medium = set
-            .plan_c1541_mastering(mastering())
-            .expect("the plan resolves")
+        let image = set
+            .plan_reconstruction(&reconstruction())
+            .expect("the reduction plans")
             .execute(1 << 20)
-            .expect("the medium is produced");
+            .expect("the image is produced");
 
-        let bitstream = medium
+        let bitstream = image
             .materialize_c1541_bitstream(channel(), 1 << 20)
             .expect("the channel clocks the medium");
-        let repeated = medium
+        let repeated = image
             .materialize_c1541_bitstream(channel(), 1 << 20)
             .expect("and clocks it again");
         let bytestream = bitstream
@@ -120,7 +119,7 @@ fn presented() -> &'static Presented {
         drop(bytestream);
         drop(repeated);
         drop(bitstream);
-        drop(medium);
+        drop(image);
         drop(set);
         std::fs::remove_file(&path).ok();
         presented
@@ -154,7 +153,14 @@ fn every_location_is_clocked_at_the_cell_its_declared_zone_states() {
 
     for location in &report.locations {
         assert_eq!(location.cell_cycles_denominator, 1);
-        assert_eq!(location.half_track_denominator, 1);
+        // Whole tracks address as n/1; the half-tracks between them
+        // address as n/2, and the reduction admits one where the
+        // evidence shows a recording there rather than only where the
+        // 35-track grid expects one.
+        assert!(
+            matches!(location.half_track_denominator, 1 | 2),
+            "{location:?}"
+        );
         assert_eq!(location.surface, Some(0));
         // About one rotation's worth of cells — and only about, which is
         // the point: the channel locks onto the recording's own phase,
@@ -181,11 +187,26 @@ fn every_location_is_clocked_at_the_cell_its_declared_zone_states() {
     }
 
     // GCR admits at most two zeros between transitions, so a disk whose
-    // clocked tracks held longer runs everywhere would be saying the
-    // channel was reading at the wrong cell. Nearly every location here
-    // holds exactly the runs the encoding permits — and a location that
-    // departs from it is reported as the number it is rather than
+    // clocked tracks held long runs everywhere would be saying the
+    // channel was reading at the wrong cell. Two claims hold here, and
+    // the second is the load-bearing one: most locations hold exactly
+    // the runs the encoding permits, and *every* departure is by a cell
+    // or two rather than by an order of magnitude. A channel locked to
+    // the wrong cell shows runs of tens; these are threes and fours,
+    // and they cluster on the fat track's fringe reads — the same
+    // recording picked up at a radius the head only partly covers. A
+    // location that departs is reported as the number it is rather than
     // smoothed into the others.
+    let longest = report
+        .locations
+        .iter()
+        .map(|location| location.longest_zero_run)
+        .max()
+        .expect("a whole side holds locations");
+    assert!(
+        longest <= 4,
+        "the channel is reading at the recording's own cell: longest zero run {longest}"
+    );
     let departing: Vec<u64> = report
         .locations
         .iter()
@@ -193,7 +214,7 @@ fn every_location_is_clocked_at_the_cell_its_declared_zone_states() {
         .map(|location| location.half_track_numerator)
         .collect();
     assert!(
-        departing.len() * 4 < report.locations.len(),
+        departing.len() * 2 < report.locations.len(),
         "{departing:?} of {} locations depart from the encoding",
         report.locations.len()
     );
@@ -322,7 +343,7 @@ fn a_pattern_the_family_assigns_nothing_to_is_refused_or_kept_as_its_bits() {
         report
             .evidence
             .iter()
-            .any(|line| line.contains("observation 0 of each location was selected")),
+            .any(|line| line.contains("served projection of a remanence image")),
         "{:?}",
         report.evidence
     );

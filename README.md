@@ -77,18 +77,30 @@ produced it: which of the family's zones were recovered and what each
 location holds, the derived cell against what the zone claims, the seam
 located as an angle, and a named reason for every position not claimed.
 
-A recognized capture can then be mastered: the reduction to one
-circular, half-track-addressed flux medium resolves in two stages, a
-plan that computes everything and writes nothing and an execution that
-produces the medium. Every reduction is a declared policy input, and one
-the policy does not name is a refusal rather than a default — so a
-location whose content its neighbour also holds stops the plan until the
-caller says which it is. The plan carries the complete account of what
-the destination will not carry, in the source's own terms and before
-anything exists to carry it.
+A recognized capture then reduces to a **remanence image** — the
+physical facts of the disk's surfaces, fit to nothing and carrying no
+clock. The reduction is gap-first and works on the strength of all the
+evidence rather than the choice of one revolution: every revolution of
+every location aligned by gap correspondence, the cell lattice measured
+from the intervals themselves, the angles integrated so the circle
+closes exactly, coherence decided per transition with indeterminacy
+recorded rather than repaired, and adjacent steps carrying the same
+recording merged under measured agreement — the fat track measured,
+never asserted. It resolves in two stages, a plan that computes
+everything and writes nothing and an execution that produces the image,
+and the plan carries the complete account of what the image will not
+carry, in the capture's own terms and before anything exists to carry
+it.
 
-A mastered medium — or the one a P64 holds at rest — can then be read
-the way a drive reads it. The family's read channel clocks the medium's
+That image is the disk from there on. It renders to **d64, g64 and
+p64** — each claimed twice, as a description that writes nothing and a
+write that does both, and each stating what its destination did not
+carry — and it writes back to the library's own `.remanence` artifact.
+
+An image — or the medium a P64 holds at rest — can then be read the way
+a drive reads it. An image carries no clock, so the ladder stands on
+the served projection of it, one multiply per point at the family's
+reference frame. The family's read channel clocks the medium's
 pulses into a circular, track-relative **hardware bitstream**, and its
 declared group code resolves that into the family's **encoded
 bytestream**. Both rules are the drive profile's: the cell comes from
@@ -103,7 +115,7 @@ no byte is a header, a data field, a sector or a file, and the framing
 landmark the codec locates says where bytes begin and nothing about what
 follows it.
 
-A mastered medium can then be saved as a P64, and a P64 opened back.
+An image can be saved as a P64, and a P64 opened back.
 The container's grammar and its own adaptive range coder are the
 adapter's claim, stated in the module from the published format
 description: the version is validated before anything else is touched,
@@ -382,27 +394,35 @@ with remanence.CaptureSet("captures.7z") as capture:
     for line in verdict.evidence:
         print(" ", line)
 
-    plan = capture.plan_c1541_mastering(remanence.MasteringPolicy(
-        side=0, observation_ordinal=0, duplicate="omit",
-        projection="declare-loss", pulse_strength="declared",
-        strength_state=2, origin="declared", seed=0x0123456789abcdef))
-    for loss in plan.report().declared_loss:
+    # The gap-first reduction: every revolution of every location, not
+    # the choice of one. The plan computes it whole and writes nothing.
+    plan = capture.plan_reconstruction(remanence.ReconstructionPolicy(
+        side=0, recordings="measured"))
+    report = plan.report()
+    print(report.swept_positions, len(report.recorded_positions))
+    for loss in report.declared_loss:
         print(loss.code, loss.count, loss.detail)
-    medium = plan.execute()
 
-    # What a 1541's read channel and GCR codec make of that medium.
-    bits = medium.materialize_c1541_bitstream(remanence.ReadChannelPolicy(
-        density="declared", unzoned="refuse", weak_pulse="seeded",
-        seed=0x0123456789abcdef))
-    bytes_ = bits.materialize_c1541_bytestream(remanence.GcrCodecPolicy(
-        alignment="landmark", unassigned_symbol="declare-loss"))
-    for track in bytes_.inspect().locations:
-        print(track.half_track_numerator, track.bytes, track.resolved_bytes,
-              track.alignments, track.unframed_bits)
+# What comes back is the family's own image, and it is the disk from
+# here on: the renditions and the presentation ladder both hang on it.
+image = plan.execute()
 
-    for loss in medium.describe_p64().declared_loss:
-        print(loss.code, loss.count, loss.detail)
-    medium.write_p64("pinball.p64")
+# What a 1541's read channel and GCR codec make of what it holds.
+bits = image.materialize_c1541_bitstream(remanence.ReadChannelPolicy(
+    density="declared", unzoned="refuse", weak_pulse="seeded",
+    seed=0x0123456789abcdef))
+bytes_ = bits.materialize_c1541_bytestream(remanence.GcrCodecPolicy(
+    alignment="landmark", unassigned_symbol="declare-loss"))
+for track in bytes_.inspect().locations:
+    print(track.half_track_numerator, track.bytes, track.resolved_bytes,
+          track.alignments, track.unframed_bits)
+
+# Each rendition states its loss before it writes anything.
+for loss in image.describe_p64().declared_loss:
+    print(loss.code, loss.count, loss.detail)
+image.write_p64("pinball.p64")
+image.write_d64("pinball.d64")
+image.write_g64("pinball.g64")
 
 with remanence.P64Image("pinball.p64") as image:
     for track in image.inspect().half_tracks:

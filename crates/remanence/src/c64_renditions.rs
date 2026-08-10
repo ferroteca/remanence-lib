@@ -847,7 +847,13 @@ impl RemanenceImage {
     /// the remanence model deliberately carries no per-pulse strength,
     /// uncertainty living in the report instead. Answered beside the
     /// account of what the projection itself left behind.
-    fn served_medium(&self) -> Result<(crate::flux_medium::FluxMedium, LossAccount)> {
+    ///
+    /// It is not a general verb and does not cross the surface: the p64
+    /// rendition and the presentation ladder are its two callers, and
+    /// both want the same one projection.
+    pub(crate) fn served_medium(
+        &self,
+    ) -> Result<(crate::flux_medium::FluxMedium, LossAccount)> {
         use crate::flux_capture::TimeBase;
         use crate::flux_medium::{
             Derivation, LocationKey, MediumBuilder, OriginRule, OriginStatement, Pulse,
@@ -865,7 +871,15 @@ impl RemanenceImage {
                     .note("the image's angular origin is the capture's index datum"),
             ),
         )?;
-        let policy = Provenance::new(REMANENCE)
+        // The image's own account travels into the medium ahead of the
+        // projection's: how the image came to be is part of how this
+        // medium came to be, and a destination that cannot carry it has
+        // to be able to say so (P4, P29).
+        let mut policy = Provenance::new(REMANENCE);
+        for note in &image.provenance().notes {
+            policy = policy.note(note.clone());
+        }
+        let policy = policy
             .note("served projection of a remanence image: angle times 3,200,000 over 2^28")
             .note("coherent points only; full strength — uncertainty rides the report");
         let sink = crate::flux_capture::SessionBacking::create()?;
@@ -945,7 +959,19 @@ impl RemanenceImage {
                 continue;
             }
             let key = LocationKey::fraction("c1541", step + 2, 2, Some(0))?;
-            builder.add_location(key, &pulses, &[], Provenance::new(REMANENCE))?;
+            // Each location says which orbit it was projected from, by
+            // the radius the image measured rather than by the slot the
+            // key names: the slot is where a drive would find it, and
+            // the radius is where it is (P4).
+            builder.add_location(
+                key,
+                &pulses,
+                &[],
+                Provenance::new(REMANENCE).note(format!(
+                    "projected from the orbit at {} microns",
+                    orbit.key().radius_microns()
+                )),
+            )?;
             added = true;
         }
         if !added {

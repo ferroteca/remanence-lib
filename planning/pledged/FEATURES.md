@@ -259,36 +259,3 @@ Commodore DOS device seam (P15), not this adapter.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P18,
 P19; U4, U26. Needs F56, F61.
-
-## F65 — The gap-first reconstruction
-
-The P29 reduction rebuilt on the strength of all the evidence rather
-than the choice of one revolution — the flux analysis adopted from
-the owner's research implementation, where it is measured against
-real captures. Every revolution of every location is aligned by **gap
-correspondence** (identity lives in the interval sequence, position
-in the angles; a resynchronising walk with a confirmation ladder,
-never a nearest match); the **cell lattice** is measured from the
-intervals themselves — a comb periodogram finds the cell, per-context
-medians carry the reader's peak shift so it can be removed from every
-interval, and the alternation parity is fitted; each revolution's
-spindle wander is corrected by a fitted **timebase warp**
-(least-squares harmonics of the revolution, bounded by holdout rather
-than appetite); angles are produced **gap-first** — snapped to the
-lattice where the crystal wrote them, kept and reported where the
-medium holds them off-lattice consistently across revolutions,
-integrated so closure solves the cell exactly; coherence is decided
-per transition from presence and spread against declared tolerances,
-incoherent runs becoming `Unaligned` spans; and adjacent steps
-carrying the same recording merge under measured agreement in the gap
-domain — the fat track measured, never asserted. The reduction keeps
-the family's plan/execute discipline: policy declared with no
-defaults invented, a plan that computes everything and writes
-nothing, the declared-loss account naming what the image cannot
-carry, and the survey's facts riding provenance with their basis —
-evidenced, measured, assumed — stated per fact. The
-selected-observation reduction it succeeds retires with its delivery:
-one family, one reduction discipline.
-
-Touches: S1, S2, S3. Supports: the design; in-force P4, P22, P27,
-P29, P30, P31; U25, U26.

@@ -30,7 +30,6 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use crate::c1541_mastering::MasteredMedium;
 use crate::checksum::Crc32;
 use crate::device::{self, AccessIntent, AccessMode};
 use crate::drive_profile::C1541;
@@ -1394,29 +1393,6 @@ fn stream_artifact(medium: &FluxMedium, report: &P64Report, file: &File) -> Resu
 fn write_at(file: &File, offset: u64, data: &[u8]) -> Result<()> {
     device::write_all_at(file, offset, data)
         .map_err(|error| Error::io(format!("failed to write the P64 artifact: {error}")))
-}
-
-impl MasteredMedium {
-    /// What a P64 will and will not carry of this medium, computed and
-    /// written nowhere.
-    ///
-    /// The account is complete before anything is created, so a caller
-    /// reads what the crossing costs and then decides (P29). A medium
-    /// the container's claim cannot encode is refused here rather than
-    /// approximated into it.
-    pub fn describe_p64(&self) -> Result<P64Report> {
-        describe(self.medium(), None)
-    }
-
-    /// Writes this medium into a new P64 image at `path`, and reports
-    /// what the container carried and what it did not.
-    ///
-    /// The medium is untouched. An existing destination is a named
-    /// refusal rather than an overwrite, and an interruption leaves the
-    /// destination absent rather than half an artifact (P6, P7, P9).
-    pub fn write_p64(&self, path: impl AsRef<Path>) -> Result<P64Report> {
-        write_new_artifact(self.medium(), path.as_ref())
-    }
 }
 
 #[cfg(test)]

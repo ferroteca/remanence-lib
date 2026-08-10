@@ -18,6 +18,48 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Removed
+
+- **The selected-observation reduction retires: one family, one reduction
+  discipline.** Mastering a capture by *choosing* an observation of each
+  location and reconciling the rest is gone, replaced by the gap-first
+  reconstruction that reduces on the strength of all the evidence. A
+  reduction that asked the caller which revolution to believe was
+  answering a question the evidence can answer better, and keeping two
+  reductions of one capture meant two accounts of the same disk that
+  could disagree.
+
+  Gone from Rust: `MasteringPolicy`, `MasteringPlan`, `MasteringPlanReport`,
+  `MasteredMedium`, `MasteredLocation`, `ObservationPolicy`,
+  `DuplicatePolicy`, `ProjectionPolicy`, `PulseStrengthPolicy`,
+  `OriginPolicy`, and `CaptureSet::plan_c1541_mastering`. Gone from C:
+  the whole `remanence_mastering_*` and `remanence_mastered_medium_*`
+  surface with its policy structs and enums. Gone from Python: the five
+  classes and the capture-set verb. Nothing is bridged or aliased; the
+  journey those verbs served is `CaptureSet::plan_reconstruction` →
+  `execute` → the image's own `describe_p64` / `write_p64`.
+
+  **The presentation ladder keeps both of its entry points.**
+  `RemanenceImage::materialize_c1541_bitstream` replaces the mastered
+  medium's: an image carries no clock, so the ladder stands on the
+  served projection of it — one multiply per point, at the family's
+  reference frame — rather than on the image directly. In C,
+  `remanence_image_materialize_c1541_bitstream`; in Python, the method of
+  the same name on `RemanenceImage`. The P64 container's entry is
+  unchanged.
+
+  **The reduction's account now reaches the medium it projects.** The
+  served projection carries the image's own provenance ahead of its two
+  notes, so a P64's declared-loss account states the whole reduction it
+  cannot express rather than only the projection's part of it.
+
+  Note for whoever cuts the first release: the entries below that added
+  this surface are in this same unreleased section, so nothing that ever
+  shipped is being taken away, and a reader of the first release meets
+  neither the mastering verbs nor their removal. Collapsing the section
+  to its net effect is release-time editing, and this entry is the
+  record until then.
+
 ### Added
 
 - **A KryoFlux capture reduces to a remanence image on the strength of
@@ -70,9 +112,8 @@ rather than bridged. Read every entry below in that light.
   `ReconstructionPlan`, `ReconstructionReport` and `ReconstructedOrbit`,
   and `plan.execute()` answering with a `RemanenceImage`.
 
-  The selected-observation mastering reduction stands unchanged beside
-  it: two reductions of one capture, to two different destinations, each
-  declaring its own policy.
+  It is the family's one reduction: the selected-observation mastering it
+  succeeds retires with it, above.
 
 - **The C64 renditions are mastered off the remanence image: d64, g64 and
   p64.** A `RemanenceImage` renders to all three — P29 acting where only
