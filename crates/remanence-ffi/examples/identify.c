@@ -528,6 +528,108 @@ static int show_remanence_image(const char *path, const char *destination) {
     return status;
 }
 
+/* Reduces a KryoFlux capture set to a remanence image on the strength of
+ * all the evidence rather than the choice of one revolution. The plan
+ * computes the whole reduction and writes nothing, so the account is
+ * complete before the image exists; executing it answers with the
+ * family's ordinary image handle rather than a root of its own, and the
+ * plan handle is consumed whether it succeeds or fails. */
+static int reconstruct_capture(const char *path, unsigned long side) {
+    RemanenceErrorCategory error_category;
+    char *error = NULL;
+    char *error_rule = NULL;
+    RemanenceCaptureSet *set =
+        remanence_capture_set_open(path, &error_category, &error, &error_rule);
+    if (set == NULL) {
+        report_error("error", error_category, error, error_rule);
+        return EXIT_FAILURE;
+    }
+
+    RemanenceReconstructionPolicy policy;
+    policy.side = (uint64_t)side;
+    policy.recordings = REMANENCE_RECORDING_SELECTION_MEASURED;
+    policy.declared_positions = NULL;
+    policy.declared_position_count = 0;
+
+    RemanenceReconstructionPlan *plan = remanence_capture_set_plan_reconstruction(
+        set, &policy, &error_category, &error, &error_rule);
+    if (plan == NULL) {
+        report_error("error", error_category, error, error_rule);
+        remanence_capture_set_free(set);
+        return EXIT_FAILURE;
+    }
+
+    printf("Capture: %s\n", remanence_capture_set_path(set));
+    printf("Side:    %" PRIu64 "\n", remanence_reconstruction_side(plan));
+    printf("Swept:   %" PRIu32 " step positions\n",
+           remanence_reconstruction_swept_positions(plan));
+
+    size_t recorded = remanence_reconstruction_recorded_position_count(plan);
+    printf("Records (%zu):", recorded);
+    for (size_t i = 0; i < recorded; ++i) {
+        uint64_t position = 0;
+        if (remanence_reconstruction_recorded_position(plan, i, &position)) {
+            printf(" %" PRIu64, position);
+        }
+    }
+    printf("\n");
+
+    /* One recorded band at one radius, measured rather than asserted:
+     * the fat-track merge decides which of them enter the image. */
+    size_t orbits = remanence_reconstruction_orbit_count(plan);
+    size_t admitted = 0;
+    printf("Orbits (%zu):\n", orbits);
+    for (size_t i = 0; i < orbits; ++i) {
+        RemanenceReconstructedOrbit orbit;
+        if (!remanence_reconstruction_orbit(plan, i, &orbit)) {
+            continue;
+        }
+        admitted += orbit.admitted ? 1 : 0;
+        if (i < 3 || i + 1 == orbits) {
+            printf("  step %" PRIu64 " at %" PRIu64 " um: %" PRIu32
+                   " revolutions, spread %" PRIu32 " permille, %" PRIu64
+                   " points%s\n",
+                   orbit.position, orbit.radius_microns, orbit.revolutions,
+                   orbit.count_spread_permille, orbit.points,
+                   orbit.admitted ? "" : " (not admitted)");
+        } else if (i == 3) {
+            printf("  ...\n");
+        }
+    }
+    printf("Admitted: %zu of %zu\n", admitted, orbits);
+
+    size_t losses = remanence_reconstruction_declared_loss_count(plan);
+    printf("Not carried (%zu):%s\n", losses, losses == 0 ? " nothing" : "");
+    for (size_t i = 0; i < losses; ++i) {
+        printf("  %s: %s (%" PRIu64 ")\n",
+               remanence_reconstruction_declared_loss_code(plan, i),
+               remanence_reconstruction_declared_loss_detail(plan, i),
+               remanence_reconstruction_declared_loss_amount(plan, i));
+    }
+    size_t evidence = remanence_reconstruction_evidence_count(plan);
+    printf("Known by (%zu):\n", evidence);
+    for (size_t i = 0; i < evidence; ++i) {
+        printf("  %s\n", remanence_reconstruction_evidence(plan, i));
+    }
+
+    /* Executing consumes the plan handle: it is freed either way and
+     * must not be used again. */
+    RemanenceImage *image = remanence_reconstruction_plan_execute(
+        plan, 1024 * 1024, &error_category, &error, &error_rule);
+    if (image == NULL) {
+        report_error("error", error_category, error, error_rule);
+        remanence_capture_set_free(set);
+        return EXIT_FAILURE;
+    }
+    printf("Image:   %zu orbits, %" PRIu64 " bytes backed, %" PRIu64 " resident\n",
+           remanence_image_orbit_count(image), remanence_image_backing_bytes(image),
+           remanence_image_resident_bytes(image));
+
+    remanence_image_free(image);
+    remanence_capture_set_free(set);
+    return EXIT_SUCCESS;
+}
+
 /* Writes all three C64 renditions off one remanence artifact. Each is a
  * P29 destination and each states its own loss; an existing destination
  * refuses by name rather than being overwritten. */
@@ -603,6 +705,9 @@ int main(int argc, char **argv) {
     if (argc == 4 && strcmp(argv[1], "--renditions") == 0) {
         return write_renditions(argv[2], argv[3]);
     }
+    if ((argc == 3 || argc == 4) && strcmp(argv[1], "--reconstruct") == 0) {
+        return reconstruct_capture(argv[2], argc == 4 ? strtoul(argv[3], NULL, 10) : 0);
+    }
     if (argc == 2 && strcmp(argv[1], "--families") == 0) {
         list_families();
         return EXIT_SUCCESS;
@@ -614,6 +719,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "       %s --remanence <path-to-artifact> [write-to]\n", argv[0]);
         fprintf(stderr, "       %s --renditions <path-to-artifact> <destination-stem>\n",
                 argv[0]);
+        fprintf(stderr, "       %s --reconstruct <path-to-capture> [side]\n", argv[0]);
         fprintf(stderr, "       %s --families\n", argv[0]);
         return EXIT_FAILURE;
     }

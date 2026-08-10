@@ -91,10 +91,14 @@ ABI, or Python module.
   read-channel and group-code declarations, the
   C1541 entry, and the probe that recognizes a capture from interval
   statistics alone and reports a ranked verdict with its evidence;
-  `c1541_mastering.rs` the reduction from capture to medium under a
-  declared policy (P29) — a plan that computes everything and writes
-  nothing, the declared-loss account it carries, and the execution that
-  produces the medium; `hardware_bitstream.rs` and
+  `c1541_mastering.rs` the **selected-observation** reduction from
+  capture to medium under a declared policy (P29) — a plan that
+  computes everything and writes nothing, the declared-loss account it
+  carries, and the execution that produces the medium. It is the
+  reduction U23 names, and it stands beside the gap-first
+  reconstruction below rather than above or beneath it: two reductions
+  of one capture, to two different destinations, each declaring its own
+  policy; `hardware_bitstream.rs` and
   `encoded_bytestream.rs` the two P23 layers above the medium — circular
   track-relative clocked bit state, every bit saying whether it was
   recorded or resolved by a declared rule, and the byte sequence a
@@ -136,8 +140,8 @@ ABI, or Python module.
   RFC 1951 encoder (deterministic within this implementation;
   cross-implementation byte identity deliberately unclaimed, and the
   P29 account empty because the artifact is the model's own);
-  `flux_analysis.rs` the gap-first reconstruction's numeric core (F65,
-  pledged) over plain arrays — the cell lattice from a comb
+  `flux_analysis.rs` the gap-first reconstruction's numeric core over
+  plain arrays — the cell lattice from a comb
   periodogram with per-context peak-shift medians and the alternation
   parity, the gap correspondence's resynchronising walk, the
   gap-first integration whose closure solves the cell exactly, the
@@ -148,7 +152,10 @@ ABI, or Python module.
   integrated, recordings measured by the count-spread discriminator
   or declared, the fat track merged under measured agreement, the
   plan/execute split and the declared-loss account, survey facts
-  riding provenance with their basis stated; `c64_renditions.rs` the
+  riding provenance with their basis stated — and **it answers with
+  the image itself**, the same root a `.remanence` artifact opens to,
+  rather than a second root beside it, the account of how it came to
+  be belonging to the plan that computed it; `c64_renditions.rs` the
   d64, g64 and p64 renditions off the remanence image — each claimed
   twice, as a `describe_` that computes everything and writes nothing
   and a `write_` that does both, and each stating what its
@@ -539,8 +546,10 @@ loading it, `identify --remanence <path> [write-to]` reads a
 load a flux artifact into — writes it back where a destination is
 given, and describes the three C64 renditions without writing them,
 `identify --renditions <path> <stem>` writes all three beside each
-other with their accounts, and `identify --families` lists the
-claimed families.
+other with their accounts, `identify --reconstruct <capture> [side]`
+reduces a KryoFlux capture set to a remanence image and prints the
+plan's whole account before executing it, and `identify --families`
+lists the claimed families.
 
 **Without that `PATH` entry gcc exits 1 and prints nothing at all**: it
 is gcc's own runtime DLLs failing to resolve, so the compiler never

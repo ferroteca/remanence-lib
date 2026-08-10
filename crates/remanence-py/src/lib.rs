@@ -2723,6 +2723,31 @@ impl CaptureSet {
         })
     }
 
+    /// Plans the gap-first reconstruction of this capture into one
+    /// remanence image under a declared policy.
+    ///
+    /// Nothing is written and nothing is mutated: the plan computes the
+    /// whole reduction — every revolution of every location aligned by
+    /// gap correspondence, the cell lattice measured from the intervals
+    /// themselves, the angles integrated gap-first, coherence decided
+    /// per transition, and the fat track merged under measured
+    /// agreement — and enumerates everything the image cannot carry in
+    /// the capture's own terms.
+    fn plan_reconstruction(
+        &self,
+        policy: &ReconstructionPolicy,
+    ) -> PyResult<ReconstructionPlan> {
+        let plan = self
+            .get()?
+            .plan_reconstruction(&policy.to_core()?)
+            .map_err(to_py_err)?;
+        let report = ReconstructionReport::new(plan.report());
+        Ok(ReconstructionPlan {
+            inner: Some(plan),
+            report,
+        })
+    }
+
     /// Releases the claim on the archive file and discards the private
     /// session storage the capture decoded into.
     fn close(&mut self) {
@@ -4124,6 +4149,213 @@ impl RemanenceWriteReport {
     }
 }
 
+/// The complete declared policy for one gap-first reconstruction.
+///
+/// There is no default: a reduction the policy does not name is a
+/// refusal. `recordings` is `"measured"` — a position records where its
+/// revolutions resolve the same transitions, which is the count-spread
+/// discriminator reading the evidence — or `"declared"`, in which case
+/// `declared_positions` is the caller's own assertion and is checked to
+/// exist before it is honoured.
+#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ReconstructionPolicy {
+    /// Which recorded side the image is reconstructed from. Sides are
+    /// never merged or averaged.
+    pub side: u64,
+    pub recordings: String,
+    pub declared_positions: Vec<u64>,
+}
+
+#[pymethods]
+impl ReconstructionPolicy {
+    #[new]
+    #[pyo3(signature = (*, side, recordings, declared_positions = Vec::new()))]
+    fn new(side: u64, recordings: String, declared_positions: Vec<u64>) -> Self {
+        Self {
+            side,
+            recordings,
+            declared_positions,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ReconstructionPolicy(side={}, recordings={:?})",
+            self.side, self.recordings
+        )
+    }
+}
+
+impl ReconstructionPolicy {
+    fn to_core(&self) -> PyResult<remanence::ReconstructionPolicy> {
+        Ok(remanence::ReconstructionPolicy {
+            side: self.side,
+            recordings: match self.recordings.as_str() {
+                "measured" => remanence::RecordingSelection::Measured,
+                "declared" => {
+                    remanence::RecordingSelection::Declared(self.declared_positions.clone())
+                }
+                other => {
+                    return Err(unadmitted(
+                        "recording selection",
+                        other,
+                        &["measured", "declared"],
+                    ));
+                }
+            },
+        })
+    }
+}
+
+/// One reconstructed orbit, as the plan reports it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ReconstructedOrbit {
+    /// The instrument position the orbit was read at — capture
+    /// provenance, not a fact of the medium.
+    pub position: u64,
+    /// Where the orbit is: the rig's radius at that position.
+    pub radius_microns: u64,
+    pub revolutions: u32,
+    /// Raw transitions per revolution, before alignment.
+    pub transition_counts: Vec<u32>,
+    /// The count-spread discriminator, in permille of the largest.
+    pub count_spread_permille: u32,
+    pub points: u64,
+    pub coherent_points: u64,
+    pub unaligned_spans: u64,
+    /// The cell the closed revolution implies, in millidivisions.
+    pub implied_cell_millidivisions: u64,
+    /// Intervals kept off the lattice: the medium holding what the
+    /// crystal did not write.
+    pub off_lattice: u32,
+    /// Whether the fat-track merge admitted this orbit into the image.
+    pub admitted: bool,
+}
+
+#[pymethods]
+impl ReconstructedOrbit {
+    fn __repr__(&self) -> String {
+        format!(
+            "ReconstructedOrbit(position={}, radius_microns={}, points={}, admitted={})",
+            self.position,
+            self.radius_microns,
+            self.points,
+            if self.admitted { "True" } else { "False" }
+        )
+    }
+}
+
+/// What the reconstruction will produce, computed whole before anything
+/// is written.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct ReconstructionReport {
+    pub format_id: String,
+    pub side: u64,
+    /// Every position the capture holds on the side.
+    pub swept_positions: u32,
+    /// The positions the policy's selection names as recordings.
+    pub recorded_positions: Vec<u64>,
+    pub orbits: Vec<ReconstructedOrbit>,
+    /// What the image cannot carry of the capture. A count is not an
+    /// account, so each entry says what it was.
+    pub declared_loss: Vec<DeclaredLoss>,
+    /// What the reduction claims of what it did.
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl ReconstructionReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "ReconstructionReport(side={}, orbits={}, declared_loss={})",
+            self.side,
+            self.orbits.len(),
+            self.declared_loss.len()
+        )
+    }
+}
+
+impl ReconstructionReport {
+    fn new(report: &remanence::ReconstructionReport) -> Self {
+        Self {
+            format_id: report.format_id.to_owned(),
+            side: report.side,
+            swept_positions: report.swept_positions,
+            recorded_positions: report.recorded_positions.clone(),
+            orbits: report
+                .orbits
+                .iter()
+                .map(|orbit| ReconstructedOrbit {
+                    position: orbit.position,
+                    radius_microns: orbit.radius_microns,
+                    revolutions: orbit.revolutions,
+                    transition_counts: orbit.transition_counts.clone(),
+                    count_spread_permille: orbit.count_spread_permille,
+                    points: orbit.points,
+                    coherent_points: orbit.coherent_points,
+                    unaligned_spans: orbit.unaligned_spans,
+                    implied_cell_millidivisions: orbit.implied_cell_millidivisions,
+                    off_lattice: orbit.off_lattice,
+                    admitted: orbit.admitted,
+                })
+                .collect(),
+            declared_loss: declared_loss(&report.declared_loss),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// A planned reduction: everything computed, nothing written.
+#[pyclass(module = "remanence")]
+pub struct ReconstructionPlan {
+    inner: Option<remanence::ReconstructionPlan>,
+    report: ReconstructionReport,
+}
+
+#[pymethods]
+impl ReconstructionPlan {
+    /// What the reduction will produce, and everything the image will
+    /// not carry. Read before executing: executing adds nothing to it.
+    fn report(&self) -> ReconstructionReport {
+        self.report.clone()
+    }
+
+    /// Produces the remanence image. The capture is untouched, and at
+    /// most `cache_bytes` of the image's points stay resident.
+    ///
+    /// What comes back is the family's ordinary `RemanenceImage` — the
+    /// same handle a `.remanence` artifact opens to — carrying this
+    /// reduction's declared policy and evidence as its provenance.
+    #[pyo3(signature = (*, cache_bytes = None))]
+    fn execute(&mut self, cache_bytes: Option<u64>) -> PyResult<RemanenceImage> {
+        let plan = self.inner.take().ok_or_else(|| {
+            categorized_py_err(
+                remanence::ErrorCategory::Io,
+                "plan has already been executed",
+            )
+        })?;
+        let image = plan
+            .execute(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+            .map_err(to_py_err)?;
+        let report = RemanenceImageReport::new(&image.inspect());
+        Ok(RemanenceImage {
+            inner: Some(image),
+            report,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ReconstructionPlan(side={}, orbits={})",
+            self.report.side,
+            self.report.orbits.len()
+        )
+    }
+}
+
 /// One CBM DOS block, by the address the recording states for it.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
@@ -4540,6 +4772,10 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RemanenceHole>()?;
     m.add_class::<RemanenceOrbit>()?;
     m.add_class::<RemanenceWriteReport>()?;
+    m.add_class::<ReconstructionPolicy>()?;
+    m.add_class::<ReconstructionPlan>()?;
+    m.add_class::<ReconstructionReport>()?;
+    m.add_class::<ReconstructedOrbit>()?;
     m.add_class::<D64Report>()?;
     m.add_class::<D64Block>()?;
     m.add_class::<G64Report>()?;

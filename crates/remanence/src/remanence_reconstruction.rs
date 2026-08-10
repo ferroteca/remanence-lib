@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The gap-first reconstruction (F65): the P29 reduction from an
-//! opened capture to a remanence image, on the strength of all the
-//! evidence rather than the choice of one revolution.
+//! The gap-first reconstruction: the P29 reduction from an opened
+//! capture to a remanence image, on the strength of all the evidence
+//! rather than the choice of one revolution.
 //!
 //! Per location: every revolution is aligned to the first by gap
 //! correspondence; the cell lattice is measured from the transfer's
@@ -20,7 +20,13 @@
 //! and writes nothing, a declared-loss account naming what the image
 //! cannot carry, and the survey's facts riding provenance with their
 //! basis — evidenced, measured, assumed — stated per fact.
-#![allow(dead_code)]
+//!
+//! **The reduction answers with the image itself**, not a second root
+//! beside it: what a caller holds afterwards is the same
+//! [`RemanenceImage`] a `.remanence` artifact opens to, carrying this
+//! reduction's policy and evidence as its provenance. The account of
+//! how it came to be belongs to the *plan*, which computed it before
+//! anything was written.
 
 use crate::error::{Error, Result};
 use crate::evidence::{LossAccount, Provenance};
@@ -114,13 +120,14 @@ pub struct ReconstructionReport {
     pub evidence: Vec<String>,
 }
 
+#[derive(Debug)]
 struct PlannedOrbit {
-    position: u64,
     radius_microns: u64,
     points: Vec<OrbitPoint>,
 }
 
 /// The computed reduction: everything decided, nothing written.
+#[derive(Debug)]
 pub struct ReconstructionPlan {
     planned: Vec<PlannedOrbit>,
     policy: Provenance,
@@ -128,6 +135,9 @@ pub struct ReconstructionPlan {
 }
 
 impl ReconstructionPlan {
+    /// What the reduction will produce, and what it will leave behind —
+    /// computed whole, before anything is written. Read it and then
+    /// decide: executing adds nothing to the account (P29).
     pub fn report(&self) -> &ReconstructionReport {
         &self.report
     }
@@ -135,7 +145,11 @@ impl ReconstructionPlan {
     /// Produces the remanence image, streaming each admitted orbit's
     /// packed points into private session storage under `cache_bytes`
     /// of working set (P27).
-    pub fn execute(&self, cache_bytes: u64) -> Result<RemanenceDisk> {
+    ///
+    /// The image is the family's ordinary physical stratum — the same
+    /// root a `.remanence` artifact opens to — and carries this
+    /// reduction's declared policy and evidence as its provenance.
+    pub fn execute(&self, cache_bytes: u64) -> Result<RemanenceImage> {
         let sink = crate::flux_capture::SessionBacking::create()?;
         let mut builder = RemanenceImageBuilder::to_sink(
             MediaFormFactor::Inch525,
@@ -154,35 +168,7 @@ impl ReconstructionPlan {
         }
         let (mut image, sink, total) = builder.seal()?;
         image.attach_backing(sink.into_source(), total, cache_bytes);
-        Ok(RemanenceDisk {
-            image,
-            report: self.report.clone(),
-        })
-    }
-}
-
-/// A reconstructed disk: the remanence image and the account of how it
-/// came to be.
-pub struct RemanenceDisk {
-    image: RemanenceImage,
-    report: ReconstructionReport,
-}
-
-impl RemanenceDisk {
-    pub fn report(&self) -> &ReconstructionReport {
-        &self.report
-    }
-
-    pub fn backing_bytes(&self) -> u64 {
-        self.image.backing_bytes()
-    }
-
-    pub fn resident_bytes(&self) -> u64 {
-        self.image.resident_bytes()
-    }
-
-    pub(crate) fn image(&self) -> &RemanenceImage {
-        &self.image
+        Ok(image)
     }
 }
 
@@ -611,7 +597,6 @@ pub(crate) fn plan(
         });
         if keep {
             planned.push(PlannedOrbit {
-                position: orbit.position,
                 radius_microns: radius_microns_at(orbit.position),
                 points: orbit.points.clone(),
             });
@@ -831,13 +816,12 @@ mod tests {
             report.recorded_positions
         );
 
-        let disk = plan.execute(crate::cache::DEFAULT_CACHE_BYTES).expect("the plan executes");
+        let image = plan.execute(crate::cache::DEFAULT_CACHE_BYTES).expect("the plan executes");
         let golden =
             crate::remanence_format::from_bytes(&golden_bytes).expect("the golden decodes");
 
         // The same orbits at the same radii.
-        let mine: std::collections::BTreeMap<u64, u64> = disk
-            .image()
+        let mine: std::collections::BTreeMap<u64, u64> = image
             .orbits()
             .map(|orbit| (orbit.key().radius_microns(), orbit.points()))
             .collect();

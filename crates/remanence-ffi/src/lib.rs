@@ -8716,6 +8716,402 @@ pub unsafe extern "C" fn remanence_image_write_p64(
     }
 }
 
+// ------------------------------------------- the gap-first reconstruction
+//
+// Reducing an opened capture to one remanence image on the strength of
+// all the evidence rather than the choice of one revolution. The plan
+// computes everything and writes nothing; executing it answers with the
+// family's ordinary image handle rather than a root of its own.
+
+use remanence::{ReconstructionPlan, ReconstructionPolicy, RecordingSelection};
+
+/// How the reduction decides which instrument positions hold
+/// recordings.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceRecordingSelection {
+    /// Measured from the evidence: a position records where its
+    /// revolutions resolve the same transitions.
+    Measured = 0,
+    /// The caller's own assertion, checked to exist and honoured.
+    Declared = 1,
+}
+
+/// The complete declared policy for one reduction. There is no default:
+/// a reduction the policy does not name is a refusal.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceReconstructionPolicy {
+    /// Which recorded side the image is reconstructed from. Sides are
+    /// never merged or averaged.
+    pub side: u64,
+    pub recordings: RemanenceRecordingSelection,
+    /// The declared positions, ascending. Read only when `recordings`
+    /// is `Declared`, and ignored otherwise.
+    pub declared_positions: *const u64,
+    pub declared_position_count: usize,
+}
+
+/// One reconstructed orbit, as the plan reports it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RemanenceReconstructedOrbit {
+    /// The instrument position the orbit was read at — capture
+    /// provenance, not a fact of the medium.
+    pub position: u64,
+    /// Where the orbit is: the rig's radius at that position.
+    pub radius_microns: u64,
+    pub revolutions: u32,
+    /// The count-spread discriminator, in permille of the largest.
+    pub count_spread_permille: u32,
+    pub points: u64,
+    pub coherent_points: u64,
+    pub unaligned_spans: u64,
+    /// The cell the closed revolution implies, in millidivisions.
+    pub implied_cell_millidivisions: u64,
+    /// Intervals kept off the lattice: the medium holding what the
+    /// crystal did not write.
+    pub off_lattice: u32,
+    /// Whether the fat-track merge admitted this orbit into the image.
+    pub admitted: bool,
+}
+
+struct ReconstructionView {
+    format_id: CString,
+    loss_codes: Vec<CString>,
+    loss_details: Vec<CString>,
+    evidence: Vec<CString>,
+}
+
+impl ReconstructionView {
+    fn new(report: &remanence::ReconstructionReport) -> Self {
+        Self {
+            format_id: to_cstring(report.format_id),
+            loss_codes: report
+                .declared_loss
+                .iter()
+                .map(|loss| to_cstring(&loss.code))
+                .collect(),
+            loss_details: report
+                .declared_loss
+                .iter()
+                .map(|loss| to_cstring(&loss.detail))
+                .collect(),
+            evidence: report.evidence.iter().map(|line| to_cstring(line)).collect(),
+        }
+    }
+}
+
+/// A planned reduction: everything computed, nothing written.
+pub struct RemanenceReconstructionPlan {
+    plan: Option<ReconstructionPlan>,
+    report: remanence::ReconstructionReport,
+    view: ReconstructionView,
+}
+
+/// Plans the gap-first reconstruction of a capture set into one
+/// remanence image. Nothing is written and nothing is mutated: the plan
+/// computes the whole reduction and enumerates everything the image
+/// cannot carry in the capture's own terms. Returns null on failure and
+/// stores a message in `error_out` (free with `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_capture_set_plan_reconstruction(
+    set: *const RemanenceCaptureSet,
+    policy: *const RemanenceReconstructionPolicy,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceReconstructionPlan {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let (Some(set), Some(policy)) = (unsafe { set.as_ref() }, unsafe { policy.as_ref() }) else {
+        let error = remanence::Error::io("null capture set or policy");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let recordings = match policy.recordings {
+        RemanenceRecordingSelection::Measured => RecordingSelection::Measured,
+        RemanenceRecordingSelection::Declared => {
+            // An empty declaration is the caller's own, and is carried
+            // rather than silently promoted to a measurement.
+            let positions = if policy.declared_positions.is_null()
+                || policy.declared_position_count == 0
+            {
+                Vec::new()
+            } else {
+                unsafe {
+                    std::slice::from_raw_parts(
+                        policy.declared_positions,
+                        policy.declared_position_count,
+                    )
+                }
+                .to_vec()
+            };
+            RecordingSelection::Declared(positions)
+        }
+    };
+    let policy = ReconstructionPolicy {
+        side: policy.side,
+        recordings,
+    };
+    match set.set.plan_reconstruction(&policy) {
+        Ok(plan) => {
+            let report = plan.report().clone();
+            let view = ReconstructionView::new(&report);
+            Box::into_raw(Box::new(RemanenceReconstructionPlan {
+                plan: Some(plan),
+                report,
+                view,
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a plan handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_plan_free(
+    plan: *mut RemanenceReconstructionPlan,
+) {
+    if !plan.is_null() {
+        drop(unsafe { Box::from_raw(plan) });
+    }
+}
+
+/// Produces the remanence image the plan described, consuming the plan:
+/// the handle is freed whether this succeeds or fails, and must not be
+/// used again. At most `cache_bytes` of the image's points stay resident
+/// (P27). What comes back is the family's ordinary image handle, freed
+/// with `remanence_image_free`. Returns null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_plan_execute(
+    plan: *mut RemanenceReconstructionPlan,
+    cache_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceImage {
+    unsafe { clear_error(error_out, error_rule_out) };
+    if plan.is_null() {
+        let error = remanence::Error::io("null plan");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let owned = unsafe { Box::from_raw(plan) };
+    let RemanenceReconstructionPlan {
+        plan: Some(plan), ..
+    } = *owned
+    else {
+        let error = remanence::Error::io("plan has already been executed");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match plan.execute(cache_bytes) {
+        Ok(image) => {
+            let report = image.inspect();
+            let view = ImageView::new(&image, &report);
+            Box::into_raw(Box::new(RemanenceImage {
+                image,
+                report,
+                view,
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// The artifact format the reduction produces: `"remanence"`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_format_id(
+    plan: *const RemanenceReconstructionPlan,
+) -> *const c_char {
+    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| plan.view.format_id.as_ptr())
+}
+
+/// The side the image is reconstructed from.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_side(
+    plan: *const RemanenceReconstructionPlan,
+) -> u64 {
+    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.side)
+}
+
+/// Every instrument position the capture holds on that side.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_swept_positions(
+    plan: *const RemanenceReconstructionPlan,
+) -> u32 {
+    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.swept_positions)
+}
+
+/// How many of them the policy's selection names as recordings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_recorded_position_count(
+    plan: *const RemanenceReconstructionPlan,
+) -> usize {
+    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.recorded_positions.len())
+}
+
+/// One of them, written into `out`. False when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_recorded_position(
+    plan: *const RemanenceReconstructionPlan,
+    index: usize,
+    out: *mut u64,
+) -> bool {
+    let (Some(plan), false) = (unsafe { plan.as_ref() }, out.is_null()) else {
+        return false;
+    };
+    let Some(position) = plan.report.recorded_positions.get(index) else {
+        return false;
+    };
+    unsafe { *out = *position };
+    true
+}
+
+/// How many orbits the reduction describes — every position it
+/// reconstructed, admitted into the image or not.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_orbit_count(
+    plan: *const RemanenceReconstructionPlan,
+) -> usize {
+    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.orbits.len())
+}
+
+/// One of them, written into `out`. False when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_orbit(
+    plan: *const RemanenceReconstructionPlan,
+    index: usize,
+    out: *mut RemanenceReconstructedOrbit,
+) -> bool {
+    let (Some(plan), false) = (unsafe { plan.as_ref() }, out.is_null()) else {
+        return false;
+    };
+    let Some(orbit) = plan.report.orbits.get(index) else {
+        return false;
+    };
+    unsafe {
+        *out = RemanenceReconstructedOrbit {
+            position: orbit.position,
+            radius_microns: orbit.radius_microns,
+            revolutions: orbit.revolutions,
+            count_spread_permille: orbit.count_spread_permille,
+            points: orbit.points,
+            coherent_points: orbit.coherent_points,
+            unaligned_spans: orbit.unaligned_spans,
+            implied_cell_millidivisions: orbit.implied_cell_millidivisions,
+            off_lattice: orbit.off_lattice,
+            admitted: orbit.admitted,
+        };
+    }
+    true
+}
+
+/// One orbit's raw transition count for one revolution, before
+/// alignment — the evidence the count-spread discriminator reads.
+/// False when either index is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_orbit_transitions(
+    plan: *const RemanenceReconstructionPlan,
+    orbit_index: usize,
+    revolution_index: usize,
+    out: *mut u32,
+) -> bool {
+    let (Some(plan), false) = (unsafe { plan.as_ref() }, out.is_null()) else {
+        return false;
+    };
+    let Some(count) = plan
+        .report
+        .orbits
+        .get(orbit_index)
+        .and_then(|orbit| orbit.transition_counts.get(revolution_index))
+    else {
+        return false;
+    };
+    unsafe { *out = *count };
+    true
+}
+
+/// How many kinds of loss the image cannot carry of the capture.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_declared_loss_count(
+    plan: *const RemanenceReconstructionPlan,
+) -> usize {
+    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.declared_loss.len())
+}
+
+/// One loss entry's stable code, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_declared_loss_code(
+    plan: *const RemanenceReconstructionPlan,
+    index: usize,
+) -> *const c_char {
+    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| {
+        plan.view
+            .loss_codes
+            .get(index)
+            .map_or(ptr::null(), |code| code.as_ptr())
+    })
+}
+
+/// What was lost, in the capture's own terms. A count is not an
+/// account.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_declared_loss_detail(
+    plan: *const RemanenceReconstructionPlan,
+    index: usize,
+) -> *const c_char {
+    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| {
+        plan.view
+            .loss_details
+            .get(index)
+            .map_or(ptr::null(), |detail| detail.as_ptr())
+    })
+}
+
+/// How much of it there was, in whatever the detail counts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_declared_loss_amount(
+    plan: *const RemanenceReconstructionPlan,
+    index: usize,
+) -> u64 {
+    unsafe { plan.as_ref() }.map_or(0, |plan| {
+        plan.report
+            .declared_loss
+            .get(index)
+            .map_or(0, |loss| loss.count)
+    })
+}
+
+/// How many lines of evidence the reduction states for what it did
+/// (P4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_evidence_count(
+    plan: *const RemanenceReconstructionPlan,
+) -> usize {
+    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.evidence.len())
+}
+
+/// One of them, or null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_reconstruction_evidence(
+    plan: *const RemanenceReconstructionPlan,
+    index: usize,
+) -> *const c_char {
+    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| {
+        plan.view
+            .evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

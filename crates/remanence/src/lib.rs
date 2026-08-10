@@ -53,6 +53,17 @@
 //! verb that computes everything and writes nothing, and each stating
 //! what its destination did not carry (P29).
 //!
+//! **A capture reduces to one of those images.**
+//! [`CaptureSet::plan_reconstruction`] takes a declared
+//! [`ReconstructionPolicy`] and computes the whole gap-first reduction
+//! without writing anything — every revolution of every location
+//! aligned by gap correspondence, the cell lattice measured from the
+//! intervals themselves, the angles integrated gap-first, and the fat
+//! track merged under measured agreement. [`ReconstructionPlan::report`]
+//! is that reduction stated whole, and [`ReconstructionPlan::execute`]
+//! answers with the [`RemanenceImage`] itself rather than a root of its
+//! own.
+//!
 //! Every open also states what it established about the evidence beneath
 //! it ([`StorageDevice::assurance`]): a source short of what its own
 //! interpretation declares is read as far as it truthfully goes,
@@ -147,6 +158,10 @@ pub use report::{
 pub use p64::{P64HalfTrack, P64Image, P64Report};
 pub use remanence_format::RemanenceWriteReport;
 pub use remanence_image::{RemanenceHole, RemanenceImage, RemanenceImageReport, RemanenceOrbit};
+pub use remanence_reconstruction::{
+    ReconstructedOrbit, ReconstructionPlan, ReconstructionPolicy, ReconstructionReport,
+    RecordingSelection,
+};
 pub use storage_device::{AttachmentId, StorageDevice};
 pub use session::{
     ArchiveLayout, DiskLayout, FilesystemLayout, Identification, ImageLayout, Layer, LayerKind,

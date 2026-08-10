@@ -1147,12 +1147,11 @@ mod tests {
             },
         )
         .expect("the reduction plans");
-        let disk = plan
+        let image = plan
             .execute(crate::cache::DEFAULT_CACHE_BYTES)
             .expect("the plan executes");
 
         // ---- d64: block-for-block against the lineage ----
-        let image = disk.image();
         let (mine, report) = image.d64_artifact().expect("the d64 assembles");
         assert!(
             report.blocks_read >= 600,

@@ -962,9 +962,30 @@ impl CaptureSet {
         crate::c1541_mastering::plan(&self.capture, policy)
     }
 
+    /// Plans the gap-first reconstruction of this capture into one
+    /// remanence image under a declared policy (P29).
+    ///
+    /// Nothing is written and nothing is mutated: the plan computes the
+    /// whole reduction — every revolution of every location aligned by
+    /// gap correspondence, the cell lattice measured from the intervals
+    /// themselves, the angles integrated gap-first, coherence decided
+    /// per transition, and the fat track merged under measured
+    /// agreement — reports the image it will produce, and enumerates
+    /// everything that image cannot carry in the capture's own terms. A
+    /// reduction the policy does not name is a refusal rather than a
+    /// default, so the plan either accounts for the whole capture or
+    /// does not exist.
+    pub fn plan_reconstruction(
+        &self,
+        policy: &crate::ReconstructionPolicy,
+    ) -> Result<crate::ReconstructionPlan> {
+        crate::remanence_reconstruction::plan(&self.capture, policy)
+    }
+
     /// The capture model this set opened — the evidence the flux
-    /// reductions consume. Reached by the remanence reduction's tests
-    /// today; the surface verb arrives with that reduction.
+    /// reduction consumes. The reduction reaches it through
+    /// [`plan_reconstruction`](Self::plan_reconstruction); this is the
+    /// same model, for the tests that build one directly.
     #[allow(dead_code)]
     pub(crate) fn capture(&self) -> &FluxCapture {
         &self.capture

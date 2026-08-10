@@ -210,6 +210,16 @@ typedef enum {
   REMANENCE_LETTER_OUTCOME_UNDETERMINED = 3,
 } RemanenceLetterOutcome;
 
+// How the reduction decides which instrument positions hold
+// recordings.
+typedef enum {
+  // Measured from the evidence: a position records where its
+  // revolutions resolve the same transitions.
+  REMANENCE_RECORDING_SELECTION_MEASURED = 0,
+  // The caller's own assertion, checked to exist and honoured.
+  REMANENCE_RECORDING_SELECTION_DECLARED = 1,
+} RemanenceRecordingSelection;
+
 // One open's assurance state (P28). Free with
 // `remanence_assurance_free`; the strings it returns are owned by it.
 typedef struct RemanenceAssurance RemanenceAssurance;
@@ -305,6 +315,9 @@ typedef struct RemanenceP64Report RemanenceP64Report;
 
 // A recognition result, ranked highest confidence first.
 typedef struct RemanenceRecognition RemanenceRecognition;
+
+// A planned reduction: everything computed, nothing written.
+typedef struct RemanenceReconstructionPlan RemanenceReconstructionPlan;
 
 // An open session: the claim and cache scope, holding the machines
 // within it (P32).
@@ -512,6 +525,41 @@ typedef struct {
   // its own measured figure was not a recording's.
   bool clocked_at_nominal;
 } RemanenceG64HalfTrack;
+
+// The complete declared policy for one reduction. There is no default:
+// a reduction the policy does not name is a refusal.
+typedef struct {
+  // Which recorded side the image is reconstructed from. Sides are
+  // never merged or averaged.
+  uint64_t side;
+  RemanenceRecordingSelection recordings;
+  // The declared positions, ascending. Read only when `recordings`
+  // is `Declared`, and ignored otherwise.
+  const uint64_t *declared_positions;
+  size_t declared_position_count;
+} RemanenceReconstructionPolicy;
+
+// One reconstructed orbit, as the plan reports it.
+typedef struct {
+  // The instrument position the orbit was read at — capture
+  // provenance, not a fact of the medium.
+  uint64_t position;
+  // Where the orbit is: the rig's radius at that position.
+  uint64_t radius_microns;
+  uint32_t revolutions;
+  // The count-spread discriminator, in permille of the largest.
+  uint32_t count_spread_permille;
+  uint64_t points;
+  uint64_t coherent_points;
+  uint64_t unaligned_spans;
+  // The cell the closed revolution implies, in millidivisions.
+  uint64_t implied_cell_millidivisions;
+  // Intervals kept off the lattice: the medium holding what the
+  // crystal did not write.
+  uint32_t off_lattice;
+  // Whether the fat-track merge admitted this orbit into the image.
+  bool admitted;
+} RemanenceReconstructedOrbit;
 
 #ifdef __cplusplus
 extern "C" {
@@ -2652,6 +2700,89 @@ RemanenceP64Report *remanence_image_write_p64(const RemanenceImage *image,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
                                               char **error_rule_out);
+
+// Plans the gap-first reconstruction of a capture set into one
+// remanence image. Nothing is written and nothing is mutated: the plan
+// computes the whole reduction and enumerates everything the image
+// cannot carry in the capture's own terms. Returns null on failure and
+// stores a message in `error_out` (free with `remanence_string_free`).
+RemanenceReconstructionPlan *remanence_capture_set_plan_reconstruction(const RemanenceCaptureSet *set,
+                                                                       const RemanenceReconstructionPolicy *policy,
+                                                                       RemanenceErrorCategory *error_category_out,
+                                                                       char **error_out,
+                                                                       char **error_rule_out);
+
+// Frees a plan handle.
+void remanence_reconstruction_plan_free(RemanenceReconstructionPlan *plan);
+
+// Produces the remanence image the plan described, consuming the plan:
+// the handle is freed whether this succeeds or fails, and must not be
+// used again. At most `cache_bytes` of the image's points stay resident
+// (P27). What comes back is the family's ordinary image handle, freed
+// with `remanence_image_free`. Returns null on failure.
+RemanenceImage *remanence_reconstruction_plan_execute(RemanenceReconstructionPlan *plan,
+                                                      uint64_t cache_bytes,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out,
+                                                      char **error_rule_out);
+
+// The artifact format the reduction produces: `"remanence"`.
+const char *remanence_reconstruction_format_id(const RemanenceReconstructionPlan *plan);
+
+// The side the image is reconstructed from.
+uint64_t remanence_reconstruction_side(const RemanenceReconstructionPlan *plan);
+
+// Every instrument position the capture holds on that side.
+uint32_t remanence_reconstruction_swept_positions(const RemanenceReconstructionPlan *plan);
+
+// How many of them the policy's selection names as recordings.
+size_t remanence_reconstruction_recorded_position_count(const RemanenceReconstructionPlan *plan);
+
+// One of them, written into `out`. False when out of range.
+bool remanence_reconstruction_recorded_position(const RemanenceReconstructionPlan *plan,
+                                                size_t index,
+                                                uint64_t *out);
+
+// How many orbits the reduction describes — every position it
+// reconstructed, admitted into the image or not.
+size_t remanence_reconstruction_orbit_count(const RemanenceReconstructionPlan *plan);
+
+// One of them, written into `out`. False when out of range.
+bool remanence_reconstruction_orbit(const RemanenceReconstructionPlan *plan,
+                                    size_t index,
+                                    RemanenceReconstructedOrbit *out);
+
+// One orbit's raw transition count for one revolution, before
+// alignment — the evidence the count-spread discriminator reads.
+// False when either index is out of range.
+bool remanence_reconstruction_orbit_transitions(const RemanenceReconstructionPlan *plan,
+                                                size_t orbit_index,
+                                                size_t revolution_index,
+                                                uint32_t *out);
+
+// How many kinds of loss the image cannot carry of the capture.
+size_t remanence_reconstruction_declared_loss_count(const RemanenceReconstructionPlan *plan);
+
+// One loss entry's stable code, or null when out of range.
+const char *remanence_reconstruction_declared_loss_code(const RemanenceReconstructionPlan *plan,
+                                                        size_t index);
+
+// What was lost, in the capture's own terms. A count is not an
+// account.
+const char *remanence_reconstruction_declared_loss_detail(const RemanenceReconstructionPlan *plan,
+                                                          size_t index);
+
+// How much of it there was, in whatever the detail counts.
+uint64_t remanence_reconstruction_declared_loss_amount(const RemanenceReconstructionPlan *plan,
+                                                       size_t index);
+
+// How many lines of evidence the reduction states for what it did
+// (P4).
+size_t remanence_reconstruction_evidence_count(const RemanenceReconstructionPlan *plan);
+
+// One of them, or null when out of range.
+const char *remanence_reconstruction_evidence(const RemanenceReconstructionPlan *plan,
+                                              size_t index);
 
 #ifdef __cplusplus
 }  // extern "C"

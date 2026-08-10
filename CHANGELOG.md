@@ -20,6 +20,60 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A KryoFlux capture reduces to a remanence image on the strength of
+  all the evidence, not the choice of one revolution.**
+  `CaptureSet::plan_reconstruction` takes a declared policy — which
+  recorded side, and whether the positions holding recordings are
+  measured from the evidence or declared by the caller — and computes
+  the whole gap-first reduction without writing anything. Every
+  revolution of every location is aligned by **gap correspondence**
+  (identity lives in the interval sequence, position in the angles); the
+  **cell lattice** is measured from the intervals themselves; each
+  revolution's spindle wander is corrected by a fitted **timebase
+  warp**; angles are produced **gap-first** — snapped to the lattice
+  where the crystal wrote them, kept and reported where the medium holds
+  them off-lattice consistently across revolutions, integrated so
+  closure solves the cell exactly; coherence is decided per transition
+  and incoherent runs become `Unaligned` spans; and adjacent steps
+  carrying the same recording merge under measured agreement, **the fat
+  track measured rather than asserted**.
+
+  **The reduction answers with the image itself.** `execute` returns the
+  family's ordinary `RemanenceImage` — the same root a `.remanence`
+  artifact opens to, and the same one the d64, g64 and p64 renditions
+  hang on — carrying the reduction's declared policy and evidence as its
+  provenance. There is no second root beside it: the account of how the
+  image came to be belongs to the *plan*, which computed it before
+  anything was written, and executing adds nothing to that account.
+
+  **The plan's report is the reduction stated whole**: the side, every
+  step position the capture swept, the positions its selection names as
+  recordings, and per orbit where the instrument read it, where it
+  actually sits in whole microns, how many revolutions stood behind it,
+  each revolution's raw transition count, the count-spread discriminator
+  in permille, the points and coherent points and unaligned spans it
+  produced, the cell its closed revolution implies, how many intervals
+  it kept off the lattice, and whether the fat-track merge admitted it.
+  Beside that the declared-loss account — the unselected side, positions
+  whose evidence names no recording, marker channels, capture metadata,
+  retained foreign records, and flux recorded outside any bounded
+  revolution — and the survey's facts with their basis stated per fact:
+  **evidenced**, **measured**, **assumed**.
+
+  In C: `remanence_capture_set_plan_reconstruction` with
+  `RemanenceReconstructionPolicy`, the `remanence_reconstruction_*`
+  accessors over the positions, the orbits and the account, and
+  `remanence_reconstruction_plan_execute`, which consumes the plan and
+  answers with a `RemanenceImage *`. The example consumer gains
+  `identify --reconstruct <capture> [side]`. In Python:
+  `CaptureSet.plan_reconstruction`, with `ReconstructionPolicy`,
+  `ReconstructionPlan`, `ReconstructionReport` and `ReconstructedOrbit`,
+  and `plan.execute()` answering with a `RemanenceImage`.
+
+  The selected-observation mastering reduction stands unchanged beside
+  it: two reductions of one capture, to two different destinations, each
+  declaring its own policy.
+
 - **The C64 renditions are mastered off the remanence image: d64, g64 and
   p64.** A `RemanenceImage` renders to all three — P29 acting where only
   the destination varies — and each is claimed twice: `describe_d64`,
