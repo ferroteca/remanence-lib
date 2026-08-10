@@ -13,7 +13,7 @@ ever reused.
 
 | Class | Next number to issue |
 |---|---:|
-| U | 25 |
+| U | 35 |
 | P | 36 |
 | S | 5 |
 | D | 28 |

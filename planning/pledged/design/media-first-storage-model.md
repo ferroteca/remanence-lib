@@ -38,7 +38,10 @@ Session::new()                                 OWNED root
    │                                  stay pooled) → release devices → machine
    │
    ├── MEDIA POOL — state, independent of every machine
-   │     .load_media(source, format, intent)?  → &mut Medium   declared reading
+   │     .load_media(source, format)?  → &mut Medium    declared reading —
+   │                                     the source: the caller's own opened
+   │                                     std::fs::File(s), or File(s) from
+   │                                     another medium's namespace
    │     .new_media(kind)?                     → &mut Medium   authored
    │     .medium(id) → Option · .media()
    │     .release_media(id)?          severs its own link if inserted, then ends
@@ -54,25 +57,30 @@ Machine "pc"                                   identity (a real name, never null
    │   ★ .namespace()?  → MachineSpace        P35's seat (plumbing later)
    │     .compose_dos_letters()               its derived-mapping half, delivered
    ▼
-StorageDevice hdd0                             config only: slot · family
+StorageDevice hdd0                             config only: slot · device type
    │     .insert(media_id)? / .eject()?       the ONE edge crossing config→state:
-   │     .medium() → Option<&mut Medium>      family/media-type check at insert;
+   │     .medium() → Option<&mut Medium>      device-type equality at insert;
    │                                          eject severs — claim and buffered
    │                                          writes SURVIVE in the pool
    │   ★ presentations later: .chs()? · .hardware(contract)?     P15's seat
    ▼
 Medium                                         pool-owned, holdable — ALL content
-   │     media_type · article · recording facts (geometry…) · mode · assurance
+   │     device_type · article · recording facts (geometry…) · mode · assurance
    │     .get_sector(…)? / .put_sector(…)?  · .read_at()? · .commit()? / .rollback()?
    │     .bitstream()? / .bytestream()?       kind-declared rules, no arguments
    │
-   ├── PARTITION POOL — evidence (the direct partition when scheme: None)
+   ├── PARTITION POOL — populated under the DEVICE SPEC, never probed
+   │                                   the spec's scheme (MBR, GPT) checked
+   │                                   at load; the schemeless types bear
+   │                                   the direct partition
    │     .partition(1) → Option · .partitions()
    │       ▼
    │     Partition — raw type + reading · extent · role · .active()
-   │       │   .as_type("dos-primary")?       a declared reading, checked
+   │       │   .as_type(PartitionType::DosPrimary)?   a declared reading, checked
    │       │   .volume()     → Option<&mut StorageSpace>   the vantage doors:
    │       │   .filesystem() → Option<&mut StorageSpace>   same node behind both
+   │       │   .filesystem_as(id)?            the declared reading where no
+   │       │                                  partition type determines one
    │       ▼
    │     StorageSpace — ONE node, TWO vantage traits (D26)
    │           volume: .read_at()? / .write_at()?   within the extent
@@ -107,41 +115,98 @@ Medium                                         pool-owned, holdable — ALL cont
    on conflict) or authored at creation — never declared onto an
    existing medium.
 5. **Creation grammar.** Every creation verb declares a **concrete
-   catalog entry by its stable id** and the check is that entry's own:
-   `load_media` a format (`zip`, `kryoflux { disk }`, `qcow2 { disk }`),
-   `new_media` an authored kind, `as_type` a partition type. A
-   classification ("archive", "some floppy") can check nothing and is
-   refused as a declaration.
-6. **Source shapes.** `load_media` reads one artifact however reached:
-   a host path; a collection of host paths; a `File` inside another
-   medium's namespace; a collection of `File`s. A format declares
+   catalog entry by its enumerated identifier** and the check is that
+   entry's own: `load_media` a format (`Format::Zip`,
+   `KryoFlux { device: FloppyDrive::… }`, `Qcow2 { device: HardDrive::… }`),
+   `new_media` an authored kind, `as_type` a partition type
+   (`PartitionType::DosPrimary`). A classification ("archive", "some
+   floppy") can check nothing and is refused as a declaration.
+6. **Source shapes, and whose lock.** `load_media` reads one artifact
+   however reached: an opened `std::fs::File` — the portable file, the
+   caller's own open — or a collection of them; a `File` inside another
+   medium's namespace, or a collection of those. A format declares
    which source shape it reads (KryoFlux: a collection; zip: one
-   artifact), as it declares everything else.
-7. **The media catalog has two levels.** **Media types** are concrete —
-   `c1541-disk`, `h17-disk`, `chs-hd-disk`, `lba-hd-disk`,
-   `zip-archive`, `blank-5.25-soft` — and compose **articles**, the
+   artifact), as it declares everything else. **Whoever opens owns the
+   lock.** A local artifact's claim is the caller's open, checked for
+   exactly one thing — may the library write through it? — and honoured
+   exactly: never escalated through a recovered name, never
+   supplemented with locks of the library's own, the claim's class
+   recorded on the medium. A name recovered from a handle serves
+   location only — the commit journal's beside, a backing parent's
+   next door — under an identity check that the name still denotes the
+   handle's file; a nameless handle (memory-only, deleted-but-open)
+   refuses those location-dependent journeys by name and serves
+   everything else.
+7. **The catalog speaks in device types, and it is a hierarchy.** A
+   medium carries **one device type** — the device its content is
+   assumed recorded by — an enumerated identity in two levels: the
+   **class** (`Floppy`, `HardDrive`; `Optical` and `Tape` reserved
+   for the coming families), then the **concrete type** within it —
+   `Commodore1541` is a `FloppyDrive`, and is a `DeviceType`. The
+   granularity rule cuts the catalog: a device type is the coarsest
+   name that fixes the whole addressing surface and recording
+   discipline without per-media parameters — what the device fixes
+   lives in the type, what varies disk to disk lives on the medium.
+   The floppy class: `FloppyDrive::Commodore1541`, the flux product
+   class (encoding, speed zones, timings, tracks);
+   `FloppyDrive::HeathH17` and `FloppyDrive::HeathH37`, the Heathkit
+   product classes (hard- and soft-sectored); `FloppyDrive::Sector`,
+   the generic schemeless sector floppy, geometry per-media. The
+   hard-drive class — the machine vantages, the partition scheme part
+   of the spec: `HardDrive::MbrSector`, `HardDrive::MbrBlock`,
+   `HardDrive::Gpt` (GPT implying block addressing by its own
+   definition) — so every partition pool populates kind-determined,
+   the table checked at load, and no separate scheme declaration
+   exists. Archives were recorded by no device: `device_type()`
+   answers `Option`, absence being the honest answer. A type the
+   library does not know fails to compile; the catalog strings
+   (`c1541`, `mbr-block-hd`) survive as display forms in provenance,
+   refusals, and the S2/S3 spellings. Types compose **articles**, the
    passive physical substrate (P14 as delivered:
-   `flexible-5.25-soft`, `logical-block-512`, `virtual`). D19's three
-   facts keep three homes: the article's facts in the article, the
-   recording in the type, the drive's behavior in the profile. The
-   recognizing format names the concrete type (P14's rule, sharpened).
-8. **Kind-declared rules need no arguments.** Being a `c1541-disk`
-   *means* reading through the c1541 channel and codec:
-   `disk.bytestream()?` takes no policy because the media type carries
-   it (P30 declarations reached through the type). Deviation surfaces
+   `flexible-5.25-soft`, `flexible-5.25-hard-10`, `logical-block-512`,
+   `virtual`); D19's three facts keep three homes: the article's
+   facts in the article, the recording in the device type, the
+   drive's behavior in the profile. A format that admits one device
+   type carries it bare (`Format::H8d` → `FloppyDrive::HeathH17`,
+   `Format::P64` → `FloppyDrive::Commodore1541`); one that records
+   many declares it, the field typed by the class its adapter records
+   (`KryoFlux { device: FloppyDrive }`, `Qcow2 { device: HardDrive }`)
+   — a flux capture of a hard drive fails to compile — and a pairing
+   no adapter declares within the class is a named refusal (P14's
+   rule, sharpened). `PartitionType` follows the same enumerated
+   rule, declared and checked per partition.
+8. **Kind-declared rules need no arguments.** Being a `Commodore1541`
+   medium *means* reading through the c1541 channel and codec:
+   `disk.bytestream()?` takes no policy because the device type carries
+   it (P30 declarations reached through the type). The disciplines are
+   **flat attributes of the device-type profile — the traits live on
+   the medium**: the actions (`read_blocks`, `put_sector`,
+   `partition`) take shape as trait surfaces on `Medium`, each
+   answering only where the profile's attribute holds —
+   `Commodore1541`'s profile bears flux, so its medium answers the
+   flux questions — one type bearing several question surfaces
+   without the hierarchy encoding them: the D26 vantage-trait
+   pattern, generalized. Deviation surfaces
    are deferred. Likewise the reduction that creates a mastered medium
    runs under the profile's declared defaults; a choice no family
    convention can make refuses by name, and the answer goes into the
    `load_media` declaration.
-9. **Vantage doors.** A partition composes at most one `StorageSpace`
-   (an identity rule: both doors hand out the same node).
-   `.volume()` answers iff the addressable vantage exists;
-   `.filesystem()` iff the namespace vantage does. The doors are pure
-   lookups because composition (P17) and recognition (P18) ran at
-   partition-pool population. No phantom vantage is ever invented
-   (D26); a medium with no scheme bears the **direct partition** — the
-   library's own composition act, carried as provenance, never as
-   evidence.
+9. **Vantage doors — specified, never probed.** A partition composes
+   at most one `StorageSpace` (an identity rule: both doors hand out
+   the same node). `.volume()` answers iff the addressable vantage
+   exists; `.filesystem()` iff the namespace vantage does. The doors
+   are pure lookups because everything behind them was **specified and
+   verified**: the scheme is the device spec's own, checked against the
+   table at load — the schemeless types (flux, floppies, archives)
+   bearing the direct partition with no step; the namespace vantage
+   opens under the declared partition type where it determines one
+   (`DosPrimary` determines FAT) and under `filesystem_as` where
+   nothing does.
+   Verification reads evidence to *check* a reading and to *fill
+   values* under it; it never picks a reading — probing belongs to the
+   question tier. No phantom vantage is ever invented (D26); the
+   **direct partition** is the library's own composition act, carried
+   as provenance, never as evidence.
 10. **The edge.** `insert` / `eject` are the one crossing between
     configuration and state: insert checks the device family against
     the media type and refuses naming both sides; eject severs only —
@@ -163,129 +228,23 @@ Medium                                         pool-owned, holdable — ALL cont
 - **P35** — `machine.namespace()` is the machine-composed namespace's
   seat; `compose_dos_letters()` is its derived-mapping half, delivered.
 
-## Coded use cases
+## The use cases
 
-### 1 — A 1541 disk from capture files on the user's own filesystem
-
-The collection is host paths — nothing here is inside any image or
-archive. The user names the format and the disk it records; the member
-grammar, completeness, stream grammar, and the c1541 claim are all
-checked, and the reduction runs under the profile's declared defaults.
-
-```rust
-let mut session = Session::new();
-
-let disk = session.load_media(
-    &["captures/pcs00.0.raw", "captures/pcs00.1.raw" /* … all 168 … */],
-    Format::KryoFlux { disk: "c1541" },
-    AccessIntent::Read,
-)?;
-assert_eq!(disk.media_type(), "c1541-disk");
-
-let mut first = [0u8; 1];
-disk.bytestream()?                       // kind-declared channel + codec
-    .location(Location::track(1))?       // the family's first location
-    .read_at(0, &mut first)?;            // byte 0: the first FRAMED byte —
-                                         // nothing before sync is a byte
-```
-
-### 2 — The same disk from a zip, then the CBM DOS directory
-
-```rust
-let mut session = Session::new();
-
-let arc     = session.load_media("pcs_disk1.zip", Format::Zip, AccessIntent::Read)?;
-let members = arc
-    .partition(0).expect("an archive bears its direct partition")
-    .filesystem().expect("an archive's content is its namespace")
-    .files("")?;
-let disk    = session.load_media(members, Format::KryoFlux { disk: "c1541" })?;
-
-// flux media record no partition scheme, so: the direct partition —
-// and the filesystem door does real work: a protected or blank disk
-// honestly bears no namespace, and everything beneath stays readable.
-let Some(cbm) = disk
-    .partition(0).expect("an unpartitioned disk bears its direct partition")
-    .filesystem()
-else {
-    return Ok(());   // absence is the answer; sectors and streams still answer
-};
-
-println!("{}", cbm.label()?);            // 0 "PINBALL     " PC 2A — the BAM
-for entry in cbm.files("")? {            // header, and directory order is
-    println!(                            // evidence (U4)
-        "{:16} {:>4} {}",
-        entry.name,                      // PETSCII: raw + reading, untransliterated
-        entry.fact("blocks"),            // CBM records size in blocks
-        entry.fact("type"),              // PRG · SEQ · USR · REL, flags beside
-    );
-}
-```
-
-This is the file-access presentation (P18/P19), not CBM DOS running:
-`LOAD"$"` — the directory as the drive's ROM synthesizes it — belongs
-to the future Commodore DOS device seam (P15).
-
-### 3 — A qcow2 as an LBA hard disk: first partition, declared primary DOS, root listing
-
-```rust
-let mut session = Session::new();
-
-let disk = session.load_media("dos_hd.qcow2", Format::Qcow2 { disk: "lba-hd" },
-                              AccessIntent::Read)?;
-assert_eq!(disk.media_type(), "lba-hd-disk");    // MBR discovered as evidence
-
-let part = disk.partition(1).expect("the image's MBR declares entry 1");
-part.as_type("dos-primary")?;            // a declared reading, checked against
-                                         // the raw type byte — 0x06 bears it,
-                                         // 0x05 refuses naming both sides
-
-let fs = part.filesystem().expect("a declared DOS primary bears FAT");
-for entry in fs.files("")? {
-    println!("{:12} {:>9} {}", entry.name, entry.size_bytes, entry.fact("attributes"));
-}
-```
-
-### 4 — A VDI as a CHS hard disk: the first 8 bytes of `\COMMAND.COM`
-
-```rust
-let mut session = Session::new();
-
-let disk = session.load_media("dos_hd.vdi", Format::Vdi { disk: "chs-hd" },
-                              AccessIntent::Read)?;
-assert_eq!(disk.media_type(), "chs-hd-disk");    // geometry: discovered evidence
-                                                 // (BPB, MBR end-tuples), so
-                                                 // disk.get_sector(c,h,s) answers
-
-let part = disk.partition(1).expect("the image's MBR declares entry 1");
-part.as_type("dos-primary")?;
-
-let mut head = [0u8; 8];
-part.filesystem().expect("a declared DOS primary bears FAT")
-    .get_file("COMMAND.COM")?            // FAT 8.3 matching, without regard
-    .read_at(0, &mut head)?;             // to case — the delivered name rules
-```
-
-### 5 — A qcow2 as an LBA/MBR hard disk: 16 bytes of the boot partition's boot block
-
-The volume door's use case: no filesystem is consulted at all.
-
-```rust
-let mut session = Session::new();
-
-let disk = session.load_media("dos_hd.qcow2", Format::Qcow2 { disk: "lba-hd" },
-                              AccessIntent::Read)?;
-
-let boot = disk.partitions().into_iter()
-    .find(|p| p.active())                // the MBR's own boot flag — evidence
-    .expect("a bootable image marks one partition active");
-
-let mut block = [0u8; 16];
-boot.volume().expect("a DOS partition composes its addressable space")
-    .read_at(0, &mut block)?;            // byte 0 OF THE PARTITION — the boot
-                                         // block, addressed within the space's
-                                         // own extent, no offsets by hand
-```
+The model is pledged against ten first-class use cases — **U25 through
+U34** in [../USE-CASES.md](../USE-CASES.md) — every one carrying the
+tier's defining attribute: **no discovery, complete user
+specification**, declarations throughout, partition information
+included — specified, never probed. U25–U29
+are the walks this design was argued over (the loose-capture mastering,
+the zip to the CBM DOS directory, the LBA hard disk to a FAT root
+listing, COMMAND.COM off a CHS disk, the boot block through the volume
+door); U30–U34 close the concept coverage (the reconstructed machine
+and its letters, the write and the commit point, authored media, pool
+independence and machine teardown, the single-`File` source). The
+simplified workflows where discovery does the specifying work belong to
+the question tier, proposed; when they arrive they layer above these
+walks, which remain valid forever — the declared tier is permanent
+surface, not scaffolding.
 
 ## The question tier is demoted, not deferred
 
@@ -312,6 +271,10 @@ Conveniences, restorable without moving the model. The test:
 - A `move` act (slot-to-slot transfer without eject/re-insert
   ceremony), if reconstruction journeys make eject+insert sting.
 - A media-pool re-find registry beyond `media()`/`medium(id)`.
+- Loading by name: a path-taking `load_media` where the library opens
+  the local artifact itself — carrying P7's mandatory denial, since
+  there the library opens. The pledged form takes only the caller's
+  own opened file.
 
 ## Ledger — what this design reverses or supersedes
 
@@ -346,10 +309,24 @@ the features that make each real.
   the declared synthetic member. In-force P19's transparency clause is
   amended accordingly: uniformity of the walk replaces
   resolve-without-selecting.
-- **The media-type vocabulary sharpens**: `media_type` answers the
-  concrete type (`c1541-disk`), `article` the substrate. P14 gains the
-  two-level catalog; the P32 nature amendment is untouched, exercised
-  at the P15 seat.
+- **The media-type vocabulary is superseded by the device type**:
+  `media_type()` and its two-level strings give way to `device_type()`
+  answering `Option<DeviceType>` — one device type per medium, a
+  two-level identity (the class, then the concrete type; `Optical`
+  and `Tape` reserved), `None` the honest answer for archives and
+  authored blanks — beside `article()`. The partition scheme moves
+  into the hard-drive specs, so `as_scheme` never ships: every
+  partition pool populates under its device spec, checked at load.
+  P14 gains the device-type catalog and its granularity rule; the P32
+  nature amendment is untouched, exercised at the P15 seat.
+- **In-force P7 is amended**: "denying write permission to every other
+  process is mandatory in all scenarios" becomes *mandatory where the
+  library opens; caller-owned where the caller opened*. Local artifacts
+  arrive as the caller's own opened files, the caller's lock is their
+  safeguard and the library's claim, the library checks what it is
+  afforded and honours it exactly, and the claim's class travels on the
+  medium's assurance. The amendment lands with F53, the feature that
+  moves the open to the caller.
 
 ## Open questions carried
 

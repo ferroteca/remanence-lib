@@ -10,295 +10,6 @@ SPDX-License-Identifier: GPL-3.0-only
 > on full delivery. Numbers come from the one global U-sequence and are never
 > reused.
 
-## U2 amendment — browsing is a plain walk down, whatever holds the files
-
-In-force U2 claims the browse-and-extract journey over a vintage volume —
-HDOS today. This amendment restates the journey's shape; it claims no new
-format, and writing stays U3's journey.
-
-Getting a file out of a floppy image is a walk down the scopes that
-actually exist: a session to work in, the drive the disk belonged in,
-the image in that drive, its filesystem, my file.
-
-```
-session = Session()
-drive   = session.add_device(heathkit_h17)
-drive.load_media("games.h8d")
-fs      = drive.filesystem()
-file    = fs.get_file("CHESS.ABS")
-```
-
-I never named a machine, and that is the point: I am opening an
-artifact, not reconstructing a computer. My drive went into the
-session's anonymous machine — the one whose identity is null — which is
-a machine like any other and behaves like one. If I asked it for drive
-letters I would get them, derived from the devices I happen to have
-added and carrying that fact as provenance; it would be a strange thing
-to ask, and the answer would still say exactly what it came from. When I
-*am* reconstructing a machine I name one and configure it (U22), which
-is what makes the letters mean something.
-
-The drive is mine to state, and I state the one my machine had — the
-H-17, the hard-sectored Heathkit drive — not "some floppy". Which device
-serves a medium is a fact about my machine, not about the image, and
-stating it concretely is what gives `load_media` something to check: an
-H8D is a ten-sector hard-sectored 5.25-inch disk, and a drive family
-that spins soft-sectored media refuses it by name rather than reading it
-wrongly. There is no "generic floppy" to add: the lineage's interior
-names classify drives and answer questions, but only a concrete entry
-instantiates, because only a concrete drive declares anything. Stating
-the drive is also how one exists empty.
-
-I hold the drive and nothing else. The disk in it is not a second thing
-to carry: the drive answers for what it holds, and answers by name that
-it holds nothing when it is empty. Swapping disks changes what my drive
-reports without changing what I hold.
-
-The filesystem is resolved, never guessed: `drive.filesystem()` walks
-down to the one filesystem when every layer between has exactly one
-supported answer, and that is why I name no volume here. When the image
-holds two volumes, the resolver refuses by naming both, and I select by
-the identity the report issued — never by a position. When the volume
-bears no filesystem, the answer is a named absence, not an empty
-listing. When the source falls short of its own declaration, I get the
-bounded, evidence-stated degraded reading rather than an all-or-nothing
-loss.
-
-An archive is the same journey, not a parallel one: loaded into its own
-device, `load_media("games.zip")` gives that device a medium whose
-content *is* a namespace — its `filesystem()` always answers — and the
-same `get_file` walks it. When one of those entries is itself a disk
-image, it goes into a drive of its own and I keep reading — the archive
-on my host was never part of any machine the disk belonged to, and
-nothing here is composing a machine's namespace to be confused by that.
-Reading never mutates anything.
-
-*(Deliberately unchanged: the write journey is U3's; typed sector and
-block access is the emulator family's demand (U9–U12); HDOS remains the
-claimed catalog today. The model this journey falls out of is
-[design/storage-model-and-vocabulary.md](design/storage-model-and-vocabulary.md).)*
-
-## U7 — A C64 emulator delegates the hardware behind the 1541 disk VIA
-
-I am writing a C64 emulator that executes the 1541's 6502 code and emulates
-its two 6522 VIAs. My emulator owns the CPU, RAM, ROM, address decoding,
-VIA registers and timers, IEC bus, and scheduler. Remanence owns the
-drive-side electronics connected to the disk VIA, the mechanism, and the
-inserted medium. It does not emulate either 6522.
-
-I load `<floppy-name>.p64` into one read-only 1541 drive-hardware instance.
-Whenever my disk-VIA implementation changes a connected output, I send the
-complete drive-side control state to Remanence at that transition's real
-time. Between changes I advance Remanence to its next observable signal
-transition and feed the resulting levels and edges back into my VIA and
-6502 models. Stock ROM code and uploaded custom drive code therefore use
-ordinary 6522 behavior; neither knows that Remanence supplies the hardware
-behind the pins.
-
-The smallest useful read outcome is one correctly timed byte-ready edge
-with the corresponding raw eight-bit GCR value and sync level. The caller's
-6522 decides how that edge latches port A or raises an interrupt, and the
-caller routes the real byte-ready fan-out to the 6502 `SO` input. The drive
-program performs GCR decoding and recognizes headers, sectors, checksums,
-and files.
-
-### The exact semantic interface
-
-Every typed presentation of the common P15 hardware layer uses the same
-timed-causality operations:
-reset, read current time, find the next outward deadline, advance to a
-time, apply one timestamped control change, and inspect current outward
-signals without advancing. The 1541 specialization supplies typed control
-and signal bundles rather than CPU addresses or 6522 registers:
-
-```rust
-let mut hardware = Hardware::<C1541Drive>::open(
-    C1541DriveOptions {
-        weak_pulse_seed: 0x0123_4567_89ab_cdef,
-    },
-    vec![MediaAttachment {
-        slot: C1541MediaSlot::Drive,
-        source: floppy_path.into(),
-        access: AccessIntent::Read,
-        write_protected: true,
-    }],
-)?;
-
-let effects = hardware.reset(C1541Tick::ZERO)?;
-apply_drive_signals_to_via_and_cpu(effects);
-
-let effects = hardware.interact(
-    at,
-    C1541DriveStimulus::SetControl(C1541DriveControl {
-        stepper_phase,
-        motor_on,
-        density_zone,
-        byte_ready_enabled,
-        write_mode,
-        port_a_drive: DrivenByte { value, mask },
-    }),
-)?;
-apply_drive_signals_to_via_and_cpu(effects);
-
-while let Some(deadline) = hardware.next_event_tick() {
-    if deadline > scheduler_limit {
-        break;
-    }
-    let effects = hardware.advance_to(deadline)?;
-    apply_drive_signals_to_via_and_cpu(effects);
-}
-
-let signals = hardware.inspect(C1541DriveInspect::Signals)?;
-```
-
-The semantic bundles are:
-
-```rust
-pub enum C1541DriveStimulus {
-    SetControl(C1541DriveControl),
-}
-
-pub struct C1541DriveControl {
-    pub stepper_phase: C1541StepperPhase,
-    pub motor_on: bool,
-    pub density_zone: C1541DensityZone,
-    pub byte_ready_enabled: bool,
-    pub write_mode: bool,
-    pub port_a_drive: DrivenByte,
-}
-
-pub struct DrivenByte {
-    pub value: u8,
-    pub mask: u8,
-}
-
-pub struct C1541DriveSignals {
-    pub port_a_drive: DrivenByte,
-    pub write_protected: bool,
-    pub sync_active: bool,
-    pub byte_ready: LineLevel,
-}
-
-pub enum C1541DriveEvent {
-    SignalsChanged(C1541DriveSignals),
-}
-
-pub enum C1541DriveInspect {
-    Signals,
-}
-```
-
-`C1541Drive` binds the common hardware interface's associated types to
-`C1541Tick`, `C1541DriveStimulus`, the unit response,
-`C1541DriveEvent`, `C1541DriveInspect`, and `C1541DriveSignals`.
-`DrivenByte` describes which port-A pins the caller's VIA currently drives;
-it does not expose the VIA data-direction register itself. An effects record
-contains a new outward snapshot only when a caller-visible signal changes.
-The transition of `byte_ready` is the physical event the caller presents to
-the VIA's CA1 input and, through the 1541's real fan-out, to the 6502 `SO`
-input. Remanence does not emit a VIA interrupt or mutate a CPU flag.
-
-The C presentation uses the common opaque `remanence_hardware_t` and the
-operations `remanence_hardware_open`, `_reset`, `_now`,
-`_next_event_tick`, `_advance_to`, `_interact`, and `_inspect`. A 1541
-contract descriptor and typed C records preserve the controls, signals, and
-events above without opaque payload bytes. The Python presentation carries
-the same semantic interface in Python idiom under P5.
-
-`open` recognizes and validates P64, loads its evidence-bearing magnetic
-state, inserts it into a compatible 1541 mechanism, and takes the P7 claim
-for the instance's lifetime. `reset` resets only Remanence-owned drive
-electronics and mechanism state. The caller separately resets the CPU and
-VIAs and then supplies their resulting drive-side control bundle.
-
-`AccessIntent::Read` protects the host artifact. The medium is also
-physically write-protected in this journey, so `write_protected` is asserted
-and modeled write current cannot change it. VIA register writes and output
-changes still complete normally on the caller's side.
-
-### Time and causal ordering
-
-One `C1541Tick` is one cycle of the drive's 16 MHz reference clock. All
-times are absolute ticks since open. The caller maps its CPU and VIA phases
-to that clock consistently.
-
-`next_event_tick` reports the earliest tick at which `port_a_drive`,
-`write_protected`, `sync_active`, or `byte_ready` can change without another
-caller input. `advance_to` may reach that deadline but may not silently
-cross an undelivered transition. `interact` first advances to its
-timestamp and is refused if doing so would cross such a deadline. At one
-tick, an already caused outward transition is delivered before a new
-control change, and any transition caused by that change follows it.
-
-`inspect` is side-effect free and untimed. It exists for wiring,
-stopped debugging, and tests; guest execution does not use it to obtain a
-new byte or bypass causal advancement.
-
-### One complete P64 read
-
-The unchanged 1541 firmware configures its disk VIA. The emulator resolves
-the VIA's output registers, data directions, and control-line modes into one
-`C1541DriveControl` snapshot and calls `interact` whenever that snapshot
-changes. Starting the motor and changing stepper phase cause the modeled
-spindle and head to advance; density selection configures the 1541 read
-channel.
-
-As flux passes the head, Remanence performs pulse detection, filtering,
-clock recovery, sync detection, and byte assembly. At a byte boundary it
-updates `port_a_drive` and transitions `byte_ready` at the modeled tick. The
-emulator supplies those signals to its VIA and CPU. Firmware can then wait
-with `BVC`, clear overflow with `CLV`, and read its own `$1c01` VIA register.
-That register read is entirely caller-owned; the byte it returns originated
-from Remanence's current drive-side `port_a_drive` signal.
-
-Repeating this interaction gives arbitrary drive code its raw timed GCR
-byte stream. The smallest complete success is not `read sector N` and not a
-public flux iterator: it is one drive-side byte-ready transition which an
-independent 6522 implementation turns into the correct programmer-visible
-read.
-
-### The P64 floor
-
-Under P22, one timed flux-transition pulse with detection strength is the
-lowest modeled magnetic-data unit. P64 pulse positions and strengths remain
-inside the image, active-media, and read-channel modules. Strong, weak, and
-missing pulses become timed recovery, sync, byte-ready, and GCR values at
-the hardware seam. Successive passes may differ where stored pulse strength
-demands it, while the same image, control history, and weak-pulse seed remain
-reproducible.
-
-No public P64-shaped pulse iterator is required. The family hardware
-presentation translates durable flux into the signals needed by a controller
-or I/O-chip emulator while preserving timing and uncertainty.
-
-### The reference-emulator retrofit
-
-This use case must be testable by adapting a cycle-aware C64 emulator which
-already executes the 1541 CPU and emulates its VIAs. VICE's current source
-supports this cut: its common VIA implementation and 1541 VIA adapter are
-separate from `drive/rotation.c`, whose 1541 paths already perform GCR and
-P64 circuit simulation and update read data, sync, and byte-ready state.
-
-The retrofit therefore keeps VICE's CPU, VIA, memory map, IEC bus, and VIA
-interrupt behavior. Its P64 attachment creates a Remanence drive-hardware
-instance; disk-VIA output changes become `interact` calls; Remanence
-deadlines enter VICE's scheduler; and returned signal transitions feed the
-existing VIA/CPU inputs. The successful fork boots the unchanged drive ROM,
-loads through IEC, runs uploaded custom code, and reproduces seeded weak
-pulses without routing VIA register accesses into Remanence.
-
-### Deliberately outside this use case
-
-- Emulating either 6522, the 1541 CPU, RAM, ROM, IEC bus, DOS, or uploaded
-  machine code.
-- Decoding GCR into sectors or files.
-- Mutating the magnetic medium; a writable journey is separate.
-- Save states, power sequencing, disk swapping, multiple drives, parallel
-  cables, board modifications, and non-1541 variants.
-- A universal signal enumeration shared by unrelated drive families. The
-  timed-causality operations are common; this signal bundle is specific to
-  the 1541 drive-side electronics.
-
 ## U16 — I reconstruct a stopped machine's storage namespace from its disk set
 
 I have a set of raw or qcow2 disk images captured from one stopped machine,
@@ -309,7 +20,8 @@ filesystems. I provide those attachment placements, but I do not want to
 attach the images to the host, boot the guest, or manually restate every
 partition and mount.
 
-I open the complete set read-only. Remanence inspects every image and reports
+I load every image read-only, seat each in my declared machine, and
+inspect. Remanence inspects every seated medium and reports
 the independently established devices, partition schemas, regions, volumes,
 filesystems, and candidate operating-system installations. If the entire set
 contains exactly one supported installation candidate, I may ask Remanence to
@@ -329,37 +41,35 @@ installation.
 
 ### The exact semantic interface
 
-The smallest useful operation is opening one composed file-container view
-after the set has been inspected:
+The smallest useful operation is opening the machine's composed namespace
+after the seated set has been inspected:
 
 ```rust
-let machine = ArtifactSet::open(
-    [
-        AttachedArtifact {
-            attachment: Attachment::Hdd(0),
-            source: system_drive,
-        },
-        AttachedArtifact {
-            attachment: Attachment::Hdd(1),
-            source: data_drive,
-        },
-    ],
-    AccessIntent::Read,
-)?;
+let mut session = Session::new();
+let sys  = session.load_media(
+    File::open(system_drive)?,
+    Format::Qcow2 { device: HardDrive::MbrBlock },
+)?.id();
+let data = session.load_media(
+    File::open(data_drive)?,
+    Format::Qcow2 { device: HardDrive::MbrBlock },
+)?.id();
 
-let report = machine.inspect()?;
+let pc = session.add_machine("captured-pc")?;
+pc.add_device(hdd0)?.insert(sys)?;
+pc.add_device(hdd1)?.insert(data)?;
 
-let files = machine.open_system_namespace(
-    InstallationSelection::Unique,
-)?;
+let report = pc.inspect()?;
 
+let files = pc.namespace(InstallationSelection::Unique)?;
 let contents = files.read_file(path_from_caller)?;
 ```
 
 For Windows, `path_from_caller` may be
 `C:\Users\Paul\Documents\example.txt`. For Unix it may be
-`/home/paul/example.txt`. The returned object is the P19 file-container view
-of the selected installation's composed namespace, so ordinary file
+`/home/paul/example.txt`. The returned object is the machine namespace —
+P35's `MachineFilesystem`, presenting the P19 interface over the selected
+installation's composed mapping — so ordinary file
 operations do not need to know which image, partition, volume, or filesystem
 supplies a path.
 
@@ -379,28 +89,27 @@ for installation in report.operating_system_installations() {
 }
 
 let selected = choose_installation_from_report(&report)?;
-let files = machine.open_system_namespace(
+let files = pc.namespace(
     InstallationSelection::ById(selected.id()),
 )?;
 ```
 
 The names are semantic pseudocode, not a pledge of literal Rust layout. The C
-and Python presentations preserve the same deep operation: supply one typed
-attachment placement per source, atomically open the read-only artifact set,
-inspect it, then request the unique installation or pass back one opaque
-installation identity issued by that report. They do not ask the caller to
+and Python presentations preserve the same deep operation: load each source,
+declare each placement, inspect, then request the unique installation or
+pass back one opaque installation identity issued by that report. They do not ask the caller to
 reconstruct partitions or namespace mappings from source paths, array order,
 partition numbers, drive letters, labels, UUID spellings, or byte ranges.
 
-`ArtifactSet::open` takes a P7 claim for every supplied image as one atomic
-operation. Every source carries one caller-supplied, composition-unique
-attachment identity such as `hdd0` or `hdd1`; array order establishes
-nothing. Each image-format adapter exposes its own addressed device, and
-Remanence separately assigns that device a composition-scoped P21 identity.
-The attachment is an asserted placement in the stopped machine, not the
-device identity and not evidence extracted from the image. Each device
-retains its own P23 active durable layer; opening the set never concatenates
-or otherwise merges their address spaces.
+Each medium's claim is my own read-only open, honoured as afforded for
+the pooled lifetime, and the machine's device set carries the placements: `hdd0` and `hdd1` are
+attachment identities I declared by adding the devices, and no ordering of
+loads establishes anything — the attachment order is the order I added the
+devices, a fact of my configuration. The attachment is an asserted
+placement in the stopped machine, not a device identity and not evidence
+extracted from any image. Each medium retains its own P23 active durable
+layer; seating several media in one machine never concatenates or otherwise
+merges their address spaces.
 
 ### Installation selection substitutes for unmodeled boot policy
 
@@ -433,7 +142,7 @@ The successful composition has two phases:
 2. Operating-system adapters identify installation candidates and the
    persisted configuration by which each candidate maps discovered volumes
    into its namespace. A namespace-composition adapter then maps the selected
-   volumes' P19 file-container views at the evidenced roots and paths.
+   volumes' P19 filesystem views at the evidenced roots and paths.
 
 For Windows, the selected installation's registry and other claimed system
 metadata establish persisted drive-letter, volume-GUID, and folder-mount
@@ -446,7 +155,7 @@ beneath it; boot-loader configuration may corroborate the selected root, but
 The installation result records the evidence which makes it a candidate,
 its root volume or equivalent namespace authority, any separate boot-related
 regions, and every storage mapping it claims. The composed namespace keeps
-provenance back through each mounted file-container view, filesystem, volume,
+provenance back through each mounted filesystem view, volume,
 region, assigned device identity, asserted attachment, and source image.
 Unmounted or unreferenced volumes remain in the lower-layer report; namespace
 composition does not erase them.
@@ -469,7 +178,7 @@ caller-selected installation identity.
 A successful result contains the complete storage namespace which the
 selected, supported installation requires from the supplied image set. Each
 required local mount must resolve uniquely to a discovered volume and an
-opened filesystem file-container view. Optional, inactive, removable,
+opened filesystem view. Optional, inactive, removable,
 network, and deliberately unsupported mappings may remain named omissions
 when the operating system's persisted configuration makes that status clear.
 
@@ -485,13 +194,13 @@ set or choose a different installation deliberately.
 ### This is namespace composition, not a multi-device volume
 
 Every volume in this journey is composed independently through P17 from one
-device or one of its regions. P19 then maps several filesystem file-container
-views into the selected operating system's namespace. A path crossing from
+device or one of its regions. P19 then maps several filesystem views into the
+selected operating system's namespace. A path crossing from
 `C:` to `D:`, or from `/` into `/home`, crosses a namespace mapping; it does
 not make those volumes one address space.
 
 U14 is the distinct case where regions from several devices form one striped
-volume before a filesystem can be read. U16 needs a multi-source open and
+volume before a filesystem can be read. U16 needs several media seated in one machine and
 machine-level namespace composition, but it neither requires nor implies
 multi-device volume assembly, manual stripe recipes, or cross-source write
 transactions. U13 remains the focused one-image Windows case and demonstrates
@@ -558,7 +267,7 @@ current single-disk surfaces continue to bind.
   runtime-only mounts, or configuration not persisted in the supplied
   artifacts.
 - Encryption, credentials, ACL-policy emulation, or recovery of secrets.
-- A generic container tree, global or caller-authored device identities, or a
+- A generic namespace tree, global or caller-authored device identities, or a
   universal operating-system model. Caller-authored attachment placement is
   required and remains a separate concept under P21.
 
@@ -585,20 +294,15 @@ The smallest useful read is one or more complete logical blocks from one
 opened block presentation:
 
 ```rust
-let artifact = Artifact::open(
-    hard_drive_image,
-    AccessIntent::Read,
+let mut session = Session::new();
+
+let disk = session.load_media(
+    File::open(hard_drive_image)?,
+    Format::Qcow2 { device: HardDrive::MbrBlock },
 )?;
 
-let mut blocks = artifact.open_block_device(
-    BlockDeviceSelection::Unique,
-    BlockConfiguration {
-        logical_block_size: BlockSizeSelection::Asserted(512),
-    },
-)?;
-
-let info = blocks.info();
-let contents = blocks.read_blocks(
+let info = disk.block_info();
+let contents = disk.read_blocks(
     Lba::new(first_lba),
     BlockCount::new(number_of_blocks),
 )?;
@@ -618,11 +322,10 @@ silently changes LBA into a serialized-file offset. All presentations use
 checked fixed-width sizes and report overflow or out-of-range access before
 performing I/O.
 
-An ordinary single-image open yields one block device and therefore does not
-ask the caller to echo a P21 device identity. `BlockDeviceSelection::Unique`
-means exactly one candidate, not the strongest guess. A later multi-image
-composition may select a reported device by its opaque identity, but `hdd0`,
-a source-array position, and an image path never substitute for that identity.
+One medium is one block state: there is no device selection to make and no
+identity to echo — the medium in my hand is the presentation. A later
+multi-image composition selects media by their pool identities; `hdd0`, a
+source-array position, and an image path never substitute for one.
 
 ### Logical block size is a claimed fact
 
@@ -630,13 +333,13 @@ The block presentation cannot exist without a logical block size because LBA
 has no byte meaning without one. When an image format authoritatively records
 that size, its adapter supplies it and a conflicting caller assertion is
 refused. When the format does not record it—as with a geometry-opaque raw
-byte image—the caller must supply the size expected by the consuming hardware
-or software. The report records that value as asserted configuration rather
-than observed image evidence.
+byte image—the caller supplies it in the load declaration itself:
+`Format::Raw { device: HardDrive::MbrBlock, block_bytes: 512 }`,
+recorded as declared configuration, never as observed image evidence.
 
-`BlockSizeSelection::Asserted(512)` therefore does not teach Remanence that
+The declared `block_bytes: 512` therefore does not teach Remanence that
 every hard drive has 512-byte sectors. It says that this consumer requires a
-512-byte logical-block presentation for this open. A presentation which
+512-byte logical-block presentation for this load. A presentation which
 requires format-declared size instead can refuse an image which lacks it.
 Remanence never guesses block size from filename extension, total byte length,
 partition-table plausibility, filesystem boot records, host sector size, or
@@ -650,9 +353,9 @@ logical block size or the block presentation is refused.
 
 ### Reads and writes share one block-active state
 
-Opening the presentation establishes one P23 block-active durable state. The
-partition, volume, filesystem, and file-container presentations may later be
-derived from that same state, but they are not invoked merely to satisfy a
+The loaded medium holds one P23 block-active durable state. The partition,
+volume, filesystem, and namespace presentations may later be derived from
+that same state, but they are not invoked merely to satisfy a
 block read. A block write changes the bytes those higher presentations would
 subsequently observe; Remanence does not maintain a second mutable filesystem
 or partition copy.
@@ -660,25 +363,17 @@ or partition copy.
 A writable journey is semantically:
 
 ```rust
-let artifact = Artifact::open(
-    hard_drive_image,
-    AccessIntent::Write,
-)?;
+let image = File::options().read(true).write(true).open(hard_drive_image)?;
+let disk = session.load_media(
+    image, Format::Qcow2 { device: HardDrive::MbrBlock })?;
 
-let mut blocks = artifact.open_block_device(
-    BlockDeviceSelection::Unique,
-    BlockConfiguration {
-        logical_block_size: BlockSizeSelection::Asserted(512),
-    },
-)?;
-
-blocks.write_blocks(Lba::new(target_lba), replacement_blocks)?;
-let observed = blocks.read_blocks(
+disk.write_blocks(Lba::new(target_lba), replacement_blocks)?;
+let observed = disk.read_blocks(
     Lba::new(target_lba),
     BlockCount::new(replacement_block_count),
 )?;
 
-blocks.commit()?;
+disk.commit()?;
 ```
 
 `replacement_blocks` must contain a positive whole number of logical blocks,
@@ -686,7 +381,7 @@ and the entire addressed range must lie within the fixed device bounds.
 Validation occurs before the active state changes. Until `commit`, reads
 through this presentation and every other view over the same state see the
 replacement while the host image remains untouched; `rollback` discards it.
-Dropping an uncommitted writable open does not imply commit.
+Releasing an uncommitted medium does not imply commit.
 
 Commit encodes the changed block-active state through the original image
 adapter under P2, P9, and P13. A raw image receives the corresponding byte
@@ -768,3 +463,369 @@ Neither should grow a second orchestration path to serve the other.
   recording underneath a geometry-opaque logical-block device.
 - Partial-block writes, short successful transfers, or implicit block-size
   guessing.
+
+## The media-first walks — U25 through U34
+
+**No discovery, complete user specification — the defining attribute of
+every use case below.** The caller declares what they have — the
+format, the device it records (the partition scheme riding the device
+spec), every interpretation — and every declaration is checked against
+evidence, refused by name where the evidence cannot bear it. No
+discovery does any specifying here. **Partition information in
+particular is specified, never discovered**: the scheme rides my
+declared device type, checked against the table at load; a partition's
+interpretation is my reading of its entry (`as_type`); and a namespace
+nothing determines is my reading too (`filesystem_as`) — checked,
+every one, and probed for never. **Local artifacts arrive as the caller's own opened files** —
+`File::open` below is `std::fs::File`, the portable file; files from
+inside media are this library's own views — and whoever opens owns the
+lock: my open is my safeguard and the library's claim, checked for what
+it affords (may it write?), honoured exactly, never escalated. A name
+recovered from a handle serves location only — the commit journal's
+*beside*, a backing parent's *next door* — under an identity check, and
+a nameless handle refuses those journeys by name. The simplified
+workflows where discovery does the specifying
+work belong to the question tier
+([../proposed/design/question-tier.md](../proposed/design/question-tier.md)),
+proposed and argued separately — and **these walks are permanent**:
+they remain valid, supported workflows even when discovery and other
+conveniences evolve to make the same results easier to achieve.
+Conveniences layer above the declared tier; they never replace it. Together the ten exercise every core
+concept the media-first storage model
+([design/media-first-storage-model.md](design/media-first-storage-model.md))
+pledges: the pools and their lifecycles, the declared creation grammar
+and its source shapes, the device types, the partition pool and
+the vantage doors, the edge, writing and the commit point, authorship,
+and the machine tier's own half.
+
+## U25 — I master a 1541 disk from the captures on my filesystem and read its first byte
+
+I have a directory of KryoFlux stream files — 168 of them, two heads by
+eighty-four step positions, straight off the instrument — and I know
+what they are: a capture of a Commodore 1541 disk. Nothing here is
+inside any image or archive; these are loose files on my own
+filesystem, opened by me — the locks are mine. I name what I have, and
+I get back the disk itself.
+
+```rust
+let mut session = Session::new();
+
+let members: Vec<File> = capture_paths          // …00.0.raw, …00.1.raw, all 168
+    .iter().map(File::open)
+    .collect::<io::Result<_>>()?;               // my opens — my locks, read-only
+
+let disk = session.load_media(
+    members, Format::KryoFlux { device: FloppyDrive::Commodore1541 })?;
+assert_eq!(disk.device_type(),
+           Some(DeviceType::Floppy(FloppyDrive::Commodore1541)));
+
+let mut first = [0u8; 1];
+disk.bytestream()?
+    .location(Location::track(1))?
+    .read_at(0, &mut first)?;
+```
+
+My declaration is checked, not trusted: the member names must carry
+their positions, the set must be complete, the streams must parse, and
+the capture must actually bear the c1541 claim — any failure refuses
+the whole declaration by name. The reduction runs under the profile's
+declared defaults; a choice no family convention can make refuses by
+name and I answer it by growing my declaration. What I get back is a
+1541 disk with the whole story as provenance — evidence, policy, and
+the declared account of what the reduction could not carry — and the
+byte I read is the first *framed* byte, because nothing before sync is
+a byte at all.
+
+## U26 — I open a captured C64 disk from a zip and list its CBM DOS directory
+
+The same capture, but zipped, the way archives actually circulate. The
+zip is a medium; its entries are a namespace; the capture is a
+collection of files I gather from that namespace and declare — the same
+journey as U25 with one more link in front. Then I want what any C64
+user wants first: the directory.
+
+```rust
+let mut session = Session::new();
+
+let arc     = session.load_media(File::open("pcs_disk1.zip")?, Format::Zip)?;
+let members = arc
+    .partition(0).expect("an archive bears its direct partition")
+    .filesystem().expect("an archive's content is its namespace")
+    .files("")?;
+let disk    = session.load_media(
+    members, Format::KryoFlux { device: FloppyDrive::Commodore1541 })?;
+
+let cbm = disk
+    .partition(0).expect("flux media record no scheme: the direct partition")
+    .filesystem_as("cbmdos")?;   // MY reading, checked against the recorded
+                                 // structures: a protected or blank disk
+                                 // refuses it by name — and the sectors and
+                                 // streams beneath still answer
+
+println!("{}", cbm.label()?);            // 0 "PINBALL     " PC 2A — the BAM header
+for entry in cbm.files("")? {
+    println!("{:16} {:>4} {}",
+        entry.name,                      // PETSCII: raw beside its reading
+        entry.fact("blocks"),            // CBM records size in blocks
+        entry.fact("type"));             // PRG · SEQ · USR · REL, flags beside
+}
+```
+
+The listing is the recorded directory in directory order — the order is
+evidence — with the disk name and ID as the BAM recorded them. This is
+the file-access presentation reading recorded structures; it is not CBM
+DOS running, and `LOAD"$"` — the directory as the drive's ROM
+synthesizes it — is the future Commodore DOS device seam's journey, not
+this one.
+
+## U27 — I walk a qcow2 hard disk to its DOS root directory
+
+I have a qcow2 of a DOS machine's hard disk, and I know how that
+machine addressed it. I declare both facts — the format, and the device
+it records — then walk the partition table the way DOS did: the first
+entry, which I say is a DOS primary, and the FAT volume on it.
+
+```rust
+let mut session = Session::new();
+
+let disk = session.load_media(
+    File::open("dos_hd.qcow2")?,
+    Format::Qcow2 { device: HardDrive::MbrBlock },
+)?;                                      // the spec carries the scheme: the
+                                         // table must parse as MBR at load,
+                                         // or the declaration refuses by name
+assert_eq!(disk.device_type(),
+           Some(DeviceType::HardDrive(HardDrive::MbrBlock)));
+
+let part = disk.partition(1).expect("the declared table bears entry 1");
+part.as_type(PartitionType::DosPrimary)?;   // declared, checked against
+                                            // the raw type byte — 0x06
+                                            // bears it, 0x05 refuses
+                                            // naming both sides
+
+let fs = part.filesystem().expect("DosPrimary determines FAT; verified at as_type");
+for entry in fs.files("")? {
+    println!("{:12} {:>9} {}", entry.name, entry.size_bytes,
+             entry.fact("attributes"));
+}
+```
+
+The partition ordinal is the table's own fact — MBR entry 1, its place
+preserved — and my `DosPrimary` is a reading the evidence must bear,
+never a relabeling of it.
+
+## U28 — I read COMMAND.COM's first bytes off a CHS hard disk image
+
+A VDI this time, of a disk its machine addressed by cylinder, head and
+sector. The geometry is not mine to state: the image's own structures
+recorded it — the FAT boot sector wrote down sectors-per-track and
+heads, the MBR's end tuples agree — so the disk answers sector
+questions from evidence, and I go straight to the file I care about.
+
+```rust
+let mut session = Session::new();
+
+let disk = session.load_media(
+    File::open("dos_hd.vdi")?,
+    Format::Vdi { device: HardDrive::MbrSector },
+)?;
+assert_eq!(disk.device_type(),
+           Some(DeviceType::HardDrive(HardDrive::MbrSector)));
+// geometry: evidence read UNDER my declarations (BPB, MBR end-tuples) —
+// verification fills values, it never picks readings — so
+// disk.get_sector(c, h, s) answers, and disagreement between the
+// sources comes back Undetermined rather than settled
+
+let part = disk.partition(1).expect("the declared table bears entry 1");
+part.as_type(PartitionType::DosPrimary)?;
+
+let mut head = [0u8; 8];
+part.filesystem().expect("DosPrimary determines FAT; verified at as_type")
+    .get_file("COMMAND.COM")?            // FAT 8.3 matching, without regard
+    .read_at(0, &mut head)?;             // to case
+```
+
+## U29 — I read a boot partition's boot block, consulting no filesystem
+
+Sometimes the bytes I want are exactly the ones no namespace names. I
+find the partition the MBR marks active and read the first sixteen
+bytes of its own space — the boot block — through the volume door,
+with no filesystem consulted and no offsets computed by hand.
+
+```rust
+let mut session = Session::new();
+
+let disk = session.load_media(
+    File::open("dos_hd.qcow2")?,
+    Format::Qcow2 { device: HardDrive::MbrBlock },
+)?;
+
+let boot = disk.partitions().into_iter()
+    .find(|p| p.active())                // the MBR's own boot flag — evidence
+    .expect("a bootable image marks one partition active");
+
+let mut block = [0u8; 16];
+boot.volume().expect("a DOS partition composes its addressable space")
+    .read_at(0, &mut block)?;            // byte 0 OF THE PARTITION — addressed
+                                         // within the space's own extent
+```
+
+The volume door and the filesystem door open onto the same one space; I
+chose the vantage that answers by position, and a partition bearing no
+filesystem at all would have answered this walk identically — which is
+the point.
+
+## U30 — I reconstruct a DOS machine and letter its drives
+
+Two hard disk images, and I know their order; a third drive that was
+present and empty. I declare the machine, its devices in attachment
+order, and link the media — and the letters come from *my machine's own
+configuration*, not from an assertion beside it.
+
+```rust
+let mut session = Session::new();
+let c = session.load_media(
+    File::open("boot_hd.qcow2")?,
+    Format::Qcow2 { device: HardDrive::MbrBlock },
+)?.id();
+let d = session.load_media(
+    File::open("data_hd.qcow2")?,
+    Format::Qcow2 { device: HardDrive::MbrBlock },
+)?.id();
+
+let pc = session.add_machine("pc")?;
+pc.add_device(hdd0)?.insert(c)?;
+pc.add_device(hdd1)?.insert(d)?;
+pc.add_device(hdd2)?;                    // present and empty — configuration
+                                         // in its own right, holding no volume
+
+let map = pc.compose_dos_letters(Some(DosAssignmentRule::MsDos5), &[])?;
+for m in &map.mappings {
+    println!("{}: {:?}", m.letter, m.outcome);   // C:, D: — by attachment order
+}
+```
+
+The mapping's provenance names my machine, the devices lettered in the
+order I added them, and the empty drive that contributed no volume —
+derived from configuration I declared, carried as provenance, never as
+evidence.
+
+## U31 — I write a file onto a DOS disk, and nothing moves until I commit
+
+```rust
+let mut session = Session::new();
+
+let image = File::options().read(true).write(true).open("dos_hd.qcow2")?;
+                                         // my open, my lock — and the library
+                                         // checks exactly one thing: whether
+                                         // it is allowed to write
+let disk = session.load_media(
+    image, Format::Qcow2 { device: HardDrive::MbrBlock })?;
+let part = disk.partition(1).expect("the declared table bears entry 1");
+part.as_type(PartitionType::DosPrimary)?;
+
+let fs = part.filesystem().expect("DosPrimary determines FAT; verified at as_type");
+fs.make_directory("OUT")?;
+fs.write_file("OUT/REPORT.TXT", report)?;
+
+disk.commit()?;                          // THE commit point: until this line
+                                         // the image file was untouched, and
+                                         // rollback() would have cost nothing
+```
+
+The write authority is my own open's — the library checked what my
+handle affords and honoured it — and the commit is durable: the journal
+lands beside the file, its name recovered from my handle for location
+and nothing else; interrupted anywhere, the next open reconciles to
+wholly the old image or wholly the new one.
+
+## U32 — I author a blank CHS disk and lay down its boot sector
+
+Nothing is discovered here: there is no artifact yet. I am the author,
+and my facts are the medium's original facts.
+
+```rust
+let mut session = Session::new();
+
+let disk = session.new_media(NewMedia::ChsDisk {
+    cylinders: 1024, heads: 16, sectors: 63, sector_bytes: 512,
+})?;
+// authored provenance — geometry mine, marked mine — and no device
+// assumed: authorship is its own fact class, and only the future
+// authored-to-recorded arc binds a device type
+assert_eq!(disk.device_type(), None);
+
+let mut boot = [0u8; 512];
+boot[510] = 0x55; boot[511] = 0xaa;
+disk.put_sector(0, 0, 1, &boot)?;               // the authored geometry answers
+disk.commit()?;
+```
+
+The disk is session-backed until an explicit encode gives it an
+artifact. The arc from authored to recorded stays reserved: a future
+partition editor consumes my geometry into MBR end tuples and BPBs,
+after which any later discovery recovers it as evidence — the artifact
+testifying for itself.
+
+## U33 — The disk outlives its source, and enters a machine of its own
+
+Media are session state, independent of every machine and of each
+other. The archive I mastered a disk out of is not the disk's parent —
+I can release it, and the disk keeps answering; I can seat the disk in
+a reconstructed machine, unseat it, and tear the machine down, and the
+disk is untouched throughout.
+
+```rust
+// …after U26's chain: `arc` (zip archive) and `disk` (1541 disk) in the pool
+
+session.release_media(arc_id)?;          // the source archive leaves the
+                                         // session; the mastered disk is
+                                         // free-standing and still answers:
+let mut b = [0u8; 1];
+disk.bytestream()?.location(Location::track(1))?.read_at(0, &mut b)?;
+
+let c64 = session.add_machine("c64")?;
+c64.add_device(cbmfloppy0)?.insert(disk_id)?;   // the drive an emulator will
+                                                // one day address as unit 8
+
+c64.device(cbmfloppy0).expect("just added").eject()?;   // sever — claim and
+                                                        // state survive pooled
+session.release_machine("c64")?;         // the cascade: configuration falls
+                                         // with its owner; state never does
+```
+
+## U34 — I load the one image inside an archive, by naming it
+
+An archive holding a disk image is two media, and I take them one
+declared step at a time: the archive by its format, then the image by
+its own — a `File` from the first medium's namespace being an ordinary
+source for the second.
+
+```rust
+let mut session = Session::new();
+
+let arc  = session.load_media(File::open("HDOS_1-0.zip")?, Format::Zip)?;
+let file = arc
+    .partition(0).expect("an archive bears its direct partition")
+    .filesystem().expect("an archive's content is its namespace")
+    .get_file("HDOS_1-0_Issue_#50-00-00_890-1.h8d")?;
+
+let disk = session.load_media(file, Format::H8d)?;   // a File of OURS —
+                                                      // it rides the archive's claim
+assert_eq!(disk.device_type(),
+           Some(DeviceType::Floppy(FloppyDrive::HeathH17)));
+
+let hdos = disk
+    .partition(0).expect("flexible media record no scheme: the direct partition")
+    .filesystem_as("hdos")?;             // my reading — an h8d could bear
+                                         // CP/M, so the choice is mine and
+                                         // the check is the library's
+for entry in hdos.files("")? {           // a flat catalog: one root of leaves
+    println!("{:12} {:>4} {}", entry.name,
+             entry.fact("size-sectors"), entry.fact("flags"));
+}
+```
+
+Nothing was guessed at any step: I named the entry rather than being
+served "the only file", I declared each format, and I declared the
+filesystem — the reading mine, the check the library's, at every rung.
