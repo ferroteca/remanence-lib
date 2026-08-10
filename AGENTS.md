@@ -94,11 +94,13 @@ ABI, or Python module.
   `c1541_mastering.rs` the **selected-observation** reduction from
   capture to medium under a declared policy (P29) — a plan that
   computes everything and writes nothing, the declared-loss account it
-  carries, and the execution that produces the medium. It is the
-  reduction pledged U23 names, and it stands beside the gap-first
-  reconstruction below rather than above or beneath it: two reductions
-  of one capture, to two different destinations, each declaring its own
-  policy; `hardware_bitstream.rs` and
+  carries, and the execution that produces the medium. **No use case
+  demands it any longer** — U23 named it while it was in force, and the
+  pledged rewrite runs the reduction under the profile's declared
+  defaults instead — so what remains of it is F65's outstanding clause,
+  which retires it in favour of the gap-first reconstruction below. Both
+  stand until that lands, two reductions of one capture to two
+  destinations, each declaring its own policy; `hardware_bitstream.rs` and
   `encoded_bytestream.rs` the two P23 layers above the medium — circular
   track-relative clocked bit state, every bit saying whether it was
   recorded or resolved by a declared rule, and the byte sequence a
