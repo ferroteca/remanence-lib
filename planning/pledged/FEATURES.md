@@ -259,3 +259,123 @@ Commodore DOS device seam (P15), not this adapter.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P18,
 P19; U4, U26. Needs F56, F61.
+
+## F63 — The remanence image, the flux family's physical stratum
+
+The flux family gains its deepest layer
+([design/remanence-flux-layer.md](design/remanence-flux-layer.md)): the
+**remanence image**, the model of what a disk's surfaces physically
+hold — distinct from any capture of them and beneath the served medium
+a drive reads. A form factor; the index holes as angular data (angle
+and extent as exact rationals, nothing radial); and per surface the
+**orbits** — one recorded band at one radius, never "track", because
+that word means different things to the flux community and the
+recording's own format. An orbit is its center radius in whole microns
+and an ordered circular array of **points**: a 28-bit angle (fixed
+point over 2²⁸ of a turn — a unit, not a measurement, so exactness
+survives), a four-state magnetization (`Positive`, `Negative`,
+`Unaligned`, `Inert` — the low-amplitude split is writability, not
+amplitude), and, where stated, the write widths (plateau and guard,
+whole microns, symmetric about the center; the first coherent point
+must state them). The model's invariants are the constructors' own:
+adjacent coherent points alternate (a width-stating point may repeat
+its sense — the rewrite splice), angles ascend strictly, one radius
+holds one recording per surface, and an orbit asserting nothing is
+dropped. Amplitude is not modelled — a domain invariant, not a missing
+field — and confidence is deliberately not a field either: uncertainty
+is an output of reconstruction, reported beside the artifact, never
+inside it; genuine indeterminacy is `Unaligned` spans. Each point packs
+into one 32-bit word — angle high, flags low, so wraparound arithmetic
+is angle arithmetic — and each orbit's points are a **cache-backed
+array of transition data** over the family's section-addressable
+backing (P27), chunked and LRU-resident like every layer beside it.
+Two operations belong to the model: refinement, where only ignorance
+may be overwritten (`Unaligned` is fillable, `Inert` is contested),
+and reversal, where spans reverse rather than points and polarity is
+re-laid.
+
+Touches: S1, S2, S3 (the public root lands with its reflections; the
+model beneath is crate-private). Supports: the design; in-force P4,
+P13, P23, P27; U25, U26 by way of the reduction that fills it (F65).
+
+## F64 — The remanence artifact: the library's own flux format
+
+The remanence image gains its artifact — the `.remanence` format,
+claimed in both directions. The grammar: the ASCII magic
+`REMANENCE_PHYSICAL_DISK`, a 0x1A binary sentinel, a one-byte layout
+version gated first (P8), then one zlib-framed DEFLATE stream holding
+the whole image — form factor, holes as exact rationals, surfaces each
+naming themselves, orbits outermost-first, points as varint angle
+deltas under a two-bit tag electing a magnetization byte and the
+widths, the magnetization byte elided wherever alternation derives it.
+Counts, never terminators. The reader inflates through the library's
+own DEFLATE decoder under new zlib framing — header checked, Adler-32
+verified by reading through the stream's end, trailing content refused
+— and hands the payload to the model's constructors, so a file and a
+constructed image are held to one standard. The writer compresses
+through a DEFLATE encoder of the library's own (the core stays
+dependency-free), deterministic within this implementation;
+cross-implementation byte identity is not claimed, and the design
+records why. Encode of a reconstructed image into a new artifact is a
+P29 destination and carries the account.
+
+Touches: S1, S2, S3. Supports: the design; in-force P8, P13, P27,
+P29. Needs F63.
+
+## F65 — The gap-first reconstruction
+
+The P29 reduction rebuilt on the strength of all the evidence rather
+than the choice of one revolution — the flux analysis adopted from
+the owner's research implementation, where it is measured against
+real captures. Every revolution of every location is aligned by **gap
+correspondence** (identity lives in the interval sequence, position
+in the angles; a resynchronising walk with a confirmation ladder,
+never a nearest match); the **cell lattice** is measured from the
+intervals themselves — a comb periodogram finds the cell, per-context
+medians carry the reader's peak shift so it can be removed from every
+interval, and the alternation parity is fitted; each revolution's
+spindle wander is corrected by a fitted **timebase warp**
+(least-squares harmonics of the revolution, bounded by holdout rather
+than appetite); angles are produced **gap-first** — snapped to the
+lattice where the crystal wrote them, kept and reported where the
+medium holds them off-lattice consistently across revolutions,
+integrated so closure solves the cell exactly; coherence is decided
+per transition from presence and spread against declared tolerances,
+incoherent runs becoming `Unaligned` spans; and adjacent steps
+carrying the same recording merge under measured agreement in the gap
+domain — the fat track measured, never asserted. The reduction keeps
+the family's plan/execute discipline: policy declared with no
+defaults invented, a plan that computes everything and writes
+nothing, the declared-loss account naming what the image cannot
+carry, and the survey's facts riding provenance with their basis —
+evidenced, measured, assumed — stated per fact. The
+selected-observation reduction it succeeds retires with its delivery:
+one family, one reduction discipline.
+
+Touches: S1, S2, S3. Supports: the design; in-force P4, P22, P27,
+P29, P30, P31; U25, U26. Needs F63.
+
+## F66 — The C64 renditions: d64, g64 and p64 from the remanence image
+
+Mastered renditions off the remanence-backed image — P29 acts where
+only the destination varies, each stating its loss. **g64**: each
+orbit clocked by the phase-locked half-window at its measured cell,
+snapped to the zone nominal where an unformatted band's own figure
+would run several revolutions long, packed under the `GCR-1541`
+grammar with one speed zone per half-track. **d64**: the recording's
+own sectors read by the family's group code — headers, data blocks,
+checksums, blocks allowed to wrap the origin, nothing repaired and
+nothing rejected — laid into the CBM DOS 683-block grid, an
+incomplete disk carrying the error map as its declared-loss account
+made flesh. That sector reading is crate-private analysis machinery
+serving the reconstruction and this rendition; it is not the F61
+sector surface, which remains the user-facing rung in the media-first
+shape. **p64**: one multiply from angle to cycle (2²⁸ divisions onto
+3,200,000 cycles, rounded to nearest, collisions nudged and
+recorded), coherent points only, an orbit with no pulses skipped
+rather than written empty — absent claims never-written where an
+empty chunk would claim erased — served through the delivered P64
+encode path.
+
+Touches: S1, S2, S3. Supports: the design; in-force P13, P29, P30;
+U25, U26. Needs F63, F65.
