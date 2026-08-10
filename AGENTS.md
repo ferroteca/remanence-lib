@@ -112,8 +112,11 @@ ABI, or Python module.
   byte-addressed device, and block and flux are disjoint families (P13),
   so a flux artifact is reached through its own type as the capture-set
   adapter is;
-  `remanence_image.rs` the flux family's physical stratum (F63,
-  pledged) — the remanence image: form factor, holes as angular data,
+  `remanence_image.rs` the flux family's physical stratum — the public
+  `RemanenceImage` root, which answers the image's *shape* and nothing
+  below it (form factor, the angular unit, holes, surfaces, and per
+  orbit its radius and counts), over the crate-private model it is a
+  face of: form factor, holes as angular data,
   and per surface the orbits, each an ordered circular array of packed
   32-bit points (28-bit angle high, magnetization and widths flags
   low) held as cache-backed chunks over the family's
@@ -121,13 +124,18 @@ ABI, or Python module.
   (alternation, the rewrite splice, one radius one recording), the
   refinement where only ignorance may be overwritten, and the reversal
   where spans reverse rather than points; `remanence_format.rs` the
-  `.remanence` artifact (F64, pledged), claimed in both directions —
-  magic, binary sentinel, version gate, then one zlib-framed DEFLATE
+  `.remanence` artifact, claimed in both directions and carrying the
+  root's own `open`/`open_with_cache`/`write` — a flux artifact is
+  reached through its own type rather than a device, as the capture
+  set and the P64 image are, block and flux being disjoint families
+  (P13) — magic, binary sentinel, version gate, then one zlib-framed
+  DEFLATE
   payload of varint angle deltas with the magnetization byte elided
   wherever alternation derives it — read through `inflate.rs` under
   new zlib framing and written through `deflate.rs`, the library's own
   RFC 1951 encoder (deterministic within this implementation;
-  cross-implementation byte identity deliberately unclaimed);
+  cross-implementation byte identity deliberately unclaimed, and the
+  P29 account empty because the artifact is the model's own);
   `flux_analysis.rs` the gap-first reconstruction's numeric core (F65,
   pledged) over plain arrays — the cell lattice from a comb
   periodogram with per-context peak-shift medians and the alternation
@@ -524,7 +532,10 @@ takes the device family as an optional second argument
 instead, through the convenience over discovery, so a format declaring
 no default device — a raw image — refuses there and names the drives to
 pass. `identify --discover <path>` reports what an artifact is without
-loading it, and `identify --families` lists the claimed families.
+loading it, `identify --remanence <path> [write-to]` reads a
+`.remanence` artifact through its own type — there is no device to
+load a flux artifact into — and writes it back where a destination is
+given, and `identify --families` lists the claimed families.
 
 **Without that `PATH` entry gcc exits 1 and prints nothing at all**: it
 is gcc's own runtime DLLs failing to resolve, so the compiler never

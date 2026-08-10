@@ -271,6 +271,13 @@ typedef struct RemanenceFileData RemanenceFileData;
 // The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
 
+// An opened remanence image, holding its claim on the artifact and the
+// points it decoded into private session storage.
+typedef struct RemanenceImage RemanenceImage;
+
+// What writing an image into a `.remanence` artifact carried.
+typedef struct RemanenceImageWriteReport RemanenceImageWriteReport;
+
 // A borrowed view of one machine in a session.
 //
 // **The session owns this; never free it.** It stays valid until the
@@ -458,6 +465,27 @@ typedef struct {
   uint64_t longest_landmark_bits;
   uint64_t unframed_bits;
 } RemanenceBytestreamLocation;
+
+// One index hole, as the image holds it: an exact fraction of a turn
+// for the centre and another for the extent. Nothing radial is stored.
+typedef struct {
+  uint64_t center_numerator;
+  uint64_t center_denominator;
+  uint64_t extent_numerator;
+  uint64_t extent_denominator;
+} RemanenceImageHole;
+
+// One orbit's identity and shape — never its points.
+typedef struct {
+  uint64_t surface;
+  // The centre radius of the recorded band, in whole microns.
+  uint64_t radius_microns;
+  uint64_t points;
+  // How many carry a sense a reversal can be drawn from.
+  uint64_t coherent_points;
+  // How many spans the image declines to read.
+  uint64_t unaligned_spans;
+} RemanenceImageOrbit;
 
 #ifdef __cplusplus
 extern "C" {
@@ -2346,6 +2374,127 @@ size_t remanence_drive_map_provenance_count(const RemanenceDriveMap *map);
 // travelling with the answer. **This is not evidence** — nothing in it was
 // read off a disk.
 const char *remanence_drive_map_provenance(const RemanenceDriveMap *map, size_t index);
+
+// Opens the `.remanence` artifact at `path` (UTF-8), claiming the file
+// and decoding the whole image once into private session storage. The
+// magic, the binary sentinel and the layout version are checked before
+// anything else is believed, and a version past this release's claim is
+// refused by name. Returns null on failure and stores a message in
+// `error_out` (free with `remanence_string_free`).
+RemanenceImage *remanence_image_open(const char *path,
+                                     RemanenceErrorCategory *error_category_out,
+                                     char **error_out,
+                                     char **error_rule_out);
+
+// Opens a remanence image as `remanence_image_open` does, under a
+// declared cache bound: at most `cache_bytes` of the decoded image
+// stays resident. The bound narrows the working set; it never refuses
+// service.
+RemanenceImage *remanence_image_open_with_cache(const char *path,
+                                                uint64_t cache_bytes,
+                                                RemanenceErrorCategory *error_category_out,
+                                                char **error_out,
+                                                char **error_rule_out);
+
+// Frees an image handle, releasing its claim on the artifact and
+// discarding the private session storage its points decoded into.
+void remanence_image_free(RemanenceImage *image);
+
+// The artifact the image was opened from.
+const char *remanence_image_path(const RemanenceImage *image);
+
+// The artifact format's stable identifier: `"remanence"`.
+const char *remanence_image_format_id(const RemanenceImage *image);
+
+// That format's human-readable name.
+const char *remanence_image_format_name(const RemanenceImage *image);
+
+// Which P7 mode the open obtained on the artifact.
+RemanenceAccessMode remanence_image_access_mode(const RemanenceImage *image);
+
+// The medium's shape in the model's own spelling: `"8-inch"`,
+// `"5.25-inch"` or `"3.5-inch"`.
+const char *remanence_image_form_factor(const RemanenceImage *image);
+
+// The angular unit every angle in the image is stated over — a unit
+// rather than a measurement, so equality is exact.
+uint64_t remanence_image_angular_divisions(const RemanenceImage *image);
+
+// How many bytes of private session storage the decoded points occupy.
+uint64_t remanence_image_backing_bytes(const RemanenceImage *image);
+
+// How much of that backing is currently resident. The points are never
+// held whole.
+uint64_t remanence_image_resident_bytes(const RemanenceImage *image);
+
+// How many index holes the image holds.
+size_t remanence_image_hole_count(const RemanenceImage *image);
+
+// One of them, written into `out`. Returns false when out of range.
+bool remanence_image_hole(const RemanenceImage *image, size_t index, RemanenceImageHole *out);
+
+// How many surfaces carry orbits.
+size_t remanence_image_surface_count(const RemanenceImage *image);
+
+// One surface's index, written into `out`, ascending. Returns false
+// when out of range.
+bool remanence_image_surface(const RemanenceImage *image, size_t index, uint64_t *out);
+
+// How many orbits the image holds, across every surface.
+size_t remanence_image_orbit_count(const RemanenceImage *image);
+
+// One of them, written into `out`, ordered by surface then radius.
+// Returns false when out of range.
+bool remanence_image_orbit(const RemanenceImage *image, size_t index, RemanenceImageOrbit *out);
+
+// How the image came to be known, in human-readable terms.
+size_t remanence_image_provenance_count(const RemanenceImage *image);
+
+const char *remanence_image_provenance(const RemanenceImage *image, size_t index);
+
+// Writes the image into a new `.remanence` artifact at `path` (UTF-8)
+// and reports what the artifact carried. An existing destination is a
+// named refusal rather than an overwrite, and an interruption leaves
+// the destination absent rather than half an artifact. Returns null on
+// failure; free the report with `remanence_image_write_report_free`.
+RemanenceImageWriteReport *remanence_image_write(const RemanenceImage *image,
+                                                 const char *path,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
+
+// Frees a write report.
+void remanence_image_write_report_free(RemanenceImageWriteReport *report);
+
+// Where the artifact was written.
+const char *remanence_image_write_path(const RemanenceImageWriteReport *report);
+
+// The artifact's size on storage.
+uint64_t remanence_image_write_artifact_bytes(const RemanenceImageWriteReport *report);
+
+// How many orbits it carried.
+uint64_t remanence_image_write_orbits(const RemanenceImageWriteReport *report);
+
+// Every point across every orbit it carried.
+uint64_t remanence_image_write_points(const RemanenceImageWriteReport *report);
+
+// How many kinds of loss the crossing did not carry. Zero for this
+// format, always: the remanence artifact is the model's own, so it
+// carries every fact the image holds. An empty account is the claim,
+// not a missing one.
+size_t remanence_image_write_declared_loss_count(const RemanenceImageWriteReport *report);
+
+// One loss entry's stable code, or null when out of range.
+const char *remanence_image_write_declared_loss_code(const RemanenceImageWriteReport *report,
+                                                     size_t index);
+
+// What was lost, in the source's own terms. A count is not an account.
+const char *remanence_image_write_declared_loss_detail(const RemanenceImageWriteReport *report,
+                                                       size_t index);
+
+// How much of it there was, in whatever the detail counts.
+uint64_t remanence_image_write_declared_loss_amount(const RemanenceImageWriteReport *report,
+                                                    size_t index);
 
 #ifdef __cplusplus
 }  // extern "C"

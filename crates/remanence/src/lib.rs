@@ -136,6 +136,8 @@ pub use report::{
     VolumeLabel, VolumeOrigin,
 };
 pub use p64::{P64HalfTrack, P64Image, P64Report};
+pub use remanence_format::RemanenceWriteReport;
+pub use remanence_image::{RemanenceHole, RemanenceImage, RemanenceImageReport, RemanenceOrbit};
 pub use storage_device::{AttachmentId, StorageDevice};
 pub use session::{
     ArchiveLayout, DiskLayout, FilesystemLayout, Identification, ImageLayout, Layer, LayerKind,

@@ -332,12 +332,130 @@ static int show_discovery(const char *path) {
     return EXIT_SUCCESS;
 }
 
+/* The remanence image: the flux family's physical stratum, read from its
+ * own artifact rather than through a device. Block and flux are disjoint
+ * families, so a flux artifact is reached through its own type exactly as
+ * a capture set is -- there is no device to load it into. What crosses
+ * the boundary is the image's shape; the points beneath it stay in the
+ * library, streamed from private session storage under the declared
+ * bound. */
+static int show_remanence_image(const char *path, const char *destination) {
+    RemanenceErrorCategory error_category;
+    char *error = NULL;
+    char *error_rule = NULL;
+    RemanenceImage *image =
+        remanence_image_open(path, &error_category, &error, &error_rule);
+    if (image == NULL) {
+        report_error("error", error_category, error, error_rule);
+        return EXIT_FAILURE;
+    }
+
+    printf("Source:  %s\n", remanence_image_path(image));
+    printf("Format:  %s (%s)\n", remanence_image_format_name(image),
+           remanence_image_format_id(image));
+    printf("Medium:  %s\n", remanence_image_form_factor(image));
+    printf("Angles:  %" PRIu64 " divisions per turn\n",
+           remanence_image_angular_divisions(image));
+
+    size_t holes = remanence_image_hole_count(image);
+    printf("Holes:   %zu\n", holes);
+    for (size_t i = 0; i < holes; ++i) {
+        RemanenceImageHole hole;
+        if (remanence_image_hole(image, i, &hole)) {
+            printf("  centre %" PRIu64 "/%" PRIu64 ", extent %" PRIu64 "/%" PRIu64 "\n",
+                   hole.center_numerator, hole.center_denominator,
+                   hole.extent_numerator, hole.extent_denominator);
+        }
+    }
+
+    size_t surfaces = remanence_image_surface_count(image);
+    printf("Surfaces (%zu):", surfaces);
+    for (size_t i = 0; i < surfaces; ++i) {
+        uint64_t surface = 0;
+        if (remanence_image_surface(image, i, &surface)) {
+            printf(" %" PRIu64, surface);
+        }
+    }
+    printf("\n");
+
+    /* One recorded band at one radius. "Orbit", not "track": both the
+     * flux community and the recording formats use "track" and mean
+     * different radii by it. */
+    size_t orbits = remanence_image_orbit_count(image);
+    uint64_t points = 0;
+    uint64_t unread = 0;
+    printf("Orbits (%zu):\n", orbits);
+    for (size_t i = 0; i < orbits; ++i) {
+        RemanenceImageOrbit orbit;
+        if (!remanence_image_orbit(image, i, &orbit)) {
+            continue;
+        }
+        points += orbit.points;
+        unread += orbit.unaligned_spans;
+        /* The ends of the disk say most about it; the middle is more of
+         * the same, so this prints the first three and the last. */
+        if (i < 3 || i + 1 == orbits) {
+            printf("  surface %" PRIu64 " radius %" PRIu64 " um: %" PRIu64
+                   " points (%" PRIu64 " coherent, %" PRIu64 " unread)\n",
+                   orbit.surface, orbit.radius_microns, orbit.points,
+                   orbit.coherent_points, orbit.unaligned_spans);
+        } else if (i == 3) {
+            printf("  ...\n");
+        }
+    }
+    printf("Total:   %" PRIu64 " points, %" PRIu64 " spans unread\n", points, unread);
+
+    size_t provenance = remanence_image_provenance_count(image);
+    printf("Known by (%zu):\n", provenance);
+    for (size_t i = 0; i < provenance; ++i) {
+        printf("  %s\n", remanence_image_provenance(image, i));
+    }
+    printf("Backing: %" PRIu64 " bytes, %" PRIu64 " resident\n",
+           remanence_image_backing_bytes(image), remanence_image_resident_bytes(image));
+
+    /* Writing is the other direction of the same claim. An existing
+     * destination refuses by name rather than being overwritten, and the
+     * P29 account comes back empty because this is the model's own
+     * artifact: nothing of the image was left behind. */
+    int status = EXIT_SUCCESS;
+    if (destination != NULL) {
+        RemanenceImageWriteReport *written = remanence_image_write(
+            image, destination, &error_category, &error, &error_rule);
+        if (written == NULL) {
+            report_error("error", error_category, error, error_rule);
+            status = EXIT_FAILURE;
+        } else {
+            printf("Wrote:   %s (%" PRIu64 " bytes, %" PRIu64 " orbits, %" PRIu64
+                   " points)\n",
+                   remanence_image_write_path(written),
+                   remanence_image_write_artifact_bytes(written),
+                   remanence_image_write_orbits(written),
+                   remanence_image_write_points(written));
+            size_t losses = remanence_image_write_declared_loss_count(written);
+            printf("Not carried (%zu):%s\n", losses, losses == 0 ? " nothing" : "");
+            for (size_t i = 0; i < losses; ++i) {
+                printf("  %s: %s (%" PRIu64 ")\n",
+                       remanence_image_write_declared_loss_code(written, i),
+                       remanence_image_write_declared_loss_detail(written, i),
+                       remanence_image_write_declared_loss_amount(written, i));
+            }
+            remanence_image_write_report_free(written);
+        }
+    }
+
+    remanence_image_free(image);
+    return status;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--list") == 0) {
         return list_archive(argv[2]);
     }
     if (argc == 3 && strcmp(argv[1], "--discover") == 0) {
         return show_discovery(argv[2]);
+    }
+    if ((argc == 3 || argc == 4) && strcmp(argv[1], "--remanence") == 0) {
+        return show_remanence_image(argv[2], argc == 4 ? argv[3] : NULL);
     }
     if (argc == 2 && strcmp(argv[1], "--families") == 0) {
         list_families();
@@ -347,6 +465,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: %s <path-to-image> [device-family]\n", argv[0]);
         fprintf(stderr, "       %s --discover <path-to-image>\n", argv[0]);
         fprintf(stderr, "       %s --list <path-to-archive>\n", argv[0]);
+        fprintf(stderr, "       %s --remanence <path-to-artifact> [write-to]\n", argv[0]);
         fprintf(stderr, "       %s --families\n", argv[0]);
         return EXIT_FAILURE;
     }

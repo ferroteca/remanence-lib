@@ -3972,6 +3972,305 @@ impl P64Image {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The remanence image: the flux family's physical stratum, and the
+// `.remanence` artifact it is read from and written to. The model
+// beneath the root — orbits' points, magnetization, write geometry —
+// does not cross this boundary; what crosses is the image's shape.
+
+/// One index hole, as the image holds it: an exact fraction of a turn
+/// for the centre and another for the extent. Nothing radial is stored.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemanenceHole {
+    pub center_numerator: u64,
+    pub center_denominator: u64,
+    pub extent_numerator: u64,
+    pub extent_denominator: u64,
+}
+
+#[pymethods]
+impl RemanenceHole {
+    fn __repr__(&self) -> String {
+        format!(
+            "RemanenceHole(center={}/{}, extent={}/{})",
+            self.center_numerator,
+            self.center_denominator,
+            self.extent_numerator,
+            self.extent_denominator
+        )
+    }
+}
+
+/// One orbit's identity and shape — never its points.
+///
+/// The points are the model beneath this root and stay there: a whole
+/// side carries millions of them, and what a reader of the image needs
+/// is where the orbit sits and how much it holds.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemanenceOrbit {
+    pub surface: u64,
+    /// The centre radius of the recorded band, in whole microns — a
+    /// fact about the disk, never the step index of whichever
+    /// instrument found it.
+    pub radius_microns: u64,
+    /// Every point the orbit holds, coherent or not.
+    pub points: u64,
+    /// How many of them carry a sense a reversal can be drawn from.
+    pub coherent_points: u64,
+    /// How many spans the image declines to read. Genuine
+    /// indeterminacy, recorded rather than repaired into a guess.
+    pub unaligned_spans: u64,
+}
+
+#[pymethods]
+impl RemanenceOrbit {
+    fn __repr__(&self) -> String {
+        format!(
+            "RemanenceOrbit(surface={}, radius_microns={}, points={})",
+            self.surface, self.radius_microns, self.points
+        )
+    }
+}
+
+/// A remanence image as it stands: the physical facts of one disk.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct RemanenceImageReport {
+    /// The medium's shape in the model's own spelling: `"8-inch"`,
+    /// `"5.25-inch"` or `"3.5-inch"`.
+    pub form_factor: String,
+    /// The angular unit every angle in the image is stated over — a
+    /// unit rather than a measurement, so equality is exact.
+    pub angular_divisions: u64,
+    pub holes: Vec<RemanenceHole>,
+    /// The surfaces carrying orbits, ascending.
+    pub surfaces: Vec<u64>,
+    /// Every orbit, ordered by surface then radius.
+    pub orbits: Vec<RemanenceOrbit>,
+    /// How the image came to be known, in human-readable terms.
+    pub provenance: Vec<String>,
+}
+
+#[pymethods]
+impl RemanenceImageReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "RemanenceImageReport(form_factor={:?}, orbits={})",
+            self.form_factor,
+            self.orbits.len()
+        )
+    }
+}
+
+impl RemanenceImageReport {
+    fn new(report: &remanence::RemanenceImageReport) -> Self {
+        Self {
+            form_factor: report.form_factor.clone(),
+            angular_divisions: report.angular_divisions,
+            holes: report
+                .holes
+                .iter()
+                .map(|hole| RemanenceHole {
+                    center_numerator: hole.center_numerator,
+                    center_denominator: hole.center_denominator,
+                    extent_numerator: hole.extent_numerator,
+                    extent_denominator: hole.extent_denominator,
+                })
+                .collect(),
+            surfaces: report.surfaces.clone(),
+            orbits: report
+                .orbits
+                .iter()
+                .map(|orbit| RemanenceOrbit {
+                    surface: orbit.surface,
+                    radius_microns: orbit.radius_microns,
+                    points: orbit.points,
+                    coherent_points: orbit.coherent_points,
+                    unaligned_spans: orbit.unaligned_spans,
+                })
+                .collect(),
+            provenance: report.provenance.clone(),
+        }
+    }
+}
+
+/// What writing an image into a `.remanence` artifact carried.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct RemanenceWriteReport {
+    /// Where the artifact was written.
+    pub path: String,
+    /// The artifact's size on storage.
+    pub artifact_bytes: u64,
+    pub orbits: u64,
+    /// Every point across every orbit the artifact carries.
+    pub points: u64,
+    /// What the destination did not carry. Empty for this format,
+    /// always: the remanence artifact is the model's own, so it carries
+    /// every fact the image holds. An empty account is the claim, not a
+    /// missing one.
+    pub declared_loss: Vec<DeclaredLoss>,
+}
+
+#[pymethods]
+impl RemanenceWriteReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "RemanenceWriteReport(path={:?}, orbits={}, points={})",
+            self.path, self.orbits, self.points
+        )
+    }
+}
+
+/// One remanence image, opened from a `.remanence` artifact.
+///
+/// The image is the flux family's physical stratum — what the medium
+/// holds, stated as facts of the surfaces, distinct from any capture of
+/// them. Opening claims the file — writes denied to every other process
+/// — decodes the whole image once into private session storage, and
+/// holds the claim until the image is closed or collected.
+#[pyclass(module = "remanence")]
+pub struct RemanenceImage {
+    inner: Option<remanence::RemanenceImage>,
+    report: RemanenceImageReport,
+}
+
+#[pymethods]
+impl RemanenceImage {
+    /// Opens the `.remanence` artifact at `path`. The magic, the binary
+    /// sentinel and the layout version are checked before anything else
+    /// is believed, and a version past this release's claim is refused
+    /// by name. `cache_bytes` declares the session working set; the
+    /// bound narrows what stays resident and never refuses service.
+    #[new]
+    #[pyo3(signature = (path, *, cache_bytes = None))]
+    fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
+        let image = match cache_bytes {
+            Some(cache_bytes) => remanence::RemanenceImage::open_with_cache(path, cache_bytes),
+            None => remanence::RemanenceImage::open(path),
+        }
+        .map_err(to_py_err)?;
+        let report = RemanenceImageReport::new(&image.inspect());
+        Ok(Self {
+            inner: Some(image),
+            report,
+        })
+    }
+
+    /// The image as it stands: its shape, its holes, and every orbit's
+    /// identity and counts.
+    fn inspect(&self) -> RemanenceImageReport {
+        self.report.clone()
+    }
+
+    /// The artifact the image was opened from.
+    #[getter]
+    fn path(&self) -> PyResult<Option<String>> {
+        Ok(self
+            .get()?
+            .path()
+            .map(|path| path.to_string_lossy().into_owned()))
+    }
+
+    /// The artifact format's stable identifier: `"remanence"`.
+    #[getter]
+    fn format_id(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_id())
+    }
+
+    /// That format's human-readable name.
+    #[getter]
+    fn format_name(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.format_name())
+    }
+
+    /// `"read-write"` or `"read-only"`: which mode the deny-write claim
+    /// on the artifact was obtained in.
+    #[getter]
+    fn access_mode(&self) -> PyResult<Option<&'static str>> {
+        Ok(self.get()?.access_mode().map(mode_str))
+    }
+
+    /// How many bytes of private session storage the decoded points
+    /// occupy.
+    #[getter]
+    fn backing_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.backing_bytes())
+    }
+
+    /// How much of that backing is currently resident. The points are
+    /// never held whole.
+    #[getter]
+    fn resident_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.resident_bytes())
+    }
+
+    /// Writes this image into a new `.remanence` artifact at `path`,
+    /// and reports what the artifact carried.
+    ///
+    /// The image is untouched. An existing destination is a named
+    /// refusal rather than an overwrite, and an interruption leaves the
+    /// destination absent rather than half an artifact. The bytes are
+    /// deterministic — the same image spells the same artifact, every
+    /// time.
+    fn write(&self, path: PathBuf) -> PyResult<RemanenceWriteReport> {
+        let written = self.get()?.write(path).map_err(to_py_err)?;
+        Ok(RemanenceWriteReport {
+            path: written.path.clone(),
+            artifact_bytes: written.artifact_bytes,
+            orbits: written.orbits,
+            points: written.points,
+            declared_loss: written
+                .declared_loss
+                .iter()
+                .map(|loss| DeclaredLoss {
+                    code: loss.code.clone(),
+                    detail: loss.detail.clone(),
+                    count: loss.count,
+                })
+                .collect(),
+        })
+    }
+
+    /// Releases the claim on the artifact and discards the private
+    /// session storage its points decoded into.
+    fn close(&mut self) {
+        self.inner = None;
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exception_type: Bound<'_, PyAny>,
+        _exception: Bound<'_, PyAny>,
+        _traceback: Bound<'_, PyAny>,
+    ) -> bool {
+        self.inner = None;
+        false
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RemanenceImage(form_factor={:?}, orbits={})",
+            self.report.form_factor,
+            self.report.orbits.len()
+        )
+    }
+}
+
+impl RemanenceImage {
+    fn get(&self) -> PyResult<&remanence::RemanenceImage> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "image is closed"))
+    }
+}
+
 #[pymodule(name = "remanence")]
 fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The distribution version (pyproject.toml) governs; the crate version is
@@ -4010,6 +4309,11 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BytestreamReport>()?;
     m.add_class::<BytestreamLocation>()?;
     m.add_class::<P64Image>()?;
+    m.add_class::<RemanenceImage>()?;
+    m.add_class::<RemanenceImageReport>()?;
+    m.add_class::<RemanenceHole>()?;
+    m.add_class::<RemanenceOrbit>()?;
+    m.add_class::<RemanenceWriteReport>()?;
     m.add_class::<P64Report>()?;
     m.add_class::<P64HalfTrack>()?;
     m.add_class::<MasteredLocation>()?;

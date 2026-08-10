@@ -30,10 +30,13 @@
 //! which is what keeps every writer's artifacts readable here.
 #![allow(dead_code)]
 
+use std::path::{Path, PathBuf};
+
 use crate::deflate::{zlib_compress, zlib_decompress};
+use crate::device::{self, AccessIntent, AccessMode};
 use crate::error::{Error, Result};
-use crate::evidence::Provenance;
-use crate::flux_capture::{ByteSink, CHUNK_RECORDS, read_varint, write_varint};
+use crate::evidence::{DeclaredLoss, Provenance};
+use crate::flux_capture::{ByteSink, CHUNK_RECORDS, SessionBacking, read_varint, write_varint};
 use crate::remanence_image::{
     Hole, MediaFormFactor, Magnetization, MemorySource, OrbitKey, OrbitPoint, REMANENCE,
     RemanenceImage, RemanenceImageBuilder, TurnFraction, WriteWidths,
@@ -373,6 +376,160 @@ pub(crate) fn to_bytes(image: &RemanenceImage) -> Result<Vec<u8>> {
     out.push(VERSION);
     out.extend_from_slice(&zlib_compress(&payload));
     Ok(out)
+}
+
+// ----------------------------------------------------- the public root
+
+/// What writing an image into a `.remanence` artifact carried.
+///
+/// The account is P29's, and for this destination it is empty by
+/// construction: the remanence artifact is the model's own, so it
+/// carries every fact the image holds. An empty account is the claim
+/// that nothing was left behind, not an account nobody assembled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemanenceWriteReport {
+    /// Where the artifact was written.
+    pub path: String,
+    /// The artifact's size on storage.
+    pub artifact_bytes: u64,
+    pub orbits: u64,
+    /// Every point across every orbit the artifact carries.
+    pub points: u64,
+    /// What the destination did not carry (P29) — empty for this
+    /// format, always.
+    pub declared_loss: Vec<DeclaredLoss>,
+}
+
+impl RemanenceImage {
+    /// Opens the `.remanence` artifact at `path` with the stated
+    /// default session cache bound ([`crate::DEFAULT_CACHE_BYTES`]).
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_cache(path, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// Opens the artifact under a caller-declared cache bound (P27): at
+    /// most `cache_bytes` of the decoded image stays resident. The
+    /// bound narrows the working set; it never refuses service.
+    ///
+    /// Opening claims the file (P7) — writes denied to every other
+    /// process — decodes the whole artifact once into private session
+    /// storage, and holds the claim until the image is dropped, so what
+    /// the image was read from cannot change beneath it.
+    pub fn open_with_cache(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
+        let path = path.as_ref();
+        let claimed = device::open_declared(path, AccessIntent::Read)?;
+        let length = claimed
+            .metadata()
+            .map_err(|error| Error::io(format!("cannot size '{}': {error}", path.display())))?
+            .len();
+        // The payload is one zlib stream and is inflated whole, so the
+        // artifact is read whole; a file too large to be an image of a
+        // disk is refused before any of it is allocated.
+        let held = usize::try_from(length)
+            .ok()
+            .filter(|&held| held <= DECOMPRESSED_CAP)
+            .ok_or_else(|| {
+                Error::invalid_image(
+                    REMANENCE,
+                    format!(
+                        "'{}' is {length} bytes, which is larger than any image of a \
+                         disk in this device class",
+                        path.display()
+                    ),
+                )
+            })?;
+        let mut bytes = vec![0u8; held];
+        device::read_exact_at(&claimed, 0, &mut bytes).map_err(|error| {
+            Error::io(format!("cannot read '{}': {error}", path.display()))
+        })?;
+
+        let (mut image, backing, total) =
+            decode(&bytes, SessionBacking::create()?, CHUNK_RECORDS)?;
+        image.attach_backing(backing.into_source(), total, cache_bytes);
+        image.attach_artifact(path.to_path_buf(), claimed, AccessMode::ReadOnly);
+        Ok(image)
+    }
+
+    /// Writes this image into a new `.remanence` artifact at `path`,
+    /// and reports what the artifact carried.
+    ///
+    /// The image is untouched. An existing destination is a named
+    /// refusal rather than an overwrite, and an interruption leaves the
+    /// destination absent rather than half an artifact (P6, P7, P9).
+    ///
+    /// The bytes are deterministic — the same image spells the same
+    /// artifact, every time. Byte identity with another
+    /// implementation's writer is deliberately not claimed: two correct
+    /// DEFLATE encoders legitimately differ, and this reader accepts
+    /// any valid stream.
+    pub fn write(&self, path: impl AsRef<Path>) -> Result<RemanenceWriteReport> {
+        write_new_artifact(self, path.as_ref())
+    }
+}
+
+fn write_new_artifact(image: &RemanenceImage, path: &Path) -> Result<RemanenceWriteReport> {
+    if path.try_exists().unwrap_or(false) {
+        return Err(Error::io(format!(
+            "cannot write '{}': something is already there, and a destination this \
+             library did not create is never overwritten",
+            path.display()
+        )));
+    }
+    let artifact = to_bytes(image)?;
+
+    let staging = staging_path(path);
+    let file = device::create_claimed(&staging)?;
+    // The bytes are on the medium before the name exists, so what the
+    // destination names is either the whole artifact or nothing.
+    let built = device::write_all_at(&file, 0, &artifact)
+        .map_err(|error| {
+            Error::io(format!("cannot write '{}': {error}", staging.display()))
+        })
+        .and_then(|()| {
+            file.sync_all().map_err(|error| {
+                Error::io(format!(
+                    "cannot commit '{}' to storage: {error}",
+                    staging.display()
+                ))
+            })
+        });
+    drop(file);
+    if let Err(error) = built {
+        let _ = std::fs::remove_file(&staging);
+        return Err(error);
+    }
+    std::fs::rename(&staging, path).map_err(|error| {
+        let _ = std::fs::remove_file(&staging);
+        Error::io(format!(
+            "cannot put the written artifact in place at '{}': {error}",
+            path.display()
+        ))
+    })?;
+
+    Ok(RemanenceWriteReport {
+        path: path.display().to_string(),
+        artifact_bytes: artifact.len() as u64,
+        orbits: image.orbit_count() as u64,
+        points: image.orbits().map(|orbit| orbit.points()).sum(),
+        // Nothing: this is the model's own artifact.
+        declared_loss: Vec::new(),
+    })
+}
+
+/// Where the artifact is built: beside its destination, so moving it
+/// into place is a rename within one filesystem rather than a copy.
+fn staging_path(destination: &Path) -> PathBuf {
+    let name = destination.file_name().map_or_else(
+        || "artifact".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.subsec_nanos());
+    destination.with_file_name(format!(
+        ".{name}.remanence-{}-{nonce}.part",
+        std::process::id()
+    ))
 }
 
 #[cfg(test)]

@@ -5,10 +5,10 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # The remanence flux layer
 
-The design behind F63–F66: the **remanence image** as the flux
-family's physical stratum, the `.remanence` artifact, the gap-first
-reconstruction that fills it, and the renditions read off it. Pledged
-at the owner's direction, 2026-08-09.
+The design behind F65 and F66: the gap-first reconstruction that fills
+the **remanence image**, and the renditions read off it. Pledged at the
+owner's direction, 2026-08-09. The image itself and its `.remanence`
+artifact have since been delivered, and the code is their norm.
 
 **Provenance.** The model and the algorithms are ported from the
 owner's own flux-capture research implementation (Java, private,
@@ -26,12 +26,12 @@ carries only what the implementer here needs.
 The flux family holds **two models of a disk, deliberately**, and
 they are not rivals:
 
-- The **remanence image** (F63) is the physical stratum: what the
-  medium holds, stated as facts of the surfaces — radius, angle,
-  magnetization, write geometry. It is fit to nothing, addressed by
-  no drive's stepping, and carries no clock: a cell length is a
-  property of a *recording*, recoverable from the image, never a
-  field of it.
+- The **remanence image** (`remanence_image.rs`, delivered) is the
+  physical stratum: what the medium holds, stated as facts of the
+  surfaces — radius, angle, magnetization, write geometry. It is fit
+  to nothing, addressed by no drive's stepping, and carries no clock:
+  a cell length is a property of a *recording*, recoverable from the
+  image, never a field of it.
 - The **flux medium** (`flux_medium.rs`, delivered) is the served
   stratum: what a drive reads — one circular pulse stream per
   family-addressed location, an exact rotational frame, per-pulse
@@ -44,66 +44,6 @@ a served projection — one multiply per point — on its way to the
 delivered encode path. The media-first fold (F59) later takes the
 whole family under `load_media`; nothing here moves the surface
 shape it pledges.
-
-## The model, and the packed point
-
-`RemanenceImage` = form factor + holes + orbits, with the invariants
-F63 states. The angular unit is **2²⁸ divisions per turn**: ~670×
-finer than the tightest write quantum in the device class and ~30×
-finer than an instrument sample tick, and a *unit* rather than a
-measurement, so equality is exact and results are bit-deterministic.
-`double`-in-turns was weighed in the research lineage and declined —
-it wastes exponent bits and breaks exact equality.
-
-A point is **one `u32`**: the angle in the high 28 bits, four flag
-bits low — two carrying the magnetization, one marking a
-width-stating point. Angle-high is the load-bearing choice: `u32`
-wraparound *is* angle wraparound, so circular span tests are
-`p.wrapping_sub(s) < e.wrapping_sub(s)` with no masking. Write
-widths, stated sparsely, live beside the packed array as their own
-records; radius and widths are whole microns (`u64`), pinned by a
-radial sweep to tens of microns, so rationals would claim precision
-the facts lack. Holes keep exact rational angles.
-
-Orbit point arrays are **cache-backed**: packed words stream into the
-family's section-addressable backing (`SectionWriter` /
-`SectionCache` over `SessionBacking`, as every flux layer already
-does), chunked at the family's record-count boundary, LRU-resident
-under a declared bound (P27). The resident `Orbit` holds identity and
-shape — surface, radius, counts, width records — never the points.
-
-Vocabulary note: **orbit**, not track. "Track" collides between the
-flux community's one-band-at-one-step and the recording format's own
-track numbers; the collision is the reason the research lineage
-renamed, and this crate adopts the settled name.
-
-## The `.remanence` grammar
-
-Exactly F64's: `REMANENCE_PHYSICAL_DISK` (23 ASCII bytes), 0x1A,
-version byte `0x01`, then one zlib stream (RFC 1950 framing over the
-crate's own RFC 1951 DEFLATE). Payload: form-factor code (u8); hole
-count and holes (zigzag/varint rational pairs); surface count;
-per surface its index, orbit count, and orbits outermost-first; per
-orbit its radius (varint microns), point count, and points as
-`(angle_delta << 2) | tag` varints — tag bit 0 elects a magnetization
-byte, tag bit 1 elects two width varints. The magnetization byte is
-elided wherever alternation derives it; it survives at an orbit's
-first coherent point, at one reopening after a non-coherent span, and
-at a width-stating point repeating its predecessor's sense. Counts,
-never terminators. Enum codes are explicit table entries, never
-language ordinals. Structural rules are enforced by the model's
-constructors, not re-checked by the reader, so file and constructed
-image are held to one standard.
-
-**Determinism ruling.** The research implementation fixed its zlib
-level as part of the format so re-serialisation is byte-identical.
-Byte-identical output across *implementations* is not achievable —
-two correct DEFLATE encoders legitimately differ — so this crate
-claims determinism of its own writer only: same image, same bytes,
-every time. Reading accepts any valid zlib stream, which is what
-makes the research implementation's artifacts (and any future
-writer's) readable here. The golden fixture for the reader is an
-artifact the research implementation wrote.
 
 ## The reduction, staged
 

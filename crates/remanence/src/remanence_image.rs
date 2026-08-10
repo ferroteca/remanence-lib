@@ -40,8 +40,10 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::device::AccessMode;
 use crate::error::{Error, Result};
 use crate::evidence::Provenance;
 use crate::flux_capture::{
@@ -538,17 +540,153 @@ impl std::fmt::Debug for RemanenceBacking {
     }
 }
 
-/// The remanence image: the physical facts of one disk.
+/// One index hole as the image holds it: an exact fraction of a turn
+/// for the centre and another for the extent. Nothing radial, because
+/// nothing radial is stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemanenceHole {
+    pub center_numerator: u64,
+    pub center_denominator: u64,
+    pub extent_numerator: u64,
+    pub extent_denominator: u64,
+}
+
+/// One orbit's identity and shape — never its points.
+///
+/// The points are the model beneath this root and stay there: a whole
+/// side carries millions of them, and what a reader of the image needs
+/// is where the orbit sits and how much it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemanenceOrbit {
+    pub surface: u64,
+    /// The centre radius of the recorded band, in whole microns — a
+    /// fact about the disk, never the step index of whichever
+    /// instrument found it.
+    pub radius_microns: u64,
+    /// Every point the orbit holds, coherent or not.
+    pub points: u64,
+    /// How many of them carry a sense a reversal can be drawn from.
+    pub coherent_points: u64,
+    /// How many spans the image declines to read. Genuine
+    /// indeterminacy, recorded rather than repaired into a guess.
+    pub unaligned_spans: u64,
+}
+
+/// A remanence image as it stands: the physical facts of one disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemanenceImageReport {
+    /// The medium's shape in the model's own spelling: `"8-inch"`,
+    /// `"5.25-inch"` or `"3.5-inch"`.
+    pub form_factor: String,
+    /// The angular unit every angle in the image is stated over — a
+    /// unit rather than a measurement, so equality is exact.
+    pub angular_divisions: u64,
+    pub holes: Vec<RemanenceHole>,
+    /// The surfaces carrying orbits, ascending.
+    pub surfaces: Vec<u64>,
+    /// Every orbit, ordered by surface then radius.
+    pub orbits: Vec<RemanenceOrbit>,
+    /// How the image came to be known, in human-readable terms (P4).
+    pub provenance: Vec<String>,
+}
+
+/// The artifact an image was read from, held for the image's whole
+/// life so what it was read from cannot change beneath it (P7).
 #[derive(Debug)]
-pub(crate) struct RemanenceImage {
+struct OpenedArtifact {
+    path: PathBuf,
+    _claimed: std::fs::File,
+    mode: AccessMode,
+}
+
+/// The remanence image: the physical facts of one disk.
+///
+/// This is the flux family's physical stratum — what the medium holds,
+/// stated as facts of the surfaces, distinct from any capture of them
+/// and beneath the served medium a drive reads. It is fit to nothing,
+/// addressed by no drive's stepping, and carries no clock: a cell
+/// length is a property of a *recording*, recoverable from the image,
+/// never a field of it.
+///
+/// The model beneath this root — orbits, points, magnetization, write
+/// geometry — is the library's own and stays there. What crosses the
+/// surface is the image's shape, through [`inspect`](Self::inspect).
+#[derive(Debug)]
+pub struct RemanenceImage {
     form_factor: MediaFormFactor,
     holes: Vec<Hole>,
     orbits: BTreeMap<OrbitKey, Orbit>,
     provenance: Provenance,
     backing: Option<RemanenceBacking>,
+    artifact: Option<OpenedArtifact>,
 }
 
 impl RemanenceImage {
+    /// The stable identifier of the artifact format this image reads
+    /// and writes: `"remanence"`.
+    pub fn format_id(&self) -> &'static str {
+        REMANENCE
+    }
+
+    /// That format's human-readable name.
+    pub fn format_name(&self) -> &'static str {
+        "Remanence physical disk image"
+    }
+
+    /// The artifact this image was read from, or `None` for one the
+    /// library built rather than read.
+    pub fn path(&self) -> Option<&Path> {
+        self.artifact.as_ref().map(|artifact| artifact.path.as_path())
+    }
+
+    /// Which mode the deny-write claim on that artifact was obtained
+    /// in, or `None` for an image that was built rather than read.
+    pub fn access_mode(&self) -> Option<AccessMode> {
+        self.artifact.as_ref().map(|artifact| artifact.mode)
+    }
+
+    /// The image as it stands: its shape, its holes, and every orbit's
+    /// identity and counts.
+    ///
+    /// The report is a projection of what is already resident — orbit
+    /// identities and counts, never points — so it is built on demand
+    /// rather than held beside the state it restates.
+    pub fn inspect(&self) -> RemanenceImageReport {
+        let mut surfaces: Vec<u64> = self
+            .orbits
+            .keys()
+            .map(|key| key.surface)
+            .collect();
+        surfaces.dedup();
+        RemanenceImageReport {
+            form_factor: self.form_factor.as_str().to_owned(),
+            angular_divisions: ANGULAR_DIVISIONS,
+            holes: self
+                .holes
+                .iter()
+                .map(|hole| RemanenceHole {
+                    center_numerator: hole.center_angle().numerator(),
+                    center_denominator: hole.center_angle().denominator(),
+                    extent_numerator: hole.angular_extent().numerator(),
+                    extent_denominator: hole.angular_extent().denominator(),
+                })
+                .collect(),
+            surfaces,
+            orbits: self
+                .orbits
+                .values()
+                .map(|orbit| RemanenceOrbit {
+                    surface: orbit.key.surface,
+                    radius_microns: orbit.key.radius_microns,
+                    points: orbit.points,
+                    coherent_points: orbit.coherent_points,
+                    unaligned_spans: orbit.unaligned_spans,
+                })
+                .collect(),
+            provenance: self.provenance.notes.clone(),
+        }
+    }
+
     pub(crate) fn form_factor(&self) -> MediaFormFactor {
         self.form_factor
     }
@@ -589,14 +727,28 @@ impl RemanenceImage {
         });
     }
 
-    pub(crate) fn backing_bytes(&self) -> u64 {
+    /// Records the artifact this image was read from, and the claim
+    /// held on it for the image's whole life.
+    pub(crate) fn attach_artifact(&mut self, path: PathBuf, claimed: std::fs::File, mode: AccessMode) {
+        self.artifact = Some(OpenedArtifact {
+            path,
+            _claimed: claimed,
+            mode,
+        });
+    }
+
+    /// How many bytes of private session storage this image's points
+    /// occupy.
+    pub fn backing_bytes(&self) -> u64 {
         self.backing
             .as_ref()
             .map(|backing| backing.total_bytes)
             .unwrap_or(0)
     }
 
-    pub(crate) fn resident_bytes(&self) -> u64 {
+    /// How much of that backing is currently resident. The points are
+    /// never held whole (P27); this is what says so.
+    pub fn resident_bytes(&self) -> u64 {
         self.backing
             .as_ref()
             .map(|backing| {
@@ -1023,6 +1175,7 @@ impl<S: ByteSink> RemanenceImageBuilder<S> {
                 orbits: BTreeMap::new(),
                 provenance: policy,
                 backing: None,
+                artifact: None,
             },
             chunk_records: chunk_records.max(1),
         })

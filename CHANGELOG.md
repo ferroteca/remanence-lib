@@ -20,6 +20,60 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **The flux family's physical stratum is a surface, and its artifact is
+  claimed in both directions.** `RemanenceImage::open` reads a
+  `.remanence` artifact — the library's own flux format — and answers
+  with the physical facts of one disk: what the medium *holds*, stated
+  as facts of the surfaces, distinct from any capture of them and
+  beneath the served medium a drive reads. It is fit to nothing,
+  addressed by no drive's stepping, and carries no clock — a cell length
+  is a property of a *recording*, recoverable from the image, never a
+  field of it.
+
+  **The shape crosses the surface; the model beneath it does not.**
+  `inspect` answers the form factor, the angular unit every angle is
+  stated over (2²⁸ divisions of one turn — a unit rather than a
+  measurement, so equality is exact), the index holes as exact rationals
+  with nothing radial, the surfaces, and every **orbit**: one recorded
+  band at one radius, located by its centre radius in whole microns
+  rather than by the step index of whichever instrument found it, and
+  counted — how many points it holds, how many carry a sense a reversal
+  can be drawn from, and how many spans the image declines to read,
+  which is indeterminacy recorded rather than repaired into a guess. The
+  points themselves stay beneath the root, chunked into private session
+  storage under the declared cache bound (P27), so a whole side's
+  million transitions are never resident at once. "Orbit", not "track":
+  both the flux community and the recording formats use "track" and mean
+  different radii by it.
+
+  **Writing is the other direction of the same claim.**
+  `RemanenceImage::write` encodes the image into a new artifact — the
+  magic, a binary sentinel, a layout version gated before anything is
+  believed (P8), then one zlib-framed DEFLATE stream through an encoder
+  of the library's own, the core staying dependency-free. The bytes are
+  deterministic: the same image spells the same artifact, every time.
+  Byte identity with another implementation's writer is deliberately not
+  claimed — two correct DEFLATE encoders legitimately differ — and the
+  reader accepts any valid stream, which is what keeps every writer's
+  artifacts readable here. An existing destination is a named refusal
+  rather than an overwrite, and the P29 account comes back **empty**
+  because this is the model's own artifact: an empty account is the
+  claim that nothing was left behind, not an account nobody assembled.
+
+  A flux artifact is reached through its own type rather than through a
+  device, as the capture set and the P64 image already are: block and
+  flux are disjoint families (P13), so there is no device to load one
+  into.
+
+  In C: `remanence_image_open`, `remanence_image_open_with_cache`, the
+  `remanence_image_*` accessors over holes, surfaces, orbits and
+  provenance, and `remanence_image_write` with its own report; the
+  example consumer gains `identify --remanence <path> [write-to]`. In
+  Python: `RemanenceImage`, a context manager like every other handle,
+  with `inspect()` and `write()` and the `RemanenceImageReport`,
+  `RemanenceHole`, `RemanenceOrbit` and `RemanenceWriteReport` records
+  beside it.
+
 - **An archive is a medium, and it enters a machine the way every medium
   does.** A `.zip` or `.7z` loads into an **archive-family device**
   (`DeviceFamily::ARCHIVE_DEVICE`, slot `arc0`) and its content is the
