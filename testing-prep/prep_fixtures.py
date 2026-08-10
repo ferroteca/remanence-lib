@@ -58,7 +58,6 @@ RIG_DIR = REPO_ROOT / "testing-prep" / "test-rigs"
 #           https://archive.org/details/digitoxin_20260110_213112
 #           https://archive.org/details/Populous2_Electronic_Arts_AtariST_DiskImage
 #           https://archive.org/details/kings-quest-iii-kixxr-xl-c-sierra-on-line-inc.
-#
 
 HDOS_URL = "https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip"
 # The SEBHC archive publishes no hash; this pin records the archive as
@@ -270,8 +269,6 @@ def prepare_pinball_fixture() -> None:
                 f"7-Zip could not verify {target.name} "
                 f"(exit code {result.returncode})."
             )
-
-
 
 
 def rig_context():
