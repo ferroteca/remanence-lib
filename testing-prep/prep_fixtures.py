@@ -53,6 +53,12 @@ DOWNLOADS_DIR = REPO_ROOT / "testing-prep" / "downloads"
 RIG_DIR = REPO_ROOT / "testing-prep" / "test-rigs"
 
 # See also: https://archive.org/details/flux_capacity
+#           https://archive.org/details/20250402_20250402_0519
+#           https://archive.org/details/20240119_20240119_0659
+#           https://archive.org/details/digitoxin_20260110_213112
+#           https://archive.org/details/Populous2_Electronic_Arts_AtariST_DiskImage
+#           https://archive.org/details/kings-quest-iii-kixxr-xl-c-sierra-on-line-inc.
+#
 
 HDOS_URL = "https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip"
 # The SEBHC archive publishes no hash; this pin records the archive as
