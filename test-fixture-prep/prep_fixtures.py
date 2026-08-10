@@ -8,18 +8,18 @@ The HDOS 1.0 distribution zip downloads sha256-pinned straight into
 crates/remanence/tests/fixtures/ — a multi-image zip, test material
 in its own right. The one disk image the tests read extracts beside
 it, joined by a generated single-image zip fixture. (Downloads that
-are not fixtures at all would land in testing-prep/downloads/.)
+are not fixtures at all would land in test-fixture-prep/downloads/.)
 
 The FreeDOS rig artifact is built by driving reliquary through its
 Python API. The LiveCD downloads through the blueprint's own media
 spec; the prep script pins reliquary's media cache to
-testing-prep/test-rigs/cache/media, so the download survives
+test-fixture-prep/test-rigs/cache/media, so the download survives
 `cargo clean` and machine rebuilds.
 
-Reliquary is pinned in the root pyproject.toml's `testing-prep`
+Reliquary is pinned in the root pyproject.toml's `test-fixture-prep`
 dependency group; run the script through uv from the repo root:
 
-    uv run --group testing-prep testing-prep/prep_fixtures.py
+    uv run --group test-fixture-prep test-fixture-prep/prep_fixtures.py
 """
 
 import hashlib
@@ -44,13 +44,13 @@ if reliquary is None:
     sys.exit(
         "reliquary is not importable — run this script through uv "
         "from the repo root:\n"
-        "  uv run --group testing-prep testing-prep/prep_fixtures.py"
+        "  uv run --group test-fixture-prep test-fixture-prep/prep_fixtures.py"
     )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "crates" / "remanence" / "tests" / "fixtures"
-DOWNLOADS_DIR = REPO_ROOT / "testing-prep" / "downloads"
-RIG_DIR = REPO_ROOT / "testing-prep" / "test-rigs"
+DOWNLOADS_DIR = REPO_ROOT / "test-fixture-prep" / "downloads"
+RIG_DIR = REPO_ROOT / "test-fixture-prep" / "test-rigs"
 
 # See also: https://archive.org/details/flux_capacity
 #           https://archive.org/details/20250402_20250402_0519
@@ -317,7 +317,7 @@ def build_rig_machine(context) -> tuple[str, Path]:
         sys.exit(
             f"reliquary install run failed: {error}\n"
             "(QEMU missing? A LiveCD whose prompts have moved under the\n"
-            "install script? See testing-prep/test-rigs/README.md — the\n"
+            "install script? See test-fixture-prep/test-rigs/README.md — the\n"
             "script records which screen texts it depends on.)"
         )
 

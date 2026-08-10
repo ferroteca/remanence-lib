@@ -801,8 +801,8 @@ mod tests {
         let golden_path = fixtures.join("pinball-construction-set-c64.pooled.remanence");
         if !capture_path.exists() {
             panic!(
-                "missing fixture {capture_path:?}: run `uv run --group testing-prep \
-                 testing-prep/prep_fixtures.py`"
+                "missing fixture {capture_path:?}: run `uv run --group test-fixture-prep \
+                 test-fixture-prep/prep_fixtures.py`"
             );
         }
         let Ok(golden_bytes) = std::fs::read(&golden_path) else {

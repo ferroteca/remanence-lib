@@ -899,8 +899,8 @@ mod tests {
         let golden_g64_path = fixtures.join("pinball-construction-set-c64.front.g64");
         if !capture_path.exists() {
             panic!(
-                "missing fixture {capture_path:?}: run `uv run --group testing-prep \
-                 testing-prep/prep_fixtures.py`"
+                "missing fixture {capture_path:?}: run `uv run --group test-fixture-prep \
+                 test-fixture-prep/prep_fixtures.py`"
             );
         }
         let Ok(golden_d64) = std::fs::read(&golden_d64_path) else {

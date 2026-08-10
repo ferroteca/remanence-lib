@@ -46,15 +46,15 @@ drives the maturin build backend in an isolated environment. See
 [README.md](README.md).
 
 Some `remanence` unit tests need fixtures that are not checked in;
-`testing-prep/prep_fixtures.py` prepares them (Python 3.12+, via uv):
+`test-fixture-prep/prep_fixtures.py` prepares them (Python 3.12+, via uv):
 
 ```bash
-uv sync --group testing-prep
+uv sync --group test-fixture-prep
 .venv\Scripts\Activate.ps1
-python testing-prep/prep_fixtures.py
+python test-fixture-prep/prep_fixtures.py
 ```
 
-See [testing-prep/test-rigs/README.md](testing-prep/test-rigs/README.md)
+See [testing-prep/test-rigs/README.md](test-fixture-prep/test-rigs/README.md)
 for what it builds, prerequisites (QEMU), and how the FreeDOS rig works.
 
 - The core crate (`crates/remanence`) is **dependency-free at runtime**,

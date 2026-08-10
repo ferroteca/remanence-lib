@@ -228,11 +228,11 @@ ABI, or Python module.
   isolated environment; publishing is `uv publish` and is owner-gated.
   **The Python package claims Windows only** (the tested host; the
   classifiers state it) — keep POSIX paths correct but never state or
-  imply support the project has not tested. The root `pyproject.toml`
-  is a virtual uv workspace root (`[tool.uv] package = false`, no
-  build-system of its own) listing this crate as its sole workspace
-  member; it also carries the `testing-prep` dependency group (below)
-  so uv is the one Python tool for the whole repo.
+  imply support the project has not tested. `uv build
+  crates/remanence-py` produces the sdist and abi3 wheel in its
+  `dist/`; publishing is `uv publish`.  `test-fixture-prep/` is a
+  separate uv project with its own `pyproject.toml` and lock file,
+  carrying only the fixture-preparation dependency group.
 - [CHANGELOG.md](CHANGELOG.md) records release-facing changes; the rules
   it follows are in "Versioning and releases" below.
 - `planning/README.md` is the map of the maintainer-facing planning
@@ -308,7 +308,7 @@ a reusable library should not have, and it goes stale silently inside a
 published artifact — a consumer's rename leaves the falsehood shipped.
 
 One thing is not a violation of it. The fixture-preparation tooling under
-`testing-prep/` *depends on* a named tool the way any dependency is named —
+`test-fixture-prep/` *depends on* a named tool the way any dependency is named —
 the permitted direction — which reaches that tooling, the metadata pinning
 it, and the prose documenting them, and nothing else. Being nameable there
 licenses nothing elsewhere, `planning/DECISIONS.md` included.
@@ -417,14 +417,14 @@ compiled into the wheel.
   outputs, copied in by hand, never fetched, and never tracked — the
   tests skip with a note when they are absent.
 - `crates/remanence/tests/fixtures/` holds the test fixtures.
-  `testing-prep/prep_fixtures.py` (run with `uv run --group
-  testing-prep`; testing-prep/test-rigs/README.md) prepares them: it downloads the
+  `test-fixture-prep/prep_fixtures.py` (run with `uv run --directory
+  test-fixture-prep`; testing-prep/test-rigs/README.md) prepares them: it downloads the
   sha256-pinned HDOS 1.0 distribution zip straight into
   `tests/fixtures/` (a multi-image zip, test material in its own
   right), extracts only the one disk image the tests read beside it
   plus a generated single-image zip; downloads the sha256-pinned
   Pinball Construction Set KryoFlux source archive into
-  `testing-prep/downloads/` and packages disk one's whole capture —
+  `test-fixture-prep/downloads/` and packages disk one's whole capture —
   all 84 step positions from both heads — into one local 7z fixture,
   which is the artifact a real capture produces when a single-sided
   disk is read in a two-head drive. Members keep the `.0.raw` /
@@ -436,8 +436,8 @@ compiled into the wheel.
   library's job, not the fixture's. And it builds the FreeDOS qcow2
   rig artifact there. The FreeDOS LiveCD downloads through
   reliquary's own media mechanism into
-  `testing-prep/test-rigs/cache/media`; downloads that are not
-  fixtures at all belong in `testing-prep/downloads/`. Downloaded,
+  `test-fixture-prep/test-rigs/cache/media`; downloads that are not
+  fixtures at all belong in `test-fixture-prep/downloads/`. Downloaded,
   extracted, and generated fixture files are never tracked: the
   fixtures directory's own `.gitignore` names each one, and
   `package.exclude` keeps them out of published artifacts.

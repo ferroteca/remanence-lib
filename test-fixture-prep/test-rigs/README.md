@@ -15,24 +15,24 @@ artifact** (the fixtures directory is never tracked — see D1 in
 ## Running prep_fixtures.py
 
 Through uv, from the repo root (reliquary is pinned in the root
-`pyproject.toml`'s `testing-prep` dependency group):
+`pyproject.toml`'s `test-fixture-prep` dependency group):
 
 ```bash
-uv run --group testing-prep testing-prep/prep_fixtures.py
+uv run --group test-fixture-prep test-fixture-prep/prep_fixtures.py
 ```
 
 Or activate the uv-managed `.venv` once and run directly, as before:
 
 ```bash
-uv sync --group testing-prep
+uv sync --group test-fixture-prep
 .venv\Scripts\Activate.ps1
-python testing-prep/prep_fixtures.py
+python test-fixture-prep/prep_fixtures.py
 ```
 
 The prep script drives reliquary through its **Python API**. The
 LiveCD zip downloads through the blueprint's own media spec
 (sha256-pinned), into a media cache the script pins to
-`testing-prep/test-rigs/cache/media` — inside the rig tree so the
+`../test-rigs/cache/media` — inside the rig tree so the
 ~0.5 GB download survives `cargo clean` and machine rebuilds, and
 git-ignored there. The install script runs, and the machine's `hdd0`
 image is harvested into
@@ -45,7 +45,7 @@ this fixture to be present in `tests/fixtures/`.
 zip downloads sha256-pinned straight into `tests/fixtures/`, and only
 the one disk image the tests read extracts beside it. It also downloads
 the Pinball Construction Set KryoFlux source archive into
-`testing-prep/downloads/`, then packages only disk one — all 84 step
+`../downloads/`, then packages only disk one — all 84 step
 positions from both heads — into a single 7z fixture. `.0.raw` and
 `.1.raw` are the KryoFlux head designator, not two passes over one
 surface, and members keep those suffixes because a stream records its
@@ -54,7 +54,7 @@ position nowhere but its name.)
 ## Prerequisites — the tests fail naming the gap, they do not skip
 
 - **Python ≥ 3.12** (reliquary's floor); the root `pyproject.toml`
-  pins `requires-python` accordingly for the `testing-prep` group.
+  pins `requires-python` accordingly for the `test-fixture-prep` group.
 - **QEMU** installed where reliquary can discover it, per reliquary's
   docs: a standard install location is sufficient, and PATH also
   works.
@@ -97,7 +97,7 @@ local editable checkout for the run:
 `uv run --with-editable D:\Projects\reliquary --group testing-prep testing-prep/prep_fixtures.py`.
 
 First build notes: the LiveCD zip (~0.5 GB) downloads into
-`testing-prep/test-rigs/cache/media/`, and the install run can take
+`../test-rigs/cache/media/`, and the install run can take
 tens of minutes.
 After a failed build the machine is still there to inspect;
 `uv run rlq destroy-machine --machine remanence-parttest-<n>

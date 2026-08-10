@@ -22,7 +22,7 @@ pub fn fixtures_dir() -> PathBuf {
 }
 
 /// Returns the path to a requested test fixture from `tests/fixtures/`.
-/// If the fixture is missing, panics with diagnostic instructions to run `python testing-prep/prep_fixtures.py`.
+/// If the fixture is missing, panics with diagnostic instructions to run `python test-fixture-prep/prep_fixtures.py`.
 pub fn ensure_fixture(name: &str) -> PathBuf {
     let target = fixtures_dir().join(name);
     if target.exists() {
@@ -31,7 +31,7 @@ pub fn ensure_fixture(name: &str) -> PathBuf {
 
     panic!(
         "Missing required test fixture '{name}'.\n\
-         Please run 'python testing-prep/prep_fixtures.py' (from the testing venv; see testing-prep/test-rigs/README.md)\n\
+         Please run 'python test-fixture-prep/prep_fixtures.py' (from the testing venv; see test-fixture-prep/test-rigs/README.md)\n\
          to download or generate required test fixtures before running unit tests."
     );
 }

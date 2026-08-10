@@ -1159,8 +1159,8 @@ measured to be false.
 
 **Folded into:** U23 in [pledged/USE-CASES.md](pledged/USE-CASES.md); F31 and
 F33 in [pledged/FEATURES.md](pledged/FEATURES.md);
-[AGENTS.md](../AGENTS.md); `testing-prep/prep_fixtures.py`;
-`testing-prep/test-rigs/README.md`;
+[AGENTS.md](../AGENTS.md); `../test-fixture-prep/prep_fixtures.py`;
+`../test-fixture-prep/test-rigs/README.md`;
 `crates/remanence/tests/sevenzip_catalog.rs`;
 `crates/remanence/Cargo.toml` and the fixtures directory's `.gitignore`.
 
@@ -1595,12 +1595,12 @@ D1 refuses to distribute changes; only the granularity does, and
 `package.exclude` mirrors the same names.
 
 **And the material is fetched, not carried.**
-`testing-prep/prep_fixtures.py` downloads the HDOS 1.0 distribution
+`../test-fixture-prep/prep_fixtures.py` downloads the HDOS 1.0 distribution
 zip from `https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip`
 under a pinned SHA-256, extracting only the image the tests read;
 the FreeDOS LiveCD downloads through the rig blueprint's own
 reliquary media spec, likewise pinned, into
-`testing-prep/test-rigs/cache/media` (git-ignored, outside the
+`../test-fixture-prep/test-rigs/cache/media` (git-ignored, outside the
 crate). The FreeDOS qcow2 the rig builds lands in the fixtures
 directory as a generated artifact. So a fresh checkout carries none
 of it and can obtain all of it, which closes the accepted cost this
@@ -1615,7 +1615,7 @@ distribute the blobs).
 
 **Folded into:** `crates/remanence/Cargo.toml` (`package.exclude`),
 `crates/remanence/tests/fixtures/.gitignore`, root `.gitignore`,
-`testing-prep/prep_fixtures.py`, AGENTS.md "Prior art and provenance
+`../test-fixture-prep/prep_fixtures.py`, AGENTS.md "Prior art and provenance
 notes".
 
 ## Retired decisions
