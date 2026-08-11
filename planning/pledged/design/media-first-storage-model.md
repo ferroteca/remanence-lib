@@ -246,16 +246,24 @@ the question tier, proposed; when they arrive they layer above these
 walks, which remain valid forever — the declared tier is permanent
 surface, not scaffolding.
 
-## The question tier is demoted, not deferred
+## The discovery surface stands beside this model (D30)
 
-The armed discovery surface — `discover_media` and its cache sibling,
-the consumable `Discovery`, `load_discovery`, `add_device_for`, the
-image-format `default_device` declaration — is **removed from S1–S3 by
-this design's delivery and returns to `proposed/`**, where it is argued
-as one coherent thing:
+This design once removed the armed discovery surface — `discover_media`
+and its cache sibling, the consumable `Discovery`, `load_discovery`,
+`add_device_for`, the image-format `default_device` declaration — from
+S1–S3 on the reading that a declared `load_media` already did its work.
+**D30 reversed that**: the two verbs answer different questions, and a
+caller who does not yet know what an artifact is has no format to
+declare. The surface stays, under the constraint that distinguishes it —
+**discovery holds the claim and builds no cache** — which F67 makes
+real, the delivered verb materializing a whole medium today.
+
+Nothing pledged here depends on discovery either way, and nothing here
+reinstates what the question tier still *proposes*: ranked verdicts,
+policy templates and gated derivation chains were never delivered and
+stay at
 [../../proposed/design/question-tier.md](../../proposed/design/question-tier.md)
-(the unified ask, ranked verdicts, policy templates, and the gated
-derivation chains). Nothing pledged here depends on it.
+to be argued as one thing.
 
 ## The deferred drawer
 
@@ -298,11 +306,12 @@ the features that make each real.
   session (creation), `insert`/`eject` become the edge verbs, the
   family check moves to `insert`. The two-acts discipline survives as
   create-then-link.
-- **F51's armed surface is demoted**: the ask-first journey leaves
-  S1–S3 whole — `discover_media`, `Discovery`, `load_discovery`,
-  `add_device_for`, `default_device` — and returns to `proposed/` as
-  the question tier. A demotion, not a drawer entry: the mechanism
-  goes back through the gate it came in by.
+- **F51's armed surface was to be demoted, and is not** (D30): the
+  ask-first journey stays on S1–S3 — `discover_media`, `Discovery`,
+  `load_discovery`, `add_device_for`, `default_device` — because
+  discovery and loading answer different questions. What it owes is the
+  constraint, not the exit: discovery holds the claim and builds no
+  cache (F67).
 - **The delivered "zero partitions, not one trivial one" ruling is
   reversed** by the direct partition — the evidence answer
   (`partition_scheme: None`) is unchanged; the navigation answer gains

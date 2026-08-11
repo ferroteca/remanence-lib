@@ -6,12 +6,17 @@ SPDX-License-Identifier: GPL-3.0-only
 # The question tier
 
 **Status: proposed — argued but not pledged. Nothing is worked from
-here.** This is the demoted successor of F51's delivered discovery
-surface, which the media-first storage model
-([../../pledged/design/media-first-storage-model.md](../../pledged/design/media-first-storage-model.md))
-removes from S1–S3: the creation verbs there are declaration-only, and
-every ask-first mechanism returns to this side of the gate to be argued
-as one coherent thing rather than shipped piecemeal.
+here.** This is the *extension* above the delivered discovery surface,
+not its successor. That surface — `discover_media`, the consumable
+`Discovery`, `load_discovery`, `add_device_for`, `default_device` — was
+once to be removed from S1–S3 by the media-first storage model
+([../../pledged/design/media-first-storage-model.md](../../pledged/design/media-first-storage-model.md));
+D30 reversed that, because discovery and loading answer different
+questions and a caller who does not yet know what an artifact is has no
+format to declare. What stays on this side of the gate is everything
+below that the delivered verb does *not* do — ranked verdicts, policy
+templates, gated derivation chains — to be argued as one coherent thing
+rather than shipped piecemeal.
 
 ## The one concept
 

@@ -58,6 +58,57 @@ removes it is the record either way.
 
 ## Decisions
 
+### D30 — The discovery surface is reinstated: discovery is not a duplicate of loading
+
+**Decided** Paul Galbraith, 2026-08-10. **Supports** S1, S2, S3; in-force
+P3, P4, P7, P27; U-numbers none — the demand is a caller's, and the
+question tier's own argument is where a use case for it belongs.
+
+The media-first design demoted `discover_media`, its cache sibling, the
+consumable `Discovery`, `load_discovery`, `add_device_for` and the
+image-format `default_device` declaration out of S1–S3, on the reading
+that the ask-first journey duplicated what a declared `load_media`
+already does. **That reading was wrong, and the ruling is reversed.**
+The two verbs answer different questions: loading says *make this a
+medium under a format I name*, and discovery says *what is this?* — on
+no handle at all, with nothing configured and nothing created. A caller
+who does not yet know what an artifact is has no format to declare, and
+telling them to guess one so the refusal can teach them the answer is
+the ask-first journey wearing a worse shape.
+
+**What makes it not a duplicate is now a stated constraint rather than
+an observation: discovery holds the claim and builds no cache.** It
+opens the artifact, takes the P7 claim, probes for the type, and stops —
+no media state, no session cache, no spilled backing. The `Discovery`
+stays consumable, so a load takes the open handle out of it: nothing
+runs twice and no window opens between the question and the load. The
+cache bound is the *load's* declaration and has no meaning at discovery,
+so the delivered `discover_media_with_cache` and the bound travelling
+into the device with a discovery go — the delivered surface materializes
+today, and closing that gap is F67 rather than something this ruling
+performs.
+
+Three places carried the demotion and all three are corrected: F55 is
+struck, the pledged media-first design's "the question tier is demoted,
+not deferred" section is replaced by this ruling, and
+[proposed/design/question-tier.md](proposed/design/question-tier.md)
+stops describing itself as the demoted successor of a delivered surface.
+
+**What is *not* reinstated is everything that tier still proposes.**
+Ranked verdicts, policy templates, and gated derivation chains were
+never delivered and stay in `proposed/`, to be argued as one thing. This
+ruling reverses a removal; it pledges no extension, and the delivered
+surface keeps the shape it has until one is argued.
+
+**Weighed and declined:** leaving the demotion standing and letting the
+question tier restore the surface when it is argued (the surface is
+delivered and working, and removing it to re-add it later costs every
+consumer a migration for a decision already known to rest on a false
+premise); and reinstating it as delivered, cache and all (that is the
+duplication complaint's one true grain — a discovery that materializes a
+medium *is* doing the load's work, and the constraint above is what
+keeps the two verbs distinct).
+
 ### D29 — What the swept flux-layer design deferred, kept where a design cannot go
 
 **Decided** Paul Galbraith, 2026-08-10. **Supports** in-force P22, P29,

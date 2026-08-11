@@ -94,21 +94,6 @@ lookups return null without touching the error outs; Python returns
 Touches: S1, S2, S3. Supports: the pledged design; in-force P5, P10;
 U3's absence discipline generalized; U30, U33. Needs F53.
 
-## F55 — The question tier leaves the surfaces
-
-The armed discovery mechanism is demoted, not deferred: `discover_media`
-and its cache sibling, the consumable `Discovery`, `load_discovery`,
-`add_device_for` and its cache sibling, and the image-format
-`default_device` declaration with its C and Python readers leave S1–S3
-whole. The ask-first journey returns to
-[../proposed/design/question-tier.md](../proposed/design/question-tier.md)
-to be argued as one thing — ranked verdicts, policy templates, gated
-derivation chains. `load_media` is the replacement entry, so nothing a
-use case needs is lost meanwhile.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P3 (a
-mechanism that would guess is refused until it can declare). Needs F53.
-
 ## F56 — The partition pool and the vantage doors
 
 Partitions become the medium's evidence pool: `partition(n)` by the
@@ -237,3 +222,19 @@ create/release slots.
 Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P13,
 P27; U32. Needs F57, F58.
 
+## F67 — Discovery holds the claim and builds no cache
+
+The constraint D30 reinstated the discovery surface *on*, made real.
+`discover_media` opens the artifact, takes the P7 claim, probes for the
+type, and stops: no media state, no session cache, no spilled backing —
+where the delivered verb opens a whole `MediumState` under a declared
+bound today, which is a load's work done before anyone asked for one.
+The `Discovery` stays consumable, so a load still takes the open handle
+out of it and nothing runs twice. `discover_media_with_cache` and the
+bound travelling into the device with a discovery go with the
+materialization: a cache bound is the load's declaration, and a verb
+that creates nothing has nothing to bound. The probe reads the bounded
+evidence its claims name (P27), as identification always has.
+
+Touches: S1, S2, S3. Supports: D30; in-force P4, P7, P27. Needs
+nothing — the delivered surface is what it changes.
