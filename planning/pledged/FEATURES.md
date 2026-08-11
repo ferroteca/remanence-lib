@@ -132,6 +132,13 @@ deleted; in-force P19's transparency clause is amended in the same
 change — uniformity of the walk replaces resolve-without-selecting —
 and `DiskReport` demotes to a derived view.
 
+**It rehomes the one delivered door that has nowhere else to be.** The
+CBM DOS filesystem reads today through `C1541Sectors::filesystem()`,
+that layer being where a flux recording could be reached at all before
+media were pool-held; the adapter, its label and its evidence are
+delivered and move with the door rather than being rewritten, and the
+sector layer keeps carrying no file verbs of its own either way.
+
 Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P16,
 P17, P18, P19 (as amended here), P21; U4, U26–U29, U31, U34. Needs F53.
 
@@ -230,18 +237,3 @@ create/release slots.
 Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P13,
 P27; U32. Needs F57, F58.
 
-## F62 — The CBM DOS filesystem
-
-The P18 adapter over the delivered sector layer: the track-18 directory in
-directory order (U4), the BAM header as the space's label (disk name
-and ID as recorded), PETSCII names raw beside their readings, and the
-CBM facts — PRG/SEQ/USR/REL, the locked and splat flags, size in
-blocks — as declared entry facts, byte sizes chain-established. The
-filesystem door answers on a `Commodore1541` medium bearing it and answers
-`None` honestly for the protected and the blank, everything beneath
-staying readable. `LOAD"$"` — the directory as the drive's ROM
-synthesizes it — is explicitly out of scope: that is the future
-Commodore DOS device seam (P15), not this adapter.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P18,
-P19; U4, U26. Needs F56.

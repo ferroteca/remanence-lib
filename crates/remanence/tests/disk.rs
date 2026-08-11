@@ -1463,6 +1463,7 @@ fn the_resolver_is_transparent_where_every_seam_has_one_answer() {
         "the verbs answer on the node the resolver handed back"
     );
 
+    drop(filesystem);
     drop(session);
     std::fs::remove_file(&path).ok();
 }
@@ -1615,6 +1616,7 @@ fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
         ErrorCategory::IsDirectory
     );
 
+    drop(filesystem);
     drop(session);
     std::fs::remove_file(&path).ok();
 }
@@ -1676,6 +1678,7 @@ fn a_space_addresses_its_extent_and_names_its_files() {
     space.read_at(0, &mut after).expect("reads back");
     assert_eq!(&after, b"\xEB\x3C\x90\x00", "the write is visible");
 
+    drop(space);
     disk.rollback().expect("nothing reached the image");
 
     drop(session);

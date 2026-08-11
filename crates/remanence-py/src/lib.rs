@@ -1948,9 +1948,10 @@ impl StorageDevice {
             )
         };
         Ok(StorageSpace {
-            session: Arc::clone(&self.session),
+            session: Some(Arc::clone(&self.session)),
             machine: self.machine.clone(),
-            attachment: self.attachment,
+            attachment: Some(self.attachment),
+            sectors: None,
             volume: volume.map(remanence::VolumeId::value),
             start_bytes,
             length_bytes,
@@ -1977,9 +1978,10 @@ impl StorageDevice {
             )
         };
         Ok(StorageSpace {
-            session: Arc::clone(&self.session),
+            session: Some(Arc::clone(&self.session)),
             machine: self.machine.clone(),
-            attachment: self.attachment,
+            attachment: Some(self.attachment),
+            sectors: None,
             volume: Some(volume_id),
             start_bytes,
             length_bytes,
@@ -2009,12 +2011,25 @@ impl StorageDevice {
 /// answer, the namespace's where it did — and a medium that has left
 /// answers by name rather than through state that is gone.
 fn with_filesystem<T>(
-    session: &Arc<Mutex<remanence::Session>>,
+    session: Option<&Arc<Mutex<remanence::Session>>>,
     machine: &Option<String>,
-    attachment: remanence::AttachmentId,
+    attachment: Option<remanence::AttachmentId>,
     volume: Option<u64>,
+    sectors: Option<&Arc<remanence::C1541Sectors>>,
     action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
 ) -> PyResult<T> {
+    // A namespace presented over a sector layer re-resolves from that
+    // layer, exactly as a device-backed one re-resolves from its device.
+    if let Some(sectors) = sectors {
+        let mut space = sectors.filesystem().map_err(to_py_err)?;
+        return action(&mut space).map_err(to_py_err);
+    }
+    let (Some(session), Some(attachment)) = (session, attachment) else {
+        return Err(categorized_py_err(
+            remanence::ErrorCategory::NotFound,
+            "this namespace names no device to be resolved through",
+        ));
+    };
     let mut guard = session
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2044,9 +2059,17 @@ fn with_filesystem<T>(
 /// active layer, and nothing here holds a listing that could go stale.
 #[pyclass(module = "remanence")]
 pub struct StorageSpace {
-    session: Arc<Mutex<remanence::Session>>,
+    /// The session the device holding this namespace lives in, or
+    /// `None` where no device composed it.
+    session: Option<Arc<Mutex<remanence::Session>>>,
     machine: Option<String>,
-    attachment: remanence::AttachmentId,
+    /// The device slot this namespace was resolved through, or `None`
+    /// where no device composed it at all.
+    attachment: Option<remanence::AttachmentId>,
+    /// The sector layer it is presented over, where the flux family
+    /// composed it: that family is reached through its own types rather
+    /// than through a device, and the node still carries the file verbs.
+    sectors: Option<Arc<remanence::C1541Sectors>>,
     /// The volume that composed it, where it has the addressable
     /// vantage. `None` where the medium bears its namespace directly.
     volume: Option<u64>,
@@ -2093,10 +2116,11 @@ impl StorageSpace {
     fn read_at(&self, py: Python<'_>, offset: u64, length: usize) -> PyResult<Py<PyBytes>> {
         let mut buf = vec![0_u8; length];
         with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |space| space.read_at(offset, &mut buf),
         )?;
         Ok(PyBytes::new(py, &buf).unbind())
@@ -2106,10 +2130,11 @@ impl StorageSpace {
     /// `commit` like every other write.
     fn write_at(&self, offset: u64, data: &[u8]) -> PyResult<()> {
         with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |space| space.write_at(offset, data),
         )
     }
@@ -2130,14 +2155,48 @@ impl StorageSpace {
         self.kind.clone()
     }
 
+    /// The label the recognizing filesystem read, answered whole — the
+    /// name, which source decided it, and every source it consulted.
+    ///
+    /// `None` where the namespace's format carries no such field at all,
+    /// which is a different fact from a field that is present and blank;
+    /// the readings say which it was.
+    fn label(&self) -> PyResult<Option<VolumeLabel>> {
+        Ok(with_filesystem(
+            self.session.as_ref(),
+            &self.machine,
+            self.attachment,
+            self.volume,
+            self.sectors.as_ref(),
+            |filesystem| filesystem.label(),
+        )?
+        .as_ref()
+        .map(volume_label))
+    }
+
+    /// What recognized this namespace, in human-readable terms — a
+    /// verdict without the observations that produced it is not an
+    /// answer.
+    fn evidence(&self) -> PyResult<Vec<String>> {
+        with_filesystem(
+            self.session.as_ref(),
+            &self.machine,
+            self.attachment,
+            self.volume,
+            self.sectors.as_ref(),
+            |filesystem| filesystem.evidence(),
+        )
+    }
+
     /// Lists a directory (`""` is the root, `"A/B"` descends).
     #[pyo3(signature = (path = ""))]
     fn entries(&self, path: &str) -> PyResult<Vec<Entry>> {
         let entries = with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.entries(path),
         )?;
         Ok(entries.iter().map(Entry::new).collect())
@@ -2149,10 +2208,11 @@ impl StorageSpace {
     /// which raises.
     fn stat(&self, path: &str) -> PyResult<Option<Entry>> {
         let entry = with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.stat(path),
         )?;
         Ok(entry.as_ref().map(Entry::new))
@@ -2165,16 +2225,18 @@ impl StorageSpace {
     /// directory both raise by name.
     fn get_file(&self, path: &str) -> PyResult<File> {
         let entry = with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| Ok(filesystem.get_file(path)?.entry().clone()),
         )?;
         Ok(File {
-            session: Arc::clone(&self.session),
+            session: self.session.clone(),
             machine: self.machine.clone(),
             attachment: self.attachment,
+            sectors: self.sectors.clone(),
             volume: self.volume,
             path: path.to_owned(),
             entry: Entry::new(&entry),
@@ -2185,10 +2247,11 @@ impl StorageSpace {
     /// `File.read_at`.
     fn read_file<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.read_file(path),
         )?;
         Ok(PyBytes::new(py, &bytes))
@@ -2200,10 +2263,11 @@ impl StorageSpace {
     /// `StorageDevice.commit()`.
     fn write_file(&self, path: &str, contents: &[u8]) -> PyResult<()> {
         with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.write_file(path, contents),
         )
     }
@@ -2213,10 +2277,11 @@ impl StorageSpace {
     /// Buffered until commit.
     fn resize_file(&self, path: &str, size: u64) -> PyResult<()> {
         with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.resize_file(path, size),
         )
     }
@@ -2226,10 +2291,11 @@ impl StorageSpace {
     /// commit.
     fn make_directory(&self, path: &str) -> PyResult<()> {
         with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.make_directory(path),
         )
     }
@@ -2249,9 +2315,12 @@ impl StorageSpace {
 /// and `bytes()`, the whole-value convenience beside it.
 #[pyclass(module = "remanence")]
 pub struct File {
-    session: Arc<Mutex<remanence::Session>>,
+    session: Option<Arc<Mutex<remanence::Session>>>,
     machine: Option<String>,
-    attachment: remanence::AttachmentId,
+    attachment: Option<remanence::AttachmentId>,
+    /// As on `StorageSpace`: the sector layer a flux-family namespace is
+    /// presented over, where no device composed it.
+    sectors: Option<Arc<remanence::C1541Sectors>>,
     volume: Option<u64>,
     path: String,
     entry: Entry,
@@ -2298,10 +2367,11 @@ impl File {
     fn discover(&self) -> PyResult<Discovery> {
         let path = self.path.clone();
         let discovery = with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.discover(),
         )?;
         Ok(Discovery::over(discovery))
@@ -2311,10 +2381,11 @@ impl File {
     fn bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let path = self.path.clone();
         let bytes = with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.bytes(),
         )?;
         Ok(PyBytes::new(py, &bytes))
@@ -2331,10 +2402,11 @@ impl File {
         let path = self.path.clone();
         let mut buffer = vec![0u8; length];
         with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.read_at(offset, &mut buffer),
         )?;
         Ok(PyBytes::new(py, &buffer))
@@ -2347,10 +2419,11 @@ impl File {
     fn write_at(&self, offset: u64, data: &[u8]) -> PyResult<()> {
         let path = self.path.clone();
         with_filesystem(
-            &self.session,
+            self.session.as_ref(),
             &self.machine,
             self.attachment,
             self.volume,
+            self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.write_at(offset, data),
         )
     }
@@ -3419,7 +3492,10 @@ impl C1541Bytestream {
             )
             .map_err(to_py_err)?;
         let report = SectorReport::new(inner.inspect());
-        Ok(C1541Sectors { inner, report })
+        Ok(C1541Sectors {
+            inner: Arc::new(inner),
+            report,
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -3672,7 +3748,7 @@ impl SectorReport {
 /// for them.
 #[pyclass(module = "remanence")]
 pub struct C1541Sectors {
-    inner: remanence::C1541Sectors,
+    inner: Arc<remanence::C1541Sectors>,
     report: SectorReport,
 }
 
@@ -3699,6 +3775,31 @@ impl C1541Sectors {
     ) -> PyResult<Bound<'py, PyBytes>> {
         let payload = self.inner.read_sector(track, sector).map_err(to_py_err)?;
         Ok(PyBytes::new(py, &payload))
+    }
+
+    /// The filesystem this recording bears, where it bears one.
+    ///
+    /// **The sector layer carries no file verbs of its own** — it may be
+    /// asked what it resolves to, and may not be told to act as a
+    /// namespace it is not. The answer is the same `StorageSpace` a
+    /// device resolves to, and the protected and the blank raise naming
+    /// the seam that ran out of answers.
+    fn filesystem(&self) -> PyResult<StorageSpace> {
+        let kind = self
+            .inner
+            .filesystem()
+            .and_then(|space| space.kind().map(str::to_owned))
+            .map_err(to_py_err)?;
+        Ok(StorageSpace {
+            session: None,
+            machine: None,
+            attachment: None,
+            sectors: Some(Arc::clone(&self.inner)),
+            volume: None,
+            start_bytes: 0,
+            length_bytes: 0,
+            kind: Some(kind),
+        })
     }
 
     /// How many records the recognition read.

@@ -76,7 +76,12 @@
 //! that ends, and it ends by stating what it derives — every record
 //! carrying its evidence, and [`C1541Sectors::read_sector`] refusing by
 //! name (its own [`SectorRule`] set) rather than filling in a block the
-//! recording does not hold.
+//! recording does not hold. [`C1541Sectors::filesystem`] is the rung
+//! above that: a recording bearing CBM DOS resolves to the same
+//! [`StorageSpace`] a disk image does, because the file verbs live on
+//! the namespace and on nothing else — carrying the BAM header as its
+//! label, the directory in the order it was written, and a size
+//! established by walking each file's chain.
 //!
 //! Every open also states what it established about the evidence beneath
 //! it ([`StorageDevice::assurance`]): a source short of what its own
@@ -91,6 +96,7 @@ mod c1541_presentation;
 mod c1541_sectors;
 mod c64_renditions;
 mod cache;
+mod cbm_dos;
 mod checksum;
 mod deflate;
 mod device;

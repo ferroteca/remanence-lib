@@ -2694,7 +2694,14 @@ pub unsafe extern "C" fn remanence_device_is_modified(device: *const RemanenceDe
 pub struct RemanenceSpace {
     session: *mut RemanenceSession,
     machine: Option<String>,
-    attachment: AttachmentId,
+    /// The device slot this namespace was resolved through. `None` where
+    /// no device composed it at all.
+    attachment: Option<AttachmentId>,
+    /// The sector layer this namespace is presented over, where no
+    /// device composed it — the flux family is reached through its own
+    /// types rather than through a device. Null for a device-backed
+    /// space, and borrowed from the handle that owns it either way.
+    sectors: *const RemanenceC1541Sectors,
     /// The volume that composed it, where it has the addressable
     /// vantage. `None` where the medium bears its namespace directly.
     volume: Option<u64>,
@@ -2711,7 +2718,10 @@ pub struct RemanenceSpace {
 pub struct RemanenceFile {
     session: *mut RemanenceSession,
     machine: Option<String>,
-    attachment: AttachmentId,
+    attachment: Option<AttachmentId>,
+    /// As on `RemanenceSpace`: the sector layer a flux-family namespace
+    /// is presented over, or null.
+    sectors: *const RemanenceC1541Sectors,
     volume: Option<u64>,
     path: CString,
     name: CString,
@@ -2727,12 +2737,24 @@ pub struct RemanenceFile {
 unsafe fn with_space<T>(
     session: *mut RemanenceSession,
     machine: &Option<String>,
-    attachment: AttachmentId,
+    attachment: Option<AttachmentId>,
     volume: Option<u64>,
+    sectors: *const RemanenceC1541Sectors,
     action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
 ) -> remanence::Result<T> {
+    // A namespace presented over a sector layer re-resolves from that
+    // layer, exactly as a device-backed one re-resolves from its
+    // device: the node is a view over what is beneath it and never an
+    // instance, whichever seam that is.
+    if let Some(held) = unsafe { sectors.as_ref() } {
+        let mut space = held.sectors.filesystem()?;
+        return action(&mut space);
+    }
     let handle =
         unsafe { session.as_mut() }.ok_or_else(|| remanence::Error::io("null session"))?;
+    let attachment = attachment.ok_or_else(|| {
+        remanence::Error::io("this namespace names no device to be resolved through")
+    })?;
     let target = match machine {
         Some(identity) => handle.session.machine_mut(identity),
         None => Some(handle.session.anonymous_mut()),
@@ -2766,9 +2788,9 @@ pub unsafe extern "C" fn remanence_device_filesystem(
         return ptr::null_mut();
     };
     let (session, machine, attachment) =
-        (handle.session, handle.machine.clone(), handle.attachment);
+        (handle.session, handle.machine.clone(), Some(handle.attachment));
     match unsafe {
-        with_space(session, &machine, attachment, None, |space| {
+        with_space(session, &machine, attachment, None, ptr::null(), |space| {
             Ok((
                 space.kind()?.to_owned(),
                 space.volume_id(),
@@ -2781,6 +2803,7 @@ pub unsafe extern "C" fn remanence_device_filesystem(
             session,
             machine,
             attachment,
+            sectors: ptr::null(),
             volume: volume.map(VolumeId::value),
             start_bytes,
             length_bytes,
@@ -2810,7 +2833,7 @@ pub unsafe extern "C" fn remanence_device_volume(
         return ptr::null_mut();
     };
     let (session, machine, attachment) =
-        (handle.session, handle.machine.clone(), handle.attachment);
+        (handle.session, handle.machine.clone(), Some(handle.attachment));
     let Some(medium) = handle.device() else {
         let error = remanence::Error::io("the device holding this medium was removed");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -2827,6 +2850,7 @@ pub unsafe extern "C" fn remanence_device_volume(
                 session,
                 machine,
                 attachment,
+                sectors: ptr::null(),
                 volume: Some(volume_id),
                 start_bytes,
                 length_bytes,
@@ -2905,6 +2929,7 @@ pub unsafe extern "C" fn remanence_volume_read_at(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |space| space.read_at(offset, buf),
         )
     } {
@@ -2942,6 +2967,7 @@ pub unsafe extern "C" fn remanence_volume_write_at(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |space| space.write_at(offset, bytes),
         )
     } {
@@ -2969,6 +2995,151 @@ pub unsafe extern "C" fn remanence_filesystem_kind(space: *const RemanenceSpace)
         .map_or(ptr::null(), |kind| kind.as_ptr())
 }
 
+/// The label the recognizing filesystem read, or null where this space
+/// bears none. Free with `remanence_string_free`. Sets the error on a
+/// failure to read the namespace, which a caller tells from an honest
+/// absence by whether `error_out` was written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_label(
+    filesystem: *const RemanenceSpace,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut c_char {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    match unsafe {
+        with_space(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            handle.sectors,
+            |target| target.label(),
+        )
+    } {
+        Ok(label) => label
+            .and_then(|label| label.name)
+            .map_or(ptr::null_mut(), |name| to_owned_c_char(&name)),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// How many readings the label answer holds — the sources the
+/// recognizing filesystem consulted, in its own policy's order (P4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_label_reading_count(
+    filesystem: *const RemanenceSpace,
+) -> usize {
+    unsafe { filesystem.as_ref() }.map_or(0, |handle| {
+    unsafe {
+        with_space(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            handle.sectors,
+            |target| target.label(),
+        )
+    }
+        .ok()
+        .flatten()
+        .map_or(0, |label| label.readings.len())
+    })
+}
+
+/// Writes reading `index`'s source and stored value, each freed with
+/// `remanence_string_free`. Returns false past the end.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_label_reading(
+    filesystem: *const RemanenceSpace,
+    index: usize,
+    source_out: *mut *mut c_char,
+    stored_out: *mut *mut c_char,
+) -> bool {
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return false;
+    };
+    let Some(label) = (unsafe {
+        with_space(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            handle.sectors,
+            |target| target.label(),
+        )
+    })
+    .ok()
+    .flatten() else {
+        return false;
+    };
+    let Some(reading) = label.readings.get(index) else {
+        return false;
+    };
+    if !source_out.is_null() {
+        unsafe { *source_out = to_owned_c_char(&reading.source) };
+    }
+    if !stored_out.is_null() {
+        unsafe {
+            *stored_out = reading
+                .stored
+                .as_ref()
+                .map_or(ptr::null_mut(), |stored| to_owned_c_char(stored));
+        }
+    }
+    true
+}
+
+/// How many observations recognized this namespace (P4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_evidence_count(
+    filesystem: *const RemanenceSpace,
+) -> usize {
+    unsafe { filesystem.as_ref() }.map_or(0, |handle| {
+    unsafe {
+        with_space(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            handle.sectors,
+            |target| target.evidence(),
+        )
+    }
+        .map_or(0, |evidence| evidence.len())
+    })
+}
+
+/// One of them, freed with `remanence_string_free`, or null past the end.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_evidence(
+    filesystem: *const RemanenceSpace,
+    index: usize,
+) -> *mut c_char {
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    unsafe {
+        with_space(
+            handle.session,
+            &handle.machine,
+            handle.attachment,
+            handle.volume,
+            handle.sectors,
+            |target| target.evidence(),
+        )
+    }
+    .ok()
+    .and_then(|evidence| evidence.get(index).map(|line| to_owned_c_char(line)))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Lists a directory ("" = root, "A/B" descends). Free with
 /// `remanence_entry_list_free`.
 #[unsafe(no_mangle)]
@@ -2990,6 +3161,7 @@ pub unsafe extern "C" fn remanence_filesystem_entries(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.entries(path.as_ref()),
         )
     } {
@@ -3032,6 +3204,7 @@ pub unsafe extern "C" fn remanence_filesystem_stat(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.stat(path.as_ref()),
         )
     } {
@@ -3155,6 +3328,7 @@ pub unsafe extern "C" fn remanence_filesystem_get_file(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| {
                 let file = target.get_file(path.as_ref())?;
                 Ok((
@@ -3169,6 +3343,7 @@ pub unsafe extern "C" fn remanence_filesystem_get_file(
             session: handle.session,
             machine: handle.machine.clone(),
             attachment: handle.attachment,
+            sectors: handle.sectors,
             volume: handle.volume,
             path: to_cstring(path.as_ref()),
             name: to_cstring(&name),
@@ -3219,6 +3394,7 @@ pub unsafe extern "C" fn remanence_filesystem_discover(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.get_file(path.as_ref())?.discover(),
         )
     };
@@ -3256,6 +3432,7 @@ pub unsafe extern "C" fn remanence_filesystem_read_file(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.read_file(path.as_ref()),
         )
     } {
@@ -3293,6 +3470,7 @@ pub unsafe extern "C" fn remanence_filesystem_resize_file(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.resize_file(path.as_ref(), size),
         )
     } {
@@ -3342,6 +3520,7 @@ pub unsafe extern "C" fn remanence_filesystem_write_file(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.write_file(path.as_ref(), contents),
         )
     } {
@@ -3378,6 +3557,7 @@ pub unsafe extern "C" fn remanence_filesystem_make_directory(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.make_directory(path.as_ref()),
         )
     } {
@@ -3442,6 +3622,7 @@ pub unsafe extern "C" fn remanence_file_bytes(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.get_file(&path)?.bytes(),
         )
     } {
@@ -3483,6 +3664,7 @@ pub unsafe extern "C" fn remanence_file_read_at(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.get_file(&path)?.read_at(offset, buffer),
         )
     } {
@@ -3529,6 +3711,7 @@ pub unsafe extern "C" fn remanence_file_write_at(
             &handle.machine,
             handle.attachment,
             handle.volume,
+            handle.sectors,
             |target| target.get_file(&path)?.write_at(offset, data),
         )
     } {
@@ -5938,6 +6121,52 @@ pub unsafe extern "C" fn remanence_c1541_sectors_read(
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             false
+        }
+    }
+}
+
+/// The filesystem this recording bears, or null with the refusal set.
+///
+/// **The sector layer carries no file verbs of its own**: it may be
+/// asked what it resolves to — this — and the verbs live on the space
+/// handed back, which is the same `RemanenceSpace` a device resolves to
+/// and takes every `remanence_filesystem_*` verb. The protected and the
+/// blank are refusals naming the seam that ran out of answers.
+///
+/// The space **borrows** the sector layer: keep it alive for as long as
+/// the space and anything reached through it, and free the space with
+/// `remanence_space_free` before freeing the sectors.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_sectors_filesystem(
+    sectors: *const RemanenceC1541Sectors,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceSpace {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(held) = (unsafe { sectors.as_ref() }) else {
+        let error = remanence::Error::io("null sector layer");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match held
+        .sectors
+        .filesystem()
+        .and_then(|space| space.kind().map(str::to_owned))
+    {
+        Ok(kind) => Box::into_raw(Box::new(RemanenceSpace {
+            session: ptr::null_mut(),
+            machine: None,
+            attachment: None,
+            sectors,
+            volume: None,
+            start_bytes: 0,
+            length_bytes: 0,
+            kind: Some(to_cstring(&kind)),
+        })),
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
         }
     }
 }

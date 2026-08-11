@@ -133,6 +133,21 @@ of which reads, and an address readable claims disagree about are each
 a refusal naming the rule it broke. Nothing is repaired and no block is
 filled in.
 
+**And the disk's own directory is above that.** A recording bearing CBM
+DOS resolves to a filesystem — the same namespace node a disk image
+resolves to, because the file verbs live on one node and nowhere else —
+carrying the BAM header as the space's label, the directory in the order
+it was written, PETSCII names read beside the sixteen bytes as recorded,
+and the CBM facts each entry declares: PRG or SEQ or USR or REL, the
+locked and never-closed flags, the block count, and the slot it was read
+from. A file's size is established by walking its chain rather than
+trusting the count, and a chain that reaches a block the recording never
+yielded says so on the entry and refuses on the read, so one unrecovered
+sector qualifies its own file instead of taking the listing down with
+it. `LOAD"$"` — the directory as the drive's ROM synthesizes it — is
+deliberately not this: that is a Commodore DOS device, and this is the
+filesystem the disk records.
+
 An image can be saved as a P64, and a P64 opened back.
 The container's grammar and its own adaptive range coder are the
 adapter's claim, stated in the module from the published format
@@ -442,6 +457,14 @@ for claim in sectors.inspect().claims:
     print(claim.track, claim.sector, claim.readable, claim.rule,
           claim.header_checksum_stated, claim.header_checksum_computed)
 print(sectors.read_sector(18, 0)[:3])   # the BAM: 18, 1, and DOS 'A'
+
+# And the directory CBM DOS wrote across those sectors.
+space = sectors.filesystem()
+print(space.kind, space.label().name, space.evidence()[0])
+for entry in space.entries():
+    print(entry.name, entry.size_bytes,
+          {fact.key: fact.value for fact in entry.declared})
+print(space.read_file("PCS.4000")[:2])  # a PRG's own load address
 
 
 # Each rendition states its loss before it writes anything.

@@ -321,6 +321,8 @@ fn the_namespace_reports_the_grammars_own_hierarchy() {
     file.read_at(2, &mut part).expect("a span reads");
     assert_eq!(&part, b"mane");
 
+    drop(file);
+    drop(namespace);
     drop(session);
     std::fs::remove_file(&path).ok();
 }

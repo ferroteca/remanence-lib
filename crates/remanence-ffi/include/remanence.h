@@ -1308,6 +1308,32 @@ bool remanence_filesystem_has_namespace(const RemanenceSpace *space);
 // null where this space bears no namespace.
 const char *remanence_filesystem_kind(const RemanenceSpace *space);
 
+// The label the recognizing filesystem read, or null where this space
+// bears none. Free with `remanence_string_free`. Sets the error on a
+// failure to read the namespace, which a caller tells from an honest
+// absence by whether `error_out` was written.
+char *remanence_filesystem_label(const RemanenceSpace *filesystem,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
+
+// How many readings the label answer holds — the sources the
+// recognizing filesystem consulted, in its own policy's order (P4).
+size_t remanence_filesystem_label_reading_count(const RemanenceSpace *filesystem);
+
+// Writes reading `index`'s source and stored value, each freed with
+// `remanence_string_free`. Returns false past the end.
+bool remanence_filesystem_label_reading(const RemanenceSpace *filesystem,
+                                        size_t index,
+                                        char **source_out,
+                                        char **stored_out);
+
+// How many observations recognized this namespace (P4).
+size_t remanence_filesystem_evidence_count(const RemanenceSpace *filesystem);
+
+// One of them, freed with `remanence_string_free`, or null past the end.
+char *remanence_filesystem_evidence(const RemanenceSpace *filesystem, size_t index);
+
 // Lists a directory ("" = root, "A/B" descends). Free with
 // `remanence_entry_list_free`.
 RemanenceEntryList *remanence_filesystem_entries(const RemanenceSpace *filesystem,
@@ -2028,6 +2054,22 @@ bool remanence_c1541_sectors_read(const RemanenceC1541Sectors *sectors,
                                   RemanenceErrorCategory *error_category_out,
                                   char **error_out,
                                   char **error_rule_out);
+
+// The filesystem this recording bears, or null with the refusal set.
+//
+// **The sector layer carries no file verbs of its own**: it may be
+// asked what it resolves to — this — and the verbs live on the space
+// handed back, which is the same `RemanenceSpace` a device resolves to
+// and takes every `remanence_filesystem_*` verb. The protected and the
+// blank are refusals naming the seam that ran out of answers.
+//
+// The space **borrows** the sector layer: keep it alive for as long as
+// the space and anything reached through it, and free the space with
+// `remanence_space_free` before freeing the sectors.
+RemanenceSpace *remanence_c1541_sectors_filesystem(const RemanenceC1541Sectors *sectors,
+                                                   RemanenceErrorCategory *error_category_out,
+                                                   char **error_out,
+                                                   char **error_rule_out);
 
 // How many bytes of payload one sector carries.
 uint32_t remanence_c1541_sectors_payload_bytes(const RemanenceC1541Sectors *sectors);

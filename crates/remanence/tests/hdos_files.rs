@@ -127,6 +127,7 @@ fn lists_files_from_hdos_fixture_image() {
         assert_eq!(file.name, expected);
     }
 
+    drop(filesystem);
     drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
@@ -170,6 +171,7 @@ fn reads_a_file_out_through_the_grt_chain() {
     assert_eq!(refusal.category(), ErrorCategory::ReadOnly);
     assert_eq!(refusal.rule(), Some(SpaceRule::NotWritable.as_str()));
 
+    drop(filesystem);
     drop(disk_session);
     std::fs::remove_file(&path).ok();
 }

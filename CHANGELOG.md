@@ -62,6 +62,60 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **The CBM DOS filesystem, above the sector layer.**
+  `C1541Sectors::filesystem()` answers the disk's own directory as the
+  **same `StorageSpace` a disk image resolves to** — the file verbs live
+  on the namespace and on nothing else, so this is a second door onto
+  the one node rather than a second node with the same verbs. The sector
+  layer carries no file verbs itself: it may be asked what it resolves
+  to, and may not be told to act as a namespace it is not.
+
+  What it reads is what CBM DOS records: the BAM header as the space's
+  **label** (the disk name, its identity and its DOS type, each a
+  reading with the recorded PETSCII beside it), the **directory in the
+  order it was written** (U4), walked along its own chain from where the
+  BAM says it begins, and each entry's facts in CBM DOS's own spelling —
+  PRG/SEQ/USR/REL, the locked and never-closed bits, the block count,
+  the first block, the directory slot it was read from, and a relative
+  file's record length and side sector. A name is sixteen PETSCII bytes
+  padded with `0xA0`: the reading covers the ranges CBM DOS displays,
+  marks anything else unread, and carries all sixteen bytes as recorded
+  beside it, so this disk's autoboot name — a control sequence that
+  types `LOAD"EA",8,1` when the directory is listed — survives whole.
+
+  **A size is established by walking, not by trusting.** Every block but
+  the last carries 254 bytes and the last carries what its own link
+  field says it filled, so the entry's size is what the chain holds and
+  the recorded block count travels beside it. Where the chain reaches a
+  block the recording never yielded, the entry says so — `size-basis`
+  naming which of the two its size came from, `chain-refusal` carrying
+  what stopped the walk — and reading that file refuses rather than
+  handing back the part that was reachable. One unrecovered sector
+  qualifies its own file instead of taking the listing down with it.
+
+  The filesystem adapter knows nothing about what is beneath it (P18):
+  it consumes blocks by address and never sees a flux transition, a bit
+  cell, a byte of GCR or a sector header. `LOAD"$"` — the directory as
+  the drive's ROM synthesizes it — is deliberately out of scope.
+
+  **`StorageSpace` gains `label()` and `evidence()`**, answered for both
+  vantages: a namespace recognized on a volume answers from the
+  inspection report that recognized it, and one presented over a layer
+  no device composed answers from its own adapter. A space presented
+  that way carries the namespace vantage alone — `read_at` refuses as
+  `not-addressable`, because nothing composed an extent for it to be a
+  position within. In C:
+  `remanence_c1541_sectors_filesystem`, answering the same
+  `RemanenceSpace` every `remanence_filesystem_*` verb already takes,
+  plus `remanence_filesystem_label`, its readings, and
+  `remanence_filesystem_evidence`. In Python: `C1541Sectors.filesystem()`
+  answering a `StorageSpace`, with `label()` and `evidence()` on it.
+
+  One consequence for Rust callers: a `StorageSpace` now holds its
+  borrow of whatever it reads through until it is dropped, which is what
+  its documentation always claimed. Code that held a space across the
+  drop of its session or device now drops the space first.
+
 - **The 1541 sector layer: the recording's own sectors, above the
   encoded bytestream.** `C1541Bytestream::recognize_c1541_sectors` takes
   a declared `SectorPolicy` and reads the records the recording states

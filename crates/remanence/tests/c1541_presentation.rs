@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Presenting a reconstructed disk as a 1541 hardware bitstream, then
-//! as the family's encoded bytestream, and then as the sectors the
-//! recording states for itself.
+//! as the family's encoded bytestream, then as the sectors the
+//! recording states for itself — and finally as the directory CBM DOS
+//! wrote across them.
 //!
 //! The claim under test is P23's, P33's and P30's together: the layers above a
 //! flux medium are materialized under rules the drive profile declares,
@@ -14,6 +15,16 @@
 //! derives: every record it recognizes carries its evidence, and a
 //! sector that does not read is a named refusal rather than a filled
 //! block (P4, P10).
+//!
+//! The fourth rung is reached the way every namespace is: through the
+//! partition that composes it (P19). A recording records no partition
+//! scheme, so the sector layer bears the **direct partition** — the
+//! library's own composition of the whole recording, carried as
+//! provenance and never as evidence, and extent-less because a
+//! recording's blocks are addressed by the recording rather than by
+//! position (P13). Nothing there determines a reading, so the CBM DOS
+//! one is *declared* over it and the recognizer verifies that
+//! declaration rather than picking one (P18).
 //!
 //! The journey is the real one — a KryoFlux capture of a C64 disk,
 //! reduced gap-first to the remanence image and then read by a declared
@@ -28,9 +39,9 @@ use std::sync::OnceLock;
 
 use remanence::{
     AlignmentPolicy, BitstreamReport, BytestreamReport, C1541Sectors, CaptureSet,
-    ChecksumFailurePolicy, DensityPolicy, ErrorCategory, GcrCodecPolicy, ReadChannelPolicy,
-    ReconstructionPolicy, RecordingSelection, SectorPolicy, SectorRule, UnassignedSymbolPolicy,
-    UnpairedRecordPolicy, UnzonedPolicy, WeakPulsePolicy,
+    ChecksumFailurePolicy, DensityPolicy, ErrorCategory, GcrCodecPolicy, PartitionRule,
+    ReadChannelPolicy, ReconstructionPolicy, RecordingSelection, SectorPolicy, SectorRule,
+    UnassignedSymbolPolicy, UnpairedRecordPolicy, UnzonedPolicy, WeakPulsePolicy,
 };
 
 mod common;
@@ -596,6 +607,330 @@ fn a_sector_reads_by_the_address_the_recording_states_for_it() {
     let error = sectors.read_sector(36, 0).expect_err("there is no track 36");
     assert_eq!(error.rule(), Some(SectorRule::NoSuchAddress.as_str()));
     assert!(error.to_string().contains("no track 36"), "{error}");
+}
+
+#[test]
+fn the_recording_composes_the_direct_partition_and_its_namespace_is_declared() {
+    let sectors = &presented().sectors;
+
+    // A recording records no partition scheme, so the one member of its
+    // pool is the library's own composition: ordinal zero, which no
+    // scheme numbers, and an account that is provenance rather than
+    // evidence — a composition act is stated as one and is never offered
+    // as something the recording said (P4).
+    let view = sectors.partition();
+    assert!(view.is_direct());
+    assert_eq!(view.ordinal(), 0);
+    assert_eq!(view.type_byte(), None, "nothing here records a type");
+    let direct = view.partition();
+    assert_eq!(direct.placement(), "direct");
+    assert!(
+        direct
+            .provenance()
+            .is_some_and(|why| why.contains("never evidence")),
+        "{direct:?}"
+    );
+    assert!(direct.evidence().is_empty(), "{direct:?}");
+
+    // And it composes no addressed extent: a recording's blocks are
+    // addressed by the recording rather than by position (P13), so there
+    // is no position for an extent to be measured in. The addressable
+    // vantage is absent rather than invented (D26) — a phantom volume
+    // over a layer nothing addressed would be a claim the evidence does
+    // not make.
+    assert_eq!(direct.start_bytes(), None);
+    assert_eq!(direct.length_bytes(), None);
+    assert!(!direct.is_addressable());
+    assert!(direct.volume_id().is_none());
+    assert!(!direct.bears_namespace());
+    assert!(
+        view.volume().is_none(),
+        "there is no extent for a position to be within"
+    );
+
+    // Nothing here determines a reading and this layer will not pick
+    // one, so the plain door answers the honest absence P19 requires
+    // rather than probing the blocks for a filesystem.
+    assert!(sectors.partition().filesystem().is_none());
+
+    // The reading is the caller's and the check is the library's: the
+    // adapter the declaration names is the one that reads the directory
+    // track, and this disk bears what was declared.
+    let space = sectors
+        .partition()
+        .filesystem_as("cbmdos")
+        .expect("this disk's directory track reads");
+    assert_eq!(space.kind().expect("a namespace was recognized"), "cbmdos");
+
+    // A namespace this release does read, declared over a layer it
+    // cannot be read out of, is refused by name (P10) and says what *is*
+    // read there rather than only that the answer is no.
+    let error = sectors
+        .partition()
+        .filesystem_as("fat")
+        .expect_err("a record layer bears no boot record to recognize FAT on");
+    assert_eq!(error.rule(), Some(PartitionRule::UnclaimedNamespace.as_str()));
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
+    assert!(error.to_string().contains("cbmdos"), "{error}");
+
+    // And a spelling this release reads nowhere at all is refused the
+    // same way, naming what it does read (P3).
+    let error = sectors
+        .partition()
+        .filesystem_as("ext4")
+        .expect_err("this release reads no ext4");
+    assert_eq!(error.rule(), Some(PartitionRule::UnclaimedNamespace.as_str()));
+    assert!(error.to_string().contains("ext4"), "names what was asked: {error}");
+    assert!(error.to_string().contains("cbmdos"), "names what is read: {error}");
+}
+
+/// One entry's declared fact, by the key CBM DOS spells it with.
+fn fact(entry: &remanence::Entry, key: &str) -> Option<String> {
+    entry
+        .declared
+        .iter()
+        .find(|fact| fact.key == key)
+        .map(|fact| fact.value.clone())
+}
+
+#[test]
+fn the_disk_bears_cbm_dos_and_the_bam_header_is_its_label() {
+    let mut space = presented()
+        .sectors
+        .partition()
+        .filesystem_as("cbmdos")
+        .expect("this disk's directory track reads");
+
+    assert_eq!(space.kind().expect("a namespace was recognized"), "cbmdos");
+    // The namespace vantage and not the addressable one: nothing
+    // composed an extent for this to be a position within, and the 0..1
+    // is carried by what the node answers rather than asserted beside it.
+    // The extent-lessness belongs to the direct partition this was
+    // declared over and is stated there, at the composition that made it,
+    // rather than only here at the space it handed out.
+    assert!(!space.is_addressable());
+    assert!(space.volume_id().is_none());
+
+    // The BAM header, read as the label CBM DOS displays. This disk's
+    // name is the autoboot trick — a PETSCII sequence that types
+    // `LOAD"EA",8,1` when the directory is listed — so its unreadable
+    // control bytes are marked in the reading and carried whole beside
+    // it, which is the two-outcome rule doing exactly what it is for.
+    let label = space
+        .label()
+        .expect("the namespace answers")
+        .expect("a CBM DOS disk names itself");
+    assert_eq!(label.answered_by.as_deref(), Some("bam-disk-name"));
+    let reading = |source: &str| {
+        label
+            .readings
+            .iter()
+            .find(|reading| reading.source == source)
+            .and_then(|reading| reading.stored.clone())
+            .unwrap_or_else(|| panic!("{source} is not among {:?}", label.readings))
+    };
+    assert!(reading("bam-disk-name").contains("LOAD\"EA\",8,1"), "{label:?}");
+    assert_eq!(
+        reading("bam-disk-name-petscii"),
+        "0d 93 4c 4f 41 44 22 45 41 22 2c 38 2c 31 0d 0d"
+    );
+    assert_eq!(reading("bam-disk-id"), "EA");
+    assert_eq!(reading("bam-dos-type"), "2A");
+
+    // And the claim carries what recognized it (P4).
+    let evidence = space.evidence().expect("the namespace answers");
+    assert!(
+        evidence
+            .iter()
+            .any(|line| line.contains("DOS version byte 0x41")),
+        "{evidence:?}"
+    );
+    assert!(
+        evidence
+            .iter()
+            .any(|line| line.contains("every rule this reading applied is CBM DOS's")),
+        "{evidence:?}"
+    );
+}
+
+#[test]
+fn the_directory_lists_in_its_own_order_with_the_facts_cbm_dos_records() {
+    let mut space = presented()
+        .sectors
+        .partition()
+        .filesystem_as("cbmdos")
+        .expect("the disk bears it");
+    let entries = space.entries("").expect("the directory chain reads");
+
+    // Directory order is evidence (U4): the chain is walked from where
+    // the BAM says it begins, and nothing is sorted on the way out.
+    let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names.len(), 16, "{names:?}");
+    assert_eq!(names[0], "EA");
+    assert_eq!(names[3], "DEMO1.PB");
+    assert_eq!(names[15], "DEMO4.PB");
+    // The chain crosses two directory blocks, and each entry says which
+    // slot of which block it was read from.
+    assert_eq!(fact(&entries[0], "directory-slot").as_deref(), Some("18/1#0"));
+    assert_eq!(fact(&entries[8], "directory-slot").as_deref(), Some("18/4#0"));
+
+    for entry in &entries {
+        assert_eq!(entry.kind, remanence::EntryKind::File);
+        assert_eq!(fact(entry, "type").as_deref(), Some("prg"));
+        assert_eq!(fact(entry, "type-raw").as_deref(), Some("130"));
+        assert_eq!(fact(entry, "closed").as_deref(), Some("true"));
+        assert_eq!(fact(entry, "locked").as_deref(), Some("false"));
+        // Sixteen bytes as recorded, padding included, beside the name.
+        assert_eq!(
+            fact(entry, "name-petscii").expect("recorded beside read").len(),
+            16 * 3 - 1
+        );
+    }
+
+    // The second file's name carries a byte PETSCII gives no reading —
+    // the recorded bytes have it and the reading marks it, rather than
+    // either of them being quietly dropped.
+    assert!(entries[1].name.contains('\u{fffd}'), "{:?}", entries[1].name);
+    assert_eq!(
+        fact(&entries[1], "name-petscii").as_deref(),
+        Some("45 41 22 9d a0 a0 a0 a0 a0 a0 a0 a0 a0 a0 a0 a0")
+    );
+
+    // Absence is an answer, and it is not the same as a failure to read
+    // the directory (U3).
+    assert!(space.stat("NOTHING").expect("the directory reads").is_none());
+    assert_eq!(
+        space
+            .stat("demo1.pb")
+            .expect("the directory reads")
+            .map(|entry| entry.name),
+        Some("DEMO1.PB".to_owned())
+    );
+}
+
+#[test]
+fn a_file_reads_by_name_and_its_size_is_what_its_chain_holds() {
+    let mut space = presented()
+        .sectors
+        .partition()
+        .filesystem_as("cbmdos")
+        .expect("the disk bears it");
+    let entries = space.entries("").expect("the directory chain reads");
+
+    // Sixty-five blocks: sixty-four carrying their whole 254 bytes and
+    // the last carrying what its own link field states it filled. The
+    // directory records the block count and the walk establishes the
+    // bytes, and both are reported.
+    let program = entries
+        .iter()
+        .find(|entry| entry.name == "PCS.4000")
+        .expect("the disk holds it");
+    assert_eq!(fact(program, "size-blocks").as_deref(), Some("65"));
+    assert_eq!(fact(program, "blocks-walked").as_deref(), Some("65"));
+    assert_eq!(fact(program, "size-basis").as_deref(), Some("chain-walked"));
+    assert_eq!(program.size_bytes, 64 * 254 + 130);
+
+    let bytes = space.read_file("PCS.4000").expect("the chain reads");
+    assert_eq!(bytes.len() as u64, program.size_bytes);
+    // A Commodore program's first two bytes are the address it loads
+    // at, low byte first — and this one is named for it. Four layers
+    // down that is a flux transition, so the whole ladder is standing.
+    assert_eq!(&bytes[..2], &[0x00, 0x40]);
+
+    // The bounded form beside the whole-value one reaches the same
+    // bytes (P27).
+    let mut window = [0u8; 16];
+    space
+        .get_file("PCS.4000")
+        .expect("the file is named")
+        .read_at(1000, &mut window)
+        .expect("a span within the file reads");
+    assert_eq!(window, bytes[1000..1016]);
+}
+
+#[test]
+fn a_file_whose_chain_reaches_an_unrecovered_block_is_qualified_rather_than_hidden() {
+    let mut space = presented()
+        .sectors
+        .partition()
+        .filesystem_as("cbmdos")
+        .expect("the disk bears it");
+    let entries = space.entries("").expect("the directory chain reads");
+
+    // This capture never recovered track 16 sector 0, and one file's
+    // chain runs through it. The listing still answers — what the
+    // directory records is readable either way — and the entry says
+    // which of the two its size came from and what stopped the walk.
+    let broken = entries
+        .iter()
+        .find(|entry| entry.name == "PCS.A80A")
+        .expect("the disk holds it");
+    assert_eq!(
+        fact(broken, "size-basis").as_deref(),
+        Some("size-blocks-recorded")
+    );
+    assert_eq!(broken.size_bytes, 21 * 254);
+    assert!(fact(broken, "blocks-walked").is_none());
+    let refusal = fact(broken, "chain-refusal").expect("the entry says what stopped it");
+    assert!(refusal.contains("track 16 sector 0"), "{refusal}");
+
+    // And reading it is a refusal rather than the part that was
+    // reachable: a file shortened to what came back would be worse than
+    // no file at all.
+    let error = space
+        .read_file("PCS.A80A")
+        .expect_err("the chain does not read");
+    assert_eq!(error.category(), ErrorCategory::NotFound);
+    assert_eq!(error.rule(), Some(SectorRule::NoSuchAddress.as_str()));
+
+    // Its neighbours are untouched by it.
+    assert_eq!(
+        space.read_file("EA").expect("this one reads").len(),
+        102
+    );
+}
+
+#[test]
+fn the_namespace_carries_the_file_verbs_and_claims_nothing_else() {
+    // The sector layer carries no file verbs of its own. It composes a
+    // partition and is asked what that partition composes; it does not
+    // resolve a filesystem, and the verbs below live on the namespace
+    // declared over the partition rather than on the layer beneath it.
+    let mut space = presented()
+        .sectors
+        .partition()
+        .filesystem_as("cbmdos")
+        .expect("the disk bears it");
+
+    // No addressable vantage: this namespace is presented over a layer
+    // no volume composed, so there is no position to read by, and that
+    // is a named refusal rather than a zero-filled answer.
+    let mut buffer = [0u8; 4];
+    let error = space
+        .read_at(0, &mut buffer)
+        .expect_err("there is no extent beneath this namespace");
+    assert_eq!(error.rule(), Some("not-addressable"));
+
+    // Read-only in this release, said by name at both the space and the
+    // file.
+    let error = space
+        .write_file("EA", b"no")
+        .expect_err("this release does not write CBM DOS");
+    assert_eq!(error.rule(), Some("namespace-not-writable"));
+    assert_eq!(error.category(), ErrorCategory::ReadOnly);
+    let error = space
+        .get_file("EA")
+        .expect("the file is named")
+        .write_at(0, b"no")
+        .expect_err("nor through the file");
+    assert_eq!(error.rule(), Some("namespace-not-writable"));
+
+    // A path below the root holds no names: CBM DOS is one flat
+    // directory, and saying so is not the same as answering empty.
+    let error = space
+        .entries("SOMEWHERE")
+        .expect_err("the directory is flat");
+    assert_eq!(error.category(), ErrorCategory::NotDirectory);
 }
 
 #[test]

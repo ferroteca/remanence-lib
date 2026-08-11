@@ -217,6 +217,7 @@ fn the_archive_lists_its_entries_without_touching_their_data() {
         entries[0].declared
     );
 
+    drop(namespace);
     drop(session);
     std::fs::remove_file(&path).ok();
 }

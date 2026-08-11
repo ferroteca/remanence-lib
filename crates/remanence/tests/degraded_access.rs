@@ -254,20 +254,34 @@ fn every_mutation_path_including_commit_returns_the_condition() {
     let medium = session.require_device(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
-    let refusals: Vec<remanence::Error> = vec![
-        fs(medium, volume).write_file("NEW.BIN", b"nope")
+    // Each space is taken in turn rather than four at once: a namespace
+    // holds its borrow of what it reads through until it is dropped, so
+    // the medium is free for the next one only after the last is done
+    // with it.
+    let mut refusals: Vec<remanence::Error> = Vec::new();
+    refusals.push(
+        fs(medium, volume)
+            .write_file("NEW.BIN", b"nope")
             .expect_err("write_file is denied"),
+    );
+    refusals.push(
         fs(medium, volume)
             .get_file(NEAR)
             .expect("the entry is inside the readable extent")
             .write_at(0, b"nope")
             .expect_err("the ranged write is denied"),
-        fs(medium, volume).resize_file(NEAR, 10)
+    );
+    refusals.push(
+        fs(medium, volume)
+            .resize_file(NEAR, 10)
             .expect_err("resize_file is denied"),
-        fs(medium, volume).make_directory("SUB")
+    );
+    refusals.push(
+        fs(medium, volume)
+            .make_directory("SUB")
             .expect_err("make_directory is denied"),
-        medium.commit().expect_err("commit is denied"),
-    ];
+    );
+    refusals.push(medium.commit().expect_err("commit is denied"));
 
     for refusal in &refusals {
         assert_eq!(
@@ -445,6 +459,10 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
     let listing = space.entries("").expect_err("and the verbs answer alike");
     assert_eq!(listing.category(), ErrorCategory::Unavailable);
 
+    // The space holds its borrow of what it reads through until it is
+    // dropped, so the session outlives it rather than the other way
+    // round.
+    drop(space);
     drop(session);
     std::fs::remove_file(&path).ok();
 }

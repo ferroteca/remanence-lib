@@ -123,6 +123,7 @@ fn the_namespace_lists_every_member_in_archive_order() {
         assert_eq!(entry.name, format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){step:02}.{head}.raw"));
     }
 
+    drop(namespace);
     drop(session);
     std::fs::remove_file(&path).ok();
 }

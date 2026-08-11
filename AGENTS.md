@@ -47,11 +47,14 @@ ABI, or Python module.
   volume bearing no filesystem has only the first, and a medium's own
   namespace only the second (the 0..1 as trait presence rather than
   prose); the `File` view, the one `Entry` vocabulary with the facts a
-  filesystem declares in its own spelling, the enumerated `SpaceRule` set
+  filesystem declares in its own spelling, the label and evidence a
+  recognition answers with, the enumerated `SpaceRule` set
   its refusals name, and the resolver that walks device → volume →
   namespace where every seam has one supported answer and refuses naming
   the candidates where it does not; **the file verbs live here and on
-  nothing else**;
+  nothing else** — including for a namespace no device composed, where
+  the node is the same one with its device and its extent absent rather
+  than a second type carrying the same verbs;
   `filesystem_catalog.rs` the streamed filesystem adapters and catalog
   for the namespaces a medium bears directly (crate-private, reached
   through the device's `identify` and through the resolver — the adapter
@@ -103,6 +106,15 @@ ABI, or Python module.
   points are a remanence image and a P64 container**: an image carries
   no clock, so the image's entry stands on the served projection of it
   rather than on the image directly;
+  `cbm_dos.rs` the P18 adapter at the top of that ladder — the
+  directory CBM DOS wrote, read through a `BlockSource` and nothing
+  else, so the filesystem never learns what it is standing on: the BAM
+  header as the space's label, the directory chain in its own order,
+  PETSCII names read beside the sixteen bytes as recorded, the CBM facts
+  as declared entry facts, and byte sizes established by walking each
+  chain — with the recorded block count kept where a block that never
+  came back stops the walk, so one unreadable sector qualifies its own
+  entry instead of taking the listing down;
   `c1541_sectors.rs` the rung above them — the **seam where the
   bytestream's silence ends**, and it ends by a new layer stating what
   it derives: the family's declared record grammar (which byte opens
@@ -115,7 +127,11 @@ ABI, or Python module.
   set — where nothing states an address, where no claim of one reads, or
   where several readable claims disagree. It is derived rather than a
   seventh active layer, and its payloads stream to private session
-  storage as they are recognized;
+  storage as they are recognized; **the filesystem door is on it** —
+  `filesystem()` answering the same `StorageSpace` a device resolves to,
+  because the file verbs live on the namespace and on nothing else, and
+  a space presented over a layer no device composed carries the
+  namespace vantage alone;
   `p64.rs` the P64 image-format adapter, claimed in
   both directions — the container grammar and its own range coder, the
   version gate and the structural refusals, decode of a stored medium
