@@ -716,6 +716,48 @@ fn account_for_the_envelope(capture: &FluxCapture, loss: &mut LossAccount) {
 #[cfg(test)]
 pub(crate) static CAPTURE_FIXTURE_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The one reduction this crate's tests share.
+///
+/// Opening the capture fixture and reducing it costs minutes, and more
+/// than one test needs the same disk, so it is computed once and handed
+/// out. It is the image the reduction produced rather than a stand-in
+/// for it, so what a test masters off here is what a run of its own
+/// would have given it.
+#[cfg(test)]
+pub(crate) struct ReconstructedCapture {
+    pub(crate) image: crate::remanence_image::RemanenceImage,
+    pub(crate) report: ReconstructionReport,
+}
+
+#[cfg(test)]
+pub(crate) fn reconstructed_capture() -> &'static ReconstructedCapture {
+    static SHARED: std::sync::OnceLock<ReconstructedCapture> = std::sync::OnceLock::new();
+    SHARED.get_or_init(|| {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let capture_path =
+            fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
+        if !capture_path.exists() {
+            panic!(
+                "missing fixture {capture_path:?}: run `uv run --group test-fixture-prep                  test-fixture-prep/prep_fixtures.py`"
+            );
+        }
+        let set = crate::kryoflux::CaptureSet::open(&capture_path).expect("the capture opens");
+        let plan = plan(
+            set.capture(),
+            &ReconstructionPolicy {
+                side: 0,
+                recordings: RecordingSelection::Measured,
+            },
+        )
+        .expect("the reduction plans");
+        let report = plan.report().clone();
+        let image = plan
+            .execute(crate::cache::DEFAULT_CACHE_BYTES)
+            .expect("the plan executes");
+        ReconstructedCapture { image, report }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1146,36 +1146,18 @@ mod tests {
     #[test]
     fn the_pinball_renditions_match_the_lineage() {
         let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let capture_path =
-            fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
         let golden_d64_path = fixtures.join("pinball-construction-set-c64.d64");
         let golden_g64_path = fixtures.join("pinball-construction-set-c64.front.g64");
-        if !capture_path.exists() {
-            panic!(
-                "missing fixture {capture_path:?}: run `uv run --group test-fixture-prep \
-                 test-fixture-prep/prep_fixtures.py`"
-            );
-        }
         let Ok(golden_d64) = std::fs::read(&golden_d64_path) else {
             eprintln!("skipping: golden d64 not present at {golden_d64_path:?}");
             return;
         };
 
-        let _gate = crate::remanence_reconstruction::CAPTURE_FIXTURE_GATE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let set = crate::kryoflux::CaptureSet::open(&capture_path).expect("the capture opens");
-        let plan = crate::remanence_reconstruction::plan(
-            set.capture(),
-            &crate::remanence_reconstruction::ReconstructionPolicy {
-                side: 0,
-                recordings: crate::remanence_reconstruction::RecordingSelection::Measured,
-            },
-        )
-        .expect("the reduction plans");
-        let image = plan
-            .execute(crate::cache::DEFAULT_CACHE_BYTES)
-            .expect("the plan executes");
+        // The one reduction this crate's tests share. It is the image
+        // the reduction produced rather than a stand-in for it, so what
+        // the renditions are mastered off here is what a run of their
+        // own would have given them.
+        let image = &crate::remanence_reconstruction::reconstructed_capture().image;
 
         // ---- d64: block-for-block against the lineage ----
         let (mine, report) = image.d64_artifact().expect("the d64 assembles");
