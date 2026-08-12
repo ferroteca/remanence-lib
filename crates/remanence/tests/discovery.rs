@@ -3,15 +3,23 @@
 
 //! Discovery, declared defaults, and the one-step convenience over them:
 //! asking what an artifact is before a machine has been configured for
-//! it, consuming that answer into a device, and the convenience that
-//! composes the two acts where a format declares the drive it records.
+//! it, consuming that answer into the media pool, and the convenience
+//! that composes the acts where a format declares the drive it records.
+//!
+//! **This is the half of P7 the amendment leaves untouched**: discovery
+//! names an artifact by path, so the library opens it and the mandatory
+//! write-denial applies in full. `load_media` is the other half.
 //! These tests build their images by hand, so they run without fixtures.
 
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, AttachmentId, DeviceFamily, ErrorCategory, Session, discover_media,
+    AccessIntent, AccessMode, AttachmentId, DeviceFamily, ErrorCategory, Format, Session,
+    discover_media,
 };
+
+mod common;
+use common::open_read;
 
 fn temp_path(tag: &str, extension: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,7 +56,7 @@ fn a_discovery_says_what_the_artifact_is_and_where_it_could_go() {
 
     assert_eq!(discovery.image_format(), "h8d");
     assert_eq!(discovery.media_type(), "flexible-5.25-hard-10");
-    assert_eq!(discovery.image_path(), disk.as_path());
+    assert_eq!(discovery.image_path(), Some(disk.as_path()));
 
     // Two different questions with two different answers. Where the
     // medium *could* go is derived by asking the families what they
@@ -83,7 +91,10 @@ fn the_convenience_adds_the_declared_drive_and_loads_the_medium() {
     assert_eq!(device.attachment().to_string(), "heathfloppy0");
     assert_eq!(device.family(), DeviceFamily::HEATHKIT_H17);
     assert!(device.is_occupied(), "the medium was loaded, not just found");
-    assert_eq!(device.image_path().expect("occupied"), disk.as_path());
+    assert_eq!(
+        device.medium().expect("occupied").image_path(),
+        Some(disk.as_path())
+    );
 
     // A fresh device every call, never a silent reuse of the slot that
     // is already there.
@@ -153,13 +164,17 @@ fn a_format_declaring_no_default_refuses_by_name_toward_the_two_acts() {
         "a refused convenience adds no device"
     );
 
-    // The two acts remain available and are what the refusal points at.
-    let device = session
+    // The explicit acts remain available and are what the refusal points
+    // at: declare the format, then state the drive.
+    let media = session
+        .load_media(open_read(&image), Format::Raw)
+        .expect("the caller declares the format")
+        .id();
+    session
         .add_device(DeviceFamily::HARD_DISK)
-        .expect("the caller states the drive");
-    device
-        .load_media(&image, AccessIntent::Read)
-        .expect("and the medium loads into it");
+        .expect("the caller states the drive")
+        .insert(media)
+        .expect("and the medium goes into it");
 
     drop(session);
     std::fs::remove_file(&image).ok();
@@ -183,28 +198,33 @@ fn a_discovery_is_consumed_by_the_load_and_the_claim_never_lapses() {
         .expect_err("a second exclusive claim on the same file is refused");
     assert_eq!(rival.category(), ErrorCategory::Locked);
 
-    let device = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("a drive to load it into");
-    device
+    let medium = session
         .load_discovery(discovery)
-        .expect("the state moves into the device");
-    assert!(device.is_occupied());
+        .expect("the state moves into the pool");
     assert_eq!(
-        device.mode().expect("occupied"),
+        medium.mode(),
         AccessMode::ReadWrite,
         "the intent is the discovery's own, not a second open's"
     );
+    assert_eq!(
+        medium.assurance().claim,
+        remanence::Claim::LibraryOpened,
+        "the library opened this one, and P7's denial is its own"
+    );
+    let media = medium.id();
+    session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("a drive to seat it in")
+        .insert(media)
+        .expect("the medium goes in");
 
-    // The claim is now the device's, and it is still the same one.
+    // The claim is now the pool's, and it is still the same one.
     let after = discover_media(&image, AccessIntent::Write)
-        .expect_err("the medium is still claimed, by the device now");
+        .expect_err("the medium is still claimed, by the pool now");
     assert_eq!(after.category(), ErrorCategory::Locked);
 
     drop(session);
-    discover_media(&image, AccessIntent::Write)
-        .expect("dropping the session released it")
-        .path();
+    discover_media(&image, AccessIntent::Write).expect("dropping the session released it");
     std::fs::remove_file(&image).ok();
 }
 
@@ -217,11 +237,15 @@ fn a_discovered_medium_in_the_wrong_drive_is_refused_naming_both_sides() {
     let mut session = Session::new();
 
     let discovery = discover_media(&disk, AccessIntent::Read).expect("identifies");
-    let device = session
+    let media = session
+        .load_discovery(discovery)
+        .expect("the state pools whatever drive it belongs in")
+        .id();
+    let mut device = session
         .add_device(DeviceFamily::HARD_DISK)
         .expect("the wrong drive for it");
     let error = device
-        .load_discovery(discovery)
+        .insert(media)
         .expect_err("a hard disk is not served a floppy");
 
     let message = error.to_string();
@@ -232,13 +256,13 @@ fn a_discovered_medium_in_the_wrong_drive_is_refused_naming_both_sides() {
     assert!(message.contains("hdd0"), "names the slot: {message}");
     assert!(
         !device.is_occupied(),
-        "a refused load leaves the slot as it was"
+        "a refused insert leaves the slot as it was"
     );
 
-    // The discovery was consumed by the refused load — it is gone from
-    // the type system, and its claim went with it, so the artifact is
-    // free to be asked about again.
-    discover_media(&disk, AccessIntent::Write).expect("the refused claim was released");
+    // The medium survives the refused edge — it is state, and the slot
+    // was configuration — and releasing it is what ends the claim.
+    session.release_media(media).expect("released");
+    discover_media(&disk, AccessIntent::Write).expect("the claim was released with it");
 
     drop(session);
     std::fs::remove_file(&disk).ok();

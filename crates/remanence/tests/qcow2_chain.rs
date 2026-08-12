@@ -10,34 +10,48 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, StorageDevice, DiskFormat, ErrorCategory};
+use remanence::{DiskFormat, ErrorCategory, Format, MediaId, Medium, Session};
 
-/// The space on one volume of `device`, selected by the identity the
-/// inspection report issued. One node, both vantages: `device.volume(id)`
+/// The space on one volume of `medium`, selected by the identity the
+/// inspection report issued. One node, both vantages: `medium.volume(id)`
 /// answers with the addressable extent and the namespace together, and
 /// the file verbs live on it and nowhere else (P19).
 fn fs(
-    device: &mut remanence::StorageDevice,
+    medium: &mut remanence::Medium,
     volume: remanence::VolumeId,
 ) -> remanence::StorageSpace<'_> {
-    device
+    medium
         .volume(volume)
         .expect("the report issued this volume")
 }
 
-/// Attaches `path` to a fresh session and returns both, because a medium
-/// is reachable only through the device holding it (P32). Tests keep the
-/// session alive for as long as they use the medium.
+/// Pools `path` in a fresh session under the declaration these tests
+/// make, and returns both: a medium lives in its session's pool, so
+/// tests keep the session alive for as long as they use the medium.
 fn attach(
     path: impl AsRef<std::path::Path>,
-    intent: AccessIntent,
-) -> remanence::Result<(Session, AttachmentId)> {
+    afford: Afford,
+) -> remanence::Result<(Session, MediaId)> {
+    let source = match afford {
+        Afford::Read => open_read(path),
+        Afford::Write => open_write(path),
+    };
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::HARD_DISK)?;
-    let attachment = device.attachment();
-    device.load_media(path, intent)?;
-    Ok((session, attachment))
+    let id = session.load_media(source, Format::Qcow2)?.id();
+    Ok((session, id))
 }
+
+/// What the caller's own open affords, in the shape these tests declare
+/// it: the amended P7 asks the handle one question, so the test says
+/// which answer it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Afford {
+    Read,
+    Write,
+}
+
+mod common;
+use common::{open_read, open_write};
 
 const CLUSTER_BITS: u32 = 12;
 const CLUSTER: u64 = 1 << CLUSTER_BITS;
@@ -189,7 +203,7 @@ fn run_qemu_img(qemu_img: &Path, args: &[&str]) -> String {
 
 /// The volume a partitionless image composes, named the only way a caller
 /// can name one: by asking the library what it reported.
-fn only_volume(disk: &mut StorageDevice) -> remanence::VolumeId {
+fn only_volume(disk: &mut Medium) -> remanence::VolumeId {
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1, "a partitionless image, one volume");
     report.volumes[0].id
@@ -206,10 +220,10 @@ fn reads_compose_through_a_raw_backing_file() {
         &qcow2_shell(base.len() as u64, Some(("base.img", Some("raw")))),
     );
 
-    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
-    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Qcow2 { version: 3 });
-    assert_eq!(disk.size().expect("a medium is attached"), base.len() as u64);
+    let (mut disk_session, disk_at) = attach(&overlay, Afford::Read).expect("the chain opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Qcow2 { version: 3 });
+    assert_eq!(disk.size().expect("a medium is pooled"), base.len() as u64);
 
     // The FAT volume at the bottom of the chain reads as one disk.
     let report = disk.inspect().expect("inspection composes");
@@ -234,12 +248,12 @@ fn reads_compose_through_a_raw_backing_file() {
     // remain byte-for-byte unchanged.
     let untouched_top = std::fs::read(&overlay).expect("top reads");
     let top_header = untouched_top[..CLUSTER as usize].to_vec();
-    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("write chain opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let volume = only_volume(disk);
     fs(disk, volume).write_file("MARKER.TXT", b"rolled back")
         .expect("write buffers");
-    disk.rollback().expect("a medium is attached");
+    disk.rollback().expect("a medium is pooled");
     drop(disk_session);
     assert_eq!(
         std::fs::read(&overlay).expect("rolled-back top reads"),
@@ -247,8 +261,8 @@ fn reads_compose_through_a_raw_backing_file() {
         "rollback never reaches the top image"
     );
 
-    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("write chain opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("write chain opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let volume = only_volume(disk);
     fs(disk, volume).write_file("MARKER.TXT", b"changed in the top")
         .expect("write buffers");
@@ -260,8 +274,8 @@ fn reads_compose_through_a_raw_backing_file() {
         &std::fs::read(&overlay).expect("top reads")[..CLUSTER as usize],
         top_header.as_slice()
     );
-    let (mut reopened_session, reopened_at) = attach(&overlay, AccessIntent::Read).expect("written chain reopens");
-    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
+    let (mut reopened_session, reopened_at) = attach(&overlay, Afford::Read).expect("written chain reopens");
+    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     let volume = only_volume(reopened);
     assert_eq!(
         fs(reopened, volume).read_file("MARKER.TXT").expect("changed file reads"),
@@ -289,8 +303,8 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     );
     let before = run_qemu_img(&qemu, &["info", overlay_arg]);
 
-    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Write).expect("QEMU chain opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("QEMU chain opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let volume = only_volume(disk);
     fs(disk, volume).write_file("MARKER.TXT", b"remanence copy-on-write")
         .expect("write buffers");
@@ -307,8 +321,8 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     let flattened_arg = flattened.to_str().expect("utf-8 flattened path");
     run_qemu_img(&qemu, &["convert", "-O", "raw", overlay_arg, flattened_arg]);
     let (mut qemu_session, qemu_at) =
-        attach(&flattened, AccessIntent::Read).expect("QEMU-rendered disk opens");
-    let qemu_view = qemu_session.require_device(qemu_at).expect("the medium is attached");
+        attach(&flattened, Afford::Read).expect("QEMU-rendered disk opens");
+    let qemu_view = qemu_session.medium_mut(qemu_at).expect("the medium is pooled");
     assert_eq!(
         fs(qemu_view, volume).read_file("MARKER.TXT")
             .expect("QEMU-rendered changed file reads"),
@@ -336,8 +350,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         &qcow2_shell(base.len() as u64, Some(("../mid.qcow2", Some("qcow2")))),
     );
 
-    let (mut disk_session, disk_at) = attach(&top, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&top, Afford::Read).expect("the chain opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let report = disk.inspect().expect("inspection composes");
     assert_eq!(report.volumes.len(), 1);
     let volume = report.volumes[0].id;
@@ -350,8 +364,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
 
     let base_before = std::fs::read(dir.join("base.img")).expect("base reads");
     let mid_before = std::fs::read(dir.join("mid.qcow2")).expect("middle reads");
-    let (mut disk_session, disk_at) = attach(&top, AccessIntent::Write).expect("two-level write opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&top, Afford::Write).expect("two-level write opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let volume = only_volume(disk);
     fs(disk, volume).write_file("MARKER.TXT", b"changed above two levels")
         .expect("write buffers");
@@ -365,8 +379,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         std::fs::read(dir.join("mid.qcow2")).expect("middle reads"),
         mid_before
     );
-    let (mut reopened_session, reopened_at) = attach(&top, AccessIntent::Read).expect("changed chain reopens");
-    let reopened = reopened_session.require_device(reopened_at).expect("the medium is attached");
+    let (mut reopened_session, reopened_at) = attach(&top, Afford::Read).expect("changed chain reopens");
+    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     assert_eq!(
         fs(reopened, volume).read_file("MARKER.TXT")
             .expect("changed marker reads"),
@@ -393,8 +407,8 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
 
     // No format extension anywhere: the qcow2 middle and the raw base
     // are each told apart by magic, exactly as at the top.
-    let (mut disk_session, disk_at) = attach(&top, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&top, Afford::Read).expect("the chain opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let volume = only_volume(disk);
     assert_eq!(
         fs(disk, volume).read_file("MARKER.TXT")
@@ -411,7 +425,7 @@ fn a_missing_backing_file_is_refused_by_name() {
     let overlay = dir.join("overlay.qcow2");
     write(&overlay, &qcow2_shell(64 * CLUSTER, Some(("gone.img", None))));
 
-    let error = attach(&overlay, AccessIntent::Read).expect_err("missing member refused");
+    let error = attach(&overlay, Afford::Read).expect_err("missing member refused");
     assert_eq!(error.category(), ErrorCategory::NotFound);
     let message = error.to_string();
     assert!(
@@ -429,7 +443,7 @@ fn a_backing_cycle_is_refused_by_name() {
     write(&a, &qcow2_shell(64 * CLUSTER, Some(("b.qcow2", Some("qcow2")))));
     write(&b, &qcow2_shell(64 * CLUSTER, Some(("a.qcow2", Some("qcow2")))));
 
-    let error = attach(&a, AccessIntent::Read).expect_err("a cycle is refused");
+    let error = attach(&a, Afford::Read).expect_err("a cycle is refused");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     assert!(
         error.to_string().contains("cycle"),
@@ -452,7 +466,7 @@ fn a_chain_past_the_claimed_depth_is_refused_by_name() {
         );
     }
 
-    let error = attach(dir.join("member0.qcow2"), AccessIntent::Read)
+    let error = attach(dir.join("member0.qcow2"), Afford::Read)
         .expect_err("a chain past the claim is refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(
@@ -461,7 +475,7 @@ fn a_chain_past_the_claimed_depth_is_refused_by_name() {
     );
 
     // One member shorter sits exactly at the claim, and opens.
-    let (session, _at) = attach(dir.join("member1.qcow2"), AccessIntent::Read)
+    let (session, _at) = attach(dir.join("member1.qcow2"), Afford::Read)
         .expect("sixteen files are within the claim");
     drop(session);
     cleanup(&dir);
@@ -478,7 +492,7 @@ fn an_unclaimed_backing_format_is_refused_by_name() {
         &qcow2_shell(base.len() as u64, Some(("base.img", Some("vmdk")))),
     );
 
-    let error = attach(&overlay, AccessIntent::Read).expect_err("vmdk backing refused");
+    let error = attach(&overlay, Afford::Read).expect_err("vmdk backing refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();
     assert!(
@@ -501,7 +515,7 @@ fn the_p8_gates_run_for_every_chain_member() {
         &qcow2_shell(64 * CLUSTER, Some(("base.qcow2", Some("qcow2")))),
     );
 
-    let error = attach(&overlay, AccessIntent::Read).expect_err("encrypted member refused");
+    let error = attach(&overlay, Afford::Read).expect_err("encrypted member refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(
         error.to_string().contains("encrypted"),
@@ -522,25 +536,31 @@ fn every_chain_member_is_claimed_immutable() {
         &qcow2_shell(base.len() as u64, Some(("base.img", Some("raw")))),
     );
 
-    let (mut disk_session, disk_at) = attach(&overlay, AccessIntent::Read).expect("the chain opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&overlay, Afford::Read).expect("the chain opens");
+    assert!(disk_session.medium_mut(disk_at).is_some(), "the chain pooled");
 
-    // The backing file is immutable while the chain holds it: another
-    // writer is refused immediately, another reader stays admitted.
-    assert_eq!(
-        attach(&base_path, AccessIntent::Write)
-            .expect_err("a writer is refused on a claimed member")
-            .category(),
-        ErrorCategory::Locked
+    // **The library opened the backing member itself**, so P7's mandatory
+    // denial applies to it in full — the half of the rule the amendment
+    // leaves untouched. A writer is refused before a handle exists; a
+    // reader stays admitted.
+    assert!(
+        std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(&base_path)
+            .is_err(),
+        "a writer is refused on a member the library claimed"
     );
-    let (mut reader_session, reader_at) = attach(&base_path, AccessIntent::Read).expect("readers stay admitted");
-    let reader = reader_session.require_device(reader_at).expect("the medium is attached");
-    drop(reader_session);
+    let reader = std::fs::File::open(&base_path).expect("readers stay admitted");
+    drop(reader);
 
     // The claim lasts exactly as long as the chain.
     drop(disk_session);
-    let writer =
-        attach(&base_path, AccessIntent::Write).expect("the claim releases with the chain");
+    let writer = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(&base_path)
+        .expect("the claim releases with the chain");
     drop(writer);
     cleanup(&dir);
 }

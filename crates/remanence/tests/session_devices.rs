@@ -1,16 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The storage-device tier (P32): a machine holds a dynamic set of
-//! family-typed devices, each a durable slot distinct from the medium in
-//! it, and **devices are added while media are loaded — as two acts**.
-//! These reach that set through the session's own verbs, which are its
-//! anonymous machine's; the machine scope itself is `machines.rs`. These
-//! tests build their images by hand, so they run without fixtures.
+//! The media pool and the edge into the device tier (P32): a session
+//! holds media as state and machines as configuration, and the two meet
+//! at exactly one place — `insert` and `eject`. These reach the
+//! anonymous machine's device set through the session's own verbs; the
+//! machine scope itself is `machines.rs`. These tests build their images
+//! by hand, so they run without fixtures.
 
 use std::path::PathBuf;
 
-use remanence::{AccessIntent, AttachmentId, DeviceFamily, ErrorCategory, Session};
+use remanence::{AttachmentId, DeviceFamily, ErrorCategory, Format, MediaId, Session};
+
+mod common;
+use common::{open_read, open_write};
 
 fn temp_path(tag: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,43 +33,70 @@ fn write_image(tag: &str) -> PathBuf {
     path
 }
 
-/// The two acts, where a test cares about the result rather than the
-/// pair: add the drive, load the disk, and answer with the slot it took.
-fn load(session: &mut Session, path: &PathBuf, intent: AccessIntent) -> remanence::Result<AttachmentId> {
-    let device = session.add_device(DeviceFamily::HARD_DISK)?;
+/// The three acts, where a test cares about the result rather than the
+/// sequence: pool the disk, add the drive, and link them.
+fn seat(session: &mut Session, path: &PathBuf) -> remanence::Result<(MediaId, AttachmentId)> {
+    let media = session.load_media(open_read(path), Format::Raw)?.id();
+    let mut device = session.add_device(DeviceFamily::HARD_DISK)?;
     let attachment = device.attachment();
-    device.load_media(path, intent)?;
-    Ok(attachment)
+    device.insert(media)?;
+    Ok((media, attachment))
 }
 
 #[test]
-fn a_device_is_added_empty_and_the_medium_is_loaded_into_it() {
-    // The two acts, and the empty device between them: a drive with no
-    // disk in it is configuration in its own right (U22 letters one), not
-    // a half-finished attach.
-    let a = write_image("two-acts");
+fn a_medium_is_loaded_unlinked_and_answers_before_any_device_exists() {
+    // The pool is state and the machine is configuration; the medium is
+    // the content handle and needs no drive to be one.
+    let a = write_image("unlinked");
     let mut session = Session::new();
 
-    let device = session
+    let medium = session
+        .load_media(open_read(&a), Format::Raw)
+        .expect("the declaration is borne out");
+    assert!(!medium.is_linked(), "a load links nothing");
+    assert_eq!(medium.image_size_bytes(), 1024 * 1024);
+    assert_eq!(medium.media_type(), "logical-block-512");
+    let id = medium.id();
+
+    assert_eq!(session.media(), vec![id]);
+    assert!(session.medium(id).is_some());
+
+    drop(session);
+    std::fs::remove_file(&a).ok();
+}
+
+#[test]
+fn a_device_is_added_empty_and_the_medium_is_inserted_into_it() {
+    // The acts, and the empty device between them: a drive with no disk
+    // in it is configuration in its own right (U22 letters one), not a
+    // half-finished attach.
+    let a = write_image("three-acts");
+    let mut session = Session::new();
+
+    let media = session
+        .load_media(open_read(&a), Format::Raw)
+        .expect("loads")
+        .id();
+
+    let mut device = session
         .add_device(DeviceFamily::HARD_DISK)
         .expect("the drive is added");
     let id = device.attachment();
     assert_eq!(id.to_string(), "hdd0");
     assert!(!device.is_occupied(), "a fresh device holds nothing");
+    assert!(device.medium().is_none(), "absence is an answer");
 
-    // Every content verb refuses by name while the slot is empty.
-    let error = device.identify().expect_err("a content verb needs a medium");
-    let message = error.to_string();
-    assert_eq!(error.category(), ErrorCategory::NotFound);
-    assert!(message.contains("hdd0"), "names the slot: {message}");
-
-    device.load_media(&a, AccessIntent::Read).expect("the disk goes in");
+    device.insert(media).expect("the disk goes in");
     assert!(device.is_occupied());
-    assert_eq!(device.image_size_bytes().expect("occupied"), 1024 * 1024);
+    assert_eq!(device.media_id(), Some(media));
+    assert_eq!(
+        device.medium().expect("occupied").image_size_bytes(),
+        1024 * 1024
+    );
     assert_eq!(
         device.attachment(),
         id,
-        "the handle is the slot, and loading did not move it"
+        "the handle is the slot, and inserting did not move it"
     );
 
     drop(session);
@@ -79,8 +109,8 @@ fn an_added_device_takes_the_lowest_free_slot_in_its_family() {
     let b = write_image("auto-b");
     let mut session = Session::new();
 
-    let first = load(&mut session, &a, AccessIntent::Read).expect("first loads");
-    let second = load(&mut session, &b, AccessIntent::Read).expect("second loads");
+    let (_, first) = seat(&mut session, &a).expect("first seats");
+    let (_, second) = seat(&mut session, &b).expect("second seats");
 
     assert_eq!(first.to_string(), "hdd0");
     assert_eq!(second.to_string(), "hdd1");
@@ -99,7 +129,6 @@ fn an_added_device_takes_the_lowest_free_slot_in_its_family() {
 
 #[test]
 fn a_caller_may_choose_the_slot_and_leave_a_gap() {
-    let a = write_image("slot-a");
     let mut session = Session::new();
 
     let named = session
@@ -107,7 +136,6 @@ fn a_caller_may_choose_the_slot_and_leave_a_gap() {
         .expect("the named slot takes a device")
         .attachment();
     assert_eq!(named.to_string(), "hdd3");
-    let _ = &a;
 
     // The gap is real: the next added device fills slot 0, not slot 4.
     let auto = session
@@ -115,9 +143,6 @@ fn a_caller_may_choose_the_slot_and_leave_a_gap() {
         .expect("added")
         .attachment();
     assert_eq!(auto.to_string(), "hdd0");
-
-    drop(session);
-    std::fs::remove_file(&a).ok();
 }
 
 #[test]
@@ -133,7 +158,6 @@ fn a_taken_slot_is_refused_by_name_rather_than_displaced() {
 
     let message = error.to_string();
     assert!(message.contains("hdd0"), "names the slot: {message}");
-    assert!(message.contains("remove"), "names the remedy: {message}");
 }
 
 #[test]
@@ -142,10 +166,16 @@ fn an_occupied_device_is_refused_a_second_medium() {
     let b = write_image("occupied-b");
     let mut session = Session::new();
 
-    let device = session.add_device(DeviceFamily::HARD_DISK).expect("added");
-    device.load_media(&a, AccessIntent::Read).expect("first loads");
-    let error = device
-        .load_media(&b, AccessIntent::Read)
+    let (_, attachment) = seat(&mut session, &a).expect("first seats");
+    let second = session
+        .load_media(open_read(&b), Format::Raw)
+        .expect("loads")
+        .id();
+
+    let error = session
+        .require_device(attachment)
+        .expect("device")
+        .insert(second)
         .expect_err("the occupied device is refused");
 
     let message = error.to_string();
@@ -158,29 +188,83 @@ fn an_occupied_device_is_refused_a_second_medium() {
 }
 
 #[test]
-fn ejecting_leaves_the_device_and_takes_the_medium() {
-    // The device outlives every medium loaded into it, which is what
-    // makes this a tier rather than a rename of the medium.
+fn one_medium_is_in_one_drive_at_a_time() {
+    // Two drives sharing one disk would be a machine no machine was, so
+    // the second insert is refused naming where the medium already is.
+    let a = write_image("one-drive");
+    let mut session = Session::new();
+
+    let (media, _) = seat(&mut session, &a).expect("seats");
+    let error = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("second drive")
+        .insert(media)
+        .expect_err("the medium is already in a drive");
+
+    let message = error.to_string();
+    assert!(message.contains("hdd0"), "names where it is: {message}");
+    assert!(message.contains("eject"), "names the remedy: {message}");
+
+    drop(session);
+    std::fs::remove_file(&a).ok();
+}
+
+#[test]
+fn ejecting_severs_and_the_medium_stays_in_the_pool() {
+    // **Eject severs only.** The claim, the assurance and everything
+    // buffered survive in the pool, which is what makes the medium the
+    // held node and the device the slot it may sit in.
     let a = write_image("eject-a");
     let b = write_image("eject-b");
     let mut session = Session::new();
 
-    let device = session.add_device(DeviceFamily::HARD_DISK).expect("added");
-    device.load_media(&a, AccessIntent::Read).expect("loads");
-    let first = device.path().expect("occupied").to_owned();
+    let (media, attachment) = seat(&mut session, &a).expect("seats");
 
-    device.eject().expect("ejects");
-    assert!(!device.is_occupied(), "the slot is empty again");
-    let error = device.identify().expect_err("the view has nothing to view");
-    assert_eq!(error.category(), ErrorCategory::NotFound);
+    let ejected = session
+        .require_device(attachment)
+        .expect("device")
+        .eject()
+        .expect("ejects");
+    assert_eq!(ejected, media, "eject answers with what left the slot");
+    assert!(
+        !session
+            .device(attachment)
+            .expect("the device stays")
+            .is_occupied(),
+        "the slot is empty again"
+    );
 
-    let again = device.eject().expect_err("there is nothing to eject twice");
+    // The medium is still here, still answering, still claimed.
+    let medium = session.medium(media).expect("the pool kept it");
+    assert!(!medium.is_linked());
+    assert_eq!(medium.image_size_bytes(), 1024 * 1024);
+
+    let again = session
+        .require_device(attachment)
+        .expect("device")
+        .eject()
+        .expect_err("there is nothing to eject twice");
     assert!(again.to_string().contains("hdd0"), "names the empty slot");
 
-    // The same handle takes the next disk, and answers for that one.
-    device.load_media(&b, AccessIntent::Read).expect("reloads");
-    let second = device.path().expect("occupied").to_owned();
-    assert_ne!(first, second, "the device answers for what is in it now");
+    // The same slot takes the next disk, and answers for that one.
+    let second = session
+        .load_media(open_read(&b), Format::Raw)
+        .expect("loads")
+        .id();
+    session
+        .require_device(attachment)
+        .expect("device")
+        .insert(second)
+        .expect("reseats");
+    assert_eq!(
+        session
+            .device(attachment)
+            .expect("device")
+            .media_id()
+            .expect("occupied"),
+        second,
+        "the device answers for what is in it now"
+    );
 
     drop(session);
     std::fs::remove_file(&a).ok();
@@ -188,32 +272,31 @@ fn ejecting_leaves_the_device_and_takes_the_medium() {
 }
 
 #[test]
-fn a_removed_slot_is_free_again_and_its_identity_stops_resolving() {
+fn releasing_a_device_ejects_first_and_destroys_nothing() {
     let a = write_image("remove-a");
     let b = write_image("remove-b");
     let mut session = Session::new();
 
-    let first = load(&mut session, &a, AccessIntent::Read).expect("loads");
+    let (media, first) = seat(&mut session, &a).expect("seats");
     assert!(session.device(first).is_some());
 
-    session.remove_device(first).expect("removed");
+    session.remove_device(first).expect("released");
     assert!(
         session.device(first).is_none(),
-        "a removed identity resolves to nothing"
+        "a released identity resolves to nothing"
     );
     assert!(session.devices().is_empty());
+    assert!(
+        session.medium(media).is_some(),
+        "configuration falls with its owner; state never does"
+    );
 
-    // Reuse is deliberate and safe: adding and removing a device are
+    // Reuse is deliberate and safe: adding and releasing a device are
     // machine-down operations, so nothing live refers to the old
     // occupant. This is not the renumbering U4 refuses, because a slot is
     // configuration rather than evidence.
-    let reused = load(&mut session, &b, AccessIntent::Read).expect("re-adds");
+    let (_, reused) = seat(&mut session, &b).expect("re-adds");
     assert_eq!(reused.to_string(), "hdd0", "the freed slot is reused");
-
-    let missing = session
-        .remove_device(AttachmentId::parse("hdd7").expect("parses"))
-        .expect_err("removing nothing is refused");
-    assert_eq!(missing.category(), ErrorCategory::NotFound);
 
     drop(session);
     std::fs::remove_file(&a).ok();
@@ -221,29 +304,38 @@ fn a_removed_slot_is_free_again_and_its_identity_stops_resolving() {
 }
 
 #[test]
-fn the_device_is_the_slot_and_the_medium_is_what_occupies_it() {
-    let a = write_image("slot-vs-medium");
+fn release_media_is_the_one_state_destroying_verb() {
+    let a = write_image("release");
     let mut session = Session::new();
 
-    let id = load(&mut session, &a, AccessIntent::Read).expect("loads");
-    let device = session.device(id).expect("device exists");
-    assert!(device.is_occupied());
-    assert_eq!(device.attachment(), id);
-    assert_eq!(device.family(), DeviceFamily::HARD_DISK);
+    let (media, attachment) = seat(&mut session, &a).expect("seats");
+    session.release_media(media).expect("released");
 
-    // The medium is reached through the device, and nothing else.
-    let medium = session.require_device(id).expect("the medium is reachable");
-    assert_eq!(medium.image_size_bytes().expect("a medium is attached"), 1024 * 1024);
+    assert!(session.medium(media).is_none(), "the state is gone");
+    assert!(session.media().is_empty());
+    assert!(
+        !session
+            .device(attachment)
+            .expect("the device stays")
+            .is_occupied(),
+        "the release severed its own link"
+    );
 
-    drop(session);
+    // The claim went with it: the artifact is free again.
+    let mut after = Session::new();
+    after
+        .load_media(open_write(&a), Format::Raw)
+        .expect("the claim was released with the medium");
+
+    drop(after);
     std::fs::remove_file(&a).ok();
 }
 
 #[test]
 fn only_a_concrete_family_instantiates() {
     // The P32 amendment's rule, and the reason for it: a device added as
-    // "some floppy" declares nothing a load could be checked against and
-    // no drive a machine ever had.
+    // "some floppy" declares nothing an insert could be checked against
+    // and no drive a machine ever had.
     let mut session = Session::new();
 
     for interior in [
@@ -283,11 +375,15 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
     let a = write_image("wrong-drive");
     let mut session = Session::new();
 
-    let drive = session
+    let media = session
+        .load_media(open_read(&a), Format::Raw)
+        .expect("loads")
+        .id();
+    let mut drive = session
         .add_device(DeviceFamily::COMMODORE_1541)
         .expect("the drive is added");
     let error = drive
-        .load_media(&a, AccessIntent::Read)
+        .insert(media)
         .expect_err("a block image is not what a 1541 is served");
 
     let message = error.to_string();
@@ -304,40 +400,38 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
         message.contains("5.25-inch"),
         "names what the family is served: {message}"
     );
-    assert!(!drive.is_occupied(), "a refused load leaves the slot empty");
+    assert!(!drive.is_occupied(), "a refused insert leaves the slot empty");
 
-    // The device is still there, which is the two acts working: the slot
-    // is the caller's configuration and a wrong disk does not remove it.
+    // Both sides survive the refusal: the slot is the caller's
+    // configuration and the medium is the session's state.
     assert_eq!(session.devices().len(), 1);
+    assert!(session.medium(media).is_some());
 
     drop(session);
     std::fs::remove_file(&a).ok();
 }
 
 #[test]
-fn two_devices_keep_their_volume_identities_device_scoped() {
+fn two_media_keep_their_volume_identities_medium_scoped() {
     // P21: device identity qualifies otherwise-local identifiers only
     // where more than one device makes it necessary, and an interface
-    // already scoped to one disk may keep a disk-local identity. Every
-    // file verb is reached through the device that owns the medium, so
-    // identical identities on two devices name different things and
-    // neither is re-derived.
+    // already scoped to one disk may keep a disk-local identity.
     let a = write_image("scoped-a");
     let b = write_image("scoped-b");
     let mut session = Session::new();
 
-    let first = load(&mut session, &a, AccessIntent::Read).expect("first loads");
-    let second = load(&mut session, &b, AccessIntent::Read).expect("second loads");
+    let (first, first_slot) = seat(&mut session, &a).expect("first seats");
+    let (second, second_slot) = seat(&mut session, &b).expect("second seats");
 
     let first_report = session
-        .require_device(first)
+        .medium_mut(first)
         .expect("medium")
         .inspect()
         .expect("first inspects");
     let first_volumes: Vec<u64> = first_report.volumes.iter().map(|v| v.id.value()).collect();
 
     let second_report = session
-        .require_device(second)
+        .medium_mut(second)
         .expect("medium")
         .inspect()
         .expect("second inspects");
@@ -348,9 +442,10 @@ fn two_devices_keep_their_volume_identities_device_scoped() {
         "identities are disk-local, so two like disks issue like values"
     );
     assert_ne!(
-        first, second,
+        first_slot, second_slot,
         "the attachment identity is what tells the two apart"
     );
+    assert_ne!(first, second, "and so is the pool identity");
 
     drop(session);
     std::fs::remove_file(&a).ok();
@@ -358,45 +453,81 @@ fn two_devices_keep_their_volume_identities_device_scoped() {
 }
 
 #[test]
-fn a_medium_is_claimed_for_as_long_as_it_is_loaded() {
-    // Each loaded medium holds its own P7 claim (F43), and ejecting it —
-    // or removing the device under it — is what releases it.
+fn a_medium_is_claimed_by_the_callers_own_open() {
+    // P7 as amended: whoever opens owns the lock. The caller's own open
+    // is the claim, and the library asks it exactly one question.
     let a = write_image("claim");
     let mut session = Session::new();
 
-    let id = load(&mut session, &a, AccessIntent::Write).expect("loads");
-    let mut rival = Session::new();
-    let second = load(&mut rival, &a, AccessIntent::Write)
-        .expect_err("a second exclusive claim on the same file is refused");
-    assert_eq!(second.category(), ErrorCategory::Locked);
+    let media = session
+        .load_media(open_write(&a), Format::Raw)
+        .expect("loads")
+        .id();
+    assert_eq!(
+        session.medium(media).expect("pooled").assurance().claim,
+        remanence::Claim::CallerOpened
+    );
+    assert_eq!(
+        session.medium(media).expect("pooled").mode(),
+        remanence::AccessMode::ReadWrite,
+        "the handle affords a write, so the session has one"
+    );
 
-    session
-        .require_device(id)
-        .expect("device")
-        .eject()
-        .expect("ejects");
-    let mut after = Session::new();
-    load(&mut after, &a, AccessIntent::Write).expect("the claim was released with the medium");
+    // A read-only handle affords no write, and the library never
+    // escalates one it was handed.
+    let mut reader = Session::new();
+    let read_only = reader
+        .load_media(open_read(&a), Format::Raw)
+        .expect("a second reader is the caller's business, not ours");
+    assert_eq!(read_only.mode(), remanence::AccessMode::ReadOnly);
 
-    drop(after);
+    drop(reader);
+    drop(session);
     std::fs::remove_file(&a).ok();
 }
 
 #[test]
-fn a_flux_family_artifact_is_refused_by_every_device() {
-    // P13: the block catalog opens anything it cannot identify at the raw
-    // adapter, so without this check a P64 loaded happily and read as
-    // raw — declaring the block layer authoritative when P64's own
-    // adapter declares flux. No device in this release holds flux state;
-    // the artifact is reached through its own type.
+fn a_declaration_the_evidence_cannot_bear_is_refused_by_name() {
+    // The declared reading is checked by exactly one adapter: nothing
+    // probes for a second answer, and the refusal names both sides.
+    let a = write_image("declared");
+    let mut session = Session::new();
+
+    let error = session
+        .load_media(open_read(&a), Format::H8d)
+        .expect_err("a megabyte of zeroes is no H17 disk");
+    let message = error.to_string();
+    assert_eq!(error.category(), ErrorCategory::InvalidImage);
+    assert!(message.contains("h8d"), "names what was declared: {message}");
+
+    assert!(
+        session.media().is_empty(),
+        "a refused declaration pools nothing"
+    );
+
+    // The same artifact under a declaration it can bear loads.
+    session
+        .load_media(open_read(&a), Format::Raw)
+        .expect("bytes are always bytes");
+
+    drop(session);
+    std::fs::remove_file(&a).ok();
+}
+
+#[test]
+fn a_flux_family_artifact_is_refused_whatever_was_declared() {
+    // P13: the raw reading opens anything, so without this check a P64
+    // loaded happily and read as raw — declaring the block layer
+    // authoritative when P64's own adapter declares flux.
     let path = temp_path("flux-artifact");
     let mut bytes = b"P64-1541".to_vec();
     bytes.extend_from_slice(&[0u8; 1024]);
     std::fs::write(&path, &bytes).expect("artifact writes");
 
     let mut session = Session::new();
-    let error = load(&mut session, &path, AccessIntent::Read)
-        .expect_err("a flux artifact is no device's medium");
+    let error = session
+        .load_media(open_read(&path), Format::Raw)
+        .expect_err("a flux artifact is no block medium");
 
     let message = error.to_string();
     assert!(message.contains("flux"), "names the family found: {message}");
@@ -404,25 +535,7 @@ fn a_flux_family_artifact_is_refused_by_every_device() {
         message.contains("own type"),
         "names where it is read instead: {message}"
     );
-
-    // Even the drive whose family claims that flux path refuses it: the
-    // family declaration (P22) says what the drive records, not that this
-    // release loads flux state into a device.
-    let drive = session
-        .add_device(DeviceFamily::COMMODORE_1541)
-        .expect("added");
-    assert!(
-        drive.load_media(&path, AccessIntent::Read).is_err(),
-        "a claimed flux path is a declaration, not a loading seam"
-    );
-
-    // And the claim went with it: the refused medium is dropped, so the
-    // artifact is free for whatever does claim the flux family.
-    let mut second = Session::new();
-    assert!(
-        load(&mut second, &path, AccessIntent::Read).is_err(),
-        "still refused, and refused for the same reason rather than a lock"
-    );
+    assert!(session.media().is_empty(), "and nothing was pooled");
 
     drop(session);
     std::fs::remove_file(&path).ok();

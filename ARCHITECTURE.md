@@ -13,8 +13,10 @@ One core, two bindings:
   dependencies. Everything the project knows lives here, in four groups.
   The **identification model** and the adapters beneath it: executable
   image formats, archives, partition layouts and
-  filesystems, each enrolled in its own catalog. The **device stack**: the
-  declared-intent deny-write claim, the native qcow2 and VDI drivers with
+  filesystems, each enrolled in its own catalog. The **storage model**:
+  the session's media pool and the machines beside it, the claim in its
+  two classes — the library's own deny-write open, and the caller's
+  handle honoured as it was afforded — the native qcow2 and VDI drivers with
   their backing and differencing chains, MBR partition discovery,
   FAT12/FAT16 volume read/write, the assurance gate that meets a
   short source with a bounded read-only reading, and the commit-point
@@ -47,9 +49,13 @@ application surface?" by lookup, not judgement. Numbers are permanent and
 never reused.
 
 - **S1 — The Rust crate API.** The public surface of `crates/remanence`:
-  `Session`, `Machine`, `StorageDevice`, `AttachmentId` and
-  `DeviceFamily` — the device being the one storage handle, carrying the
-  content verbs of the medium in its slot —
+  `Session` and its two pools, `Medium`, `MediaId` and `Format` — the
+  medium being the pool-owned content handle, created by a declared
+  reading over the caller's own opened file and carrying every content
+  verb — `Machine`, `MachineView`, `StorageDevice`, `DeviceView`,
+  `AttachmentId` and `DeviceFamily` — the device being the slot, with
+  `insert`/`eject` the one edge between configuration and state —
+  `Claim` beside the access mode,
   `StorageSpace`, `File` and the `Entry` vocabulary — the volume and
   filesystem being two vantage traits on one node, addressable I/O and
   namespace I/O, with the file verbs living there and nowhere else —
@@ -153,11 +159,15 @@ found, where. P2's commit point is the backstop, not the excuse.
 
 The library cannot support a file changing underneath it while it
 works — not while writing, not while merely reading. **Denying write
-permission to every other process is mandatory in all scenarios**, from
-the moment a file is opened, and a file for which that denial cannot be
-obtained is not opened at all: fail fast, with the reason named.
+permission to every other process is mandatory where the library opens,
+and caller-owned where the caller opened.** Which of the two a medium
+holds is the claim's class, and it travels on that medium's assurance.
 
-The caller declares a disk session's mode at open — read or write — and
+**Where the library opens** — an artifact reached by name, every file of
+a composed chain, every artifact it creates — the denial is mandatory
+from the moment the file is opened, and a file for which it cannot be
+obtained is not opened at all: fail fast, with the reason named. The
+caller declares such a session's mode at open — read or write — and
 the mode report echoes the declaration. A **writable session admits no
 observers**: its claim excludes every other read and write for the
 session's whole life, and a writable open that cannot secure that access
@@ -167,12 +177,25 @@ every remanence write by name. An identification session, which only
 reads, still takes the strongest access the file grants — read/write
 preferred, read-only otherwise — with writes denied to others either way.
 
-The claim covers every file of a composed chain: the top image per the
-declared intent, and every file behind it claimed immutable — writes
-denied to others, the library's own access read-only. Contention anywhere
-in the chain is an immediate named failure, never a hidden wait. The claim
-is held from open until the session is completely done: no
-claim-on-modify, no release-on-save. Windows share modes are the native,
+**Where the caller opened**, the claim is theirs: **whoever opens owns
+the lock.** A local artifact arrives as the caller's own opened file, and
+that open is their safeguard and the library's claim at once. The library
+checks it for **exactly one thing** — may it write through it? — honours
+the answer exactly, and never supplements it with a lock of its own or
+escalates it through a name. A handle affording no write makes a
+read-only medium whose write verbs refuse by name. A **name recovered
+from a handle serves location only** — where a commit journal lands
+beside the artifact, where a backing chain's parent is looked for next
+door — under an identity check that the name still denotes the handle's
+own file; a nameless handle refuses those journeys by name and serves
+everything else.
+
+The library-opened claim covers every file of a composed chain: the top
+image per the declared intent, and every file behind it claimed
+immutable — writes denied to others, the library's own access read-only.
+Contention anywhere in the chain is an immediate named failure, never a
+hidden wait. Every claim is held from open until the session is
+completely done: no claim-on-modify, no release-on-save. Windows share modes are the native,
 kernel-enforced mapping; on POSIX the advisory lock is the claim — shared
 for a disk read open, exclusive otherwise — binding cooperating processes
 and asserted as protocol against the rest.

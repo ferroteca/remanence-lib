@@ -9,45 +9,35 @@
 
 use std::path::{Path, PathBuf};
 
-use remanence::{
-    AccessIntent, AttachmentId, DeviceFamily, ErrorCategory, LayerKind, Session,
-};
+use remanence::{ErrorCategory, Format, LayerKind, MediaId, Session};
 
-/// Loads the archive into a device of its own — the journey every
-/// medium takes (P32).
-fn archive_session(path: impl AsRef<Path>) -> remanence::Result<Session> {
+mod common;
+use common::open_read;
+
+/// Pools the archive under its declared grammar — the journey every
+/// medium takes.
+fn archive_session(path: impl AsRef<Path>) -> remanence::Result<(Session, MediaId)> {
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::ARCHIVE_DEVICE)?;
-    device.load_media(path, AccessIntent::Read)?;
-    Ok(session)
-}
-
-/// The archive slot every one of these tests reaches its namespace
-/// through.
-fn arc0() -> AttachmentId {
-    AttachmentId::parse("arc0").expect("parses")
+    let id = session.load_media(open_read(path), Format::SevenZip)?.id();
+    Ok((session, id))
 }
 
 /// The nested journey: one member named through the archive's namespace,
-/// loaded into a drive of its own. A KryoFlux stream is a raw member, so
-/// the drive it goes in is the hard disk the block catalog serves.
+/// pooled as a medium of its own.
 fn load_member(
     path: impl AsRef<Path>,
     member: &str,
-) -> remanence::Result<(Session, AttachmentId)> {
-    let mut session = archive_session(path)?;
+) -> remanence::Result<(Session, MediaId)> {
+    let (mut session, archive) = archive_session(path)?;
     let discovery = session
-        .require_device(arc0())?
+        .medium_mut(archive)
+        .expect("the archive is pooled")
         .filesystem()?
         .get_file(member)?
         .discover()?;
-    let device = session.add_device(DeviceFamily::HARD_DISK)?;
-    let attachment = device.attachment();
-    device.load_discovery(discovery)?;
-    Ok((session, attachment))
+    let id = session.load_discovery(discovery)?.id();
+    Ok((session, id))
 }
-
-mod common;
 
 const ARCHIVE: &str = "Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z";
 const ARCHIVE_BYTES: u64 = 30_152_909;
@@ -90,9 +80,9 @@ fn private_copy(tag: &str) -> PathBuf {
 #[test]
 fn the_namespace_lists_every_member_in_archive_order() {
     let path = private_copy("list");
-    let mut session = archive_session(&path).expect("the archive loads");
-    let device = session.require_device(arc0()).expect("the device is there");
-    assert_eq!(device.image_size_bytes().expect("occupied"), ARCHIVE_BYTES);
+    let (mut session, archive) = archive_session(&path).expect("the archive loads");
+    let device = session.medium_mut(archive).expect("the medium is pooled");
+    assert_eq!(device.image_size_bytes(), ARCHIVE_BYTES);
 
     let mut namespace = device.filesystem().expect("an archive is its namespace");
     assert_eq!(namespace.kind().expect("a kind"), "7z");
@@ -134,8 +124,8 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
     // The second member: reached by decoding past the first, which is
     // what a solid folder costs, and no further.
     let (mut disk_session, disk_at) = load_member(&path, SECOND_MEMBER).expect("the member opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
-    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), SECOND_MEMBER_BYTES);
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    assert_eq!(disk.image_size_bytes(), SECOND_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
     disk.read_at(0, &mut front).expect("the front reads");
@@ -147,7 +137,7 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
         .read_at(SECOND_MEMBER_BYTES - 32, &mut tail)
         .expect("the tail reads");
 
-    let identification = disk.identify().expect("a medium is attached");
+    let identification = disk.identify();
     let archive = &identification.layers[0];
     assert_eq!(archive.kind, LayerKind::Archive);
     assert_eq!(archive.id, "7z");
@@ -167,8 +157,8 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     let path = private_copy("long");
     let (mut disk_session, disk_at) =
         load_member(&path, LAST_MEMBER).expect("the last member opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
-    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), LAST_MEMBER_BYTES);
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    assert_eq!(disk.image_size_bytes(), LAST_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
     disk.read_at(0, &mut front).expect("the front reads");
@@ -207,11 +197,11 @@ fn a_corrupted_solid_folder_fails_closed() {
     bytes[1000] ^= 0x01;
     std::fs::write(&path, &bytes).expect("the copy rewrites");
 
-    let mut session = archive_session(&path).expect("the header is untouched");
+    let (mut session, archive) = archive_session(&path).expect("the header is untouched");
     assert_eq!(
         session
-            .require_device(arc0())
-            .expect("the device is there")
+            .medium_mut(archive)
+            .expect("the medium is pooled")
             .filesystem()
             .expect("a namespace")
             .entries("")
@@ -233,8 +223,8 @@ fn an_archive_of_many_members_is_one_medium_with_many_names() {
     // archive, and which member is wanted is asked of its namespace —
     // the question the old one-file-or-refuse path had to guess at.
     let path = private_copy("many");
-    let mut session = archive_session(&path).expect("the archive loads");
-    let device = session.require_device(arc0()).expect("the device is there");
+    let (mut session, archive) = archive_session(&path).expect("the archive loads");
+    let device = session.medium_mut(archive).expect("the medium is pooled");
     assert_eq!(
         device
             .filesystem()

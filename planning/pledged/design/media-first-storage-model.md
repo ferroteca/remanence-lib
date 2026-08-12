@@ -293,7 +293,7 @@ the features that make each real.
   the medium becomes the held node; the device dissolves to
   configuration and presentations. D23's actual worry — lifetime
   questions from media held outside the session — is answered
-  structurally by the pool.
+  structurally by the pool. *Delivered: the annotation is on D23.*
 - **D24 is superseded**: the file-view load lands as a `load_media`
   source shape, and the question-tier verbs it anticipated are
   drawer'd.
@@ -334,8 +334,8 @@ the features that make each real.
   arrive as the caller's own opened files, the caller's lock is their
   safeguard and the library's claim, the library checks what it is
   afforded and honours it exactly, and the claim's class travels on the
-  medium's assurance. The amendment lands with F53, the feature that
-  moves the open to the caller.
+  medium's assurance. *Delivered: the amendment is in force, folded into
+  P7's own text at the root.*
 
 ## Open questions carried
 

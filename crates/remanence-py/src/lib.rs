@@ -91,7 +91,8 @@ pub struct SizeInformation {
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct ArchiveLayout {
-    pub path: String,
+    /// Where the archive sits, where its own handle could be named.
+    pub path: Option<String>,
     pub entry_name: String,
     pub compressed_size: Option<u64>,
     pub uncompressed_size: Option<u64>,
@@ -204,7 +205,10 @@ impl Layer {
                     Py::new(
                         py,
                         ArchiveLayout {
-                            path: layout.path.display().to_string(),
+                            path: layout
+                                .path
+                                .as_ref()
+                                .map(|path| path.display().to_string()),
                             entry_name: layout.entry_name.clone(),
                             compressed_size: layout.compressed_size,
                             uncompressed_size: layout.uncompressed_size,
@@ -540,6 +544,17 @@ impl DeviceFamily {
     fn __repr__(&self) -> String {
         format!("DeviceFamily(id={:?})", self.id)
     }
+}
+
+/// Every format a load may declare, by its stable spelling — the set a
+/// declaration is checked against (P3). A word that names a kind rather
+/// than one catalog entry is not among them and is refused by name.
+#[pyfunction]
+fn formats() -> Vec<(String, String)> {
+    remanence::Format::ALL
+        .iter()
+        .map(|format| (format.id().to_owned(), format.name().to_owned()))
+        .collect()
 }
 
 /// Every storage-device family this release enrols, interior names of the
@@ -968,6 +983,11 @@ pub struct Assurance {
     /// The access this session actually has: `"read-write"` or
     /// `"read-only"`.
     pub access: String,
+    /// Whose open this medium's P7 claim is: `"library-opened"` where
+    /// the library opened the artifact and holds the denial itself, or
+    /// `"caller-opened"` where the caller handed a handle over and what
+    /// it affords is the whole of what the session has.
+    pub claim: String,
     /// The size the interpretation declares, where one declares a size.
     pub declared_bytes: Option<u64>,
     /// The size the source actually holds.
@@ -991,6 +1011,7 @@ impl Assurance {
                 .map(|range| (range.start, range.end))
                 .collect(),
             access: mode_str(assurance.access).to_owned(),
+            claim: assurance.claim.as_str().to_owned(),
             declared_bytes: assurance.declared_bytes,
             observed_bytes: assurance.observed_bytes,
             first_unavailable_byte: assurance.first_unavailable_byte,
@@ -1103,15 +1124,20 @@ impl Discovery {
     /// The artifact claimed — the archive itself for an image discovered
     /// inside one.
     #[getter]
-    fn path(&self) -> PyResult<String> {
-        self.read(|discovery| discovery.path().to_owned())
+    fn path(&self) -> PyResult<Option<String>> {
+        self.read(|discovery| discovery.path().map(str::to_owned))
     }
 
     /// The resolved image — the entry name for an image inside an
-    /// archive, else the source path.
+    /// archive, else the source's own name. `None` where the artifact
+    /// was reached through a handle this host cannot name.
     #[getter]
-    fn image_path(&self) -> PyResult<String> {
-        self.read(|discovery| discovery.image_path().display().to_string())
+    fn image_path(&self) -> PyResult<Option<String>> {
+        self.read(|discovery| {
+            discovery
+                .image_path()
+                .map(|path| path.display().to_string())
+        })
     }
 
     /// The image format's stable spelling — `"h8d"`, `"qcow2"`,
@@ -1339,6 +1365,115 @@ impl Session {
         })
     }
 
+    /// Loads the caller's own opened artifact as the `format` they
+    /// declare it to be, and returns the medium — **linked to nothing**.
+    ///
+    /// `source` is an open file: anything with a `fileno()` — the object
+    /// `open(path, "rb")` returns — or a raw descriptor. The descriptor
+    /// is **duplicated**, so closing the Python file afterwards leaves
+    /// the medium's claim intact and the library closes its own copy
+    /// when the medium is released.
+    ///
+    /// **Whoever opens owns the lock.** That open is the claim: the
+    /// library checks it for exactly one thing — may it write through
+    /// it? — honours the answer exactly, and never supplements it with a
+    /// lock of its own. A name is recovered from the handle for location
+    /// alone, under an identity check; a handle this host cannot name
+    /// serves everything but the commit journal and a backing chain's
+    /// parent, and refuses those two by name.
+    ///
+    /// The declaration is checked by that one format's own adapter and
+    /// refused by name where the evidence cannot bear it. `format` is a
+    /// stable spelling from `formats()`.
+    #[pyo3(signature = (source, format, *, cache_bytes = None))]
+    fn load_media(
+        &self,
+        source: &Bound<'_, PyAny>,
+        format: &str,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<Medium> {
+        let format = remanence::Format::from_id(format).map_err(to_py_err)?;
+        let file = duplicated_file(source)?;
+        let mut session = self.lock();
+        let loaded = match cache_bytes {
+            Some(cache_bytes) => session.load_media_with_cache(file, format, cache_bytes),
+            None => session.load_media(file, format),
+        };
+        let id = loaded.map_err(to_py_err)?.id();
+        drop(session);
+        Ok(Medium {
+            session: Arc::clone(&self.inner),
+            id,
+        })
+    }
+
+    /// Loads the medium a `Discovery` already opened into this session's
+    /// pool, **consuming the discovery**.
+    ///
+    /// This is the load that runs nothing twice: the discovery holds the
+    /// claim taken when the artifact was identified and the work that
+    /// identification did, and both move into the pool, so nothing can
+    /// change the artifact between the question and the load. The
+    /// intent, the cache bound and the assurance are the ones the
+    /// discovery established.
+    ///
+    /// **The discovery is consumed either way** — a refused load
+    /// releases its claim with it. Asking again is `discover_media`.
+    fn load_discovery(&self, discovery: &Discovery) -> PyResult<Medium> {
+        let discovered = discovery.take()?;
+        let mut session = self.lock();
+        let id = session
+            .load_discovery(discovered)
+            .map_err(to_py_err)?
+            .id();
+        drop(session);
+        Ok(Medium {
+            session: Arc::clone(&self.inner),
+            id,
+        })
+    }
+
+    /// Every medium identity this session holds, in the order they were
+    /// loaded.
+    #[getter]
+    fn media(&self) -> Vec<u64> {
+        self.lock()
+            .media()
+            .iter()
+            .map(|id| id.value())
+            .collect()
+    }
+
+    /// The medium `media_id` names, or **`None`** — absence is an
+    /// answer, not a manufactured error.
+    fn medium(&self, media_id: u64) -> Option<Medium> {
+        let id = remanence::MediaId::from_value(media_id);
+        self.lock().medium(id).map(|_| Medium {
+            session: Arc::clone(&self.inner),
+            id,
+        })
+    }
+
+    /// **The one state-destroying verb.** It severs the medium's link if
+    /// a device holds it, ends the claim, and discards everything
+    /// uncommitted.
+    ///
+    /// Releasing is not a commit and never becomes one — buffered
+    /// changes go with the medium, so a caller who wants them commits
+    /// first.
+    fn release_media(&self, media_id: u64) -> PyResult<()> {
+        self.lock()
+            .release_media(remanence::MediaId::from_value(media_id))
+            .map_err(to_py_err)
+    }
+
+    /// Releases a machine and everything it configures, **taking no
+    /// state with it**: every device is ejected first — severing, so each
+    /// medium stays pooled — then the devices go, then the machine.
+    fn release_machine(&self, identity: &str) -> PyResult<()> {
+        self.lock().release_machine(identity).map_err(to_py_err)
+    }
+
     /// Adds a device for the artifact at `path` to the session's
     /// anonymous machine, as `Machine.add_device_for` does there.
     #[pyo3(signature = (path, *, writable, cache_bytes = None))]
@@ -1364,7 +1499,8 @@ impl Session {
     }
 
     /// Removes the device at `attachment` from the anonymous machine,
-    /// releasing any medium's claim with it and freeing the slot.
+    /// **ejecting first**: the link is severed and the medium stays in
+    /// the pool, claim and buffered changes intact.
     fn remove_device(&self, attachment: &str) -> PyResult<()> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         self.lock().remove_device(attachment).map_err(to_py_err)
@@ -1435,7 +1571,7 @@ impl Machine {
     fn get<'a>(
         &self,
         session: &'a mut MutexGuard<'_, remanence::Session>,
-    ) -> PyResult<&'a mut remanence::Machine> {
+    ) -> PyResult<remanence::MachineView<'a>> {
         match &self.identity {
             Some(identity) => session.require_machine(identity).map_err(to_py_err),
             None => Ok(session.anonymous_mut()),
@@ -1465,7 +1601,7 @@ impl Machine {
     fn add_device(&self, family: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
         let family = remanence::DeviceFamily::from_id(family).map_err(to_py_err)?;
         let mut session = self.lock();
-        let machine = self.get(&mut session)?;
+        let mut machine = self.get(&mut session)?;
         let added = match slot {
             Some(slot) => machine.add_device_at(family, slot),
             None => machine.add_device(family),
@@ -1502,7 +1638,7 @@ impl Machine {
     ) -> PyResult<StorageDevice> {
         let intent = access_intent(writable);
         let mut session = self.lock();
-        let machine = self.get(&mut session)?;
+        let mut machine = self.get(&mut session)?;
         let added = match cache_bytes {
             Some(cache_bytes) => machine.add_device_for_with_cache(path, intent, cache_bytes),
             None => machine.add_device_for(path, intent),
@@ -1516,8 +1652,9 @@ impl Machine {
         })
     }
 
-    /// Removes the device at `attachment` from this machine, releasing
-    /// any medium's claim with it and freeing the slot.
+    /// Removes the device at `attachment` from this machine, **ejecting
+    /// first**: the link is severed and the medium stays in the session's
+    /// pool, claim and buffered changes intact.
     fn remove_device(&self, attachment: &str) -> PyResult<()> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         let mut session = self.lock();
@@ -1577,10 +1714,12 @@ impl Machine {
     }
 }
 
-/// One storage device — the durable slot, its family, and the state of
-/// whatever medium occupies it. Nothing is reachable except through a
-/// device (P32), and the content verbs below refuse by name while its
-/// slot is empty.
+/// One storage device — the durable slot and its family, and the link to
+/// whichever pooled medium currently occupies it.
+///
+/// **The device is the slot, not the disk**: every content verb lives on
+/// `Medium`, and this carries `insert`, `eject` and `medium` — the one
+/// edge between a machine's configuration and the session's state.
 #[pyclass(module = "remanence")]
 pub struct StorageDevice {
     session: Arc<Mutex<remanence::Session>>,
@@ -1591,8 +1730,8 @@ pub struct StorageDevice {
 
 /// A borrow of the session with one device selected.
 ///
-/// It dereferences to the device, so every verb below reads as though it
-/// held the device directly while the session stays the owner. The
+/// It dereferences to the device, so every reader below reads as though
+/// it held the device directly while the session stays the owner. The
 /// device is re-resolved on each borrow, so a removed one refuses
 /// rather than reaching freed state.
 struct DeviceGuard<'a> {
@@ -1615,20 +1754,29 @@ impl std::ops::Deref for DeviceGuard<'_> {
     }
 }
 
-impl std::ops::DerefMut for DeviceGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
+/// The same borrow with the session's media pool beside it — what the
+/// edge verbs need, configuration being the machine's and state the
+/// session's.
+struct DeviceViewGuard<'a> {
+    session: MutexGuard<'a, remanence::Session>,
+    machine: Option<String>,
+    attachment: remanence::AttachmentId,
+}
+
+impl DeviceViewGuard<'_> {
+    fn view(&mut self) -> remanence::DeviceView<'_> {
         let machine = match &self.machine {
             Some(identity) => self.session.machine_mut(identity),
             None => Some(self.session.anonymous_mut()),
         };
         machine
-            .and_then(|machine| machine.device_mut(self.attachment))
+            .and_then(|machine| machine.into_device(self.attachment))
             .expect("the device was present when this guard was taken")
     }
 }
 
 impl StorageDevice {
-    fn get(&mut self) -> PyResult<DeviceGuard<'_>> {
+    fn present(&self) -> PyResult<MutexGuard<'_, remanence::Session>> {
         let session = self
             .session
             .lock()
@@ -1645,8 +1793,20 @@ impl StorageDevice {
                 "this device was removed",
             ));
         }
+        Ok(session)
+    }
+
+    fn get(&mut self) -> PyResult<DeviceGuard<'_>> {
         Ok(DeviceGuard {
-            session,
+            session: self.present()?,
+            machine: self.machine.clone(),
+            attachment: self.attachment,
+        })
+    }
+
+    fn view(&mut self) -> PyResult<DeviceViewGuard<'_>> {
+        Ok(DeviceViewGuard {
+            session: self.present()?,
             machine: self.machine.clone(),
             attachment: self.attachment,
         })
@@ -1673,82 +1833,156 @@ impl StorageDevice {
         Ok(self.get()?.is_occupied())
     }
 
-    /// Loads the medium at `path` — a disk image, or an archive —
-    /// into this device, and hands back nothing to hold: the device is
-    /// the one storage handle, and the medium's facts answer on it.
+    /// The identity of the medium in this slot, or `None` while it is
+    /// empty — absence being an answer rather than a manufactured error.
+    #[getter]
+    fn media_id(&mut self) -> PyResult<Option<u64>> {
+        Ok(self.get()?.media_id().map(|id| id.value()))
+    }
+
+    /// The medium in this slot, or `None` while it is empty.
+    #[getter]
+    fn medium(&mut self) -> PyResult<Option<Medium>> {
+        let id = self.get()?.media_id();
+        Ok(id.map(|id| Medium {
+            session: Arc::clone(&self.session),
+            id,
+        }))
+    }
+
+    /// Links the pooled medium `media_id` into this slot.
     ///
-    /// A device accepts only the media its family is served, and a
-    /// mismatch is refused naming both sides. `writable=True` claims the
-    /// medium exclusively and fails here when that claim cannot be
-    /// secured, never by falling back. An occupied slot is refused rather
-    /// than displaced.
-    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
-    fn load_media(
-        &mut self,
-        path: PathBuf,
-        writable: bool,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<()> {
-        let intent = access_intent(writable);
-        let mut device = self.get()?;
-        match cache_bytes {
-            Some(cache_bytes) => device.load_media_with_cache(path, intent, cache_bytes),
-            None => device.load_media(path, intent),
+    /// **A device accepts only the media its family is served**, and a
+    /// medium belonging in another drive is refused naming both sides. An
+    /// identity the pool does not hold, a slot already occupied, and a
+    /// medium another slot already holds are each refused by name.
+    fn insert(&mut self, media_id: u64) -> PyResult<()> {
+        let id = remanence::MediaId::from_value(media_id);
+        self.view()?.view().insert(id).map_err(to_py_err)
+    }
+
+    /// **Severs the link and nothing more**: the device stays in its
+    /// machine and the medium stays in the session's pool, its claim,
+    /// its assurance and everything buffered intact.
+    ///
+    /// Ejecting is not a commit point and never becomes one. Destroying a
+    /// medium's state is `Session.release_media`, and it is the one verb
+    /// that does. Answers with the identity that left the slot.
+    fn eject(&mut self) -> PyResult<u64> {
+        Ok(self.view()?.view().eject().map_err(to_py_err)?.value())
+    }
+}
+
+/// One loaded medium: the content handle, pool-owned and holdable.
+///
+/// Every content verb lives here. A medium answers whether or not a
+/// device links it — a disk mastered out of an archive answers before any
+/// machine exists to seat it — and the verbs a namespace-native medium
+/// has no space for refuse by name.
+#[pyclass(module = "remanence")]
+pub struct Medium {
+    session: Arc<Mutex<remanence::Session>>,
+    id: remanence::MediaId,
+}
+
+/// A borrow of the session with one medium selected.
+///
+/// It dereferences to the medium, so every verb below reads as though it
+/// held the medium directly while the session stays the owner. The medium
+/// is re-resolved on each borrow, so a released one refuses rather than
+/// reaching freed state.
+struct MediumGuard<'a> {
+    session: MutexGuard<'a, remanence::Session>,
+    id: remanence::MediaId,
+}
+
+impl std::ops::Deref for MediumGuard<'_> {
+    type Target = remanence::Medium;
+
+    fn deref(&self) -> &Self::Target {
+        self.session
+            .medium(self.id)
+            .expect("the medium was present when this guard was taken")
+    }
+}
+
+impl std::ops::DerefMut for MediumGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.session
+            .medium_mut(self.id)
+            .expect("the medium was present when this guard was taken")
+    }
+}
+
+impl Medium {
+    fn get(&self) -> PyResult<MediumGuard<'_>> {
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if session.medium(self.id).is_none() {
+            return Err(categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                "this medium was released",
+            ));
         }
-        .map_err(to_py_err)
+        Ok(MediumGuard {
+            session,
+            id: self.id,
+        })
     }
+}
 
-    /// Loads the medium a `Discovery` already opened into this device,
-    /// **consuming the discovery**.
-    ///
-    /// This is the load that runs nothing twice: the discovery holds the
-    /// claim taken when the artifact was identified and the work that
-    /// identification did, and both move into the device, so nothing can
-    /// change the artifact between the question and the load. The
-    /// intent, the cache bound and the assurance are the ones the
-    /// discovery established.
-    ///
-    /// **The discovery is consumed either way** — a refused load
-    /// releases its claim with it — and every attribute of it raises by
-    /// name afterwards. Asking again is `discover_media`.
-    fn load_discovery(&mut self, discovery: &Discovery) -> PyResult<()> {
-        let discovered = discovery.take()?;
-        self.get()?.load_discovery(discovered).map_err(to_py_err)
-    }
-
-    /// Ejects the medium, releasing its claim, and leaves the device in
-    /// place. Every view taken through it stops answering, and the
-    /// content verbs refuse by name until another medium is loaded.
-    fn eject(&mut self) -> PyResult<()> {
-        self.get()?.eject().map_err(to_py_err)
-    }
-
-    /// The artifact the medium was opened from (the archive path for
-    /// archive inputs).
+#[pymethods]
+impl Medium {
+    /// This medium's identity in its session's pool.
     #[getter]
-    fn path(&mut self) -> PyResult<String> {
-        Ok(self.get()?.path().map_err(to_py_err)?.to_owned())
+    fn id(&self) -> u64 {
+        self.id.value()
     }
 
-    /// The resolved image path (the entry name for archive inputs).
+    /// Whether a device currently links this medium. An unlinked medium
+    /// is ordinary rather than idle: it is loaded, claimed, and
+    /// answering.
     #[getter]
-    fn image_path(&mut self) -> PyResult<String> {
-        Ok(self.get()?.image_path().map_err(to_py_err)?.display().to_string())
+    fn is_linked(&self) -> PyResult<bool> {
+        Ok(self.get()?.is_linked())
+    }
+
+    /// The media type this medium is, by the catalog's stable spelling.
+    #[getter]
+    fn media_type(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.media_type())
+    }
+
+    /// The artifact the medium was loaded from (the archive itself for an
+    /// image loaded out of one), or **`None` where the caller's handle
+    /// has no recoverable name** — a name serves location alone.
+    #[getter]
+    fn path(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.path().map(str::to_owned))
+    }
+
+    /// The resolved image path (the entry name for archive inputs), or
+    /// `None` as above.
+    #[getter]
+    fn image_path(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.image_path().map(|path| path.display().to_string()))
     }
 
     /// The resolved image's own size in bytes — the raw plane. Distinct
     /// from `size`, which is the presented disk's size; for a qcow2 the
     /// two differ.
     #[getter]
-    fn image_size_bytes(&mut self) -> PyResult<u64> {
-        self.get()?.image_size_bytes().map_err(to_py_err)
+    fn image_size_bytes(&self) -> PyResult<u64> {
+        Ok(self.get()?.image_size_bytes())
     }
 
     /// Reads `length` bytes of the resolved image at `offset` — the
     /// bounded access form: the image streams from its backing and is
     /// never resident whole.
     fn read_at<'py>(
-        &mut self,
+        &self,
         py: Python<'py>,
         offset: u64,
         length: usize,
@@ -1759,8 +1993,8 @@ impl StorageDevice {
     }
 
     /// Identifies the artifact's nesting layers and probable filesystem.
-    fn identify(&mut self, py: Python<'_>) -> PyResult<Identification> {
-        let identification = self.get()?.identify().map_err(to_py_err)?;
+    fn identify(&self, py: Python<'_>) -> PyResult<Identification> {
+        let identification = self.get()?.identify();
         let layers = identification
             .layers
             .iter()
@@ -1773,26 +2007,27 @@ impl StorageDevice {
         })
     }
 
-    /// `"read-write"` or `"read-only"` — the **effective** mode: the
-    /// declared intent's echo where the evidence supports it, and
-    /// read-only where it does not (P28). `assurance` says why.
+    /// `"read-write"` or `"read-only"` — the **effective** mode: what the
+    /// claim afforded where the evidence supports it, and read-only where
+    /// it does not. `assurance` says why.
     #[getter]
-    fn mode(&mut self) -> PyResult<&'static str> {
-        Ok(mode_str(self.get()?.mode().map_err(to_py_err)?))
+    fn mode(&self) -> PyResult<&'static str> {
+        Ok(mode_str(self.get()?.mode()))
     }
 
-    /// What this open established about the evidence beneath it (P28),
+    /// What this open established about the evidence beneath it,
     /// available before anything is read: the outcome, the condition
     /// where one narrowed the session, the ordered evidence, the exact
-    /// extents that read, and the access the evidence permits.
+    /// extents that read, the access the evidence permits, and whose open
+    /// the claim is.
     #[getter]
-    fn assurance(&mut self) -> PyResult<Assurance> {
-        Ok(Assurance::new(self.get()?.assurance().map_err(to_py_err)?))
+    fn assurance(&self) -> PyResult<Assurance> {
+        Ok(Assurance::new(self.get()?.assurance()))
     }
 
     /// `"raw"`, `"qcow2"` or `"vdi"`.
     #[getter]
-    fn format(&mut self) -> PyResult<&'static str> {
+    fn format(&self) -> PyResult<&'static str> {
         Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Raw => "raw",
             remanence::DiskFormat::Qcow2 { .. } => "qcow2",
@@ -1802,7 +2037,7 @@ impl StorageDevice {
 
     /// The qcow2 version, or `None` for an image of any other format.
     #[getter]
-    fn qcow2_version(&mut self) -> PyResult<Option<u32>> {
+    fn qcow2_version(&self) -> PyResult<Option<u32>> {
         Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Qcow2 { version } => Some(version),
             remanence::DiskFormat::Raw | remanence::DiskFormat::Vdi { .. } => None,
@@ -1812,7 +2047,7 @@ impl StorageDevice {
     /// The VDI version as a `(major, minor)` pair, or `None` for an image
     /// of any other format.
     #[getter]
-    fn vdi_version(&mut self) -> PyResult<Option<(u32, u32)>> {
+    fn vdi_version(&self) -> PyResult<Option<(u32, u32)>> {
         Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Vdi { major, minor } => Some((major, minor)),
             remanence::DiskFormat::Raw | remanence::DiskFormat::Qcow2 { .. } => None,
@@ -1821,14 +2056,14 @@ impl StorageDevice {
 
     /// The virtual disk size in bytes.
     #[getter]
-    fn size(&mut self) -> PyResult<u64> {
+    fn size(&self) -> PyResult<u64> {
         self.get()?.size().map_err(to_py_err)
     }
 
     /// Whether uncommitted changes exist.
     #[getter]
-    fn is_modified(&mut self) -> PyResult<bool> {
-        self.get()?.is_modified().map_err(to_py_err)
+    fn is_modified(&self) -> PyResult<bool> {
+        Ok(self.get()?.is_modified())
     }
 
     /// The layered inspection of this disk: the block-active device, what
@@ -1840,106 +2075,23 @@ impl StorageDevice {
     /// neither erases a record another seam owns nor renumbers what
     /// follows. Content no adapter claims is an outcome here rather than a
     /// refusal; an image that cannot be *read* still raises.
-    fn inspect(&mut self) -> PyResult<DiskReport> {
+    fn inspect(&self) -> PyResult<DiskReport> {
         let report = self.get()?.inspect().map_err(to_py_err)?;
-        let issues = |issues: &[remanence::Error]| -> Vec<String> {
-            issues.iter().map(|issue| issue.to_string()).collect()
-        };
-        Ok(DiskReport {
-            device: DeviceInfo {
-                id: report.device.id,
-                image_format: report.device.image_format.clone(),
-                media_type: report.device.media_type.clone(),
-                length_bytes: report.device.length_bytes,
-                authoritative_layer: report.device.authoritative_layer.clone(),
-                active_layer: report.device.active_layer.clone(),
-            },
-            content: report.content.name().to_owned(),
-            content_evidence: match &report.content {
-                remanence::DiskContent::UnknownNonblank { evidence } => Some(evidence.clone()),
-                _ => None,
-            },
-            partition_schema: report.partition_schema.as_ref().map(|schema| {
-                PartitionSchemaInfo {
-                    kind: schema.kind.clone(),
-                    evidence: schema.evidence.clone(),
-                    issues: issues(&schema.issues),
-                }
-            }),
-            regions: report
-                .regions
-                .iter()
-                .map(|region| RegionInfo {
-                    id: region.id.value(),
-                    declared_number: region.declared_number,
-                    declared_placement: region.declared_placement.clone(),
-                    role: region.role.name().to_owned(),
-                    declared_type: region.declared_type,
-                    declared_type_reading: region.declared_type_reading.clone(),
-                    claimed: region.claimed,
-                    start_bytes: region.start_bytes,
-                    length_bytes: region.length_bytes,
-                    issue_category: region
-                        .issue
-                        .as_ref()
-                        .map(|issue| issue.category().as_str().to_owned()),
-                    issue: region.issue.as_ref().map(|issue| issue.to_string()),
-                })
-                .collect(),
-            volumes: report
-                .volumes
-                .iter()
-                .map(|volume| VolumeInfo {
-                    id: volume.id.value(),
-                    origin: match &volume.origin {
-                        remanence::VolumeOrigin::WholeDevice => "whole-device".to_owned(),
-                        remanence::VolumeOrigin::Regions(_) => "regions".to_owned(),
-                    },
-                    origin_regions: match &volume.origin {
-                        remanence::VolumeOrigin::WholeDevice => Vec::new(),
-                        remanence::VolumeOrigin::Regions(regions) => {
-                            regions.iter().map(|region| region.value()).collect()
-                        }
-                    },
-                    start_bytes: volume.start_bytes,
-                    length_bytes: volume.length_bytes,
-                    evidence: volume.evidence.clone(),
-                    issues: issues(&volume.issues),
-                })
-                .collect(),
-            filesystems: report
-                .filesystems
-                .iter()
-                .map(|filesystem| FilesystemInfo {
-                    id: filesystem.id.value(),
-                    volume: filesystem.volume.value(),
-                    kind: filesystem.kind.clone(),
-                    label: filesystem.label.as_ref().map(volume_label),
-                    cluster_bytes: filesystem.cluster_bytes,
-                    cluster_count: filesystem.cluster_count,
-                    sectors_per_track: filesystem.declared_geometry.sectors_per_track,
-                    heads: filesystem.declared_geometry.heads,
-                    cylinders: filesystem.declared_geometry.cylinders,
-                    evidence: filesystem.evidence.clone(),
-                    issues: issues(&filesystem.issues),
-                })
-                .collect(),
-            source: report,
-        })
+        Ok(disk_report(report))
     }
 
-    /// The filesystem this device resolves to.
+    /// The filesystem this medium resolves to.
     ///
-    /// The walk device to volume to filesystem is transparent where every
+    /// The walk medium to volume to filesystem is transparent where every
     /// seam has exactly one supported answer, and raises naming the
     /// candidates where one does not. A volume bearing no filesystem is a
-    /// named absence, not an empty listing. **The device carries no file
+    /// named absence, not an empty listing. **The medium carries no file
     /// verbs of its own** — it may be asked what it resolves to, and may
     /// not be told to act as something it isn't.
-    fn filesystem(&mut self) -> PyResult<StorageSpace> {
+    fn filesystem(&self) -> PyResult<StorageSpace> {
         let (kind, volume, start_bytes, length_bytes) = {
-            let mut device = self.get()?;
-            let space = device.filesystem().map_err(to_py_err)?;
+            let mut medium = self.get()?;
+            let space = medium.filesystem().map_err(to_py_err)?;
             (
                 space.kind().map_err(to_py_err)?.to_owned(),
                 space.volume_id(),
@@ -1949,8 +2101,7 @@ impl StorageDevice {
         };
         Ok(StorageSpace {
             session: Some(Arc::clone(&self.session)),
-            machine: self.machine.clone(),
-            attachment: Some(self.attachment),
+            media: Some(self.id),
             sectors: None,
             volume: volume.map(remanence::VolumeId::value),
             start_bytes,
@@ -1959,13 +2110,12 @@ impl StorageDevice {
         })
     }
 
-    /// One volume of this device's medium, by the identity the inspection
-    /// report issued for it — the selector where several namespaces
-    /// exist.
-    fn volume(&mut self, volume_id: u64) -> PyResult<StorageSpace> {
+    /// One volume of this medium, by the identity the inspection report
+    /// issued for it — the selector where several namespaces exist.
+    fn volume(&self, volume_id: u64) -> PyResult<StorageSpace> {
         let (start_bytes, length_bytes, kind) = {
-            let mut device = self.get()?;
-            let space = device
+            let mut medium = self.get()?;
+            let space = medium
                 .volume(remanence::VolumeId::from_value(volume_id))
                 .map_err(to_py_err)?;
             // A volume bearing no namespace is an ordinary volume, so the
@@ -1979,8 +2129,7 @@ impl StorageDevice {
         };
         Ok(StorageSpace {
             session: Some(Arc::clone(&self.session)),
-            machine: self.machine.clone(),
-            attachment: Some(self.attachment),
+            media: Some(self.id),
             sectors: None,
             volume: Some(volume_id),
             start_bytes,
@@ -1992,16 +2141,193 @@ impl StorageDevice {
     /// The commit point: everything buffered reaches the image, flushed.
     /// The commit is durable (P9): a private recovery journal is armed
     /// before the first byte of the file changes, so an interruption at
-    /// any point leaves state the next open reconciles to wholly the
-    /// old image or wholly the committed new one.
-    fn commit(&mut self) -> PyResult<()> {
+    /// any point leaves state the next open reconciles to wholly the old
+    /// image or wholly the committed new one.
+    ///
+    /// The journal lands **beside the artifact**, so a medium whose source
+    /// handle has no recoverable name refuses here by name rather than
+    /// committing without it.
+    fn commit(&self) -> PyResult<()> {
         self.get()?.commit().map_err(to_py_err)
     }
 
     /// Discards everything buffered; the image is untouched.
-    fn rollback(&mut self) -> PyResult<()> {
+    fn rollback(&self) -> PyResult<()> {
         self.get()?.rollback().map_err(to_py_err)
     }
+}
+
+/// The layered inspection report, in the module's own records.
+fn disk_report(report: remanence::DiskReport) -> DiskReport {
+    let issues = |issues: &[remanence::Error]| -> Vec<String> {
+        issues.iter().map(|issue| issue.to_string()).collect()
+    };
+    DiskReport {
+        device: DeviceInfo {
+            id: report.device.id,
+            image_format: report.device.image_format.clone(),
+            media_type: report.device.media_type.clone(),
+            length_bytes: report.device.length_bytes,
+            authoritative_layer: report.device.authoritative_layer.clone(),
+            active_layer: report.device.active_layer.clone(),
+        },
+        content: report.content.name().to_owned(),
+        content_evidence: match &report.content {
+            remanence::DiskContent::UnknownNonblank { evidence } => Some(evidence.clone()),
+            _ => None,
+        },
+        partition_schema: report
+            .partition_schema
+            .as_ref()
+            .map(|schema| PartitionSchemaInfo {
+                kind: schema.kind.clone(),
+                evidence: schema.evidence.clone(),
+                issues: issues(&schema.issues),
+            }),
+        regions: report
+            .regions
+            .iter()
+            .map(|region| RegionInfo {
+                id: region.id.value(),
+                declared_number: region.declared_number,
+                declared_placement: region.declared_placement.clone(),
+                role: region.role.name().to_owned(),
+                declared_type: region.declared_type,
+                declared_type_reading: region.declared_type_reading.clone(),
+                claimed: region.claimed,
+                start_bytes: region.start_bytes,
+                length_bytes: region.length_bytes,
+                issue_category: region
+                    .issue
+                    .as_ref()
+                    .map(|issue| issue.category().as_str().to_owned()),
+                issue: region.issue.as_ref().map(|issue| issue.to_string()),
+            })
+            .collect(),
+        volumes: report
+            .volumes
+            .iter()
+            .map(|volume| VolumeInfo {
+                id: volume.id.value(),
+                origin: match &volume.origin {
+                    remanence::VolumeOrigin::WholeDevice => "whole-device".to_owned(),
+                    remanence::VolumeOrigin::Regions(_) => "regions".to_owned(),
+                },
+                origin_regions: match &volume.origin {
+                    remanence::VolumeOrigin::WholeDevice => Vec::new(),
+                    remanence::VolumeOrigin::Regions(regions) => {
+                        regions.iter().map(|region| region.value()).collect()
+                    }
+                },
+                start_bytes: volume.start_bytes,
+                length_bytes: volume.length_bytes,
+                evidence: volume.evidence.clone(),
+                issues: issues(&volume.issues),
+            })
+            .collect(),
+        filesystems: report
+            .filesystems
+            .iter()
+            .map(|filesystem| FilesystemInfo {
+                id: filesystem.id.value(),
+                volume: filesystem.volume.value(),
+                kind: filesystem.kind.clone(),
+                label: filesystem.label.as_ref().map(volume_label),
+                cluster_bytes: filesystem.cluster_bytes,
+                cluster_count: filesystem.cluster_count,
+                sectors_per_track: filesystem.declared_geometry.sectors_per_track,
+                heads: filesystem.declared_geometry.heads,
+                cylinders: filesystem.declared_geometry.cylinders,
+                evidence: filesystem.evidence.clone(),
+                issues: issues(&filesystem.issues),
+            })
+            .collect(),
+        source: report,
+    }
+}
+
+/// The caller's own open, duplicated so the library's claim survives the
+/// Python object being closed.
+///
+/// `source` is anything with a `fileno()` — the object `open(path, "rb")`
+/// returns — or a raw descriptor. Duplicating is what makes the two
+/// lifetimes independent: the caller closes theirs when they like, and
+/// the library closes its own when the medium is released.
+fn duplicated_file(source: &Bound<'_, PyAny>) -> PyResult<std::fs::File> {
+    let raw: i32 = match source.call_method0("fileno") {
+        Ok(fileno) => fileno.extract()?,
+        Err(_) => source.extract().map_err(|_| {
+            categorized_py_err(
+                remanence::ErrorCategory::Io,
+                "the source must be an open file or a file descriptor",
+            )
+        })?,
+    };
+    duplicate_descriptor(raw)
+}
+
+#[cfg(windows)]
+fn duplicate_descriptor(raw: i32) -> PyResult<std::fs::File> {
+    use std::os::windows::io::{FromRawHandle, RawHandle};
+    unsafe extern "C" {
+        fn _get_osfhandle(fd: i32) -> isize;
+    }
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn DuplicateHandle(
+            source_process: *mut std::ffi::c_void,
+            source: *mut std::ffi::c_void,
+            target_process: *mut std::ffi::c_void,
+            target: *mut *mut std::ffi::c_void,
+            desired_access: u32,
+            inherit: i32,
+            options: u32,
+        ) -> i32;
+    }
+    const DUPLICATE_SAME_ACCESS: u32 = 0x2;
+    let handle = unsafe { _get_osfhandle(raw) };
+    if handle == -1 || handle == 0 {
+        return Err(categorized_py_err(
+            remanence::ErrorCategory::Io,
+            "the source is not an open file",
+        ));
+    }
+    let mut copy: *mut std::ffi::c_void = std::ptr::null_mut();
+    let ok = unsafe {
+        let process = GetCurrentProcess();
+        DuplicateHandle(
+            process,
+            handle as *mut std::ffi::c_void,
+            process,
+            &raw mut copy,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if ok == 0 {
+        return Err(categorized_py_err(
+            remanence::ErrorCategory::Io,
+            "cannot duplicate the source handle",
+        ));
+    }
+    Ok(unsafe { std::fs::File::from_raw_handle(copy as RawHandle) })
+}
+
+#[cfg(not(windows))]
+fn duplicate_descriptor(raw: i32) -> PyResult<std::fs::File> {
+    use std::os::fd::FromRawFd;
+    unsafe extern "C" {
+        fn dup(fd: i32) -> i32;
+    }
+    let copy = unsafe { dup(raw) };
+    if copy < 0 {
+        return Err(categorized_py_err(
+            remanence::ErrorCategory::Io,
+            "cannot duplicate the source descriptor",
+        ));
+    }
+    Ok(unsafe { std::fs::File::from_raw_fd(copy) })
 }
 
 /// Resolves the named filesystem and runs `action` over it.
@@ -2012,42 +2338,37 @@ impl StorageDevice {
 /// answers by name rather than through state that is gone.
 fn with_filesystem<T>(
     session: Option<&Arc<Mutex<remanence::Session>>>,
-    machine: &Option<String>,
-    attachment: Option<remanence::AttachmentId>,
+    media: Option<remanence::MediaId>,
     volume: Option<u64>,
     sectors: Option<&Arc<remanence::C1541Sectors>>,
     action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
 ) -> PyResult<T> {
     // A namespace presented over a sector layer re-resolves from that
-    // layer, exactly as a device-backed one re-resolves from its device.
+    // layer, exactly as a medium-backed one re-resolves from its medium.
     if let Some(sectors) = sectors {
         let mut space = sectors.filesystem().map_err(to_py_err)?;
         return action(&mut space).map_err(to_py_err);
     }
-    let (Some(session), Some(attachment)) = (session, attachment) else {
+    let (Some(session), Some(media)) = (session, media) else {
         return Err(categorized_py_err(
             remanence::ErrorCategory::NotFound,
-            "this namespace names no device to be resolved through",
+            "this namespace names no medium to be resolved through",
         ));
     };
     let mut guard = session
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let target = match machine {
-        Some(identity) => guard.machine_mut(identity),
-        None => Some(guard.anonymous_mut()),
-    };
-    let Some(device) = target.and_then(|target| target.device_mut(attachment)) else {
+    let Some(medium) = guard.medium_mut(media) else {
         return Err(categorized_py_err(
             remanence::ErrorCategory::NotFound,
-            "this device was removed",
+            "the medium this namespace reads was released",
         ));
     };
     let mut space = match volume {
-        Some(id) => device
+        Some(id) => medium
             .volume(remanence::VolumeId::from_value(id))
             .map_err(to_py_err)?,
-        None => device.filesystem().map_err(to_py_err)?,
+        None => medium.filesystem().map_err(to_py_err)?,
     };
     action(&mut space).map_err(to_py_err)
 }
@@ -2059,13 +2380,12 @@ fn with_filesystem<T>(
 /// active layer, and nothing here holds a listing that could go stale.
 #[pyclass(module = "remanence")]
 pub struct StorageSpace {
-    /// The session the device holding this namespace lives in, or
-    /// `None` where no device composed it.
+    /// The session the medium bearing this namespace lives in, or
+    /// `None` where no medium composed it.
     session: Option<Arc<Mutex<remanence::Session>>>,
-    machine: Option<String>,
-    /// The device slot this namespace was resolved through, or `None`
-    /// where no device composed it at all.
-    attachment: Option<remanence::AttachmentId>,
+    /// The medium this namespace was resolved through, or `None` where
+    /// no medium composed it at all.
+    media: Option<remanence::MediaId>,
     /// The sector layer it is presented over, where the flux family
     /// composed it: that family is reached through its own types rather
     /// than through a device, and the node still carries the file verbs.
@@ -2117,8 +2437,7 @@ impl StorageSpace {
         let mut buf = vec![0_u8; length];
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |space| space.read_at(offset, &mut buf),
@@ -2131,8 +2450,7 @@ impl StorageSpace {
     fn write_at(&self, offset: u64, data: &[u8]) -> PyResult<()> {
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |space| space.write_at(offset, data),
@@ -2164,8 +2482,7 @@ impl StorageSpace {
     fn label(&self) -> PyResult<Option<VolumeLabel>> {
         Ok(with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.label(),
@@ -2180,8 +2497,7 @@ impl StorageSpace {
     fn evidence(&self) -> PyResult<Vec<String>> {
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.evidence(),
@@ -2193,8 +2509,7 @@ impl StorageSpace {
     fn entries(&self, path: &str) -> PyResult<Vec<Entry>> {
         let entries = with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.entries(path),
@@ -2209,8 +2524,7 @@ impl StorageSpace {
     fn stat(&self, path: &str) -> PyResult<Option<Entry>> {
         let entry = with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.stat(path),
@@ -2226,16 +2540,14 @@ impl StorageSpace {
     fn get_file(&self, path: &str) -> PyResult<File> {
         let entry = with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| Ok(filesystem.get_file(path)?.entry().clone()),
         )?;
         Ok(File {
             session: self.session.clone(),
-            machine: self.machine.clone(),
-            attachment: self.attachment,
+            media: self.media,
             sectors: self.sectors.clone(),
             volume: self.volume,
             path: path.to_owned(),
@@ -2248,8 +2560,7 @@ impl StorageSpace {
     fn read_file<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.read_file(path),
@@ -2264,8 +2575,7 @@ impl StorageSpace {
     fn write_file(&self, path: &str, contents: &[u8]) -> PyResult<()> {
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.write_file(path, contents),
@@ -2278,8 +2588,7 @@ impl StorageSpace {
     fn resize_file(&self, path: &str, size: u64) -> PyResult<()> {
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.resize_file(path, size),
@@ -2292,8 +2601,7 @@ impl StorageSpace {
     fn make_directory(&self, path: &str) -> PyResult<()> {
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.make_directory(path),
@@ -2316,8 +2624,7 @@ impl StorageSpace {
 #[pyclass(module = "remanence")]
 pub struct File {
     session: Option<Arc<Mutex<remanence::Session>>>,
-    machine: Option<String>,
-    attachment: Option<remanence::AttachmentId>,
+    media: Option<remanence::MediaId>,
     /// As on `StorageSpace`: the sector layer a flux-family namespace is
     /// presented over, where no device composed it.
     sectors: Option<Arc<remanence::C1541Sectors>>,
@@ -2368,8 +2675,7 @@ impl File {
         let path = self.path.clone();
         let discovery = with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.discover(),
@@ -2382,8 +2688,7 @@ impl File {
         let path = self.path.clone();
         let bytes = with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.bytes(),
@@ -2403,8 +2708,7 @@ impl File {
         let mut buffer = vec![0u8; length];
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.read_at(offset, &mut buffer),
@@ -2420,8 +2724,7 @@ impl File {
         let path = self.path.clone();
         with_filesystem(
             self.session.as_ref(),
-            &self.machine,
-            self.attachment,
+            self.media,
             self.volume,
             self.sectors.as_ref(),
             |filesystem| filesystem.get_file(&path)?.write_at(offset, data),
@@ -3792,8 +4095,7 @@ impl C1541Sectors {
             .map_err(to_py_err)?;
         Ok(StorageSpace {
             session: None,
-            machine: None,
-            attachment: None,
+            media: None,
             sectors: Some(Arc::clone(&self.inner)),
             volume: None,
             start_bytes: 0,
@@ -4879,6 +5181,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Session>()?;
     m.add_class::<Machine>()?;
     m.add_class::<StorageDevice>()?;
+    m.add_class::<Medium>()?;
     m.add_class::<DeviceFamily>()?;
     m.add_class::<Assurance>()?;
     m.add_class::<DiskReport>()?;
@@ -4901,5 +5204,6 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(device_families, m)?)?;
     m.add_function(wrap_pyfunction!(discover_media, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
+    m.add_function(wrap_pyfunction!(formats, m)?)?;
     Ok(())
 }

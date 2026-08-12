@@ -13,25 +13,36 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AttachmentId, DeviceFamily, EntryKind, ErrorCategory, SpaceRule,
-    Session,
+    EntryKind, ErrorCategory, Format, MediaId, SpaceRule, Session,
 };
 
-/// Attaches `path` to a fresh session and returns both, because a medium
-/// is reachable only through the device holding it (P32). Tests keep the
-/// session alive for as long as they use the medium.
+/// Pools `path` in a fresh session under the declaration these tests
+/// make, and returns both: a medium lives in its session's pool, so
+/// tests keep the session alive for as long as they use the medium.
 fn attach(
     path: impl AsRef<std::path::Path>,
-    intent: AccessIntent,
-) -> remanence::Result<(Session, AttachmentId)> {
+    afford: Afford,
+) -> remanence::Result<(Session, MediaId)> {
+    let source = match afford {
+        Afford::Read => open_read(path),
+        Afford::Write => open_write(path),
+    };
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
-    let attachment = device.attachment();
-    device.load_media(path, intent)?;
-    Ok((session, attachment))
+    let id = session.load_media(source, Format::H8d)?.id();
+    Ok((session, id))
+}
+
+/// What the caller's own open affords, in the shape these tests declare
+/// it: the amended P7 asks the handle one question, so the test says
+/// which answer it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Afford {
+    Read,
+    Write,
 }
 
 mod common;
+use common::{open_read, open_write};
 
 fn fixture_h8d() -> PathBuf {
     common::ensure_fixture("HDOS_1-0_Issue_#50-00-00_890-1.h8d")
@@ -51,8 +62,8 @@ fn private_copy(tag: &str) -> PathBuf {
 #[test]
 fn lists_files_from_hdos_fixture_image() {
     let path = private_copy("list");
-    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
 
     let mut filesystem = disk.filesystem().expect("the resolver walks to one namespace");
     assert_eq!(filesystem.kind().expect("the medium bears a namespace"), "hdos");
@@ -135,8 +146,8 @@ fn lists_files_from_hdos_fixture_image() {
 #[test]
 fn reads_a_file_out_through_the_grt_chain() {
     let path = private_copy("read");
-    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
 
     let mut filesystem = disk.filesystem().expect("the resolver walks to one namespace");
     let contents = filesystem
@@ -187,8 +198,8 @@ fn a_medium_bearing_no_namespace_is_a_named_absence() {
     ));
     std::fs::write(&path, vec![0u8; 102_400]).expect("blank image writes");
 
-    let (mut session, attachment) = attach(&path, AccessIntent::Read).expect("disk opens");
-    let disk = session.require_device(attachment).expect("the medium is attached");
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("disk opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
     let error = disk.filesystem().expect_err("there is no namespace to resolve to");
     assert_eq!(error.category(), ErrorCategory::NotFound);
     assert_eq!(error.rule(), Some(SpaceRule::NoNamespace.as_str()));

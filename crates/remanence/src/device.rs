@@ -40,9 +40,45 @@ impl AccessIntent {
     }
 }
 
+/// Whose open a medium's P7 claim is.
+///
+/// In-force P7 makes denying writes to every other process mandatory
+/// **where the library opens**, and leaves the claim to the caller where
+/// the caller opened. Which of the two a medium holds is a fact about the
+/// session rather than about the artifact, so it travels on the medium's
+/// [`Assurance`](crate::Assurance) beside the access it established.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Claim {
+    /// The library opened the artifact and holds P7's denial itself —
+    /// the discovery path, and every artifact reached by name.
+    LibraryOpened,
+    /// The caller opened the artifact and handed the handle over. What
+    /// that handle affords is the whole of what this session has: the
+    /// library checked it for one thing, honours it exactly, and takes no
+    /// lock of its own.
+    CallerOpened,
+}
+
+impl Claim {
+    /// The stable cross-language spelling of this claim's class.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LibraryOpened => "library-opened",
+            Self::CallerOpened => "caller-opened",
+        }
+    }
+}
+
+impl std::fmt::Display for Claim {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A session's access mode. On the device stack this echoes the declared
 /// [`AccessIntent`]; on an identification session it reports what the
-/// P7 ladder obtained.
+/// P7 ladder obtained; on a caller-opened medium it reports what that
+/// caller's handle affords.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessMode {
     /// Write permission for us. For a disk session the claim is

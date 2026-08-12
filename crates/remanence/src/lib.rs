@@ -3,47 +3,73 @@
 
 //! Self-contained disk image analysis library.
 //!
-//! A [`Session`] is the claim and cache scope; the [`Machine`]s within it
-//! are the device sets, and a [`StorageDevice`] is the one storage
-//! handle — the slot, its family, and the state of whatever medium
-//! occupies it. **Devices are added and media are loaded, as two acts**:
-//! [`Machine::add_device`] takes a [`DeviceFamily`] as concrete as the
-//! drive the machine actually had, and [`StorageDevice::load_media`]
-//! loads a disk image into it, optionally naming an entry inside a
-//! supported archive. That load takes one P7 claim — refusing a medium
-//! the family is not served, naming both sides — and serves both of the
-//! medium's planes through that handle.
+//! A [`Session`] owns two pools — the [`Machine`]s that hold devices,
+//! which are configuration, and the media, which are state — and **the
+//! medium is the content handle**: [`Medium`] is the node a caller
+//! holds, and everything a recording can answer answers on it.
 //!
-//! [`discover_media`] answers what an artifact is before any of that, on
-//! no handle at all: the exact medium, the device families served it, and
-//! the image format's declared default device. The [`Discovery`] it
-//! returns holds that claim and the work already done, and
-//! [`StorageDevice::load_discovery`] consumes it into a device so nothing
-//! runs twice; [`Machine::add_device_for`] composes the two acts over it
+//! [`Session::load_media`] is the declared reading: the caller's own
+//! opened [`std::fs::File`] and one concrete [`Format`], checked by that
+//! format's own adapter and refused by name where the evidence cannot
+//! bear it. **Whoever opens owns the lock** (P7 as amended) — that open
+//! is the claim, the library checks it for exactly one thing (may it
+//! write?), honours the answer exactly, and takes no lock of its own; a
+//! name is recovered from the handle for location alone, under an
+//! identity check, and a handle this host cannot name refuses the two
+//! location-dependent journeys by name and serves everything else.
+//!
+//! **Devices are configuration beside that, and linking is the one
+//! edge.** [`MachineView::add_device`] takes a [`DeviceFamily`] as
+//! concrete as the drive the machine actually had, [`DeviceView::insert`]
+//! links a pooled medium into it — refusing a medium the family is not
+//! served, naming both sides — and [`DeviceView::eject`] **severs only**,
+//! the claim and everything buffered surviving in the pool.
+//! [`Session::release_media`] is the one state-destroying verb.
+//!
+//! **Every pool runs the same verbs: create, look up, remove.** A
+//! lookup — [`Session::machine`], [`Session::device`],
+//! [`Session::medium`] and their `_mut` forms — answers with an
+//! `Option`, absence being an answer rather than an error; each carries
+//! a `require_*` companion for the caller who means a demand, and that
+//! one refuses by name. Removal names what it takes with it —
+//! [`Session::release_machine`] cascading through the configuration
+//! below it, [`MachineView::remove_device`] ejecting first, and
+//! [`Session::release_media`] severing its own link before it ends the
+//! claim.
+//!
+//! [`discover_media`] answers the other question — *what is this?* —
+//! on no handle at all: the exact medium, the device families served it,
+//! and the image format's declared default device. It opens the artifact
+//! by name, so P7's mandatory denial applies there in full. The
+//! [`Discovery`] it returns holds that claim and the work already done,
+//! and [`Session::load_discovery`] consumes it into the pool so nothing
+//! runs twice; [`MachineView::add_device_for`] composes the acts over it
 //! where a format declares a default, and refuses by name where none
-//! does. Through the storage handle:
-//! [`StorageDevice::identify`] reports the layers of the artifact's
-//! nesting (archive, image, physical media, filesystem) recognized by
-//! built-in executable adapters, over the image's own bytes, while
-//! [`StorageDevice::inspect`] works over the disk a format adapter
+//! does.
+//!
+//! On the medium: [`Medium::identify`] reports the layers of the
+//! artifact's nesting (archive, image, physical media, filesystem)
+//! recognized by built-in executable adapters, over the image's own
+//! bytes, while [`Medium::inspect`] works over the disk a format adapter
 //! presents above them.
 //!
-//! **File access lives on one node.** [`StorageDevice::filesystem`]
-//! resolves device → volume → filesystem where every seam has exactly
+//! **File access lives on one node.** [`Medium::filesystem`]
+//! resolves medium → volume → filesystem where every seam has exactly
 //! one supported answer and refuses naming the candidates where one does
-//! not; [`StorageDevice::volume`] selects by the identity the inspection
+//! not; [`Medium::volume`] selects by the identity the inspection
 //! report issued where several exist. The verbs — [`StorageSpace::entries`],
 //! [`StorageSpace::stat`], [`StorageSpace::get_file`] and their kin — live
-//! on the [`StorageSpace`] the resolver answers with, and the device
+//! on the [`StorageSpace`] the resolver answers with, and the medium
 //! carries none of them.
 //!
-//! **An archive is a medium like any other.** It loads into an
-//! archive-family device ([`DeviceFamily::ARCHIVE_DEVICE`]) and its
-//! content is walked through the [`StorageSpace`] that device resolves
-//! to — a namespace with no addressed extent beneath it, ZIP and 7z
-//! being the claimed grammars. An entry recognized as an artifact of its
-//! own is opened by [`File::discover`] and loaded into a device of its
-//! own, which is the one recursion this model has.
+//! **An archive is a medium like any other.** It is loaded by its
+//! declared grammar ([`Format::Zip`], [`Format::SevenZip`]), may be
+//! seated in an archive-family device
+//! ([`DeviceFamily::ARCHIVE_DEVICE`]), and its content is walked through
+//! the [`StorageSpace`] it resolves to — a namespace with no addressed
+//! extent beneath it. An entry recognized as an artifact of its own is
+//! opened by [`File::discover`] and becomes a medium of its own, which
+//! is the one recursion this model has.
 //!
 //! **The flux family's physical stratum is reached through its own
 //! type.** [`RemanenceImage`] opens a `.remanence` artifact and answers
@@ -84,7 +110,7 @@
 //! established by walking each file's chain.
 //!
 //! Every open also states what it established about the evidence beneath
-//! it ([`StorageDevice::assurance`]): a source short of what its own
+//! it ([`Medium::assurance`]): a source short of what its own
 //! interpretation declares is read as far as it truthfully goes,
 //! read-only, with the shortfall named rather than hidden or thrown away
 //! whole (P28).
@@ -115,6 +141,7 @@ mod filesystem_catalog;
 mod flux_analysis;
 mod flux_capture;
 mod flux_medium;
+mod handle;
 mod hardware_bitstream;
 mod hdos;
 mod inflate;
@@ -123,6 +150,7 @@ mod kryoflux;
 mod lzma;
 mod machine;
 mod mbr;
+mod media;
 mod media_profile;
 mod p64;
 mod partition;
@@ -151,7 +179,7 @@ pub use c1541_sectors::{
     SectorPolicy, SectorReport, SectorRule, UnpairedRecordPolicy,
 };
 pub use cache::DEFAULT_CACHE_BYTES;
-pub use device::{AccessIntent, AccessMode};
+pub use device::{AccessIntent, AccessMode, Claim};
 pub use device_family::DeviceFamily;
 pub use discovery::{Discovery, discover_media, discover_media_with_cache};
 pub use disk::DiskFormat;
@@ -165,7 +193,7 @@ pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
 pub use fat::FatKind;
 pub use filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
-pub use machine::{Machine, Session};
+pub use machine::{Machine, MachineView, Session};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,
@@ -182,7 +210,8 @@ pub use remanence_reconstruction::{
     ReconstructedOrbit, ReconstructionPlan, ReconstructionPolicy, ReconstructionReport,
     RecordingSelection,
 };
-pub use storage_device::{AttachmentId, StorageDevice};
+pub use media::{Format, MediaId, Medium};
+pub use storage_device::{AttachmentId, DeviceView, StorageDevice};
 pub use session::{
     ArchiveLayout, DiskLayout, FilesystemLayout, Identification, ImageLayout, Layer, LayerKind,
     LayerLayout, PhysicalMediaLayout, SectorLayout, SizeInformation, TrackSectorLayout,

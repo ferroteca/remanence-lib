@@ -58,6 +58,42 @@ removes it is the record either way.
 
 ## Decisions
 
+### D31 — The declared format set enumerates what a medium *is*, so `p64` waits for the flux fold-in
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-10. **Supports** S1, S2, S3; in-force P3, P13; F53's own pledge,
+F59.
+
+F53 lists the format ids its declared reading claims as "`zip`, `7z`,
+`h8d`, `qcow2`, `vdi`, `raw`, `p64`". Six of the seven are delivered
+with it; **`Format::P64` is not, and moves to F59**, which is the
+feature that folds the standalone `CaptureSet` and `P64Image` roots into
+the model and already says "`Format::P64` loads the served form straight
+in".
+
+The reason is what a format id *does* here. A declaration names the
+adapter that checks it and, through that adapter, what the medium turns
+out to be — and this release's media are the block family and the
+archive. A P64's own adapter declares flux (P13), so `Format::P64` would
+have to answer with a flux medium: a media profile no flux artifact
+carries yet, an insert check with nothing to check, and content verbs
+with nothing behind them. Delivering that is F59's substance, and doing
+it under F53's name would have been the fold-in wearing another
+feature's number.
+
+**Nothing is dropped by the move.** F53's number retires with its
+delivery, so the id would have left no trace; F59's entry now carries it,
+and the refusal a caller meets meanwhile is the enumerated one P3
+requires — `Format::from_id("p64")` names what this release claims rather
+than accepting a spelling that leads nowhere. The flux family stays
+reached through its own types, exactly as before.
+
+**Weighed and declined:** shipping `Format::P64` as a variant that
+always refuses (a surface entry that never works is worse than an absent
+one, and P3's enumerated-claim discipline is precisely against it); and
+building the flux medium inside F53 (that is F59, and the sprint bound
+bites at the pledge rather than at delivery).
+
 ### D30 — The discovery surface is reinstated: discovery is not a duplicate of loading
 
 **Decided** Paul Galbraith, 2026-08-10. **Supports** S1, S2, S3; in-force
@@ -645,6 +681,18 @@ declared).
 the mastering path is the candidate, since a `MasteredMedium` is a medium
 in no device today, and this ruling deliberately leaves the flux handles
 where they are.
+
+**Annotated on delivery (F53, 2026-08-10): the "one storage handle"
+ruling above is reversed, as the media-first storage model's ledger said
+it would be.** The medium is now the pool-owned handle a caller holds and
+every content verb answers on; the device slims to a slot, its family and
+a link, with `insert`/`eject` the one edge between configuration and
+state. D23's actual worry — lifetime questions from media held outside
+the session — is answered structurally by the pool rather than by
+refusing to hand a medium out. The rest of this entry stands: the machine
+tier, the anonymous machine, and the reasons the device/medium split
+survives as *model* are untouched, and `Disk`'s merge into
+`StorageDevice` was the step that made this one sayable.
 
 ### D22 — P27 splits: the resource rule keeps the title, thread invisibility becomes P34
 

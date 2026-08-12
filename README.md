@@ -2,42 +2,61 @@
 
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-A self-contained disk image analysis library in Rust. A `Session` holds
-machines, a machine holds family-typed storage devices, and a
-`StorageDevice` is the one handle for a slot and the medium in it.
-Devices are added and media are loaded, as two acts: a machine takes a
-drive as concrete as the one it actually had — a Commodore 1541, a
-Heathkit H-17, a hard disk, an archive slot — and a medium is loaded into
-it under a single claim. A medium belonging in another drive is refused
-naming both sides, an empty drive is configuration in its own right. `discover_media` answers what
-an artifact is before any of that — the exact medium, the drives served
-it, and the drive the image format declares for the disks it records —
-and hands back a discovery holding that claim, which a load consumes so
-nothing is opened twice; where a format declares a drive,
-`add_device_for` composes both acts in one, and where it declares none a
-raw image says nothing about its machine, so the caller states the
-drive. The load identifies the layers of the artifact's nesting: the
-archive wrapper, image format, physical media geometry, and
-probable filesystem, each with comparable confidence and human-readable
-evidence. Executable, role-specific adapters recognize and validate formats;
-ambiguous strongest matches remain unknown rather than being resolved by
-catalog order.
+A self-contained disk image analysis library in Rust. A `Session` owns
+two pools — machines, which are configuration, and media, which are
+state — and **the medium is the content handle**, the node you hold and
+the node everything about a recording answers on.
 
-**File access lives on one node.** A device is asked what it *resolves*
-to — `device.filesystem()` walks device → volume → filesystem where
+`session.load_media(source, format)` is the declared reading: you hand
+over your own opened file and name what it is — `raw`, `qcow2`, `vdi`,
+`h8d`, `zip`, `7z` — and that one format's adapter checks the
+declaration against the evidence, refusing by name where it cannot bear
+it. **Whoever opens owns the lock**: your open is the claim, the library
+asks it exactly one question (may it write?), honours the answer, and
+adds no lock of its own. A name is recovered from the handle for
+location alone — where a commit journal lands, where a backing chain's
+parent is looked for — under an identity check.
+
+Machines and devices are the configuration beside that. A machine takes
+a drive as concrete as the one it actually had — a Commodore 1541, a
+Heathkit H-17, a hard disk, an archive slot — and `device.insert(id)`
+links a pooled medium into it, refusing a medium belonging in another
+drive and naming both sides. `device.eject()` **severs only**: the claim
+and everything buffered survive in the pool, so a disk outlives the
+drive it sat in and a machine can be torn down without touching one.
+`session.release_media(id)` is the one verb that destroys state. An
+empty drive is configuration in its own right.
+
+`discover_media` answers the other question — *what is this?* — before
+any of that: the exact medium, the drives served it, and the drive the
+image format declares for the disks it records. It opens the artifact by
+name, so there the library's own claim applies in full, and it hands
+back a discovery a load consumes so nothing is opened twice; where a
+format declares a drive, `add_device_for` composes the acts in one.
+
+A load identifies the layers of the artifact's nesting: the archive
+wrapper, image format, physical media geometry, and probable filesystem,
+each with comparable confidence and human-readable evidence. Executable,
+role-specific adapters recognize and validate formats; ambiguous
+strongest matches remain unknown rather than being resolved by catalog
+order.
+
+**File access lives on one node.** A medium is asked what it *resolves*
+to — `medium.filesystem()` walks medium → volume → filesystem where
 every seam has one supported answer, refuses naming the candidates where
 it does not, and answers a named absence where nothing bears a
-namespace — and the file verbs live on the `Filesystem` it hands back,
-never on the device. Where several volumes bear one, selection runs by
+namespace — and the file verbs live on the `StorageSpace` it hands back,
+never on the medium. Where several volumes bear one, selection runs by
 the identity the inspection report issued. FAT12/FAT16 volumes and the
 HDOS catalog of a Heathkit `.h8d` are reached the same way.
 
-**An archive is a medium like any other.** A `.zip` or `.7z` loads into
-an archive-family device, and its content is the namespace that device
-resolves to — the same node a disk's filesystem is reached through, with
-no archive journey of its own. Its own vantage is that namespace: an
-archive has no partition, no volume and no sector, so the verbs that
-address a space refuse by name rather than inventing a phantom volume.
+**An archive is a medium like any other.** A `.zip` or `.7z` is loaded
+by its declared grammar and may be seated in an archive-family device,
+and its content is the namespace it resolves to — the same node a disk's
+filesystem is reached through, with no archive journey of its own. Its
+own vantage is that namespace: an archive has no partition, no volume
+and no sector, so the verbs that address a space refuse by name rather
+than inventing a phantom volume.
 An entry recognized as an artifact of its own is opened from the file
 view that names it and loaded into a device of its own — in a machine of
 its own where one is being reconstructed, since the host's archive was
@@ -285,21 +304,30 @@ with build instructions in its header comment.
 ## Using the library
 
 ```rust
-// A session holds machines; a machine holds devices; a device is the
-// one handle for its slot and whatever medium occupies it. These verbs
-// are the session's anonymous machine, the one whose identity is null.
-// Devices are added and media are loaded, as two acts.
+// A session owns two pools: machines, which are configuration, and
+// media, which are state. The medium is the content handle. The source
+// is your own open file — whoever opens owns the lock — and the format
+// is your declaration, checked by that format's own adapter.
 let mut session = remanence::Session::new();
-let device = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
-println!("{}", device.attachment());      // heathfloppy0
-device.load_media("disk.h8d", remanence::AccessIntent::Read)?;
-let identification = device.identify()?;
+let medium = session.load_media(
+    std::fs::File::open("disk.h8d")?,
+    remanence::Format::H8d,
+)?;
+let identification = medium.identify();
 for layer in &identification.layers {
     println!("{:?} {} ({}%)", layer.kind, layer.id, layer.confidence);
 }
+let disk = medium.id();
 
-// The device is asked what it resolves to; the file verbs live there.
-let mut filesystem = device.filesystem()?;
+// Seating it in a drive is a separate act, and the drive is the slot
+// rather than the disk: ejecting severs and takes nothing away.
+let mut device = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
+println!("{}", device.attachment());      // heathfloppy0
+device.insert(disk)?;
+
+// The medium is asked what it resolves to; the file verbs live there.
+let medium = session.medium_mut(disk).expect("pooled");
+let mut filesystem = medium.filesystem()?;
 for entry in filesystem.entries("")? {
     println!("{} ({} bytes)", entry.name, entry.size_bytes);
     // Whatever this filesystem states past name, kind and size, in its
@@ -311,30 +339,33 @@ for entry in filesystem.entries("")? {
 let bytes = filesystem.get_file("HDOS.SYS")?.bytes()?;
 
 // What the open established about the evidence beneath it, before
-// anything is read from it.
-let assurance = device.assurance()?;
-println!("{} {:?}", assurance.outcome, assurance.condition);
+// anything is read from it — including whose open the claim is.
+let assurance = session.medium(disk).expect("pooled").assurance();
+println!("{} {:?} {}", assurance.outcome, assurance.condition, assurance.claim);
 for line in &assurance.evidence {
     println!("  {line}");
 }
 
-// An archive is a medium: a device of its own family, and its content
-// is the namespace that device resolves to.
-let arc0 = session.add_device(remanence::DeviceFamily::ARCHIVE_DEVICE)?;
-arc0.load_media("captures.7z", remanence::AccessIntent::Read)?;
-for entry in arc0.filesystem()?.entries("")? {
+// An archive is a medium: declared by its own grammar, and its content
+// is the namespace it resolves to.
+let archive = session
+    .load_media(std::fs::File::open("captures.7z")?, remanence::Format::SevenZip)?
+    .id();
+for entry in session.medium_mut(archive).expect("pooled").filesystem()?.entries("")? {
     println!("{} ({} bytes)", entry.name, entry.size_bytes);
 }
 
-// An entry recognized as an artifact of its own is loaded into a device
-// of its own, under the claim the archive already holds.
+// An entry recognized as an artifact of its own becomes a medium of its
+// own, under the claim the archive already holds — and it outlives the
+// archive, which is what makes the pool independent of every machine.
 let member = session
-    .require_device(remanence::AttachmentId::parse("arc0")?)?
+    .medium_mut(archive)
+    .expect("pooled")
     .filesystem()?
     .get_file("track00.raw")?
     .discover()?;
-let hdd0 = session.add_device(remanence::DeviceFamily::HARD_DISK)?;
-hdd0.load_discovery(member)?;
+let inner = session.load_discovery(member)?.id();
+session.release_media(archive)?;          // the disk keeps answering
 
 // Asking what an artifact is, before a machine has been configured for
 // it. The discovery holds the claim under which that was established;
@@ -345,10 +376,12 @@ match discovery.default_device() {
     Some(family) => println!("the format records a {}", family),
     None => println!("the format declares no drive"),
 }
-let drive = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
-drive.load_discovery(discovery)?;
+let found = session.load_discovery(discovery)?.id();
+session
+    .add_device(remanence::DeviceFamily::HEATHKIT_H17)?
+    .insert(found)?;
 
-// Or both acts at once, where the format declares the drive it
+// Or the acts at once, where the format declares the drive it
 // records — refused by name where it declares none.
 let drive = session.add_device_for("disk.h8d", remanence::AccessIntent::Read)?;
 
@@ -380,29 +413,39 @@ import remanence
 for family in remanence.device_families():
     print(family.id, family.name, family.is_concrete, family.accepted_media)
 
+print(remanence.formats())          # what a declaration may name
+
 session = remanence.Session()
-device = session.add_device("heathkit-h17")
-print(device.attachment)            # heathfloppy0
-device.load_media("HDOS_1-0.zip/HDOS_1-0_Issue_#50-00-00_890-1.h8d", writable=False)
-print(device.assurance.outcome, device.assurance.condition, device.mode)
-for layer in device.identify().layers:
+# Your own open, and your declaration of what it is. The descriptor is
+# duplicated, so closing the Python file leaves the claim intact.
+with open("disk.h8d", "rb") as source:
+    medium = session.load_media(source, "h8d")
+print(medium.assurance.outcome, medium.assurance.claim, medium.mode)
+for layer in medium.identify().layers:
     print(layer.kind, layer.id, layer.confidence)
 
-# The device is asked what it resolves to; the file verbs live there.
-filesystem = device.filesystem()
+# The medium is asked what it resolves to; the file verbs live there.
+filesystem = medium.filesystem()
 for entry in filesystem.entries():
     print(entry.name, entry.size_bytes,
           [(fact.key, fact.value) for fact in entry.declared])
 data = filesystem.get_file("HDOS.SYS").bytes()
-device.eject()                      # the drive stays; the disk goes
+
+# Seating and unseating are configuration; nothing about them is
+# destructive. `release_media` is the one verb that ends state.
+device = session.add_device("heathkit-h17")
+print(device.attachment)            # heathfloppy0
+device.insert(medium.id)
+device.eject()                      # the drive stays; the disk stays too
+session.release_media(medium.id)
 
 # What an artifact is, before a machine has been configured for it.
 discovery = remanence.discover_media("disk.h8d", writable=False)
 print(discovery.media_type, discovery.device_families, discovery.default_device)
-drive = session.add_device("heathkit-h17")
-drive.load_discovery(discovery)     # consumed: one claim, one open
+found = session.load_discovery(discovery)   # consumed: one claim, one open
+session.add_device("heathkit-h17").insert(found.id)
 
-# Or both acts at once, where the format declares the drive it records.
+# Or the acts at once, where the format declares the drive it records.
 drive = session.add_device_for("disk.h8d", writable=False)
 
 # The letters, from the machine's own device set — or from asserted
@@ -411,9 +454,9 @@ drives = session.machine().compose_dos_letters()  # no variant stated:
 for mapping in drives.mappings:                   # disagreement is reported
     print(mapping.letter, mapping.outcome, mapping.volume, mapping.reason)
 
-arc0 = session.add_device("archive-device")
-arc0.load_media("captures.7z", writable=False)
-for entry in arc0.filesystem().entries(""):
+with open("captures.7z", "rb") as source:
+    archive = session.load_media(source, "7z")
+for entry in archive.filesystem().entries(""):
     print(entry.name, entry.size_bytes)
 
 with remanence.CaptureSet("captures.7z") as capture:

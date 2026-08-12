@@ -19,9 +19,11 @@ use std::thread::JoinHandle;
 use crate::archive::EntrySource;
 use crate::cache::{EXTENT, SessionCache};
 use crate::device::{
-    AccessIntent, AccessMode, Device, FileRangeDevice, MediumDevice, open_declared, read_exact_at,
+    AccessIntent, AccessMode, Claim, Device, FileRangeDevice, MediumDevice, open_declared,
+    read_exact_at,
 };
 use crate::error::{Error, Result};
+use crate::handle;
 
 /// How far the predictive reader runs ahead of a sequential access
 /// pattern, in extents — part of the session's stated read-ahead (P27).
@@ -32,7 +34,8 @@ const PREFETCH_DEPTH: u64 = 8;
 pub(crate) struct ArchiveLayer {
     pub id: String,
     pub name: String,
-    pub path: PathBuf,
+    /// Where the archive sits, where its own handle could be named.
+    pub path: Option<PathBuf>,
     pub entry_name: String,
     pub archive_size: Option<u64>,
     pub compressed_size: Option<u64>,
@@ -280,12 +283,19 @@ impl Device for SourceDevice<'_> {
 }
 
 /// The fully-resolved image source and provenance.
+///
+/// Both names are optional because a caller-opened handle need not have
+/// one: a name is recovered from the handle for location alone, under an
+/// identity check, and a nameless handle is served everywhere that does
+/// not need a neighbourhood (`handle.rs`).
 #[derive(Debug)]
 pub(crate) struct ResolvedImage {
-    pub source_path: PathBuf,
-    pub image_path: PathBuf,
+    pub source_path: Option<PathBuf>,
+    pub image_path: Option<PathBuf>,
     pub source: ImageSource,
     pub archive_layers: Vec<ArchiveLayer>,
+    /// Whose open the claim beneath this source is.
+    pub claim: Claim,
 }
 
 /// Resolves one archive entry — reached through the namespace its medium
@@ -301,6 +311,7 @@ pub(crate) struct ResolvedImage {
 pub(crate) fn resolve_entry(
     claim: Arc<File>,
     mode: AccessMode,
+    claim_class: Claim,
     layer: ArchiveLayer,
     entry: EntrySource,
     cache_bytes: u64,
@@ -317,10 +328,45 @@ pub(crate) fn resolve_entry(
     };
     ResolvedImage {
         source_path,
-        image_path,
+        image_path: Some(image_path),
         source: ImageSource::new(claim, mode, backing, len, cache_bytes),
         archive_layers: vec![layer],
+        // The child rides the archive's claim, so it is the archive's
+        // class the entry inherits rather than one of its own.
+        claim: claim_class,
     }
+}
+
+/// Resolves the caller's own opened file to a streamed image source
+/// under **their** claim (P7 as amended).
+///
+/// Nothing is opened here and no lock is taken: the handle arrived
+/// claimed, the library asks it the one question it is entitled to ask —
+/// may it write? — and recovers a name from it for location alone.
+pub(crate) fn resolve_handle(file: File, cache_bytes: u64) -> Result<ResolvedImage> {
+    let mode = handle::afforded_access(&file);
+    let name = handle::recovered_name(&file);
+    let len = file
+        .metadata()
+        .map_err(|error| {
+            Error::io(format!(
+                "cannot read the size of the handed-over source: {error}"
+            ))
+        })?
+        .len();
+    Ok(ResolvedImage {
+        source_path: name.clone(),
+        image_path: name,
+        source: ImageSource::new(
+            Arc::new(file),
+            mode,
+            Backing::Claim { offset: 0 },
+            len,
+            cache_bytes,
+        ),
+        archive_layers: Vec::new(),
+        claim: Claim::CallerOpened,
+    })
 }
 
 /// Resolves `path` to a streamed image source under the caller's
@@ -347,8 +393,8 @@ pub(crate) fn resolve_image(
         .map_err(|error| Error::io(format!("failed to stat '{}': {error}", path.display())))?
         .len();
     Ok(ResolvedImage {
-        source_path: path.to_path_buf(),
-        image_path: path.to_path_buf(),
+        source_path: Some(path.to_path_buf()),
+        image_path: Some(path.to_path_buf()),
         source: ImageSource::new(
             Arc::new(file),
             intent.mode(),
@@ -357,5 +403,6 @@ pub(crate) fn resolve_image(
             cache_bytes,
         ),
         archive_layers: Vec::new(),
+        claim: Claim::LibraryOpened,
     })
 }

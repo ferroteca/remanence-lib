@@ -1,24 +1,38 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The archive as a medium (P14): it enters a machine the way every
-//! medium does — a device of its own family, `load_media` into it,
-//! content walked through the namespace that device resolves to.
+//! The archive as a medium (P14): it is loaded by a declared reading
+//! like every other medium, may be inserted into a device of its own
+//! family, and its content is walked through the namespace it resolves
+//! to.
 //!
 //! What these tests hold to is the *uniformity*. There is no archive
-//! journey beside the storage model any more: the same two acts, the
-//! same one storage handle, the same one node carrying file verbs, and
-//! the vantage the medium actually has deciding what it answers. A
-//! namespace-native medium refuses the space verbs by name rather than
-//! inventing a phantom volume to satisfy them.
+//! journey beside the storage model any more: the same declared load,
+//! the same pool, the same one node carrying file verbs, and the vantage
+//! the medium actually has deciding what it answers. A namespace-native
+//! medium refuses the space verbs by name rather than inventing a
+//! phantom volume to satisfy them.
 //!
 //! These tests build their zip by hand, so they run without fixtures.
 
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AttachmentId, DeviceFamily, DosAssignmentRule, EntryKind, ErrorCategory, Session,
+    AttachmentId, DeviceFamily, DosAssignmentRule, EntryKind, ErrorCategory, Format, MediaId,
+    Session,
 };
+
+mod common;
+use common::{open_read, open_write};
+
+/// Pools an archive under its declared grammar and answers with its
+/// identity — the load every test below starts from.
+fn zip_medium(session: &mut Session, path: &PathBuf) -> MediaId {
+    session
+        .load_media(open_read(path), Format::Zip)
+        .expect("the archive loads")
+        .id()
+}
 
 fn temp_path(tag: &str, extension: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -117,22 +131,27 @@ fn an_archive_loads_into_its_own_device_and_answers_for_the_medium() {
     let path = write_zip("medium", &[("disk.h8d", &bytes)]);
     let mut session = Session::new();
 
-    let device = session
+    let arc = zip_medium(&mut session, &path);
+    let mut device = session
         .add_device(DeviceFamily::ARCHIVE_DEVICE)
         .expect("the slot is added");
     assert_eq!(device.attachment().to_string(), "arc0");
     assert!(!device.is_occupied(), "a slot with no archive in it");
 
-    device
-        .load_media(&path, AccessIntent::Read)
-        .expect("the archive loads");
+    device.insert(arc).expect("the archive goes in");
     assert!(device.is_occupied());
-    assert_eq!(device.path().expect("occupied"), path.display().to_string());
+    let medium = device.medium().expect("occupied");
+    assert_eq!(
+        std::fs::canonicalize(medium.path().expect("this host names its handles"))
+            .expect("the recovered name resolves"),
+        std::fs::canonicalize(&path).expect("the original resolves"),
+        "the name is recovered from the handle, for location alone"
+    );
 
     // The identification reports the nesting it was reached through, and
     // nothing was recognized inside: an entry is recognized when it is
     // opened as an artifact of its own.
-    let identification = device.identify().expect("occupied");
+    let identification = medium.identify();
     assert_eq!(identification.layers.len(), 1);
     assert_eq!(identification.layers[0].id, "zip");
     assert!(!identification.modified);
@@ -152,16 +171,21 @@ fn the_archive_slot_is_a_device_like_any_other() {
     let image = write_image("beside");
     let mut session = Session::new();
 
+    let arc = zip_medium(&mut session, &path);
     session
         .add_device(DeviceFamily::ARCHIVE_DEVICE)
         .expect("added")
-        .load_media(&path, AccessIntent::Read)
-        .expect("the archive loads");
+        .insert(arc)
+        .expect("the archive goes in");
+    let disk = session
+        .load_media(open_read(&image), Format::Raw)
+        .expect("the disk loads")
+        .id();
     session
         .add_device(DeviceFamily::HARD_DISK)
         .expect("added")
-        .load_media(&image, AccessIntent::Read)
-        .expect("the disk loads");
+        .insert(disk)
+        .expect("the disk goes in");
 
     let attachments: Vec<String> = session
         .attachments()
@@ -198,18 +222,25 @@ fn a_medium_in_the_wrong_device_is_refused_naming_both_sides() {
     let mut session = Session::new();
 
     // A block image is not what an archive slot is served.
-    let slot = session.add_device(DeviceFamily::ARCHIVE_DEVICE).expect("added");
-    let error = slot
-        .load_media(&image, AccessIntent::Read)
+    let block = session
+        .load_media(open_read(&image), Format::Raw)
+        .expect("the disk loads")
+        .id();
+    let error = session
+        .add_device(DeviceFamily::ARCHIVE_DEVICE)
+        .expect("added")
+        .insert(block)
         .expect_err("a disk image is no archive");
     let message = error.to_string();
     assert!(message.contains("arc0"), "names the device: {message}");
     assert!(message.contains("archive medium"), "names the family's media: {message}");
 
     // And an archive is not what a hard disk is served.
-    let disk = session.add_device(DeviceFamily::HARD_DISK).expect("added");
-    let error = disk
-        .load_media(&archive, AccessIntent::Read)
+    let arc = zip_medium(&mut session, &archive);
+    let error = session
+        .add_device(DeviceFamily::HARD_DISK)
+        .expect("added")
+        .insert(arc)
         .expect_err("an archive is no logical-block medium");
     let message = error.to_string();
     assert!(message.contains("hdd0"), "names the device: {message}");
@@ -232,21 +263,19 @@ fn a_namespace_native_medium_refuses_the_space_verbs_by_name() {
     let bytes = payload();
     let path = write_zip("vantage", &[("disk.h8d", &bytes)]);
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::ARCHIVE_DEVICE).expect("added");
-    device
-        .load_media(&path, AccessIntent::Read)
-        .expect("the archive loads");
+    let arc = zip_medium(&mut session, &path);
+    let medium = session.medium_mut(arc).expect("the medium is pooled");
 
-    let error = device.inspect().expect_err("an archive inspects no space");
+    let error = medium.inspect().expect_err("an archive inspects no space");
     let message = error.to_string();
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(message.contains("inspect"), "names the verb: {message}");
     assert!(message.contains("namespace"), "names the vantage: {message}");
 
     for refusal in [
-        device.size().err(),
-        device.format().err(),
-        device.commit().err(),
+        medium.size().err(),
+        medium.format().err(),
+        medium.commit().err(),
     ] {
         let message = refusal.expect("a space verb refuses").to_string();
         assert!(
@@ -258,10 +287,10 @@ fn a_namespace_native_medium_refuses_the_space_verbs_by_name() {
     // The evidence plane is not a space, and every medium has one: the
     // artifact's own bytes read.
     let mut prefix = [0u8; 4];
-    device.read_at(0, &mut prefix).expect("the artifact reads");
+    medium.read_at(0, &mut prefix).expect("the artifact reads");
     assert_eq!(&prefix, b"PK\x03\x04");
     assert_eq!(
-        device.image_size_bytes().expect("occupied"),
+        medium.image_size_bytes(),
         std::fs::metadata(&path).expect("stat").len()
     );
 
@@ -284,11 +313,12 @@ fn the_namespace_reports_the_grammars_own_hierarchy() {
         ],
     );
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::ARCHIVE_DEVICE).expect("added");
-    device
-        .load_media(&path, AccessIntent::Read)
-        .expect("the archive loads");
-    let mut namespace = device.filesystem().expect("an archive is its namespace");
+    let arc = zip_medium(&mut session, &path);
+    let mut namespace = session
+        .medium_mut(arc)
+        .expect("the medium is pooled")
+        .filesystem()
+        .expect("an archive is its namespace");
 
     let root = namespace.entries("").expect("the root lists");
     let names: Vec<&str> = root.iter().map(|entry| entry.name.as_str()).collect();
@@ -337,15 +367,16 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
     let path = write_zip("nested", &[("disks/boot.h8d", &bytes)]);
     let mut session = Session::new();
 
+    let arc = zip_medium(&mut session, &path);
     session
         .add_device(DeviceFamily::ARCHIVE_DEVICE)
         .expect("added")
-        .load_media(&path, AccessIntent::Read)
-        .expect("the archive loads");
+        .insert(arc)
+        .expect("the archive goes in");
 
     let discovery = session
-        .require_device(arc0())
-        .expect("the archive device")
+        .medium_mut(arc)
+        .expect("the medium is pooled")
         .filesystem()
         .expect("a namespace")
         .get_file("disks/boot.h8d")
@@ -363,19 +394,28 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
         Some(DeviceFamily::HEATHKIT_H17),
         "the format declares the drive it records"
     );
-    assert_eq!(discovery.image_path(), std::path::Path::new("disks/boot.h8d"));
+    assert_eq!(
+        discovery.image_path(),
+        Some(std::path::Path::new("disks/boot.h8d"))
+    );
 
+    let disk = session
+        .load_discovery(discovery)
+        .expect("the disk pools")
+        .id();
     session.add_machine("h89").expect("the machine is added");
-    let device = session
+    session
         .require_machine("h89")
         .expect("is there")
         .add_device(DeviceFamily::HEATHKIT_H17)
-        .expect("added");
-    device.load_discovery(discovery).expect("the disk loads");
-    assert_eq!(device.image_size_bytes().expect("occupied"), IMAGE_LEN as u64);
+        .expect("added")
+        .insert(disk)
+        .expect("the disk goes in");
+    let medium = session.medium_mut(disk).expect("the medium is pooled");
+    assert_eq!(medium.image_size_bytes(), IMAGE_LEN as u64);
 
     // Its identification carries the nesting it came through.
-    let identification = device.identify().expect("occupied");
+    let identification = medium.identify();
     assert_eq!(identification.layers[0].id, "zip");
     assert_eq!(identification.layers[1].id, "h8d");
 
@@ -406,14 +446,15 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
     let path = write_zip("outlives", &[("disk.h8d", &bytes)]);
     let mut session = Session::new();
 
+    let arc = zip_medium(&mut session, &path);
     session
         .add_device(DeviceFamily::ARCHIVE_DEVICE)
         .expect("added")
-        .load_media(&path, AccessIntent::Read)
-        .expect("the archive loads");
+        .insert(arc)
+        .expect("the archive goes in");
     let discovery = session
-        .require_device(arc0())
-        .expect("the archive device")
+        .medium_mut(arc)
+        .expect("the medium is pooled")
         .filesystem()
         .expect("a namespace")
         .get_file("disk.h8d")
@@ -421,10 +462,15 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
         .discover()
         .expect("an artifact of its own");
 
-    let drive = session
+    let disk = session
+        .load_discovery(discovery)
+        .expect("the disk pools")
+        .id();
+    session
         .add_device(DeviceFamily::HEATHKIT_H17)
-        .expect("added");
-    drive.load_discovery(discovery).expect("the disk loads");
+        .expect("added")
+        .insert(disk)
+        .expect("the disk goes in");
 
     // Out comes the archive; the disk keeps reading.
     session
@@ -432,21 +478,21 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
         .expect("the archive device")
         .eject()
         .expect("ejects");
-    let drive = session
-        .require_device(AttachmentId::parse("heathfloppy0").expect("parses"))
-        .expect("the drive is there");
     let mut tail = [0u8; 32];
-    drive
+    session
+        .medium_mut(disk)
+        .expect("the medium is pooled")
         .read_at(IMAGE_LEN as u64 - 32, &mut tail)
         .expect("the disk still reads");
     assert_eq!(&tail[..], &bytes[IMAGE_LEN - 32..]);
 
-    // And so does removing the archive's device altogether.
+    // And so does removing the archive's device altogether, and
+    // releasing the archive itself — the disk is free-standing state.
     session.remove_device(arc0()).expect("removed");
-    let drive = session
-        .require_device(AttachmentId::parse("heathfloppy0").expect("parses"))
-        .expect("the drive is there");
-    drive
+    session.release_media(arc).expect("the archive leaves");
+    session
+        .medium_mut(disk)
+        .expect("the medium is pooled")
         .read_at(0, &mut tail)
         .expect("the disk is still the disk");
 
@@ -461,9 +507,8 @@ fn a_file_on_a_volume_is_refused_as_an_artifact_by_name() {
     // filesystem is read through the filesystem that names it (P3).
     let path = crate_fat_floppy("volume-file");
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::HARD_DISK).expect("added");
-    device
-        .load_media(&path, AccessIntent::Write)
+    let device = session
+        .load_media(open_write(&path), Format::Raw)
         .expect("the floppy loads");
 
     let volume = device.inspect().expect("inspects").volumes[0].id;

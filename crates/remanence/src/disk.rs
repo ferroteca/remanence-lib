@@ -32,8 +32,9 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, OpenedImage};
 use crate::assurance::{self, Assurance, ReadBound, Shortfall};
 use crate::cache::SessionCache;
-use crate::device::{AccessIntent, AccessMode, Device};
+use crate::device::{AccessIntent, AccessMode, Claim, Device};
 use crate::error::{Error, Result};
+use crate::media::Format;
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::filesystem::Catalog;
 use crate::filesystem_catalog::{self, CatalogRecognition, FilesystemAdapter};
@@ -114,10 +115,15 @@ impl Device for Composed<'_> {
 /// its version gate (P8), so no automatic degradation rule is claimed for
 /// qcow2, VDI, an archive, or a partition schema; each is its own feature
 /// if it is ever wanted.
-fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> Result<Assurance> {
+fn assess(
+    image: &mut dyn OpenedImage,
+    format: DiskFormat,
+    mode: AccessMode,
+    claim: Claim,
+) -> Result<Assurance> {
     let observed = image.presented_size();
     if format != DiskFormat::Raw || observed < 512 {
-        return Ok(Assurance::verified(observed, mode));
+        return Ok(Assurance::verified(observed, mode, claim));
     }
     let mut sector = [0u8; 512];
     image.read_at(0, &mut sector)?;
@@ -133,6 +139,7 @@ fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> 
                 metadata_end,
             },
             &reading,
+            claim,
         ),
         // A contradiction is only this gate's business where the source is
         // also short: with the declared bytes all present there is nothing
@@ -141,7 +148,7 @@ fn assess(image: &mut dyn OpenedImage, format: DiskFormat, mode: AccessMode) -> 
         VolumeDeclaration::Conflicted { bytes, detail } if bytes > observed => {
             return Err(assurance::conflicted(&detail, bytes, observed));
         }
-        _ => Assurance::verified(observed, mode),
+        _ => Assurance::verified(observed, mode, claim),
     })
 }
 
@@ -165,8 +172,9 @@ pub(crate) struct MediaState {
     /// The archive wrappers unwrapped on the way in, if any.
     layers: Vec<Layer>,
     /// The resolved image — the entry name for an archived image, else
-    /// the source path.
-    image_path: PathBuf,
+    /// the name recovered from the source. Absent where the caller's
+    /// handle has none.
+    image_path: Option<PathBuf>,
     cache: SessionCache,
     /// The declared session cache bound (P27), governing the session
     /// cache and each commit's capture alike.
@@ -192,10 +200,14 @@ pub(crate) struct MediaState {
     /// The readable extent a degraded session reads under, carried beside
     /// the assurance because every composed read consults it.
     bound: Option<ReadBound>,
-    path: String,
+    /// The artifact claimed, where a name for it exists — recovered from
+    /// the caller's handle, or the path the library opened.
+    path: Option<String>,
     /// The recovery sidecar's derived path (P9) — private transient
-    /// state, never a user-owned file.
-    journal_path: PathBuf,
+    /// state, never a user-owned file. Absent where the source handle
+    /// has no recoverable name, and the commit refuses by name there
+    /// rather than journalling somewhere nobody named.
+    journal_path: Option<PathBuf>,
     /// Set when a commit failed partway and its in-process undo failed
     /// too: the session's caches no longer describe the file, so every
     /// verb refuses until a fresh open reconciles the image.
@@ -247,6 +259,26 @@ impl MediumState {
         )?))
     }
 
+    /// Loads the caller's own opened artifact as the format they
+    /// **declared** it to be.
+    ///
+    /// This is the declared reading, and the declaration is checked
+    /// rather than trusted: the one adapter the format names is asked
+    /// whether the evidence bears it, and a refusal names both what was
+    /// declared and what was found. Nothing here probes for a second
+    /// answer — a caller who does not know what an artifact is asks
+    /// [`discover_media`](crate::discover_media) instead.
+    pub(crate) fn load(file: std::fs::File, format: Format, cache_bytes: u64) -> Result<Self> {
+        if let Some(grammar) = format.archive_grammar() {
+            return Ok(Self::Archive(ArchiveMedium::load(
+                file,
+                grammar,
+                cache_bytes,
+            )?));
+        }
+        Ok(Self::Space(MediaState::load(file, format, cache_bytes)?))
+    }
+
     /// Opens one archive entry as a medium of its own — the nested
     /// journey, reached from the file view that names the entry.
     pub(crate) fn open_entry(resolved: ResolvedImage, cache_bytes: u64) -> Result<Self> {
@@ -257,20 +289,26 @@ impl MediumState {
     }
 
     /// The artifact claimed — the archive itself for an image loaded out
-    /// of one.
-    pub(crate) fn path(&self) -> &str {
+    /// of one — where a name for it exists.
+    pub(crate) fn path(&self) -> Option<&str> {
         match self {
             Self::Space(space) => space.path(),
             Self::Archive(archive) => archive.path(),
         }
     }
 
+    /// The artifact as a refusal names it: the recovered name, or the
+    /// stated fact that the caller's handle has none.
+    pub(crate) fn named(&self) -> String {
+        crate::media::named(self.path())
+    }
+
     /// The resolved artifact — the entry name for an image loaded out of
-    /// an archive, else the source path.
-    pub(crate) fn image_path(&self) -> &Path {
+    /// an archive, else the source's own name.
+    pub(crate) fn image_path(&self) -> Option<&Path> {
         match self {
             Self::Space(space) => space.image_path(),
-            Self::Archive(archive) => Path::new(archive.path()),
+            Self::Archive(archive) => archive.path().map(Path::new),
         }
     }
 
@@ -399,11 +437,11 @@ impl MediumState {
 /// The refusal a space verb makes on a namespace-native medium.
 fn no_space(verb: &str, archive: &ArchiveMedium) -> Error {
     Error::unsupported(format!(
-        "'{verb}' addresses a space and '{}' holds an archive medium, whose \
+        "'{verb}' addresses a space and {} holds an archive medium, whose \
          vantage is a namespace: an archive has no partition, no volume and \
          no sector to address, and its content is reached through the \
-         filesystem this device resolves to",
-        archive.path()
+         filesystem this medium resolves to",
+        archive.named()
     ))
 }
 
@@ -411,7 +449,7 @@ impl MediaState {
     /// Opens `path` at the stated default cache bound.
     ///
     /// Test-only. A medium reaches a caller through
-    /// [`crate::StorageDevice::load_media`] and nothing else (P32), so
+    /// [`crate::Session::load_media`] and nothing else, so
     /// this exists for the unit tests in this module, which exercise the
     /// device stack below the device tier.
     #[cfg(test)]
@@ -469,7 +507,48 @@ impl MediaState {
                 }
             }
         }
-        Self::over(resolved, recovery, cache_bytes)
+        Self::over(resolved, Some(recovery), None, cache_bytes)
+    }
+
+    /// Loads the caller's own opened file as the format they declared,
+    /// under **their** claim (P7 as amended).
+    ///
+    /// The declaration is checked by the one adapter it names, so a
+    /// qcow2 declared `h8d` is refused naming both sides rather than
+    /// read as whatever a probe would have picked. A journal is derived
+    /// where the handle has a recoverable name and is absent where it
+    /// does not; an interrupted commit is reconciled here as it is on
+    /// the path journey, and only where there is a name to find one by.
+    pub(crate) fn load(
+        file: std::fs::File,
+        format: Format,
+        cache_bytes: u64,
+    ) -> Result<Self> {
+        let resolved = source::resolve_handle(file, cache_bytes)?;
+        let recovery = resolved
+            .source_path
+            .as_deref()
+            .map(journal::sidecar_path)
+            .filter(|sidecar| sidecar.exists());
+        if let (Some(sidecar), Some(path)) = (&recovery, resolved.source_path.clone()) {
+            // Reconciling writes, and only a handle that affords writing
+            // can perform it — a read-only claim is told rather than
+            // silently left standing on an unreconciled image (P9, P7).
+            if resolved.source.mode() != AccessMode::ReadWrite {
+                return Err(Error::read_only(format!(
+                    "'{}' carries an interrupted commit's recovery journal \
+                     '{}', and reconciling it is a write: hand over a handle \
+                     opened for writing so the image can be put back to \
+                     wholly the old state or wholly the committed new one",
+                    path.display(),
+                    sidecar.display()
+                )));
+            }
+            let mut host = resolved.source.medium_device(path.display().to_string());
+            journal::reconcile(sidecar, &mut host, &path)?;
+        }
+        let sidecar = resolved.source_path.as_deref().map(journal::sidecar_path);
+        Self::over(resolved, sidecar, Some(format), cache_bytes)
     }
 
     /// Opens the medium an already-resolved source holds — the entry
@@ -481,29 +560,38 @@ impl MediaState {
     /// backing is the same open a path takes, which is what makes a
     /// nested artifact the same journey rather than a second one.
     pub(crate) fn open_resolved(resolved: ResolvedImage, cache_bytes: u64) -> Result<Self> {
-        let recovery = journal::sidecar_path(&resolved.image_path);
-        Self::over(resolved, recovery, cache_bytes)
+        let recovery = resolved.image_path.as_deref().map(journal::sidecar_path);
+        Self::over(resolved, recovery, None, cache_bytes)
     }
 
-    /// The open both journeys share: the format adapter over the
-    /// resolved backing, the assurance gate before anything is exposed,
-    /// and the layers the artifact was reached through.
-    fn over(resolved: ResolvedImage, recovery: PathBuf, cache_bytes: u64) -> Result<Self> {
+    /// The open every journey shares: the format adapter over the
+    /// resolved backing — the one the caller declared, or whichever the
+    /// catalog recognizes — the assurance gate before anything is
+    /// exposed, and the layers the artifact was reached through.
+    fn over(
+        resolved: ResolvedImage,
+        recovery: Option<PathBuf>,
+        declared: Option<Format>,
+        cache_bytes: u64,
+    ) -> Result<Self> {
         let path = resolved.source_path.clone();
-        let path = path.as_path();
+        let named = crate::media::named(path.as_deref().map(|path| path.to_string_lossy()).as_deref());
         let mode = resolved.source.mode();
 
         // One claim, two planes: the adapter opens the presented disk over
         // a medium device sharing the very claim the raw plane reads (F43).
-        let host = resolved.source.medium_device(path.display().to_string());
-        let (mut virtual_disk, descriptor) =
-            adapters::image_catalog().open_disk(host, &resolved.image_path)?;
+        let host = resolved.source.medium_device(named.clone());
+        let image_path = resolved.image_path.as_deref();
+        let (mut virtual_disk, descriptor) = match declared {
+            Some(declared) => adapters::open_declared(declared, host, image_path, &named)?,
+            None => adapters::image_catalog().open_disk(host, image_path)?,
+        };
         let format = virtual_disk.format();
 
         // The assurance gate (P28), settled before the medium is exposed:
         // a caller who is going to be told a disk is degraded is told
         // before it reads a byte of it.
-        let assurance = assess(virtual_disk.as_mut(), format, mode)?;
+        let assurance = assess(virtual_disk.as_mut(), format, mode, resolved.claim)?;
         let mode = assurance.access;
         let bound = assurance.condition.map(|condition| ReadBound {
             end: assurance.first_unavailable_byte.unwrap_or(0),
@@ -534,16 +622,16 @@ impl MediaState {
             bound,
             // The artifact claimed, which for an archived image is the
             // archive rather than the entry loaded out of it.
-            path: resolved.source_path.display().to_string(),
+            path: path.map(|path| path.display().to_string()),
             journal_path: recovery,
             failed: None,
         })
     }
 
     /// The resolved image — the entry name for an image opened from
-    /// inside an archive, else the source path.
-    pub(crate) fn image_path(&self) -> &Path {
-        &self.image_path
+    /// inside an archive, else the source's own recovered name.
+    pub(crate) fn image_path(&self) -> Option<&Path> {
+        self.image_path.as_deref()
     }
 
     /// The resolved image's own size in bytes — the raw plane, distinct
@@ -567,7 +655,7 @@ impl MediaState {
     pub(crate) fn identify(&self) -> Identification {
         session::identify_medium(
             &self.source,
-            &self.image_path,
+            self.image_path.as_deref(),
             &self.layers,
             self.device_identity,
             self.is_modified(),
@@ -660,8 +748,13 @@ impl MediaState {
         self.virtual_disk.presented_size()
     }
 
-    pub(crate) fn path(&self) -> &str {
-        &self.path
+    pub(crate) fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+
+    /// The artifact as a refusal names it.
+    fn named(&self) -> String {
+        crate::media::named(self.path())
     }
 
     /// Whether uncommitted changes exist.
@@ -1003,13 +1096,22 @@ impl MediaState {
         // is evidence-driven, and a caller that declared write intent is
         // owed the condition rather than the generic refusal (P28).
         if self.assurance.is_degraded() {
-            return Err(assurance::read_only(&self.assurance, &self.path));
+            return Err(assurance::read_only(&self.assurance, &self.named()));
         }
         if self.mode == AccessMode::ReadOnly {
-            return Err(Error::read_only(format!(
-                "'{}' was opened for reading; write actions are denied",
-                self.path
-            )));
+            return Err(Error::read_only(match self.assurance.claim {
+                // The caller's own open is the claim, so the refusal
+                // says whose it is: the library never escalates a handle
+                // it was handed (P7 as amended).
+                Claim::CallerOpened => format!(
+                    "{} was handed over on a handle that affords no write;                      write actions are denied",
+                    self.named()
+                ),
+                Claim::LibraryOpened => format!(
+                    "{} was opened for reading; write actions are denied",
+                    self.named()
+                ),
+            }));
         }
         Ok(())
     }
@@ -1063,6 +1165,22 @@ impl MediaState {
         if !self.cache.modified() {
             return self.virtual_disk.device_mut().flush();
         }
+        // The durable commit journals beside the artifact (P9), so it
+        // needs to know where the artifact sits. A handle whose name
+        // could not be recovered refuses here rather than committing
+        // without the journal that makes an interruption reconcilable.
+        let (journal_path, image_path) = match (&self.journal_path, &self.path) {
+            (Some(journal_path), Some(path)) => (journal_path.clone(), PathBuf::from(path)),
+            _ => {
+                return Err(Error::unsupported(
+                    "this medium's source handle has no recoverable name, and a \
+                     durable commit lands its recovery journal beside the \
+                     artifact: commit through a handle whose file this host can \
+                     name, or keep the changes in the session"
+                        .to_owned(),
+                ));
+            }
+        };
 
         // Stage: the write-through runs against a capture of the host
         // file — itself a bounded cache spilling to session storage
@@ -1090,9 +1208,9 @@ impl MediaState {
         // overwrite are durable in the recovery journal — streamed
         // there, never held whole — before the first of them changes.
         if let Err(error) =
-            journal::record(&self.journal_path, self.virtual_disk.host_mut(), &capture)
+            journal::record(&journal_path, self.virtual_disk.host_mut(), &capture)
         {
-            let _ = journal::retire(&self.journal_path);
+            let _ = journal::retire(&journal_path);
             self.virtual_disk.restore_cache(cache_snapshot);
             return Err(error);
         }
@@ -1110,10 +1228,10 @@ impl MediaState {
             .and_then(|()| {
                 #[cfg(test)]
                 crash_test_process_at("image-applied");
-                journal::retire(&self.journal_path).map_err(|error| {
+                journal::retire(&journal_path).map_err(|error| {
                     Error::io(format!(
                         "cannot retire the commit's recovery journal '{}': {error}",
-                        self.journal_path.display()
+                        journal_path.display()
                     ))
                 })
             })
@@ -1122,9 +1240,8 @@ impl MediaState {
                 crash_test_process_at("journal-retired");
             });
         if let Err(error) = applied {
-            let image_path = PathBuf::from(&self.path);
             match journal::reconcile(
-                &self.journal_path,
+                &journal_path,
                 self.virtual_disk.host_mut(),
                 &image_path,
             ) {
@@ -1135,7 +1252,7 @@ impl MediaState {
                     self.failed = Some(format!(
                         "a commit on '{}' failed partway and could not be undone \
                          in this session; reopen the disk to reconcile it",
-                        self.path
+                        image_path.display()
                     ));
                 }
             }
@@ -1628,7 +1745,11 @@ mod tests {
             .write_through(disk.virtual_disk.device_mut())
             .expect("stages");
         let capture = disk.virtual_disk.host_mut().take_capture();
-        crate::journal::record(&disk.journal_path, disk.virtual_disk.host_mut(), &capture)
+        let journal_path = disk
+            .journal_path
+            .clone()
+            .expect("a test image is opened by a path this host names");
+        crate::journal::record(&journal_path, disk.virtual_disk.host_mut(), &capture)
             .expect("journals");
         let mut blocks = Vec::new();
         capture

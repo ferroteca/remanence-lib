@@ -6,47 +6,43 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, ArchiveLayout, AttachmentId, LayerKind, LayerLayout, DeviceFamily,
-    Identification, ImageLayout, PhysicalMediaLayout, SectorLayout, Session,
+    ArchiveLayout, DeviceFamily, Format, Identification, ImageLayout, LayerKind, LayerLayout,
+    MediaId, PhysicalMediaLayout, SectorLayout, Session,
 };
 
-/// Attaches `path` to a fresh session and returns both, because a medium
-/// is reachable only through the device holding it (P32). Tests keep the
-/// session alive for as long as they use the medium.
+mod common;
+use common::open_read;
+
+/// Pools `path` in a fresh session under the h8d declaration.
 fn attach(
     path: impl AsRef<std::path::Path>,
-    intent: AccessIntent,
-) -> remanence::Result<(Session, AttachmentId)> {
+) -> remanence::Result<(Session, MediaId)> {
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
-    let attachment = device.attachment();
-    device.load_media(path, intent)?;
-    Ok((session, attachment))
+    let id = session.load_media(open_read(path), Format::H8d)?.id();
+    Ok((session, id))
 }
 
-/// The nested journey: the archive into a slot of its own, the entry
-/// named through the namespace it bears, and the disk it holds loaded
-/// into the drive the format records.
+/// The nested journey: the archive pooled by its declared grammar, the
+/// entry named through the namespace it bears, and the disk it holds
+/// pooled in turn and seated in the drive the format records.
 fn attach_entry(
     archive: impl AsRef<std::path::Path>,
     entry: &str,
-) -> remanence::Result<(Session, AttachmentId)> {
+) -> remanence::Result<(Session, MediaId)> {
     let mut session = Session::new();
-    session
-        .add_device(DeviceFamily::ARCHIVE_DEVICE)?
-        .load_media(archive, AccessIntent::Read)?;
+    let arc = session.load_media(open_read(archive), Format::Zip)?.id();
     let discovery = session
-        .require_device(AttachmentId::parse("arc0")?)?
+        .medium_mut(arc)
+        .expect("the archive is pooled")
         .filesystem()?
         .get_file(entry)?
         .discover()?;
-    let device = session.add_device(DeviceFamily::HEATHKIT_H17)?;
-    let attachment = device.attachment();
-    device.load_discovery(discovery)?;
-    Ok((session, attachment))
+    let disk = session.load_discovery(discovery)?.id();
+    session
+        .add_device(DeviceFamily::HEATHKIT_H17)?
+        .insert(disk)?;
+    Ok((session, disk))
 }
-
-mod common;
 
 const IMAGE_NAME: &str = "HDOS_1-0_Issue_#50-00-00_890-1.h8d";
 const ZIP_NAME: &str = "HDOS_1-0_Issue_#50-00-00_890-1.zip";
@@ -112,9 +108,9 @@ fn archive_layout(identification: &Identification) -> &ArchiveLayout {
 fn identifies_hdos_fixture_image() {
     let image_path = fixture_path(IMAGE_NAME);
 
-    let (mut disk_session, disk_at) = attach(&image_path, AccessIntent::Read).expect("disk opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
-    let identification = disk.identify().expect("a medium is attached");
+    let (mut disk_session, disk_at) = attach(&image_path).expect("disk opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let identification = disk.identify();
 
     assert_eq!(identification.layers.len(), 3);
     assert_hdos_identification(&identification);
@@ -126,8 +122,8 @@ fn identifies_the_image_inside_the_zip_fixture() {
 
     let (mut disk_session, disk_at) =
         attach_entry(&zip_path, IMAGE_NAME).expect("the entry loads");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
-    let identification = disk.identify().expect("a medium is attached");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let identification = disk.identify();
 
     let archive = &identification.layers[0];
     assert_eq!(archive.name, "ZIP archive");
@@ -135,8 +131,12 @@ fn identifies_the_image_inside_the_zip_fixture() {
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(layout.uncompressed_size, Some(102_400));
     assert_eq!(identification.layers.len(), 4);
-    assert_eq!(disk.path().expect("a medium is attached"), zip_path.display().to_string());
-    assert_eq!(disk.image_path().expect("a medium is attached"), PathBuf::from(IMAGE_NAME));
+    assert_eq!(
+        std::fs::canonicalize(disk.path().expect("this host names its handles"))
+            .expect("resolves"),
+        std::fs::canonicalize(&zip_path).expect("resolves")
+    );
+    assert_eq!(disk.image_path(), Some(PathBuf::from(IMAGE_NAME).as_path()));
     assert_hdos_identification(&identification);
 
     drop(disk_session);
@@ -153,13 +153,10 @@ fn the_zip_itself_is_an_archive_medium_and_not_the_disk_inside_it() {
 
     let mut session = Session::new();
     let device = session
-        .add_device(DeviceFamily::ARCHIVE_DEVICE)
-        .expect("the slot is added");
-    device
-        .load_media(&zip_path, AccessIntent::Read)
+        .load_media(open_read(&zip_path), Format::Zip)
         .expect("the archive loads");
 
-    let identification = device.identify().expect("a medium is attached");
+    let identification = device.identify();
     assert_eq!(identification.layers.len(), 1);
     assert_eq!(identification.layers[0].kind, LayerKind::Archive);
     assert_eq!(identification.layers[0].name, "ZIP archive");

@@ -12,7 +12,7 @@
 //!
 //! **Interior names classify; only concrete entries instantiate.** A
 //! device added as "some floppy" would exist in no machine: it declares
-//! no media for [`crate::StorageDevice::load_media`] to check a medium
+//! no media for [`crate::DeviceView::insert`] to check a medium
 //! against, and no slot for a namespace composer to reason over. Asking
 //! whether a family *is a* floppy drive is a query, and it is answered
 //! here; asking a machine for one is refused by name.

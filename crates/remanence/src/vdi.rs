@@ -685,8 +685,34 @@ impl<D: Device> Device for Vdi<D> {
 /// access read-only. A missing parent, a cycle, a chain past
 /// [`MAX_CHAIN_LENGTH`] files, and a parent whose own version or image
 /// type falls outside the claim are refused by name (P3).
-pub(crate) fn open_chain(device: MediumDevice, path: &Path) -> Result<Vdi<MediumDevice>> {
+pub(crate) fn open_chain(
+    device: MediumDevice,
+    path: Option<&Path>,
+) -> Result<Vdi<MediumDevice>> {
+    let Some(path) = path else {
+        return open_unnamed(device);
+    };
     open_member(device, path, &mut Vec::new())
+}
+
+/// Opens an image whose own file this host cannot name.
+///
+/// The format records a parent by identity and no path, so the parent is
+/// searched for beside the child and in the directory above it (D18). A
+/// child with no neighbourhood refuses by name; a self-contained image
+/// needs no location and opens exactly as it would have.
+fn open_unnamed(mut device: MediumDevice) -> Result<Vdi<MediumDevice>> {
+    let header = VdiHeader::parse(&mut device)?;
+    if header.image_type == VdiImageType::Differencing {
+        return Err(unsupported(format!(
+            "this VDI is a differencing image naming parent {}, which is \
+             searched for beside the child and in the directory above it — \
+             and its source handle has no recoverable name, so there is \
+             nowhere to search",
+            header.parent_id
+        )));
+    }
+    Ok(Vdi::assemble(device, header, None))
 }
 
 /// Opens one member and, where it differences, the rest of the chain

@@ -13,21 +13,21 @@
 //! hand, so they run without fixtures.
 
 use remanence::{
-    AccessIntent, AttachmentId, DeviceFamily, EntryKind, ErrorCategory, LayerKind, Session,
-    SpaceRule,
+    DeviceFamily, EntryKind, ErrorCategory, Format, LayerKind, MediaId, Session, SpaceRule,
 };
+
+mod common;
+use common::open_read;
 
 /// Attaches `path` to a fresh session and returns both, because a medium
 /// is reachable only through the device holding it (P32). Tests keep the
 /// session alive for as long as they use the medium.
 fn archive_session(
     path: impl AsRef<std::path::Path>,
-    intent: AccessIntent,
-) -> remanence::Result<Session> {
+) -> remanence::Result<(Session, MediaId)> {
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::ARCHIVE_DEVICE)?;
-    device.load_media(path, intent)?;
-    Ok(session)
+    let id = session.load_media(open_read(path), Format::Zip)?.id();
+    Ok((session, id))
 }
 
 /// The nested journey: the archive into its own device, the entry named
@@ -37,20 +37,21 @@ fn archive_session(
 fn load_entry(
     path: impl AsRef<std::path::Path>,
     entry: &str,
-) -> remanence::Result<(Session, AttachmentId)> {
-    let mut session = archive_session(path, AccessIntent::Read)?;
+) -> remanence::Result<(Session, MediaId)> {
+    let (mut session, archive) = archive_session(path)?;
     let discovery = session
-        .require_device(AttachmentId::parse("arc0")?)?
+        .medium_mut(archive)
+        .expect("the archive is pooled")
         .filesystem()?
         .get_file(entry)?
         .discover()?;
+    let disk = session.load_discovery(discovery)?.id();
     session.add_machine("h89")?;
-    let device = session
+    session
         .require_machine("h89")?
-        .add_device(DeviceFamily::HEATHKIT_H17)?;
-    let attachment = device.attachment();
-    device.load_discovery(discovery)?;
-    Ok((session, attachment))
+        .add_device(DeviceFamily::HEATHKIT_H17)?
+        .insert(disk)?;
+    Ok((session, disk))
 }
 
 const IMAGE_LEN: usize = 102_400; // h8d-sized, so identification bites
@@ -136,11 +137,9 @@ fn temp_zip(tag: &str, bytes: &[u8]) -> std::path::PathBuf {
 fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
     let (mut disk_session, disk_at) = load_entry(path, "disk.h8d").expect("the entry loads");
     let disk = disk_session
-        .require_machine("h89")
-        .expect("the machine is there")
-        .require_device(disk_at)
-        .expect("the medium is attached");
-    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), expected.len() as u64);
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
+    assert_eq!(disk.image_size_bytes(), expected.len() as u64);
 
     // Bounded reads round-trip, at the front and across the tail.
     let mut front = [0u8; 64];
@@ -151,7 +150,7 @@ fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
     assert_eq!(&tail[..], &expected[expected.len() - 64..]);
 
     // The layers report the archive wrapper and the h8d-sized image.
-    let identification = disk.identify().expect("a medium is attached");
+    let identification = disk.identify();
     let archive = &identification.layers[0];
     assert_eq!(archive.kind, LayerKind::Archive);
     assert_eq!(archive.id, "zip");
@@ -190,10 +189,9 @@ fn the_archive_lists_its_entries_without_touching_their_data() {
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("listing", &zip);
 
-    let mut session = archive_session(&path, AccessIntent::Read).expect("the archive loads");
-    let arc = AttachmentId::parse("arc0").expect("parses");
-    let device = session.require_device(arc).expect("the device is there");
-    assert_eq!(device.image_size_bytes().expect("occupied"), zip.len() as u64);
+    let (mut session, archive) = archive_session(&path).expect("the archive loads");
+    let device = session.medium_mut(archive).expect("the medium is pooled");
+    assert_eq!(device.image_size_bytes(), zip.len() as u64);
 
     let mut namespace = device.filesystem().expect("an archive is its namespace");
     assert_eq!(namespace.kind().expect("a kind"), "zip");
@@ -249,13 +247,11 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
 
     let (mut disk_session, disk_at) = load_entry(&path, "disk.h8d").expect("the entry loads");
     let disk = disk_session
-        .require_machine("h89")
-        .expect("the machine is there")
-        .require_device(disk_at)
-        .expect("the medium is attached");
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     // The raw plane: the archive wrapper is still reported.
-    let identification = disk.identify().expect("a medium is attached");
+    let identification = disk.identify();
     assert_eq!(identification.layers[0].kind, LayerKind::Archive);
     assert_eq!(identification.layers[0].id, "zip");
 
@@ -264,14 +260,14 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
     assert_eq!(report.device.length_bytes, IMAGE_LEN as u64);
 
     // And both planes agree about the medium's size.
-    assert_eq!(disk.image_size_bytes().expect("a medium is attached"), IMAGE_LEN as u64);
+    assert_eq!(disk.image_size_bytes(), IMAGE_LEN as u64);
 
     drop(disk_session);
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
-fn an_archive_refuses_a_write_open_naming_the_reason() {
+fn an_archive_writes_nothing_whatever_the_handle_affords() {
     // Read-only, as archives are: a write would have to be encoded back
     // into the archive's own grammar and no adapter claims that (P13),
     // so the refusal names it rather than degrading to read-only.
@@ -279,9 +275,22 @@ fn an_archive_refuses_a_write_open_naming_the_reason() {
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("nowrite", &zip);
 
-    let error = archive_session(&path, AccessIntent::Write).expect_err("a write open is refused");
+    // A handle affording writes is not an error and buys nothing: the
+    // medium loads, and the namespace refuses every write by name.
+    let mut session = Session::new();
+    let archive = session
+        .load_media(common::open_write(&path), Format::Zip)
+        .expect("a writable handle is the caller's business")
+        .id();
+    let error = session
+        .medium_mut(archive)
+        .expect("the medium is pooled")
+        .filesystem()
+        .expect("an archive is its namespace")
+        .write_file("disk.h8d", b"denied")
+        .expect_err("no adapter encodes an archive back into its grammar");
     let message = error.to_string();
-    assert!(message.contains("archive"), "names the archive: {message}");
+    assert_eq!(error.rule(), Some(SpaceRule::NotWritable.as_str()));
     assert!(
         message.contains("does not write"),
         "names the refusal: {message}"
@@ -305,10 +314,7 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
 
     let mut session = Session::new();
     let medium = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added");
-    medium
-        .load_media(&path, AccessIntent::Read)
+        .load_media(open_read(&path), Format::Raw)
         .expect("the image itself opens; only the HDOS reader is bounded");
 
     // The medium composes no volume, so the resolver would look for a

@@ -14,14 +14,14 @@
 //! The facts are the caller's, and they are read from wherever the caller
 //! holds them. [`DosMachine`] takes them as assertions, which is the only
 //! way to state a PC floppy slot or a CD-ROM drive this release claims no
-//! device family for. [`Machine::compose_dos_letters`] takes them from a
+//! device family for. [`MachineView::compose_dos_letters`] takes them from a
 //! machine's own device set instead — attachment order being the order
 //! its devices were added — and passes over the families no claimed rule
 //! understands. Nothing else about the composer changes with that: it
 //! still opens no artifact, still names the rules it applied, and still
 //! reports what they cannot settle as undetermined.
 //!
-//! [`Machine::compose_dos_letters`]: crate::Machine::compose_dos_letters
+//! [`MachineView::compose_dos_letters`]: crate::MachineView::compose_dos_letters
 //!
 //! Three constraints govern the derivation:
 //!
@@ -911,7 +911,7 @@ fn occupied(device: MachineDevice) -> Error {
     ))
 }
 
-impl crate::machine::Machine {
+impl crate::machine::MachineView<'_> {
     /// Composes this machine's DOS drive-letter mapping, reading the
     /// machine facts from its **own device set** rather than from an
     /// assertion.
@@ -959,8 +959,10 @@ impl crate::machine::Machine {
         let reports: Vec<DiskReport> = fixed
             .iter()
             .map(|attachment| {
-                self.require_device(*attachment)
+                self.device_mut(*attachment)
                     .expect("a device this machine just listed")
+                    .medium_mut()
+                    .expect("a device this machine just found occupied")
                     .inspect()
             })
             .collect::<Result<_>>()?;

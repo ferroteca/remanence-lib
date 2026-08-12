@@ -18,6 +18,76 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Changed
+
+- **The medium becomes the content handle, and the session grows a media
+  pool.** The structural heart of the media-first storage model. A
+  `Session` now owns two pools — machines, which are configuration, and
+  media, which are state — and every content verb the device carried
+  moves onto `Medium`: `identify`, `inspect`, `read_at`, `mode`,
+  `assurance`, `format`, `size`, `is_modified`, `filesystem`, `volume`,
+  `commit`, `rollback`, and the file plumbing beneath them. A medium
+  answers whether or not a drive is configured for it, which is what lets
+  a disk mastered out of an archive outlive the archive it came from.
+
+  **`Session::load_media(source, format)` is the declared reading.** The
+  source is the caller's own opened `std::fs::File`; the format is one
+  concrete entry of the new `Format` set — `raw`, `qcow2`, `vdi`, `h8d`,
+  `zip`, `7z` — checked by that format's own adapter and refused by name
+  where the evidence cannot bear it. A classification could check
+  nothing, so none is admitted (P3). `Session::load_discovery` pools a
+  discovery the same way, and `Session::medium`/`media`/`release_media`
+  are the pool's own verbs, `release_media` being **the one
+  state-destroying verb** in the model.
+
+  **`StorageDevice` slims to what a slot is.** It carries its attachment
+  identity, its family and a link, and the new `DeviceView` carries
+  `insert(media_id)`, `eject()` and `medium()` — the one edge between a
+  machine's configuration and the session's state. Insert checks the
+  device's family against the medium and refuses naming both sides (P14);
+  **eject severs only**, so the claim, the assurance and every buffered
+  change survive in the pool. `release_machine` tears a machine's
+  configuration down and takes no state with it. `MachineView` is the
+  borrow that holds a machine and the pool at once, and
+  `Machine::compose_dos_letters` moves onto it.
+
+  In C: `remanence_session_load_media` (taking an OS file handle the
+  library adopts), `remanence_session_load_discovery`,
+  `remanence_session_medium`, `remanence_session_media_count`/`_id`,
+  `remanence_session_release_media`, `remanence_session_release_machine`,
+  `remanence_device_insert`, `remanence_device_medium`,
+  `remanence_device_media_id`, `remanence_format_count`/`_id`/`_name`,
+  and the whole `remanence_medium_*` surface replacing the
+  `remanence_device_*` content verbs. `remanence_device_load_media` and
+  `remanence_device_load_discovery` are gone. In Python:
+  `Session.load_media(source, format)` taking an open file or descriptor,
+  `Session.load_discovery`, `Session.media`, `Session.medium`,
+  `Session.release_media`, `Session.release_machine`, the new `Medium`
+  class carrying the content verbs, `StorageDevice.insert`/`.eject`/
+  `.medium`/`.media_id`, and a `formats()` function.
+
+- **In-force P7 is amended: whoever opens owns the lock.** "Denying write
+  permission to every other process is mandatory in all scenarios"
+  becomes *mandatory where the library opens; caller-owned where the
+  caller opened.* A local artifact now arrives as the caller's own opened
+  file, and that open is the claim: the library checks it for exactly one
+  thing — may it write through it? — honours the answer exactly, and adds
+  no lock of its own. A handle affording no write makes a read-only
+  medium whose write verbs refuse naming whose open it was.
+
+  **A name recovered from a handle serves location only**, under an
+  identity check that it still denotes the handle's own file: where the
+  commit journal lands beside the artifact (P9), and where a qcow2
+  backing file or a VDI parent is looked for next door (U6, D18). A
+  handle this host cannot name refuses exactly those two journeys by name
+  and serves everything else, so `Medium::path` and `image_path` answer
+  `Option`, as do `Discovery::path`/`image_path` and the archive layer's
+  path in an identification.
+
+  The claim's class travels on the medium's assurance as the new `Claim`
+  value (`library-opened`, `caller-opened`); `discover_media` and every
+  file of a composed chain keep the library-opened form unchanged.
+
 ### Removed
 
 - **The selected-observation reduction retires: one family, one reduction

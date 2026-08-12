@@ -10,10 +10,18 @@
  *       -I crates/remanence-ffi/include -o identify.exe
  */
 
+#include <ctype.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include "remanence.h"
 
@@ -58,12 +66,71 @@ static void print_size(const RemanenceIdentification *identification, size_t ind
     printf("\n");
 }
 
+/* An ASCII case-insensitive compare, spelled here so the example needs no
+ * platform string extension. */
+static int _stricmp_portable(const char *a, const char *b) {
+    while (*a != '\0' && *b != '\0') {
+        int left = tolower((unsigned char)*a++);
+        int right = tolower((unsigned char)*b++);
+        if (left != right) {
+            return left - right;
+        }
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* This caller's own open, handed to the library with the format it is
+ * declared to be. The library takes ownership of the handle: it is
+ * closed when the medium is released or the session is freed, never by
+ * us. Answers 0 where the artifact cannot be opened at all. */
+static intptr_t open_source(const char *path) {
+#ifdef _WIN32
+    HANDLE handle = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, NULL);
+    return handle == INVALID_HANDLE_VALUE ? 0 : (intptr_t)handle;
+#else
+    int fd = open(path, O_RDONLY);
+    return fd < 0 ? 0 : (intptr_t)fd;
+#endif
+}
+
+/* A name recovered from a handle serves location alone, and a handle
+ * this host cannot name has none -- which is an answer rather than a
+ * failure, so it is printed as one. */
+static const char *name_or(const char *name) {
+    return name == NULL ? "(this handle has no recoverable name)" : name;
+}
+
+/* The declaration this example makes for an artifact, from its
+ * extension. **A real consumer declares what it knows it has**; reading
+ * the extension is this example's stand-in for that knowledge, and it is
+ * still a declaration the library checks rather than a probe. */
+static const char *declared_format(const char *path) {
+    const char *dot = strrchr(path, '.');
+    if (dot != NULL) {
+        for (size_t i = 0; i < remanence_format_count(); ++i) {
+            const char *id = remanence_format_id(i);
+            if (id != NULL && _stricmp_portable(dot + 1, id) == 0) {
+                return id;
+            }
+        }
+    }
+    /* Bytes, and nothing else: the reading every artifact bears. */
+    return "raw";
+}
+
+/* An archive's grammar, declared the same way. */
+static const char *archive_format(const char *path) {
+    const char *format = declared_format(path);
+    return strcmp(format, "raw") == 0 ? "zip" : format;
+}
+
 /* The image container format the adapter recognized, and the version the
  * formats that declare one carry. A version accessor answers 0 for an
  * image of any other format, so each is read only under its own format. */
-static void print_device_format(const RemanenceDevice *device) {
+static void print_medium_format(const RemanenceMedium *medium) {
     RemanenceDiskFormat format;
-    if (!remanence_device_format(device, &format)) {
+    if (!remanence_medium_format(medium, &format)) {
         /* A medium that is no disk image -- an archive -- presents no
          * disk to state the format or the size of. */
         return;
@@ -71,26 +138,26 @@ static void print_device_format(const RemanenceDevice *device) {
     switch (format) {
         case REMANENCE_DISK_FORMAT_QCOW2:
             printf("Format:  qcow2 (version %" PRIu32 ")\n",
-                   remanence_device_qcow2_version(device));
+                   remanence_medium_qcow2_version(medium));
             break;
         case REMANENCE_DISK_FORMAT_VDI:
             printf("Format:  vdi (version %" PRIu32 ".%" PRIu32 ")\n",
-                   remanence_device_vdi_version_major(device),
-                   remanence_device_vdi_version_minor(device));
+                   remanence_medium_vdi_version_major(medium),
+                   remanence_medium_vdi_version_minor(medium));
             break;
         case REMANENCE_DISK_FORMAT_RAW:
             printf("Format:  raw\n");
             break;
     }
-    printf("Size:    %" PRIu64 " bytes\n", remanence_device_size(device));
+    printf("Size:    %" PRIu64 " bytes\n", remanence_medium_size(medium));
 }
 
 /* What the open established about the evidence beneath it (P28), and what
  * that narrows. A verified medium says so in one line; a degraded one
  * states the condition, the evidence, the extents that read, and the
  * access it actually has -- before anything is read from it. */
-static void print_assurance(const RemanenceDevice *device) {
-    RemanenceAssurance *assurance = remanence_device_assurance(device);
+static void print_assurance(const RemanenceMedium *medium) {
+    RemanenceAssurance *assurance = remanence_medium_assurance(medium);
     if (assurance == NULL) {
         return;
     }
@@ -145,13 +212,13 @@ static const char *outcome_name(RemanenceLetterOutcome outcome) {
  * first fixed device attached — and the assignment rule is the library's.
  * No variant is stated here, so a letter the claimed rules disagree on
  * comes back undetermined rather than guessed. */
-static void show_drive_letters(RemanenceDevice *device) {
+static void show_drive_letters(RemanenceMedium *medium) {
     RemanenceErrorCategory error_category;
     char *error = NULL;
     char *error_rule = NULL;
 
     RemanenceDiskReport *report =
-        remanence_device_inspect(device, &error_category, &error, &error_rule);
+        remanence_medium_inspect(medium, &error_category, &error, &error_rule);
     if (report == NULL) {
         report_error("\nerror inspecting device", error_category, error, error_rule);
         return;
@@ -224,27 +291,42 @@ static int list_archive(const char *path) {
     char *error_rule = NULL;
 
     RemanenceSession *session = remanence_session_new();
-    RemanenceDevice *device = remanence_session_add_device(
-        session, "archive-device", &error_category, &error, &error_rule);
-    if (device == NULL) {
-        report_error("error adding the archive slot", error_category, error, error_rule);
+    /* Whoever opens owns the lock: the source is this caller's own open
+     * file, handed over with the format it is declared to be, and the
+     * library takes ownership of the handle from here. */
+    intptr_t source = open_source(path);
+    if (source == 0) {
+        fprintf(stderr, "error: cannot open '%s'\n", path);
         remanence_session_free(session);
         return EXIT_FAILURE;
     }
-    if (!remanence_device_load_media(device, path, REMANENCE_ACCESS_INTENT_READ,
-                                     &error_category, &error, &error_rule)) {
+    RemanenceMedium *medium = remanence_session_load_media(
+        session, source, archive_format(path), &error_category, &error, &error_rule);
+    if (medium == NULL) {
         report_error("error", error_category, error, error_rule);
         remanence_session_free(session);
         return EXIT_FAILURE;
     }
 
-    printf("Archive: %s\n", remanence_device_path(device));
+    /* An archive is a medium like any other, and may be seated in a
+     * device of its own family -- which is configuration, not a step the
+     * content verbs wait on. */
+    RemanenceDevice *device = remanence_session_add_device(
+        session, "archive-device", &error_category, &error, &error_rule);
+    if (device == NULL || !remanence_device_insert(device, remanence_medium_id(medium),
+                                                   &error_category, &error, &error_rule)) {
+        report_error("error seating the archive", error_category, error, error_rule);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
+
+    printf("Archive: %s\n", name_or(remanence_medium_path(medium)));
     printf("Device:  %s (%s)\n", remanence_device_attachment(device),
            remanence_device_family(device));
-    printf("Size:    %" PRIu64 " bytes\n\n", remanence_device_image_size_bytes(device));
+    printf("Size:    %" PRIu64 " bytes\n\n", remanence_medium_image_size_bytes(medium));
 
     RemanenceSpace *namespace =
-        remanence_device_filesystem(device, &error_category, &error, &error_rule);
+        remanence_medium_filesystem(medium, &error_category, &error, &error_rule);
     if (namespace == NULL) {
         report_error("error reaching the namespace", error_category, error, error_rule);
         remanence_session_free(session);
@@ -724,8 +806,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     /* Which drive serves a medium is machine configuration, so it is this
-     * caller's to state -- and an `.h8d` wants `heathkit-h17`. Stated or
-     * not, nothing is reachable except through a device (P32). */
+     * caller's to state -- and an `.h8d` wants `heathkit-h17`. Told none,
+     * this example asks the artifact instead. */
     const char *family = argc == 3 ? argv[2] : NULL;
 
     RemanenceErrorCategory error_category;
@@ -733,11 +815,25 @@ int main(int argc, char **argv) {
     char *error_rule = NULL;
     RemanenceSession *session = remanence_session_new();
     RemanenceDevice *device = NULL;
+    RemanenceMedium *medium = NULL;
     if (family != NULL) {
-        /* The two acts: add the drive to the session's anonymous machine,
-         * then load the medium into it. The device is borrowed -- the
-         * session owns it, so we never free it -- and it is the one
-         * handle for the slot and its medium alike. */
+        /* The acts: declare what the artifact is over this caller's own
+         * open file (whoever opens owns the lock), add the drive to the
+         * session's anonymous machine, and link them. Both handles are
+         * borrowed -- the session owns them, so we never free them. */
+        intptr_t source = open_source(argv[1]);
+        if (source == 0) {
+            fprintf(stderr, "error: cannot open '%s'\n", argv[1]);
+            remanence_session_free(session);
+            return EXIT_FAILURE;
+        }
+        medium = remanence_session_load_media(session, source, declared_format(argv[1]),
+                                              &error_category, &error, &error_rule);
+        if (medium == NULL) {
+            report_error("error", error_category, error, error_rule);
+            remanence_session_free(session);
+            return EXIT_FAILURE;
+        }
         device = remanence_session_add_device(session, family, &error_category, &error,
                                               &error_rule);
         if (device == NULL) {
@@ -745,8 +841,8 @@ int main(int argc, char **argv) {
             remanence_session_free(session);
             return EXIT_FAILURE;
         }
-        if (!remanence_device_load_media(device, argv[1], REMANENCE_ACCESS_INTENT_READ,
-                                         &error_category, &error, &error_rule)) {
+        if (!remanence_device_insert(device, remanence_medium_id(medium), &error_category,
+                                     &error, &error_rule)) {
             report_error("error", error_category, error, error_rule);
             remanence_session_free(session);
             return EXIT_FAILURE;
@@ -754,9 +850,10 @@ int main(int argc, char **argv) {
     } else {
         /* Told no drive, this example asks the artifact rather than
          * assuming one: the convenience adds a device of the family the
-         * image format declares and loads the medium into it. A format
+         * image format declares, pools the medium and seats it. A format
          * declaring none refuses here, naming the drives to pass as the
-         * second argument. */
+         * second argument. Here the *library* opens, so P7's mandatory
+         * denial applies in full. */
         device = remanence_session_add_device_for(session, argv[1],
                                                   REMANENCE_ACCESS_INTENT_READ,
                                                   &error_category, &error, &error_rule);
@@ -765,16 +862,17 @@ int main(int argc, char **argv) {
             remanence_session_free(session);
             return EXIT_FAILURE;
         }
+        medium = remanence_device_medium(device);
     }
     printf("Device:  %s (%s)\n", remanence_device_attachment(device),
            remanence_device_family(device));
 
-    RemanenceIdentification *identification = remanence_device_identify(device);
+    RemanenceIdentification *identification = remanence_medium_identify(medium);
 
-    printf("Source:  %s\n", remanence_device_path(device));
-    printf("Image:   %s\n", remanence_device_image_path(device));
-    print_device_format(device);
-    print_assurance(device);
+    printf("Source:  %s\n", name_or(remanence_medium_path(medium)));
+    printf("Image:   %s\n", name_or(remanence_medium_image_path(medium)));
+    print_medium_format(medium);
+    print_assurance(medium);
     printf("Modified: %s\n\n", remanence_identification_modified(identification) ? "yes" : "no");
 
     size_t layer_count = remanence_identification_layer_count(identification);
@@ -803,7 +901,7 @@ int main(int argc, char **argv) {
      * here rather than a failure of the identification above. */
     int status = EXIT_SUCCESS;
     RemanenceSpace *filesystem =
-        remanence_device_filesystem(device, &error_category, &error, &error_rule);
+        remanence_medium_filesystem(medium, &error_category, &error, &error_rule);
     if (filesystem == NULL) {
         printf("\nFiles:   ");
         report_error("none reachable", error_category, error, error_rule);
@@ -855,7 +953,7 @@ int main(int argc, char **argv) {
         remanence_space_free(filesystem);
     }
 
-    show_drive_letters(device);
+    show_drive_letters(medium);
 
     remanence_identification_free(identification);
     remanence_session_free(session);

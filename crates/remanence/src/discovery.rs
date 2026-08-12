@@ -15,9 +15,16 @@
 //! scope holding the work already done.** Recognizing an artifact is not
 //! free, and re-opening it to load it would do that work twice and, worse,
 //! leave a window between the question and the load in which the file
-//! could change. So [`crate::StorageDevice::load_discovery`] takes the
-//! discovery and moves its state into the device: one open, one claim,
-//! held continuously from the question to the load (P7 continuity).
+//! could change. So [`crate::Session::load_discovery`] takes the
+//! discovery and moves its state into the media pool: one open, one
+//! claim, held continuously from the question to the load (P7
+//! continuity).
+//!
+//! **The library opens here, so P7's mandatory denial applies in full.**
+//! Discovery names an artifact by path — a caller who does not yet know
+//! what something is has no handle-and-format declaration to make — and
+//! the claim is the library's own. That is the other half of the amended
+//! rule whose first half [`crate::Session::load_media`] carries.
 //!
 //! **The default device is the image format's declaration, not the
 //! medium's** (P12). A medium cannot honestly carry it — a ten-sector
@@ -52,10 +59,10 @@ use crate::session::Identification;
 /// its claim fails here rather than falling back (P7).
 ///
 /// Discovery answers a question; it configures nothing. Adding a device
-/// is [`crate::Machine::add_device`], loading a medium is
-/// [`crate::StorageDevice::load_media`], and the one convenience that
-/// composes both over a discovery is
-/// [`crate::Machine::add_device_for`].
+/// is [`crate::MachineView::add_device`], loading a medium is
+/// [`crate::Session::load_media`], and the one convenience that composes
+/// the acts over a discovery is
+/// [`crate::MachineView::add_device_for`].
 pub fn discover_media(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Discovery> {
     discover_media_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
 }
@@ -101,13 +108,17 @@ pub struct Discovery {
 impl Discovery {
     /// The artifact claimed — the archive itself for an image
     /// discovered inside one, which is where the claim sits.
-    pub fn path(&self) -> &str {
+    ///
+    /// Absent where the artifact was reached through a handle this host
+    /// cannot name, which a discovery over an archive entry inherits
+    /// from the archive it came out of.
+    pub fn path(&self) -> Option<&str> {
         self.medium.path()
     }
 
     /// The resolved artifact — the entry name for an image discovered
-    /// inside an archive, else the source path.
-    pub fn image_path(&self) -> &Path {
+    /// inside an archive, else the source's own name.
+    pub fn image_path(&self) -> Option<&Path> {
         self.medium.image_path()
     }
 
@@ -196,7 +207,7 @@ impl Discovery {
 
     /// Identifies the artifact's nesting layers and probable
     /// filesystem, over bounded evidence alone (P27) — the same reading
-    /// [`crate::StorageDevice::identify`] gives once a medium is loaded.
+    /// [`crate::Medium::identify`] gives once a medium is loaded.
     pub fn identify(&self) -> Identification {
         self.medium.identify()
     }

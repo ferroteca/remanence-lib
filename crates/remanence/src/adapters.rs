@@ -18,6 +18,7 @@ use crate::error::{Error, ErrorCategory, Result};
 use crate::fat::FatVolume;
 use crate::filesystem_catalog;
 use crate::mbr;
+use crate::media::Format;
 use crate::media_profile::{FLEXIBLE_5_25_HARD_10, LOGICAL_BLOCK_512, MediaProfile};
 use crate::qcow2::{QCOW2_MAGIC, Qcow2, SUPPORTED_VERSION_CEILING};
 use crate::vdi::{
@@ -118,8 +119,8 @@ pub(crate) struct ImageFormatDescriptor {
     /// `None` is ordinary rather than deficient — a raw image says
     /// nothing about the machine it came from — and a caller who wants
     /// a device out of such a format states the drive itself, in the
-    /// two acts (P3: a declaration nobody makes is a refusal, not a
-    /// guess).
+    /// explicit acts (P3: a declaration nobody makes is a refusal, not
+    /// a guess).
     pub(crate) default_device: Option<DeviceFamily>,
     pub(crate) disk: Option<DiskDescriptor>,
 }
@@ -339,7 +340,34 @@ pub(crate) trait ImageFormatAdapter: Sync {
     ) -> Result<Vec<DetectedFilesystem>> {
         Ok(Vec::new())
     }
-    fn open_disk(&self, file: MediumDevice, path: &Path) -> Result<Box<dyn OpenedImage>>;
+
+    /// Whether the evidence bears a caller's **declaration** that this
+    /// is what the artifact is.
+    ///
+    /// It is the same reading the probe performs, asked the other way
+    /// round: the probe picks among formats, and this checks one that
+    /// was named. The default derives it from the probe, so a format
+    /// with a signature refuses a declaration its evidence contradicts
+    /// without stating the rule twice; a format whose claim is
+    /// structural overrides it.
+    fn verify(&self, input: &ProbeInput<'_>, named: &str) -> Result<()> {
+        let descriptor = self.descriptor();
+        match self.probe(input) {
+            ProbeResult::Match { .. } => Ok(()),
+            ProbeResult::Invalid {
+                category, reason, ..
+            } => Err(Error::categorized_image(category, descriptor.id, reason)),
+            ProbeResult::NoMatch => Err(Error::invalid_image(
+                descriptor.id,
+                format!(
+                    "{named} was declared '{}' and the evidence does not bear                      it: nothing in the artifact matches what a {} records",
+                    descriptor.id, descriptor.name
+                ),
+            )),
+        }
+    }
+
+    fn open_disk(&self, file: MediumDevice, path: Option<&Path>) -> Result<Box<dyn OpenedImage>>;
 }
 
 pub(crate) struct ImageMatch<'a> {
@@ -445,7 +473,7 @@ impl<'a> ImageCatalog<'a> {
     pub(crate) fn open_disk(
         &self,
         mut file: MediumDevice,
-        path: &Path,
+        path: Option<&Path>,
     ) -> Result<(Box<dyn OpenedImage>, &'static ImageFormatDescriptor)> {
         let mut prefix = vec![0u8; file.len().min(512) as usize];
         if !prefix.is_empty() {
@@ -454,7 +482,7 @@ impl<'a> ImageCatalog<'a> {
         let input = ProbeInput {
             len: file.len(),
             prefix: &prefix,
-            path: Some(path),
+            path,
         };
         match self.identify(&input) {
             ImageIdentification::Match(found) => {
@@ -562,7 +590,7 @@ impl ImageFormatAdapter for H8dAdapter {
         })
     }
 
-    fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
+    fn open_disk(&self, file: MediumDevice, _path: Option<&Path>) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(RawImage(file)))
     }
 }
@@ -654,7 +682,7 @@ impl ImageFormatAdapter for Qcow2Adapter {
         volumes_of(&mut qcow2, header.virtual_size, evidence)
     }
 
-    fn open_disk(&self, file: MediumDevice, path: &Path) -> Result<Box<dyn OpenedImage>> {
+    fn open_disk(&self, file: MediumDevice, path: Option<&Path>) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(Qcow2Image(crate::qcow2::open_chain(file, path)?)))
     }
 }
@@ -841,7 +869,7 @@ impl ImageFormatAdapter for VdiAdapter {
     /// adapter takes the path: the format names a parent by identity and
     /// never by path, so the file holding that identity is searched for
     /// relative to this one.
-    fn open_disk(&self, file: MediumDevice, path: &Path) -> Result<Box<dyn OpenedImage>> {
+    fn open_disk(&self, file: MediumDevice, path: Option<&Path>) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(VdiImage(crate::vdi::open_chain(file, path)?)))
     }
 }
@@ -872,7 +900,17 @@ impl ImageFormatAdapter for RawAdapter {
         ProbeResult::NoMatch
     }
 
-    fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
+    /// **Raw declares nothing, so nothing in an artifact can contradict
+    /// it.** The reading is the bytes as they are, which every artifact
+    /// bears; a caller who declares it is asking for exactly that, and
+    /// the refusal that still applies — an artifact whose own adapter
+    /// declares another family (P13) — belongs one seam up, where every
+    /// declaration passes it.
+    fn verify(&self, _input: &ProbeInput<'_>, _named: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn open_disk(&self, file: MediumDevice, _path: Option<&Path>) -> Result<Box<dyn OpenedImage>> {
         Ok(Box::new(RawImage(file)))
     }
 }
@@ -882,6 +920,56 @@ static BUILT_IN_IMAGE_ADAPTERS: [&dyn ImageFormatAdapter; 3] =
 
 pub(crate) fn image_catalog() -> ImageCatalog<'static> {
     ImageCatalog::new(&BUILT_IN_IMAGE_ADAPTERS)
+}
+
+/// The one adapter a declared block format names.
+///
+/// The enumeration is exhaustive over the block formats, so a format
+/// this release does not read fails to compile rather than falling
+/// through to a guess. The archive grammars are reached through their
+/// own catalog: their vantage is a namespace, and no image adapter
+/// opens one.
+fn adapter_for(format: Format) -> &'static dyn ImageFormatAdapter {
+    match format {
+        Format::Raw => &RAW_ADAPTER,
+        Format::Qcow2 => &QCOW2_ADAPTER,
+        Format::Vdi => &VDI_ADAPTER,
+        Format::H8d => &H8D_ADAPTER,
+        Format::Zip | Format::SevenZip => {
+            unreachable!("an archive grammar is opened by its own catalog")
+        }
+    }
+}
+
+/// Opens `file` as the format the caller **declared**, checked by that
+/// one adapter.
+///
+/// This is the declared reading and it does no probing: exactly one
+/// adapter is consulted, it is asked whether the evidence bears the
+/// declaration, and a refusal names both what was declared and what was
+/// found. Nothing falls through to a second answer — picking among
+/// formats is [`discover_media`](crate::discover_media)'s question, and
+/// answering it here would be discovery wearing a declaration's clothes.
+pub(crate) fn open_declared(
+    format: Format,
+    mut file: MediumDevice,
+    path: Option<&Path>,
+    named: &str,
+) -> Result<(Box<dyn OpenedImage>, &'static ImageFormatDescriptor)> {
+    let adapter = adapter_for(format);
+    let mut prefix = vec![0u8; file.len().min(512) as usize];
+    if !prefix.is_empty() {
+        file.read_at(0, &mut prefix)?;
+    }
+    adapter.verify(
+        &ProbeInput {
+            len: file.len(),
+            prefix: &prefix,
+            path,
+        },
+        named,
+    )?;
+    Ok((adapter.open_disk(file, path)?, adapter.descriptor()))
 }
 
 #[cfg(test)]
@@ -902,7 +990,7 @@ mod tests {
             }
         }
 
-        fn open_disk(&self, file: MediumDevice, _path: &Path) -> Result<Box<dyn OpenedImage>> {
+        fn open_disk(&self, file: MediumDevice, _path: Option<&Path>) -> Result<Box<dyn OpenedImage>> {
             Ok(Box::new(RawImage(file)))
         }
     }

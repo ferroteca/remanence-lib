@@ -13,36 +13,49 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, AttachmentId, LayerKind, DeviceFamily, DiskFormat, ErrorCategory,
-    Session,
-    VolumeId,
+    AccessMode, DiskFormat, ErrorCategory, Format, LayerKind, MediaId, Medium, Session, VolumeId,
 };
 
-/// The space on one volume of `device`, selected by the identity the
-/// inspection report issued. One node, both vantages: `device.volume(id)`
+/// The space on one volume of `medium`, selected by the identity the
+/// inspection report issued. One node, both vantages: `medium.volume(id)`
 /// answers with the addressable extent and the namespace together, and
 /// the file verbs live on it and nowhere else (P19).
 fn fs(
-    device: &mut remanence::StorageDevice,
+    medium: &mut remanence::Medium,
     volume: remanence::VolumeId,
 ) -> remanence::StorageSpace<'_> {
-    device
+    medium
         .volume(volume)
         .expect("the report issued this volume")
 }
 
-/// Attaches `path` to a fresh session and returns both, because a medium
-/// is reachable only through the device holding it (P32).
+/// Pools `path` in a fresh session under the declaration these tests
+/// make, and returns both: a medium lives in its session's pool, so
+/// tests keep the session alive for as long as they use the medium.
 fn attach(
     path: impl AsRef<std::path::Path>,
-    intent: AccessIntent,
-) -> remanence::Result<(Session, AttachmentId)> {
+    afford: Afford,
+) -> remanence::Result<(Session, MediaId)> {
+    let source = match afford {
+        Afford::Read => open_read(path),
+        Afford::Write => open_write(path),
+    };
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::HARD_DISK)?;
-    let attachment = device.attachment();
-    device.load_media(path, intent)?;
-    Ok((session, attachment))
+    let id = session.load_media(source, Format::Vdi)?.id();
+    Ok((session, id))
 }
+
+/// What the caller's own open affords, in the shape these tests declare
+/// it: the amended P7 asks the handle one question, so the test says
+/// which answer it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Afford {
+    Read,
+    Write,
+}
+
+mod common;
+use common::{open_read, open_write};
 
 fn temp_path(tag: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -53,7 +66,7 @@ fn temp_path(tag: &str) -> PathBuf {
 
 /// The one volume a synthetic image composes, named the only way a caller
 /// can name one: from the report the library issued.
-fn only_volume(disk: &mut remanence::StorageDevice) -> VolumeId {
+fn only_volume(disk: &mut Medium) -> VolumeId {
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1, "these images compose one volume");
     report.volumes[0].id
@@ -244,8 +257,8 @@ fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]
     let path = directory.join("base.vdi");
     std::fs::write(&path, base_vdi(&volume_bytes, create)).expect("base writes");
 
-    let (mut session, at) = attach(&path, AccessIntent::Write).expect("base opens");
-    let disk = session.require_device(at).expect("the medium is attached");
+    let (mut session, at) = attach(&path, Afford::Write).expect("base opens");
+    let disk = session.medium_mut(at).expect("the medium is pooled");
     let volume = only_volume(disk);
     fs(disk, volume).write_file("BASE.BIN", content).expect("write");
     disk.commit().expect("commit");
@@ -256,10 +269,10 @@ fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]
 #[test]
 fn a_vdi_identifies_layer_by_layer_with_its_evidence() {
     let path = write_image("identify", &dynamic_vdi(&synthetic_fat16()));
-    let (mut session, at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = session.require_device(at).expect("the medium is attached");
+    let (mut session, at) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(at).expect("the medium is pooled");
 
-    let identification = disk.identify().expect("a medium is attached");
+    let identification = disk.identify();
     let image = &identification.layers[0];
     assert_eq!(image.kind, LayerKind::Image);
     assert_eq!(image.id, "vdi");
@@ -306,18 +319,18 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
         "the dynamic image is smaller than the disk it presents"
     );
 
-    let (mut session, at) = attach(&path, AccessIntent::Write).expect("image opens");
-    let disk = session.require_device(at).expect("the medium is attached");
-    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Vdi { major: 1, minor: 1 });
-    assert_eq!(disk.size().expect("a medium is attached"), virtual_size);
-    assert_eq!(disk.mode().expect("a medium is attached"), AccessMode::ReadWrite);
+    let (mut session, at) = attach(&path, Afford::Write).expect("image opens");
+    let disk = session.medium_mut(at).expect("the medium is pooled");
+    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(disk.size().expect("a medium is pooled"), virtual_size);
+    assert_eq!(disk.mode(), AccessMode::ReadWrite);
 
     let volume = only_volume(disk);
     let contents: Vec<u8> = (0..40_000u32).map(|n| (n % 251) as u8).collect();
     fs(disk, volume).make_directory("GUEST").expect("mkdir");
     fs(disk, volume).write_file("GUEST/PAYLOAD.BIN", &contents)
         .expect("write");
-    assert!(disk.is_modified().expect("a medium is attached"));
+    assert!(disk.is_modified());
     assert_eq!(
         std::fs::metadata(&path).expect("metadata").len(),
         before,
@@ -332,8 +345,8 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
     drop(session);
 
     let (mut reopened_session, reopened_at) =
-        attach(&path, AccessIntent::Read).expect("image reopens");
-    let reopened = reopened_session.require_device(reopened_at).expect("attached");
+        attach(&path, Afford::Read).expect("image reopens");
+    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     assert_eq!(
         fs(reopened, volume).read_file("GUEST/PAYLOAD.BIN")
             .expect("read"),
@@ -347,10 +360,10 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
 fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
     let volume_bytes = synthetic_fat16();
     let path = write_image("fixed", &fixed_vdi(&volume_bytes));
-    let (mut session, at) = attach(&path, AccessIntent::Write).expect("image opens");
-    let disk = session.require_device(at).expect("the medium is attached");
-    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Vdi { major: 1, minor: 1 });
-    assert_eq!(disk.size().expect("a medium is attached"), volume_bytes.len() as u64);
+    let (mut session, at) = attach(&path, Afford::Write).expect("image opens");
+    let disk = session.medium_mut(at).expect("the medium is pooled");
+    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(disk.size().expect("a medium is pooled"), volume_bytes.len() as u64);
 
     let volume = only_volume(disk);
     let report = disk.inspect().expect("inspection reads");
@@ -368,8 +381,8 @@ fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
     drop(session);
 
     let (mut reopened_session, reopened_at) =
-        attach(&path, AccessIntent::Read).expect("image reopens");
-    let reopened = reopened_session.require_device(reopened_at).expect("attached");
+        attach(&path, Afford::Read).expect("image reopens");
+    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     assert_eq!(
         fs(reopened, volume).read_file("FIXED.BIN").expect("read"),
         b"written in place"
@@ -383,8 +396,8 @@ fn reading_a_dynamic_vdi_allocates_nothing() {
     let path = write_image("read-only", &dynamic_vdi(&synthetic_fat16()));
     let before = std::fs::read(&path).expect("image reads");
 
-    let (mut session, at) = attach(&path, AccessIntent::Read).expect("image opens");
-    let disk = session.require_device(at).expect("the medium is attached");
+    let (mut session, at) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(at).expect("the medium is pooled");
     let volume = only_volume(disk);
     assert!(fs(disk, volume).entries("").expect("listing reads").is_empty());
 
@@ -413,7 +426,7 @@ fn p8_refuses_a_vdi_version_past_the_claim_by_name() {
     bytes[0x44..0x48].copy_from_slice(&0x0002_0000u32.to_le_bytes()); // version 2.0
     let path = write_image("future-version", &bytes);
 
-    let error = attach(&path, AccessIntent::Read).expect_err("a future version is refused");
+    let error = attach(&path, Afford::Read).expect_err("a future version is refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();
     assert!(
@@ -430,7 +443,7 @@ fn an_image_type_outside_the_claim_is_refused_by_name() {
     bytes[0x4c..0x50].copy_from_slice(&3u32.to_le_bytes());
     let path = write_image("undo", &bytes);
 
-    let error = attach(&path, AccessIntent::Read).expect_err("the type is refused");
+    let error = attach(&path, Afford::Read).expect_err("the type is refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();
     assert!(
@@ -458,15 +471,15 @@ fn a_differencing_chain_composes_as_one_disk() {
     )
     .expect("top writes");
 
-    let (mut session, at) = attach(&top, AccessIntent::Write).expect("the chain opens");
-    let disk = session.require_device(at).expect("the medium is attached");
-    assert_eq!(disk.format().expect("a medium is attached"), DiskFormat::Vdi { major: 1, minor: 1 });
-    assert_eq!(disk.size().expect("a medium is attached"), virtual_size);
+    let (mut session, at) = attach(&top, Afford::Write).expect("the chain opens");
+    let disk = session.medium_mut(at).expect("the medium is pooled");
+    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(disk.size().expect("a medium is pooled"), virtual_size);
 
     // Identification is deliberately untouched: the top image identifies
     // as the VDI container it is (U5), with its type and its parent among
     // the evidence (P4).
-    let identification = disk.identify().expect("a medium is attached");
+    let identification = disk.identify();
     assert_eq!(identification.layers[0].id, "vdi");
     let evidence = identification.evidence.join("\n");
     assert!(evidence.contains("differencing"), "{evidence}");
@@ -495,8 +508,8 @@ fn a_differencing_chain_composes_as_one_disk() {
     );
 
     let (mut reopened_session, reopened_at) =
-        attach(&top, AccessIntent::Read).expect("the chain reopens");
-    let reopened = reopened_session.require_device(reopened_at).expect("attached");
+        attach(&top, Afford::Read).expect("the chain reopens");
+    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     let volume = only_volume(reopened);
     assert_eq!(
         fs(reopened, volume).read_file("TOP.BIN").expect("read"),
@@ -532,7 +545,7 @@ fn a_parent_named_for_the_identity_is_never_a_substitute_for_it() {
     )
     .expect("top writes");
 
-    let error = attach(&top, AccessIntent::Read).expect_err("a substitute is refused");
+    let error = attach(&top, Afford::Read).expect_err("a substitute is refused");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     let message = error.to_string();
     assert!(
@@ -554,7 +567,7 @@ fn a_missing_parent_is_a_named_refusal_rather_than_the_top_image_alone() {
     )
     .expect("top writes");
 
-    let error = attach(&top, AccessIntent::Read).expect_err("a missing parent is refused");
+    let error = attach(&top, Afford::Read).expect_err("a missing parent is refused");
     assert_eq!(error.category(), ErrorCategory::NotFound);
     let message = error.to_string();
     assert!(
@@ -580,7 +593,7 @@ fn a_cycle_in_the_chain_is_refused_at_the_open() {
     }
 
     let top = directory.join(format!("{{{}}}.vdi", identity_text(&first)));
-    let error = attach(&top, AccessIntent::Read).expect_err("a cycle is refused");
+    let error = attach(&top, Afford::Read).expect_err("a cycle is refused");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     assert!(
         error.to_string().contains("cycles"),
@@ -604,7 +617,7 @@ fn a_chain_past_the_claimed_bound_is_refused_rather_than_walked_partway() {
     }
 
     let top = directory.join(format!("{{{}}}.vdi", identity_text(&identity(0x40))));
-    let error = attach(&top, AccessIntent::Read).expect_err("a deep chain is refused");
+    let error = attach(&top, Afford::Read).expect_err("a deep chain is refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();
     assert!(
@@ -633,7 +646,7 @@ fn a_parent_outside_the_claim_refuses_in_its_own_name() {
     )
     .expect("top writes");
 
-    let error = attach(&top, AccessIntent::Read).expect_err("the parent is refused");
+    let error = attach(&top, Afford::Read).expect_err("the parent is refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(
         error.to_string().contains("undo"),

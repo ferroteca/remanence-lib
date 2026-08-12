@@ -574,11 +574,36 @@ impl<D: Device> Qcow2<D> {
 /// from the image that names it. A missing member, a cycle, a chain
 /// past [`MAX_CHAIN_LENGTH`] files, and a backing format beyond raw and
 /// qcow2 are refused by name (P3).
-pub(crate) fn open_chain(device: MediumDevice, path: &Path) -> Result<Qcow2<MediumDevice>> {
+pub(crate) fn open_chain(
+    device: MediumDevice,
+    path: Option<&Path>,
+) -> Result<Qcow2<MediumDevice>> {
+    let Some(path) = path else {
+        return open_unnamed(device);
+    };
     let canonical_top = std::fs::canonicalize(path).map_err(|error| {
         Error::io(format!("cannot resolve '{}': {error}", path.display()))
     })?;
     open_member(device, path, &mut vec![canonical_top])
+}
+
+/// Opens an image whose own file this host cannot name.
+///
+/// A backing file is resolved relative to the image that names it (U6),
+/// so an image with no neighbourhood to look in refuses by name rather
+/// than searching from somewhere nobody stated. An image declaring no
+/// backing file needs no location at all and opens exactly as it would
+/// have.
+fn open_unnamed(mut device: MediumDevice) -> Result<Qcow2<MediumDevice>> {
+    let header = Qcow2Header::parse(&mut device)?;
+    match &header.backing_file {
+        Some(name) => Err(Error::unsupported(format!(
+            "this qcow2 declares the backing file '{name}', which is resolved \
+             beside the image that names it — and its source handle has no \
+             recoverable name, so there is no 'beside' to look in"
+        ))),
+        None => Qcow2::assemble(device, header, None),
+    }
 }
 
 fn open_member(

@@ -3,7 +3,26 @@
 
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::fs::File;
+use std::path::{Path, PathBuf};
+
+/// The caller's own read-only open — the source shape `load_media` takes
+/// (P7 as amended: whoever opens owns the lock).
+pub fn open_read(path: impl AsRef<Path>) -> File {
+    let path = path.as_ref();
+    File::open(path).unwrap_or_else(|error| panic!("cannot open '{}': {error}", path.display()))
+}
+
+/// The caller's own read/write open, which is what affords the library a
+/// write.
+pub fn open_write(path: impl AsRef<Path>) -> File {
+    let path = path.as_ref();
+    File::options()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap_or_else(|error| panic!("cannot open '{}' for writing: {error}", path.display()))
+}
 
 pub fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

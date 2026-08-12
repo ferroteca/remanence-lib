@@ -14,20 +14,22 @@
 use std::path::{Path, PathBuf};
 
 use remanence::{
-    AccessIntent, AccessMode, AssuranceCondition, AssuranceOutcome, AttachmentId, ByteRange,
-    DeviceFamily,
-    ErrorCategory, Session, VolumeId,
+    AccessMode, AssuranceCondition, AssuranceOutcome, ByteRange, ErrorCategory, Format, MediaId,
+    Medium, Session, VolumeId,
 };
 
-/// The space on one volume of `device`, selected by the identity the
-/// inspection report issued. One node, both vantages: `device.volume(id)`
+mod common;
+use common::{open_read, open_write};
+
+/// The space on one volume of `medium`, selected by the identity the
+/// inspection report issued. One node, both vantages: `medium.volume(id)`
 /// answers with the addressable extent and the namespace together, and
 /// the file verbs live on it and nowhere else (P19).
 fn fs(
-    device: &mut remanence::StorageDevice,
+    medium: &mut Medium,
     volume: remanence::VolumeId,
 ) -> remanence::StorageSpace<'_> {
-    device
+    medium
         .volume(volume)
         .expect("the report issued this volume")
 }
@@ -118,10 +120,7 @@ fn build_floppy(path: &Path) {
     std::fs::write(path, floppy_1440()).expect("image writes");
     let mut session = Session::new();
     let medium = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added");
-    medium
-        .load_media(path, AccessIntent::Write)
+        .load_media(open_write(path), Format::Raw)
         .expect("the whole image loads");
     let volume = only_volume_of(medium);
     fs(medium, volume).write_file(NEAR, &near_content())
@@ -131,7 +130,7 @@ fn build_floppy(path: &Path) {
     medium.commit().expect("commits");
 }
 
-fn only_volume_of(medium: &mut remanence::StorageDevice) -> VolumeId {
+fn only_volume_of(medium: &mut Medium) -> VolumeId {
     let report = medium.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1, "a bare floppy composes one volume");
     report.volumes[0].id
@@ -146,21 +145,31 @@ fn truncate(path: &Path, len: u64) {
         .expect("truncates");
 }
 
-/// Builds the whole floppy, truncates it, and attaches what is left under
-/// `intent`.
-fn truncated(tag: &str, intent: AccessIntent) -> (PathBuf, Session, AttachmentId) {
+/// Builds the whole floppy, truncates it, and pools what is left under
+/// a handle affording what `afford` says.
+fn truncated(tag: &str, afford: Afford) -> (PathBuf, Session, MediaId) {
     let path = temp_path(tag);
     build_floppy(&path);
     truncate(&path, OBSERVED);
+    let source = match afford {
+        Afford::Read => open_read(&path),
+        Afford::Write => open_write(&path),
+    };
     let mut session = Session::new();
-    let device = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added");
-    let attachment = device.attachment();
-    device
-        .load_media(&path, intent)
-        .expect("a truncated source still loads, degraded");
-    (path, session, attachment)
+    let id = session
+        .load_media(source, Format::Raw)
+        .expect("a truncated source still loads, degraded")
+        .id();
+    (path, session, id)
+}
+
+/// What the caller's own open affords, in the shape these tests declare
+/// it: the amended P7 asks the handle one question, so the test says
+/// which answer it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Afford {
+    Read,
+    Write,
 }
 
 #[test]
@@ -170,19 +179,16 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
 
     let mut session = Session::new();
     let medium = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added");
-    medium
-        .load_media(&path, AccessIntent::Write)
+        .load_media(open_write(&path), Format::Raw)
         .expect("the whole image loads");
-    let assurance = medium.assurance().expect("a medium is attached").clone();
+    let assurance = medium.assurance().clone();
 
     assert_eq!(assurance.outcome, AssuranceOutcome::Verified);
     assert_eq!(assurance.condition, None);
     assert_eq!(assurance.readable, vec![ByteRange::new(0, DECLARED)]);
     assert_eq!(assurance.access, AccessMode::ReadWrite);
     assert_eq!(assurance.first_unavailable_byte, None);
-    assert_eq!(medium.mode().expect("a medium is attached"), AccessMode::ReadWrite);
+    assert_eq!(medium.mode(), AccessMode::ReadWrite);
 
     let volume = only_volume_of(medium);
     assert_eq!(
@@ -195,12 +201,11 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
 
 #[test]
 fn a_truncated_floppy_declares_its_shortfall_before_anything_is_read() {
-    let (path, mut session, attachment) = truncated("notifies", AccessIntent::Write);
+    let (path, mut session, attachment) = truncated("notifies", Afford::Write);
     let assurance = session
-        .require_device(attachment)
+        .medium_mut(attachment)
         .expect("medium")
         .assurance()
-        .expect("a medium is attached")
         .clone();
 
     assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
@@ -234,15 +239,15 @@ fn a_truncated_floppy_declares_its_shortfall_before_anything_is_read() {
 
 #[test]
 fn a_write_intent_open_reports_its_effective_read_only_mode() {
-    let (path, mut session, attachment) = truncated("effective-mode", AccessIntent::Write);
-    let medium = session.require_device(attachment).expect("medium");
+    let (path, mut session, attachment) = truncated("effective-mode", Afford::Write);
+    let medium = session.medium_mut(attachment).expect("medium");
 
     assert_eq!(
-        medium.mode().expect("a medium is attached"),
+        medium.mode(),
         AccessMode::ReadOnly,
         "the evidence, not the declaration, settles the effective mode"
     );
-    assert_eq!(medium.assurance().expect("a medium is attached").access, AccessMode::ReadOnly);
+    assert_eq!(medium.assurance().access, AccessMode::ReadOnly);
 
     drop(session);
     std::fs::remove_file(&path).ok();
@@ -250,8 +255,8 @@ fn a_write_intent_open_reports_its_effective_read_only_mode() {
 
 #[test]
 fn every_mutation_path_including_commit_returns_the_condition() {
-    let (path, mut session, attachment) = truncated("mutations", AccessIntent::Write);
-    let medium = session.require_device(attachment).expect("medium");
+    let (path, mut session, attachment) = truncated("mutations", Afford::Write);
+    let medium = session.medium_mut(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
     // Each space is taken in turn rather than four at once: a namespace
@@ -307,8 +312,8 @@ fn every_mutation_path_including_commit_returns_the_condition() {
 
 #[test]
 fn wholly_present_directory_and_file_data_still_read() {
-    let (path, mut session, attachment) = truncated("reads", AccessIntent::Read);
-    let medium = session.require_device(attachment).expect("medium");
+    let (path, mut session, attachment) = truncated("reads", Afford::Read);
+    let medium = session.medium_mut(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
     let names: Vec<String> = fs(medium, volume).entries("")
@@ -340,8 +345,8 @@ fn wholly_present_directory_and_file_data_still_read() {
 
 #[test]
 fn a_crossing_file_is_refused_whole_rather_than_clipped() {
-    let (path, mut session, attachment) = truncated("crossing", AccessIntent::Read);
-    let medium = session.require_device(attachment).expect("medium");
+    let (path, mut session, attachment) = truncated("crossing", Afford::Read);
+    let medium = session.medium_mut(attachment).expect("medium");
     let volume = only_volume_of(medium);
 
     let refusal = fs(medium, volume).read_file(FAR)
@@ -379,8 +384,8 @@ fn a_crossing_file_is_refused_whole_rather_than_clipped() {
 
 #[test]
 fn a_read_of_the_medium_past_the_extent_names_the_condition() {
-    let (path, mut session, attachment) = truncated("medium-read", AccessIntent::Read);
-    let medium = session.require_device(attachment).expect("medium");
+    let (path, mut session, attachment) = truncated("medium-read", Afford::Read);
+    let medium = session.medium_mut(attachment).expect("medium");
 
     let mut inside = [0u8; 512];
     medium
@@ -413,12 +418,9 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
 
     let mut session = Session::new();
     let medium = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added");
-    medium
-        .load_media(&path, AccessIntent::Read)
+        .load_media(open_read(&path), Format::Raw)
         .expect("what is left still loads");
-    let assurance = medium.assurance().expect("a medium is attached").clone();
+    let assurance = medium.assurance().clone();
     assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
     assert_eq!(assurance.observed_bytes, Some(4_096));
     assert!(
@@ -480,9 +482,7 @@ fn contradictory_metadata_beneath_a_shortfall_is_refused_not_degraded() {
 
     let mut session = Session::new();
     let refusal = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added")
-        .load_media(&path, AccessIntent::Read)
+        .load_media(open_read(&path), Format::Raw)
         .expect_err("an unbounded shortfall is refused at the load");
     assert_eq!(refusal.category(), ErrorCategory::InvalidImage);
     assert_eq!(
@@ -510,15 +510,12 @@ fn the_gate_is_narrow_and_claims_no_rule_beyond_the_raw_direct_volume() {
 
     let mut session = Session::new();
     let medium = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added");
-    medium
-        .load_media(&path, AccessIntent::Write)
+        .load_media(open_write(&path), Format::Raw)
         .expect("the image loads");
-    assert_eq!(medium.assurance().expect("a medium is attached").outcome, AssuranceOutcome::Verified);
-    assert_eq!(medium.assurance().expect("a medium is attached").condition, None);
+    assert_eq!(medium.assurance().outcome, AssuranceOutcome::Verified);
+    assert_eq!(medium.assurance().condition, None);
     assert_eq!(
-        medium.mode().expect("a medium is attached"),
+        medium.mode(),
         AccessMode::ReadWrite,
         "nothing narrowed this session's authority"
     );

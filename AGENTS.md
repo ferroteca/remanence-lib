@@ -62,7 +62,7 @@ ABI, or Python module.
   branches on a filesystem identifier);
   `session.rs` the layered
   identification model — the layers of an artifact's nesting, reached
-  through the one storage handle; `hdos.rs` the HDOS directory lister and file
+  through the medium; `hdos.rs` the HDOS directory lister and file
   extractor, private behind the namespace node; `archive.rs` the archive **medium** and the
   catalog seam beneath it — the `ArchiveCatalog` trait and the
   enrollment each grammar is reached by, the `ArchiveMedium` an
@@ -191,9 +191,20 @@ ABI, or Python module.
   `GCR-1541` grammar, and the served projection into the delivered
   P64 encode path — with `deflate.rs` beside `inflate.rs` as the
   compression pair the core owns;
+  `media.rs` the **media pool and the medium a caller holds** — the
+  declared `Format` set, the pool identity, and every content verb
+  (identify, inspect, read_at, the space and namespace doors, commit and
+  rollback), a medium being created by a declared reading and destroyed
+  only by `release_media`; `handle.rs` the **caller-owned claim**: what a
+  handed-over `std::fs::File` affords, asked by a zero-length write that
+  changes nothing, and the name recovered from it for **location only**,
+  under an identity check, a nameless handle refusing the commit
+  journal's *beside* and a backing parent's *next door* by name and
+  serving everything else;
   `device.rs` the block-device seam, the P7 claims
-  (declared intent for the device stack, the discovery ladder for
-  identification sessions), and the host-write capture a durable
+  (the library's own declared-intent open, the discovery ladder for
+  identification sessions, and the `Claim` class that says whose open a
+  medium's is), and the host-write capture a durable
   commit stages into; `cache.rs` the session cache — the P2 commit
   buffer and the bounded working set (P27): unaltered extents
   evict and re-read from the image, altered extents spill to private
@@ -231,26 +242,27 @@ ABI, or Python module.
   entries instantiating, and a concrete entry declaring its slot prefix,
   the media types it accepts and the drive profile it claims as its flux
   path; `machine.rs` the
-  session and the machines within it (P32) — the session being the claim
-  and cache scope, a machine being one device set with its own
-  attachment identities and attachment order, and the anonymous machine
-  being the one whose identity is null — with `storage_device.rs` the
-  **one storage handle**: a durable slot, its attachment identity
-  (`hdd0`), the two acts that fill it (`add_device` on the machine, then
-  `load_media`/`load_discovery`/`eject` on the device, with an empty
-  device first-class configuration and a medium in the wrong drive
-  refused naming both sides), the one convenience over discovery that
-  composes both acts (`add_device_for`, adding a device of the
-  format-declared default family and refusing by name where a format
-  declares none), and every content verb of the medium occupying it
-  (identify/inspect/commit/rollback, plus the two resolve-or-refuse
-  queries `filesystem` and `volume` that reach the namespace node —
-  **a device carries no file access of its own**, because one holding a
-  partitionable medium and bearing `get_file` would be a category error
-  in the type rather than a refusal waiting to happen),
-  refusing by name while the slot is empty; `disk.rs` the private
-  `MediaState` that handle homes — a caller never holds a medium outside
-  a device — with `report.rs` the layered inspection report its
+  session and its two pools (P32) — the session being the claim and cache
+  scope, owning the **media pool** (state) and the machines
+  (configuration) independently of each other, a machine being one device
+  set with its own attachment identities and attachment order, and the
+  anonymous machine being the one whose identity is null; `load_media`
+  and `load_discovery` fill the media pool and `release_media` empties
+  it, with `MachineView`/`DeviceView` the borrows that hold a node and
+  the pool at once, since linking is the one act that crosses — with
+  `storage_device.rs` the **slot**: its attachment identity
+  (`hdd0`), the acts that fill it (`add_device` on the machine view, then
+  `insert`/`eject`, with an empty device first-class configuration, a
+  medium in the wrong drive refused naming both sides, and **eject
+  severing only** so the claim and buffered writes survive pooled), and
+  the one convenience over discovery that composes them
+  (`add_device_for`, adding a device of the format-declared default
+  family and refusing by name where a format declares none) — **and
+  nothing else: every content verb lives on the medium**, file access
+  included, because a device holding a partitionable medium and bearing
+  `get_file` would be a category error in the type rather than a refusal
+  waiting to happen; `disk.rs` the private
+  `MediaState` a medium homes, with `report.rs` the layered inspection report its
   records are returned in — device, content outcome, partition schema,
   regions, volumes, filesystems, joined by opaque layout-derived
   identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2/VDI
@@ -562,11 +574,13 @@ Then run it beside a copy of `target/debug/remanence_ffi.dll`, against
 both a plain image and one inside an archive — the archive path is a
 distinct composition, not the same code with a longer path. The example
 takes the device family as an optional second argument
-(`identify <path> heathkit-h17`); given none it asks the artifact
-instead, through the convenience over discovery, so a format declaring
-no default device — a raw image — refuses there and names the drives to
-pass. `identify --discover <path>` reports what an artifact is without
-loading it, `identify --remanence <path> [write-to]` reads a
+(`identify <path> heathkit-h17`); given one it opens the artifact itself
+and declares its format — whoever opens owns the lock — and given none it
+asks the artifact instead, through the convenience over discovery, so a
+format declaring no default device — a raw image — refuses there and
+names the drives to pass. `identify --list <archive>` walks an archive's
+namespace, `identify --discover <path>` reports what an artifact is
+without loading it, `identify --remanence <path> [write-to]` reads a
 `.remanence` artifact through its own type — there is no device to
 load a flux artifact into — writes it back where a destination is
 given, and describes the three C64 renditions without writing them,

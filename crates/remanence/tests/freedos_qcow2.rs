@@ -12,36 +12,48 @@
 
 use std::path::PathBuf;
 
-use remanence::{AttachmentId, DeviceFamily, Session, AccessIntent, DiskFormat, RegionRole};
+use remanence::{DiskFormat, Format, MediaId, Medium, RegionRole, Session};
 
-/// The space on one volume of `device`, selected by the identity the
-/// inspection report issued. One node, both vantages: `device.volume(id)`
+/// The space on one volume of `medium`, selected by the identity the
+/// inspection report issued. One node, both vantages: `medium.volume(id)`
 /// answers with the addressable extent and the namespace together, and
 /// the file verbs live on it and nowhere else (P19).
 fn fs(
-    device: &mut remanence::StorageDevice,
+    medium: &mut remanence::Medium,
     volume: remanence::VolumeId,
 ) -> remanence::StorageSpace<'_> {
-    device
+    medium
         .volume(volume)
         .expect("the report issued this volume")
 }
 
-/// Attaches `path` to a fresh session and returns both, because a medium
-/// is reachable only through the device holding it (P32). Tests keep the
-/// session alive for as long as they use the medium.
+/// Pools `path` in a fresh session under the declaration these tests
+/// make, and returns both: a medium lives in its session's pool, so
+/// tests keep the session alive for as long as they use the medium.
 fn attach(
     path: impl AsRef<std::path::Path>,
-    intent: AccessIntent,
-) -> remanence::Result<(Session, AttachmentId)> {
+    afford: Afford,
+) -> remanence::Result<(Session, MediaId)> {
+    let source = match afford {
+        Afford::Read => open_read(path),
+        Afford::Write => open_write(path),
+    };
     let mut session = Session::new();
-    let device = session.add_device(DeviceFamily::HARD_DISK)?;
-    let attachment = device.attachment();
-    device.load_media(path, intent)?;
-    Ok((session, attachment))
+    let id = session.load_media(source, Format::Qcow2)?.id();
+    Ok((session, id))
+}
+
+/// What the caller's own open affords, in the shape these tests declare
+/// it: the amended P7 asks the handle one question, so the test says
+/// which answer it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Afford {
+    Read,
+    Write,
 }
 
 mod common;
+use common::{open_read, open_write};
 
 /// Returns a private copy of the FreeDOS rig artifact for testing.
 fn private_artifact(tag: &str) -> PathBuf {
@@ -57,9 +69,9 @@ fn private_artifact(tag: &str) -> PathBuf {
 #[test]
 fn inspection_reports_primaries_extended_and_logicals() {
     let path = private_artifact("regions");
-    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
-    assert!(matches!(disk.format().expect("a medium is attached"), DiskFormat::Qcow2 { .. }));
+    let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("rig artifact opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    assert!(matches!(disk.format().expect("a medium is pooled"), DiskFormat::Qcow2 { .. }));
 
     let report = disk.inspect().expect("inspection reads");
     assert_ne!(report.content, remanence::DiskContent::Blank);
@@ -117,8 +129,8 @@ fn inspection_reports_primaries_extended_and_logicals() {
 #[test]
 fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
-    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("rig artifact opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let volumes: Vec<_> = disk
         .inspect()
         .expect("inspection reads")
@@ -142,8 +154,8 @@ fn marker_files_read_out_of_every_volume() {
 #[test]
 fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let path = private_artifact("roundtrip");
-    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Write).expect("rig artifact opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("rig artifact opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
 
     let volume_id = disk.inspect().expect("inspection reads").volumes[0].id;
     fs(disk, volume_id).write_file("RMNDIR/RTRIP.BIN",
@@ -155,7 +167,7 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
             .expect("reads back"),
         b"buffered write on a real image"
     );
-    disk.rollback().expect("a medium is attached");
+    disk.rollback().expect("a medium is pooled");
     assert!(
         fs(disk, volume_id).read_file("RMNDIR/RTRIP.BIN").is_err(),
         "rollback leaves the image untouched"
@@ -170,8 +182,8 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
 #[test]
 fn inspection_reports_the_qcow2_device_schema_and_volumes() {
     let path = private_artifact("inspect");
-    let (mut disk_session, disk_at) = attach(&path, AccessIntent::Read).expect("rig artifact opens");
-    let disk = disk_session.require_device(disk_at).expect("the medium is attached");
+    let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("rig artifact opens");
+    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 

@@ -26,7 +26,7 @@
 
 use std::fmt;
 
-use crate::device::AccessMode;
+use crate::device::{AccessMode, Claim};
 use crate::error::{Error, ErrorCategory, Result, RuleIdentity};
 
 /// What one open established about the evidence beneath it (P28).
@@ -153,6 +153,9 @@ pub struct Assurance {
     /// The access this session actually has, which for a degraded session
     /// is read-only whatever intent the caller declared.
     pub access: AccessMode,
+    /// Whose open this medium's P7 claim is — the library's own denial,
+    /// or the caller's handle honoured as it was afforded.
+    pub claim: Claim,
     /// The size the interpretation declares, where one declares a size.
     pub declared_bytes: Option<u64>,
     /// The size the source actually holds.
@@ -165,13 +168,14 @@ pub struct Assurance {
 impl Assurance {
     /// The assurance of an open with nothing against it: every fact its
     /// interpretation needs is present, and the whole medium reads.
-    pub(crate) fn verified(observed_bytes: u64, access: AccessMode) -> Self {
+    pub(crate) fn verified(observed_bytes: u64, access: AccessMode, claim: Claim) -> Self {
         Self {
             outcome: AssuranceOutcome::Verified,
             condition: None,
             evidence: Vec::new(),
             readable: vec![ByteRange::new(0, observed_bytes)],
             access,
+            claim,
             declared_bytes: None,
             observed_bytes: Some(observed_bytes),
             first_unavailable_byte: None,
@@ -239,7 +243,7 @@ pub(crate) struct Shortfall {
 /// The gate itself (P28): a declaration the source cannot satisfy narrows
 /// the session to a degraded, read-only reading of the bytes that are
 /// there.
-pub(crate) fn degraded(shortfall: Shortfall, declaration: &str) -> Assurance {
+pub(crate) fn degraded(shortfall: Shortfall, declaration: &str, claim: Claim) -> Assurance {
     let Shortfall {
         declared,
         observed,
@@ -269,6 +273,7 @@ pub(crate) fn degraded(shortfall: Shortfall, declaration: &str) -> Assurance {
         evidence,
         readable: vec![ByteRange::new(0, observed)],
         access: AccessMode::ReadOnly,
+        claim,
         declared_bytes: Some(declared),
         observed_bytes: Some(observed),
         first_unavailable_byte: Some(observed),
@@ -336,7 +341,7 @@ mod tests {
 
     #[test]
     fn a_verified_open_reads_the_whole_medium_and_names_no_condition() {
-        let assurance = Assurance::verified(4096, AccessMode::ReadWrite);
+        let assurance = Assurance::verified(4096, AccessMode::ReadWrite, Claim::LibraryOpened);
         assert_eq!(assurance.outcome, AssuranceOutcome::Verified);
         assert_eq!(assurance.condition, None);
         assert_eq!(assurance.readable, vec![ByteRange::new(0, 4096)]);
@@ -353,6 +358,7 @@ mod tests {
                 metadata_end: 16_896,
             },
             "the boot record declares 2880 sectors of 512 bytes",
+            Claim::CallerOpened,
         );
         assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
         assert_eq!(assurance.condition, Some(AssuranceCondition::SourceTruncated));
@@ -382,6 +388,7 @@ mod tests {
                 metadata_end: 16_896,
             },
             "the boot record declares 2880 sectors of 512 bytes",
+            Claim::LibraryOpened,
         );
         assert!(
             assurance

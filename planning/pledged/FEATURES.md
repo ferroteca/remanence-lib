@@ -49,35 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F53 — The media pool and the held medium
-
-The structural heart of the media-first storage model
-([design/media-first-storage-model.md](design/media-first-storage-model.md)):
-the session gains the **media pool**, and the medium becomes the
-pool-owned, user-holdable content handle. `Session::load_media(source,
-format)` is the declared reading — a concrete format id (`zip`, `7z`,
-`h8d`, `qcow2`, `vdi`, `raw`, `p64`), checked by that one adapter,
-refused by name where the evidence cannot bear the declaration —
-answering `&mut Medium`, unlinked. The source is the caller's own
-opened `std::fs::File`: **whoever opens owns the lock** — the library
-checks what the handle affords (may it write?), honours it exactly,
-records the claim's class, and recovers the handle's name for location
-only (the commit journal's beside, a backing parent's next door), under
-an identity check. In-force P7's mandatory write-denial amends
-accordingly in this same change: mandatory where the library opens,
-caller-owned where the caller opened. Every content verb the
-device carried moves onto the medium (identify, inspect, read_at,
-commit, rollback, and the file plumbing beneath); `StorageDevice` slims
-to slot and device type with `insert(media_id)` / `eject()` / `medium()` —
-insert checks device-type equality naming both sides,
-eject **severs only**, the claim and buffered writes surviving in the
-pool. `release_media` is the one state-destroying verb. Archive media
-enter by the same door (`Format::Zip`), and an empty device stays
-first-class configuration (U22).
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P7,
-P14, P19, P21, P23, P27; U22, U23; U25–U34.
-
 ## F54 — Lookups answer with absence; lifecycle is create, lookup, release
 
 In-memory lookups — `machine`, `device`, `medium` — answer `Option`,
@@ -92,7 +63,7 @@ lookups return null without touching the error outs; Python returns
 `None`.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P5, P10;
-U3's absence discipline generalized; U30, U33. Needs F53.
+U3's absence discipline generalized; U30, U33.
 
 ## F56 — The partition pool and the vantage doors
 
@@ -125,7 +96,7 @@ delivered and move with the door rather than being rewritten, and the
 sector layer keeps carrying no file verbs of its own either way.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P16,
-P17, P18, P19 (as amended here), P21; U4, U26–U29, U31, U34. Needs F53.
+P17, P18, P19 (as amended here), P21; U4, U26–U29, U31, U34.
 
 ## F57 — Device types, and the articles they compose
 
@@ -171,7 +142,7 @@ declarations reached through the type (rule 8).
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P3, P14
 (gaining the device-type catalog and its granularity rule); U23,
-U25–U28, U32, U34. Needs F53.
+U25–U28, U32, U34.
 
 ## F58 — Discovered geometry and recording coordinates
 
@@ -198,7 +169,9 @@ under the profile's declared `Materialization` defaults — a choice no
 family convention can make refuses by name and the answer grows the
 declaration (P29, nothing unnamed). The result is a `Commodore1541` medium with
 the verdicts, policy and declared-loss account as provenance.
-`Format::P64` loads the served form straight in. `bitstream()` and
+`Format::P64` loads the served form straight in — the one format id
+F53's declared set did not carry, because a P64 answers with a flux
+medium and that is this feature's own substance (D31). `bitstream()` and
 `bytestream()` become argument-free — the type carries the channel and
 codec (P30 reached through the type) — and the standalone `CaptureSet`
 and `P64Image` roots fold into the model, closing the second root.
@@ -206,7 +179,7 @@ Capture-inspection reporting and plan preview stay out, with the
 question tier.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P7, P13,
-P22, P27, P29, P30, P31; U23, U25, U26, U33. Needs F53, F57.
+P22, P27, P29, P30, P31; U23, U25, U26, U33. Needs F57.
 
 ## F60 — Authored media
 

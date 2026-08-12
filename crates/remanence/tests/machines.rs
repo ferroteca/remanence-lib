@@ -14,7 +14,19 @@
 
 use std::path::PathBuf;
 
-use remanence::{AccessIntent, AttachmentId, DeviceFamily, ErrorCategory, Session};
+use remanence::{AttachmentId, DeviceFamily, ErrorCategory, Format, MediaId, Session};
+
+mod common;
+use common::{open_read, open_write};
+
+/// What the caller's own open affords, in the shape these tests declare
+/// it: the amended P7 asks the handle one question, so the test says
+/// which answer it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Afford {
+    Read,
+    Write,
+}
 
 fn temp_path(tag: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,17 +46,41 @@ fn write_image(tag: &str) -> PathBuf {
     path
 }
 
-/// The two acts against one machine, where a test cares about the result
-/// rather than the pair.
+/// The acts against one machine, where a test cares about the result
+/// rather than the sequence: pool the disk, add the drive, link them.
+/// `machine` is null for the session's anonymous machine.
 fn load(
-    machine: &mut remanence::Machine,
+    session: &mut Session,
+    machine: Option<&str>,
     path: &PathBuf,
-    intent: AccessIntent,
+    afford: Afford,
 ) -> remanence::Result<AttachmentId> {
-    let device = machine.add_device(DeviceFamily::HARD_DISK)?;
+    let source = match afford {
+        Afford::Read => open_read(path),
+        Afford::Write => open_write(path),
+    };
+    let media = session.load_media(source, Format::Raw)?.id();
+    let mut view = match machine {
+        Some(identity) => session.require_machine(identity).expect("the machine is there"),
+        None => session.anonymous_mut(),
+    };
+    let mut device = view.add_device(DeviceFamily::HARD_DISK)?;
     let attachment = device.attachment();
-    device.load_media(path, intent)?;
+    device.insert(media)?;
     Ok(attachment)
+}
+
+/// The medium in one machine's slot, for the content verbs.
+fn medium_at<'a>(
+    session: &'a mut Session,
+    machine: Option<&str>,
+    attachment: AttachmentId,
+) -> Option<&'a mut remanence::Medium> {
+    let media = match machine {
+        Some(identity) => session.machine(identity)?.device(attachment)?.media_id()?,
+        None => session.device(attachment)?.media_id()?,
+    };
+    session.medium_mut(media)
 }
 
 #[test]
@@ -73,7 +109,7 @@ fn the_sessions_device_verbs_land_in_the_anonymous_machine() {
     let a = write_image("anonymous");
     let mut session = Session::new();
 
-    let id = load(session.anonymous_mut(), &a, AccessIntent::Read).expect("loads");
+    let id = load(&mut session, None, &a, Afford::Read).expect("loads");
 
     assert_eq!(session.attachments(), vec![id]);
     assert_eq!(
@@ -97,14 +133,9 @@ fn each_machine_owns_its_own_slot_namespace() {
     let b = write_image("namespace-b");
     let mut session = Session::new();
 
-    let host = load(session.anonymous_mut(), &a, AccessIntent::Read).expect("host loads");
+    let host = load(&mut session, None, &a, Afford::Read).expect("host loads");
     session.add_machine("h89").expect("the machine is added");
-    let inner = load(
-        session.require_machine("h89").expect("is there"),
-        &b,
-        AccessIntent::Read,
-    )
-    .expect("loads inside it");
+    let inner = load(&mut session, Some("h89"), &b, Afford::Read).expect("loads inside it");
 
     assert_eq!(host.to_string(), "hdd0");
     assert_eq!(
@@ -113,22 +144,24 @@ fn each_machine_owns_its_own_slot_namespace() {
         "the named machine's first slot is its own hdd0, not hdd1"
     );
 
-    let host_image = session
-        .require_device(host)
-        .expect("the anonymous machine's device")
+    let host_image = medium_at(&mut session, None, host)
+        .expect("the anonymous machine's medium")
         .image_path()
-        .expect("a medium is attached")
+        .expect("this host names its handles")
         .to_owned();
-    let inner_image = session
-        .require_machine("h89")
-        .expect("is there")
-        .require_device(inner)
-        .expect("the named machine's device")
+    let inner_image = medium_at(&mut session, Some("h89"), inner)
+        .expect("the named machine's medium")
         .image_path()
-        .expect("a medium is attached")
+        .expect("this host names its handles")
         .to_owned();
-    assert_eq!(host_image, a);
-    assert_eq!(inner_image, b);
+    assert_eq!(
+        std::fs::canonicalize(&host_image).expect("resolves"),
+        std::fs::canonicalize(&a).expect("resolves")
+    );
+    assert_eq!(
+        std::fs::canonicalize(&inner_image).expect("resolves"),
+        std::fs::canonicalize(&b).expect("resolves")
+    );
     assert_ne!(host_image, inner_image, "one identity, two devices");
 
     drop(session);
@@ -145,18 +178,20 @@ fn a_machine_reaches_only_its_own_devices() {
     let b = write_image("scoped-b");
     let mut session = Session::new();
 
-    let host = load(session.anonymous_mut(), &a, AccessIntent::Read).expect("host loads");
+    let host = load(&mut session, None, &a, Afford::Read).expect("host loads");
     session.add_machine("h89").expect("the machine is added");
-    let h89 = session.require_machine("h89").expect("is there");
-    assert!(
-        h89.device(host).is_none(),
-        "the anonymous machine's hdd0 is not this machine's"
-    );
-    assert!(
-        h89.devices().is_empty(),
-        "and no device arrives in it by being added elsewhere"
-    );
-    let inner = load(h89, &b, AccessIntent::Read).expect("loads its own");
+    {
+        let h89 = session.require_machine("h89").expect("is there");
+        assert!(
+            h89.device(host).is_none(),
+            "the anonymous machine's hdd0 is not this machine's"
+        );
+        assert!(
+            h89.devices().is_empty(),
+            "and no device arrives in it by being added elsewhere"
+        );
+    }
+    let inner = load(&mut session, Some("h89"), &b, Afford::Read).expect("loads its own");
 
     session
         .require_machine("h89")
@@ -201,20 +236,20 @@ fn attachment_order_is_each_machines_own_fact() {
     let c = write_image("order-c");
     let mut session = Session::new();
 
+    let first = session
+        .load_media(open_read(&a), Format::Raw)
+        .expect("loads")
+        .id();
     session
         .add_device_at(DeviceFamily::HARD_DISK, 2)
         .expect("the anonymous machine takes hdd2 first")
-        .load_media(&a, AccessIntent::Read)
-        .expect("loads");
-    load(session.anonymous_mut(), &b, AccessIntent::Read).expect("then fills hdd0");
+        .insert(first)
+        .expect("the disk goes in");
+    load(&mut session, None, &b, Afford::Read).expect("then fills hdd0");
 
     session.add_machine("h89").expect("the machine is added");
-    load(
-        session.require_machine("h89").expect("is there"),
-        &c,
-        AccessIntent::Read,
-    )
-    .expect("the named machine starts at its own hdd0");
+    load(&mut session, Some("h89"), &c, Afford::Read)
+        .expect("the named machine starts at its own hdd0");
 
     let anonymous: Vec<String> = session
         .anonymous()
@@ -305,44 +340,46 @@ fn a_medium_in_a_named_machine_is_read_and_claimed_like_any_other() {
     let mut session = Session::new();
     session.add_machine("h89").expect("the machine is added");
 
-    let id = load(
-        session.require_machine("h89").expect("is there"),
-        &a,
-        AccessIntent::Write,
-    )
-    .expect("loads");
+    let id = load(&mut session, Some("h89"), &a, Afford::Write).expect("loads");
 
-    let device = session
-        .require_machine("h89")
+    let media = session
+        .machine("h89")
         .expect("is there")
-        .require_device(id)
-        .expect("the device is there");
-    assert!(device.is_occupied());
-    assert_eq!(device.attachment(), id);
-    assert_eq!(
-        device.image_size_bytes().expect("a medium is attached"),
-        1024 * 1024
-    );
+        .device(id)
+        .expect("the device is there")
+        .media_id()
+        .expect("occupied");
+    let medium = session.medium_mut(media).expect("the medium is pooled");
+    assert_eq!(medium.image_size_bytes(), 1024 * 1024);
+    assert_eq!(medium.mode(), remanence::AccessMode::ReadWrite);
     assert!(
-        device.inspect().is_ok(),
-        "the layered inspection reads through a named machine's device"
+        medium.inspect().is_ok(),
+        "the layered inspection reads a medium seated in a named machine"
     );
 
-    let mut rival = Session::new();
-    let contested = load(rival.anonymous_mut(), &a, AccessIntent::Write)
-        .expect_err("the claim is the medium's, wherever the device sits");
-    assert_eq!(contested.category(), ErrorCategory::Locked);
-
+    // Tearing the machine's configuration down takes nothing with it:
+    // the device goes, the medium stays, and its claim with it.
     session
         .require_machine("h89")
         .expect("is there")
         .remove_device(id)
         .expect("removes the device");
-    let mut after = Session::new();
-    load(after.anonymous_mut(), &a, AccessIntent::Write)
-        .expect("the claim was released with the medium");
+    assert!(
+        session
+            .medium(media)
+            .expect("still pooled")
+            .is_linked()
+            .eq(&false),
+        "removing the device severed the link and destroyed nothing"
+    );
+    assert_eq!(
+        session.medium_mut(media).expect("pooled").image_size_bytes(),
+        1024 * 1024
+    );
 
-    drop(after);
+    session.release_media(media).expect("the one destroying verb");
+    assert!(session.medium(media).is_none());
+
     drop(session);
     std::fs::remove_file(&a).ok();
 }
@@ -356,30 +393,19 @@ fn the_same_artifact_may_back_a_device_in_two_machines_at_once() {
     let a = write_image("shared");
     let mut session = Session::new();
 
-    let host = load(session.anonymous_mut(), &a, AccessIntent::Read).expect("host loads");
+    let host = load(&mut session, None, &a, Afford::Read).expect("host loads");
     session.add_machine("h89").expect("the machine is added");
-    let inner = load(
-        session.require_machine("h89").expect("is there"),
-        &a,
-        AccessIntent::Read,
-    )
-    .expect("the same artifact loads in another machine");
+    let inner = load(&mut session, Some("h89"), &a, Afford::Read)
+        .expect("the same artifact loads in another machine");
 
     assert_eq!(host.to_string(), inner.to_string());
-    assert_eq!(
-        session
-            .require_device(host)
-            .expect("device")
-            .image_size_bytes()
-            .expect("a medium is attached"),
-        session
-            .require_machine("h89")
-            .expect("is there")
-            .require_device(inner)
-            .expect("device")
-            .image_size_bytes()
-            .expect("a medium is attached"),
-    );
+    let host_bytes = medium_at(&mut session, None, host)
+        .expect("medium")
+        .image_size_bytes();
+    let inner_bytes = medium_at(&mut session, Some("h89"), inner)
+        .expect("medium")
+        .image_size_bytes();
+    assert_eq!(host_bytes, inner_bytes);
 
     drop(session);
     std::fs::remove_file(&a).ok();
@@ -395,32 +421,27 @@ fn a_parsed_attachment_identity_means_whatever_machine_it_is_asked_of() {
     let hdd0 = AttachmentId::parse("hdd0").expect("parses");
     let mut session = Session::new();
 
-    load(session.anonymous_mut(), &a, AccessIntent::Read).expect("host loads");
+    load(&mut session, None, &a, Afford::Read).expect("host loads");
     session.add_machine("h89").expect("the machine is added");
-    load(
-        session.require_machine("h89").expect("is there"),
-        &b,
-        AccessIntent::Read,
-    )
-    .expect("loads inside it");
+    load(&mut session, Some("h89"), &b, Afford::Read).expect("loads inside it");
 
+    let anonymous = medium_at(&mut session, None, hdd0)
+        .expect("the anonymous machine's")
+        .image_path()
+        .expect("this host names its handles")
+        .to_owned();
+    let named = medium_at(&mut session, Some("h89"), hdd0)
+        .expect("the named machine's")
+        .image_path()
+        .expect("this host names its handles")
+        .to_owned();
     assert_eq!(
-        session
-            .require_device(hdd0)
-            .expect("the anonymous machine's")
-            .image_path()
-            .expect("a medium is attached"),
-        a
+        std::fs::canonicalize(&anonymous).expect("resolves"),
+        std::fs::canonicalize(&a).expect("resolves")
     );
     assert_eq!(
-        session
-            .require_machine("h89")
-            .expect("is there")
-            .require_device(hdd0)
-            .expect("the named machine's")
-            .image_path()
-            .expect("a medium is attached"),
-        b
+        std::fs::canonicalize(&named).expect("resolves"),
+        std::fs::canonicalize(&b).expect("resolves")
     );
 
     drop(session);

@@ -27,7 +27,8 @@ pub enum LayerKind {
 /// Where the image bytes came from inside an archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchiveLayout {
-    pub path: PathBuf,
+    /// Where the archive sits, where its own handle could be named.
+    pub path: Option<PathBuf>,
     pub entry_name: String,
     pub compressed_size: Option<u64>,
     pub uncompressed_size: Option<u64>,
@@ -259,7 +260,7 @@ fn layers_with(layers: &[Layer], extra: Vec<Layer>) -> Vec<Layer> {
 /// reached through [`crate::StorageDevice`].
 pub(crate) fn identify_medium(
     source: &ImageSource,
-    image_path: &Path,
+    image_path: Option<&Path>,
     layers: &[Layer],
     device_identity: DeviceIdentity,
     modified: bool,
@@ -269,7 +270,7 @@ pub(crate) fn identify_medium(
         let input = ProbeInput {
             len: source.len(),
             prefix: &prefix,
-            path: Some(image_path),
+            path: image_path,
         };
         let result = adapters::image_catalog().identify(&input);
         let current_bytes = source.len();
@@ -278,10 +279,16 @@ pub(crate) fn identify_medium(
         for existing in layers {
             if let LayerLayout::Archive(layout) = &existing.layout {
                 archive_evidence.push(format!(
-                    "loaded '{}' from {} archive '{}'",
+                    "loaded '{}' from {} archive {}",
                     layout.entry_name,
                     existing.id,
-                    layout.path.display()
+                    crate::media::named(
+                        layout
+                            .path
+                            .as_ref()
+                            .map(|path| path.to_string_lossy())
+                            .as_deref()
+                    )
                 ));
             }
         }

@@ -12,23 +12,37 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AttachmentId, DeviceFamily, DiskReport, DosAssignmentRule, DosMachine,
-    LetterOutcome,
-    MachineDevice, RegionRole, ResidentCondition, Session, VolumeId,
+    DeviceFamily, DiskReport, DosAssignmentRule, DosMachine, Format, LetterOutcome, MachineDevice,
+    MediaId, RegionRole, ResidentCondition, Session, VolumeId,
 };
 
 mod common;
+use common::open_read;
 
-fn attach(path: impl AsRef<std::path::Path>) -> (Session, AttachmentId) {
+fn attach(path: impl AsRef<std::path::Path>, format: Format) -> (Session, MediaId) {
     let mut session = Session::new();
-    let device = session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("the drive is added");
-    let attachment = device.attachment();
-    device
-        .load_media(path, AccessIntent::Read)
-        .expect("the image loads");
-    (session, attachment)
+    let id = session
+        .load_media(open_read(path), format)
+        .expect("the image loads")
+        .id();
+    (session, id)
+}
+
+/// Pools an image and seats it in a fresh hard disk of `machine` — the
+/// device set a composer reads its facts from.
+fn seat(session: &mut Session, machine: Option<&str>, path: &PathBuf) {
+    let media = session
+        .load_media(open_read(path), Format::Raw)
+        .expect("the image loads")
+        .id();
+    let mut view = match machine {
+        Some(identity) => session.require_machine(identity).expect("is there"),
+        None => session.anonymous_mut(),
+    };
+    view.add_device(DeviceFamily::HARD_DISK)
+        .expect("a hard disk is added")
+        .insert(media)
+        .expect("the disk goes in");
 }
 
 fn temp_path(tag: &str) -> PathBuf {
@@ -167,11 +181,11 @@ fn write_image(tag: &str, bytes: Vec<u8>) -> PathBuf {
 
 /// Inspects an image and hands back the report, keeping the session alive
 /// for as long as the caller holds it.
-fn inspect(path: &PathBuf) -> (Session, DiskReport) {
-    let (mut session, attachment) = attach(path);
+fn inspect(path: &PathBuf, format: Format) -> (Session, DiskReport) {
+    let (mut session, attachment) = attach(path, format);
     let report = session
-        .require_device(attachment)
-        .expect("the medium is attached")
+        .medium_mut(attachment)
+        .expect("the medium is pooled")
         .inspect()
         .expect("inspection reads");
     (session, report)
@@ -205,8 +219,8 @@ fn reason_at(map: &remanence::DriveMap, letter: char) -> String {
 fn one_floppy_and_one_disk_map_to_a_b_and_c() {
     let floppy_path = write_image("floppy", synthetic_fat12_floppy());
     let disk_path = write_image("one-primary", synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]));
-    let (_floppy_session, floppy) = inspect(&floppy_path);
-    let (_disk_session, disk) = inspect(&disk_path);
+    let (_floppy_session, floppy) = inspect(&floppy_path, Format::Raw);
+    let (_disk_session, disk) = inspect(&disk_path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_floppy(0, &floppy).expect("slot 0 is free");
@@ -246,7 +260,7 @@ fn one_floppy_and_one_disk_map_to_a_b_and_c() {
 #[test]
 fn a_diskless_of_floppies_machine_has_no_a_or_b() {
     let disk_path = write_image("floppyless", synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]));
-    let (_session, disk) = inspect(&disk_path);
+    let (_session, disk) = inspect(&disk_path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &disk).expect("order 0 is free");
@@ -266,8 +280,8 @@ fn primaries_of_every_disk_precede_the_logical_drives_of_any() {
     let fat = synthetic_fat16();
     let first = write_image("chain-0", synthetic_extended_disk(&fat, 0x05, 0x06));
     let second = write_image("chain-1", synthetic_extended_disk(&fat, 0x05, 0x06));
-    let (_first_session, first_report) = inspect(&first);
-    let (_second_session, second_report) = inspect(&second);
+    let (_first_session, first_report) = inspect(&first, Format::Raw);
+    let (_second_session, second_report) = inspect(&second, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &first_report).expect("free");
@@ -294,7 +308,7 @@ fn primaries_of_every_disk_precede_the_logical_drives_of_any() {
 fn a_type_outside_the_dos_set_takes_no_letter() {
     let fat = synthetic_fat16();
     let path = write_image("hidden", synthetic_multi_mbr(&[(0x16, &fat), (0x06, &fat)]));
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
@@ -323,7 +337,7 @@ fn a_type_outside_the_dos_set_takes_no_letter() {
 fn an_unclaimed_extended_partition_letters_none_of_its_logicals() {
     let fat = synthetic_fat16();
     let path = write_image("lba-chain", synthetic_extended_disk(&fat, 0x0f, 0x06));
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
@@ -347,7 +361,7 @@ fn an_unclaimed_extended_partition_letters_none_of_its_logicals() {
 fn a_declared_lastdrive_ceiling_unsettles_the_letters_above_it() {
     let fat = synthetic_fat16();
     let path = write_image("ceiling", synthetic_multi_mbr(&[(0x06, &fat), (0x06, &fat)]));
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
@@ -372,7 +386,7 @@ fn a_declared_lastdrive_ceiling_unsettles_the_letters_above_it() {
 fn a_declared_subst_unsettles_every_letter() {
     let fat = synthetic_fat16();
     let path = write_image("subst", synthetic_multi_mbr(&[(0x06, &fat)]));
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
@@ -392,7 +406,7 @@ fn a_declared_subst_unsettles_every_letter() {
 fn a_cd_rom_letter_follows_only_a_declared_placement() {
     let fat = synthetic_fat16();
     let path = write_image("cdrom", synthetic_multi_mbr(&[(0x06, &fat)]));
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Raw);
 
     let mut undeclared = DosMachine::new();
     undeclared.assert_fixed_disk(0, &report).expect("free");
@@ -443,8 +457,8 @@ fn contradictory_machine_facts_are_refused_by_name() {
     let fat = synthetic_fat16();
     let floppy_path = write_image("dup-floppy", synthetic_fat12_floppy());
     let path = write_image("dup-disk", synthetic_multi_mbr(&[(0x06, &fat)]));
-    let (_floppy_session, floppy) = inspect(&floppy_path);
-    let (_session, report) = inspect(&path);
+    let (_floppy_session, floppy) = inspect(&floppy_path, Format::Raw);
+    let (_session, report) = inspect(&path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_floppy(0, &floppy).expect("free");
@@ -490,7 +504,7 @@ fn rig_artifact(tag: &str) -> PathBuf {
 #[test]
 fn a_stated_variant_letters_the_second_primary_last() {
     let path = rig_artifact("stated");
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Qcow2);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
@@ -541,7 +555,7 @@ fn a_stated_variant_letters_the_second_primary_last() {
 #[test]
 fn an_unstated_variant_leaves_the_disputed_letter_undetermined() {
     let path = rig_artifact("unstated");
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Qcow2);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
@@ -575,10 +589,10 @@ fn an_unstated_variant_leaves_the_disputed_letter_undetermined() {
 #[test]
 fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
     let path = rig_artifact("file-verb");
-    let (mut session, attachment) = attach(&path);
+    let (mut session, attachment) = attach(&path, Format::Qcow2);
     let report = session
-        .require_device(attachment)
-        .expect("attached")
+        .medium_mut(attachment)
+        .expect("the medium is pooled")
         .inspect()
         .expect("inspection reads");
 
@@ -587,8 +601,8 @@ fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
     let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
 
     let marker = session
-        .require_device(attachment)
-        .expect("attached")
+        .medium_mut(attachment)
+        .expect("the medium is pooled")
         .volume(volume_at(&map, 'C'))
         .expect("the letter's identity names a volume the report issued")
         .read_file("RMNMARK.TXT")
@@ -604,7 +618,7 @@ fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
 #[test]
 fn the_map_carries_the_asserted_facts_and_the_rule_it_applied() {
     let path = rig_artifact("provenance");
-    let (_session, report) = inspect(&path);
+    let (_session, report) = inspect(&path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
@@ -643,16 +657,13 @@ fn a_machine_letters_its_own_device_set_in_attachment_order() {
 
     let mut session = Session::new();
     session.add_machine("pc").expect("the machine is added");
-    let machine = session.require_machine("pc").expect("is there");
     for path in [&first, &second] {
-        machine
-            .add_device(DeviceFamily::HARD_DISK)
-            .expect("a hard disk is added")
-            .load_media(path, AccessIntent::Read)
-            .expect("the disk loads");
+        seat(&mut session, Some("pc"), path);
     }
 
-    let map = machine
+    let map = session
+        .require_machine("pc")
+        .expect("is there")
         .compose_dos_letters(Some(DosAssignmentRule::MsDos5), &[])
         .expect("composes");
 
@@ -694,11 +705,7 @@ fn a_family_no_rule_letters_is_passed_over_and_said_so() {
     session
         .add_device(DeviceFamily::COMMODORE_1541)
         .expect("a 1541 is a device like any other");
-    session
-        .add_device(DeviceFamily::HARD_DISK)
-        .expect("added")
-        .load_media(&path, AccessIntent::Read)
-        .expect("the disk loads");
+    seat(&mut session, None, &path);
     session
         .add_device(DeviceFamily::HARD_DISK)
         .expect("an empty second drive is configuration in its own right");
