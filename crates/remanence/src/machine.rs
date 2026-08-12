@@ -42,7 +42,6 @@
 //! [`Session::release_media`] severs its own link and then ends the
 //! claim.
 
-use std::fs::File;
 use std::path::Path;
 
 use crate::device::AccessIntent;
@@ -50,7 +49,7 @@ use crate::device_type::{DeviceSlot, DeviceType};
 use crate::discovery::{Discovery, discover_media_with_cache};
 use crate::disk::MediumState;
 use crate::error::{Error, Result};
-use crate::media::{Format, MediaId, MediaPool, Medium};
+use crate::media::{Format, MediaId, MediaPool, MediaSource, Medium};
 use crate::storage_device::{AttachmentId, DeviceView, StorageDevice};
 
 /// An open session: the claim scope, the cache budget, the machines
@@ -85,9 +84,18 @@ impl Session {
 
     // ------------------------------------------------------ the media pool
 
-    /// Loads the caller's own opened artifact as the [`Format`] they
-    /// declare it to be, and answers with the medium — **linked to
-    /// nothing**.
+    /// Loads a declared source as the [`Format`] the caller declares it
+    /// to be, and answers with the medium — **linked to nothing**.
+    ///
+    /// **The source takes one of four shapes** (each arriving by plain
+    /// conversion into [`MediaSource`]): the caller's own opened
+    /// [`std::fs::File`], a collection of them, one
+    /// [`FileSource`](crate::FileSource) taken from another medium's
+    /// namespace, or a collection of those. A format declares which
+    /// shape it reads, as it declares everything else — a KryoFlux
+    /// capture set is a declared collection, every other claimed format
+    /// one artifact — and a shape the format does not read is refused by
+    /// name.
     ///
     /// **The declaration is checked, never trusted.** Exactly one
     /// adapter is consulted — the one the format names — and a
@@ -97,19 +105,27 @@ impl Session {
     /// [`discover_media`](crate::discover_media), which answers that
     /// question on no handle at all.
     ///
-    /// **Whoever opens owns the lock** (P7 as amended). The source is the
-    /// caller's own [`File`], and that open is the claim: the library
-    /// checks it for exactly one thing — may it write through it? —
-    /// honours the answer exactly, and never supplements it with a lock
-    /// of its own. A name is recovered from the handle for **location
-    /// alone**, under an identity check, so the commit journal lands
-    /// beside the artifact and a backing chain's parent is looked for
-    /// next door; a handle this host cannot name serves everything else
-    /// and refuses those two journeys by name.
+    /// **Whoever opens owns the lock** (P7 as amended). A local
+    /// artifact arrives as the caller's own [`std::fs::File`], and that open is
+    /// the claim: the library checks it for exactly one thing — may it
+    /// write through it? — honours the answer exactly, and never
+    /// supplements it with a lock of its own. A name is recovered from
+    /// the handle for **location alone**, under an identity check, so
+    /// the commit journal lands beside the artifact and a backing
+    /// chain's parent is looked for next door; a handle this host
+    /// cannot name serves everything else and refuses those two
+    /// journeys by name. A file from another medium's namespace rides
+    /// that medium's claim instead, and a KryoFlux member's name is the
+    /// member grammar's own evidence — the one record of a stream's
+    /// position — so a nameless member refuses the collection by name.
     ///
     /// Nothing links the medium to a machine. Putting it in a drive is
     /// [`DeviceView::insert`], and it is a separate act.
-    pub fn load_media(&mut self, source: File, format: Format) -> Result<&mut Medium> {
+    pub fn load_media(
+        &mut self,
+        source: impl Into<MediaSource>,
+        format: Format,
+    ) -> Result<&mut Medium> {
         self.load_media_with_cache(source, format, crate::DEFAULT_CACHE_BYTES)
     }
 
@@ -117,11 +133,11 @@ impl Session {
     /// bound (P27).
     pub fn load_media_with_cache(
         &mut self,
-        source: File,
+        source: impl Into<MediaSource>,
         format: Format,
         cache_bytes: u64,
     ) -> Result<&mut Medium> {
-        let state = MediumState::load(source, format, cache_bytes)?;
+        let state = MediumState::load(source.into(), format, cache_bytes)?;
         self.admit(state)
     }
 
@@ -205,7 +221,8 @@ impl Session {
         if let Some(foreign) = state.foreign_family() {
             return Err(Error::unsupported(format!(
                 "{} is a {foreign}-family artifact, and a {foreign} artifact \
-                 is read through its own type rather than as a block medium",
+                 is loaded by its own declaration rather than as a block \
+                 medium: declare the format it is at `load_media`",
                 state.named()
             )));
         }

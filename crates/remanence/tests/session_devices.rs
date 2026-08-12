@@ -726,9 +726,9 @@ fn a_declaration_the_evidence_cannot_bear_is_refused_by_name() {
 fn a_flux_family_artifact_is_refused_whatever_was_declared() {
     // P13: the raw reading opens anything, so without this check a P64
     // loaded happily and read as raw — declaring the block layer
-    // authoritative when P64's own adapter declares flux. No device in
-    // this release holds flux state; the artifact is reached through its
-    // own type.
+    // authoritative when P64's own adapter declares flux. The artifact
+    // is loaded by its own declaration, which answers with a flux
+    // medium.
     let path = temp_path("flux-artifact");
     let mut bytes = b"P64-1541".to_vec();
     bytes.extend_from_slice(&[0u8; 1024]);
@@ -751,7 +751,7 @@ fn a_flux_family_artifact_is_refused_whatever_was_declared() {
         "names the family found: {message}"
     );
     assert!(
-        message.contains("own type"),
+        message.contains("own declaration"),
         "names where it is read instead: {message}"
     );
     assert!(session.media().is_empty(), "and nothing was pooled");

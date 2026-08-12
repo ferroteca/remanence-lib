@@ -365,7 +365,7 @@ fn discovery_refuses_a_foreign_family_artifact_where_a_load_would() {
         "names the family found: {message}"
     );
     assert!(
-        message.contains("own type"),
+        message.contains("own declaration"),
         "names where it is read instead: {message}"
     );
 

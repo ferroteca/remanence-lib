@@ -106,9 +106,10 @@ ABI, or Python module.
   runs, circular observations, exact timebases, parallel marker
   channels, and the section-addressable backing they stream into — with
   `kryoflux.rs` the KryoFlux capture-set adapter above it: the member
-  grammar and its completeness, the stream grammar, and the public
-  `CaptureSet` that reads one disk out of a catalog subtree of a stream
-  per head per drive-step position; `flux_medium.rs` the flux family's
+  grammar and its completeness, the stream grammar, and the assembler
+  that reads one disk out of a declared collection of members — a
+  stream per head per drive-step position — for the collection-sourced
+  load; `flux_medium.rs` the flux family's
   second model, what a drive would read rather than what an instrument
   recorded — one circular pulse stream per family-addressed location, an
   exact rotational frame, per-pulse strength, and the medium-level facts
@@ -125,12 +126,16 @@ ABI, or Python module.
   recorded or resolved by a declared rule, and the byte sequence a
   declared group code makes of it, which assigns no header, sector or
   file to any of them — with `c1541_presentation.rs` the family's read
-  channel and GCR codec above both: the declared policy inputs of each
-  transition, the clocking, the framing, and the account of what each
-  layer does not carry from the one below. **The ladder's two entry
-  points are a remanence image and a P64 container**: an image carries
-  no clock, so the image's entry stands on the served projection of it
-  rather than on the image directly;
+  channel and GCR codec above both: the declared policies of each
+  transition — the profile's own declarations, read argument-free
+  through the type (P30), with the deviation surfaces deferred (D29) —
+  the clocking, the framing, the `Location`-addressed framed-byte
+  reads, and the account of what each layer does not carry from the one
+  below. **The ladder's two entry points are a flux medium and a
+  remanence image**: the medium a flux load pools answers
+  `bitstream()`/`bytestream()` directly, and an image carries no clock,
+  so its entry stands on the served projection of it rather than on the
+  image directly;
   `cbm_dos.rs` the P18 adapter at the top of that ladder — the
   directory CBM DOS wrote, read through a `BlockSource` and nothing
   else, so the filesystem never learns what it is standing on: the BAM
@@ -160,12 +165,21 @@ ABI, or Python module.
   `p64.rs` the P64 image-format adapter, claimed in
   both directions — the container grammar and its own range coder, the
   version gate and the structural refusals, decode of a stored medium
-  into the flux-medium layer, and encode of a projected image into a new
-  artifact under a claim stated before the file exists. It sits outside
+  into the flux-medium layer (the served form `Format::P64` loads
+  straight in), and encode of a projected image into a new artifact
+  under a claim stated before the file exists. It sits outside
   `adapters.rs`'s catalog deliberately: that catalog's adapters open a
-  byte-addressed device, and block and flux are disjoint families (P13),
-  so a flux artifact is reached through its own type as the capture-set
-  adapter is;
+  byte-addressed device, and block and flux are disjoint families
+  (P13), so a flux load builds a flux medium rather than opening a
+  block device;
+  `flux_media.rs` the flux family's **medium state**: the two declared
+  flux loads — a KryoFlux collection checked whole (member grammar,
+  completeness, stream grammar, the declared device's profile claim)
+  then reduced under the profile's declared `Materialization` defaults,
+  and a P64 decoded straight in — the verdicts, policy and
+  declared-loss account riding the medium as provenance, and the
+  presentation ladder materialized once on demand under the profile's
+  declarations;
   `remanence_image.rs` the flux family's physical stratum — the public
   `RemanenceImage` root, which answers the image's *shape* and nothing
   below it (form factor, the angular unit, holes, surfaces, and per
@@ -217,10 +231,14 @@ ABI, or Python module.
   P64 encode path — with `deflate.rs` beside `inflate.rs` as the
   compression pair the core owns;
   `media.rs` the **media pool and the medium a caller holds** — the
-  declared `Format` set, the pool identity, and every content verb
+  declared `Format` set with each format's declared source shape, the
+  `MediaSource` conversions (the caller's opened file, a collection of
+  them, a `FileSource` from an archive medium's namespace, a collection
+  of those), the pool identity, and every content verb
   (identify, inspect, read_at, the space and namespace doors, the
   discovered geometry and the `get_sector`/`put_sector` pair that
-  addresses in it, commit and
+  addresses in it, the argument-free `bitstream`/`bytestream` pair a
+  flux medium answers, commit and
   rollback), a medium being created by a declared reading and destroyed
   only by `release_media`; `handle.rs` the **caller-owned claim**: what a
   handed-over `std::fs::File` affords, asked by a zero-length write that
@@ -334,8 +352,8 @@ ABI, or Python module.
   handle. `planning/TASKS.md` is the pre-approved task queue: **agents
   do not add tasks on their own initiative, and ask before editing that
   file at all**; anyone may pick up what is already there.
-- **The vision is in force.** Use cases U1–U6 and U22 (root
-  [USE-CASES.md](USE-CASES.md)) and architectural principles
+- **The vision is in force.** Use cases U1–U6, U22, U25, U26 and U33
+  (root [USE-CASES.md](USE-CASES.md)) and architectural principles
   (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage
   cites them by number; the surface-change rule in
@@ -629,9 +647,7 @@ without loading it, `identify --remanence <path> [write-to]` reads a
 load a flux artifact into — writes it back where a destination is
 given, and describes the three C64 renditions without writing them,
 `identify --renditions <path> <stem>` writes all three beside each
-other with their accounts, `identify --reconstruct <capture> [side]`
-reduces a KryoFlux capture set to a remanence image and prints the
-plan's whole account before executing it, and `identify --devices`
+other with their accounts, and `identify --devices`
 lists the claimed devices.
 
 **Without that `PATH` entry gcc exits 1 and prints nothing at all**: it

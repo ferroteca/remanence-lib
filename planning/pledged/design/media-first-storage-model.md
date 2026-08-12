@@ -149,7 +149,13 @@ Medium                                         pool-owned, holdable — ALL cont
    next door — under an identity check that the name still denotes the
    handle's file; a nameless handle (memory-only, deleted-but-open)
    refuses those location-dependent journeys by name and serves
-   everything else.
+   everything else. *Delivered (F59): the four source shapes are
+   `MediaSource`'s conversions — the caller's opened file, a collection
+   of them, a `FileSource` taken from an archive medium's namespace
+   (`File::source`, `StorageSpace::files`), and a collection of those —
+   and the format's claim declares which shape it reads, refusing the
+   other by name. KryoFlux is the collection-sourced format; everything
+   else reads one artifact.*
 7. **The catalog speaks in device types, and it is a hierarchy.** A
    medium carries **one device type** — the device its content is
    assumed recorded by — an enumerated identity in two levels: the
@@ -215,7 +221,14 @@ Medium                                         pool-owned, holdable — ALL cont
    cylinder, head and sector — every floppy and the CHS hard drive —
    and refuse by name where it says block, with the coordinates
    themselves coming from the medium's discovered geometry rather than
-   from the type (D34).*
+   from the type (D34). The flux family's half is delivered (F59):
+   `bitstream()` and `bytestream()` answer argument-free on a
+   `Commodore1541` medium under the profile's declared channel and
+   codec, the reduction that creates the medium runs under the
+   profile's declared `Materialization` defaults with the account as
+   provenance, and the CBM DOS reading opens through the direct
+   partition's `filesystem_as` — each refusing by name where the
+   family bears no flux (D35).*
 9. **Vantage doors — specified, never probed.** A partition composes
    at most one `StorageSpace` (an identity rule: both doors hand out
    the same node). `.volume()` answers iff the addressable vantage
@@ -333,12 +346,14 @@ the features that make each real.
   structurally by the pool. *Delivered: the annotation is on D23.*
 - **D24 is superseded**: the file-view load lands as a `load_media`
   source shape, and the question-tier verbs it anticipated are
-  drawer'd.
+  drawer'd. *Delivered: the annotation is on D24 (D35).*
 - **D26 is kept and extended**: one node, two vantages — now reached
   through two vantage doors on the partition, same object behind both.
 - **D27's `capture_set` spelling is deleted** before ever shipping
   publicly; the capture is a declared collection reading. The
-  `archive[/entry]` path syntax stays dead.
+  `archive[/entry]` path syntax stays dead. *Delivered (F59): the
+  capture is `Format::KryoFlux` over a declared collection, and the
+  standalone capture root is gone.*
 - **F50's shapes move**: `load_media` leaves the device for the
   session (creation), `insert`/`eject` become the edge verbs, the
   family check moves to `insert`. The two-acts discipline survives as

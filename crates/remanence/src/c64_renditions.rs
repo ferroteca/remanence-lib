@@ -1193,10 +1193,19 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&scratch);
         let written = image.write_p64(&scratch).expect("the p64 writes");
-        let reopened =
-            crate::P64Image::open(&scratch).expect("the delivered adapter reads it back");
-        let restored: u64 = reopened
-            .inspect()
+        let resolved = crate::source::resolve_image(
+            &scratch,
+            crate::device::AccessIntent::Read,
+            crate::cache::DEFAULT_CACHE_BYTES,
+        )
+        .expect("the artifact resolves");
+        let (medium, report) = crate::p64::decode(
+            &resolved.source,
+            "the rendition scratch artifact",
+            crate::cache::DEFAULT_CACHE_BYTES,
+        )
+        .expect("the delivered decoder reads it back");
+        let restored: u64 = report
             .half_tracks
             .iter()
             .map(|half_track| half_track.pulses)
@@ -1211,7 +1220,7 @@ mod tests {
             restored > 1_000_000,
             "a whole side carries over a million pulses: {restored}"
         );
-        drop(reopened);
+        drop((medium, report, resolved));
         let _ = std::fs::remove_file(&scratch);
     }
 

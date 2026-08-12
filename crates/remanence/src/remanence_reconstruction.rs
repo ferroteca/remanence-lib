@@ -59,8 +59,18 @@ const WRITE_GUARD_MICRONS: u64 = 432;
 const RESOLVES_A_RECORDING_PERMILLE: u32 = 1;
 
 /// How the reduction decides which positions hold recordings.
+///
+/// Nothing here is public: the reduction runs inside the declared
+/// collection load, under the profile's declared `Materialization`
+/// defaults, and its account rides the medium as provenance. A
+/// caller-facing plan preview belongs to the question tier, argued
+/// separately.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecordingSelection {
+pub(crate) enum RecordingSelection {
     /// Measured from the evidence: a position records where its
     /// revolutions resolve the same transitions — the count-spread
     /// discriminator, a measured fact carried as such.
@@ -73,16 +83,16 @@ pub enum RecordingSelection {
 /// deliberately: a reduction the policy does not name is a refusal
 /// rather than a default (P29).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReconstructionPolicy {
+pub(crate) struct ReconstructionPolicy {
     /// Which recorded side the image is reconstructed from. Sides are
     /// never merged or averaged.
-    pub side: u64,
-    pub recordings: RecordingSelection,
+    pub(crate) side: u64,
+    pub(crate) recordings: RecordingSelection,
 }
 
 /// One reconstructed orbit, as the plan reports it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ReconstructedOrbit {
+pub(crate) struct ReconstructedOrbit {
     /// The instrument position the orbit was read at — capture
     /// provenance, not a fact of the medium.
     pub position: u64,
@@ -108,7 +118,7 @@ pub struct ReconstructedOrbit {
 /// What the reconstruction will produce, computed whole before
 /// anything is written.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ReconstructionReport {
+pub(crate) struct ReconstructionReport {
     pub format_id: &'static str,
     pub side: u64,
     /// Every position the capture holds on the side.
@@ -128,7 +138,7 @@ struct PlannedOrbit {
 
 /// The computed reduction: everything decided, nothing written.
 #[derive(Debug)]
-pub struct ReconstructionPlan {
+pub(crate) struct ReconstructionPlan {
     planned: Vec<PlannedOrbit>,
     policy: Provenance,
     report: ReconstructionReport,
@@ -138,7 +148,7 @@ impl ReconstructionPlan {
     /// What the reduction will produce, and what it will leave behind —
     /// computed whole, before anything is written. Read it and then
     /// decide: executing adds nothing to the account (P29).
-    pub fn report(&self) -> &ReconstructionReport {
+    pub(crate) fn report(&self) -> &ReconstructionReport {
         &self.report
     }
 
@@ -149,7 +159,7 @@ impl ReconstructionPlan {
     /// The image is the family's ordinary physical stratum — the same
     /// root a `.remanence` artifact opens to — and carries this
     /// reduction's declared policy and evidence as its provenance.
-    pub fn execute(&self, cache_bytes: u64) -> Result<RemanenceImage> {
+    pub(crate) fn execute(&self, cache_bytes: u64) -> Result<RemanenceImage> {
         let sink = crate::flux_capture::SessionBacking::create()?;
         let mut builder = RemanenceImageBuilder::to_sink(
             MediaFormFactor::Inch525,
@@ -715,6 +725,42 @@ fn account_for_the_envelope(capture: &FluxCapture, loss: &mut LossAccount) {
 #[cfg(test)]
 pub(crate) static CAPTURE_FIXTURE_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Assembles the capture fixture the way a declared collection load
+/// does: the archive's namespace gathered whole, each member's bytes
+/// produced once.
+#[cfg(test)]
+pub(crate) fn fixture_capture(capture_path: &std::path::Path) -> crate::flux_capture::FluxCapture {
+    struct Member(crate::source::FileSource);
+    impl crate::kryoflux::MemberSource for Member {
+        fn name(&self) -> &str {
+            self.0.name()
+        }
+        fn size(&self) -> u64 {
+            self.0.size()
+        }
+        fn bytes(&self) -> Result<Vec<u8>> {
+            self.0.read_whole()
+        }
+    }
+    let file = std::fs::File::open(capture_path).expect("the fixture opens");
+    let archive =
+        crate::archive::ArchiveMedium::load(file, "7z", crate::cache::DEFAULT_CACHE_BYTES)
+            .expect("the fixture is a 7z");
+    let members: Vec<Member> = archive
+        .entry_group_sources("")
+        .expect("the members gather")
+        .into_iter()
+        .map(Member)
+        .collect();
+    crate::kryoflux::assemble(
+        "the fixture capture",
+        &members,
+        crate::cache::DEFAULT_CACHE_BYTES,
+    )
+    .expect("the capture assembles")
+    .capture
+}
+
 /// The one reduction this crate's tests share.
 ///
 /// Opening the capture fixture and reducing it costs minutes, and more
@@ -742,9 +788,9 @@ pub(crate) fn reconstructed_capture() -> &'static crate::remanence_image::Remane
                  test-fixture-prep/prep_fixtures.py`"
             );
         }
-        let set = crate::kryoflux::CaptureSet::open(&capture_path).expect("the capture opens");
+        let capture = fixture_capture(&capture_path);
         let plan = plan(
-            set.capture(),
+            &capture,
             &ReconstructionPolicy {
                 side: 0,
                 recordings: RecordingSelection::Measured,
@@ -839,9 +885,9 @@ mod tests {
         let _gate = CAPTURE_FIXTURE_GATE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let set = crate::kryoflux::CaptureSet::open(&capture_path).expect("the capture opens");
+        let capture = fixture_capture(&capture_path);
         let plan = plan(
-            set.capture(),
+            &capture,
             &ReconstructionPolicy {
                 side: 0,
                 recordings: RecordingSelection::Measured,

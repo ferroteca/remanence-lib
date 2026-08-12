@@ -284,6 +284,12 @@ impl FloppyDrive {
             Self::Sector => &SECTOR_FLOPPY_SPEC,
         }
     }
+
+    /// The drive profile governing this type's recording path, where it
+    /// claims one — the declaration the flux loads read (P22, P30).
+    pub(crate) fn flux_profile(self) -> Option<&'static DriveProfile> {
+        self.spec().flux_path
+    }
 }
 
 impl HardDrive {

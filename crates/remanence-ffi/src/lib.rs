@@ -1862,6 +1862,7 @@ struct FormatView {
     /// declaration may name, and what a refusal quotes back.
     devices: Vec<CString>,
     block_bytes: bool,
+    collection: bool,
 }
 
 fn format_views() -> &'static [FormatView] {
@@ -1878,6 +1879,7 @@ fn format_views() -> &'static [FormatView] {
                     .map(|device| to_cstring(device.id()))
                     .collect(),
                 block_bytes: claim.takes_block_bytes(),
+                collection: claim.takes_collection(),
             })
             .collect()
     })
@@ -1928,6 +1930,20 @@ pub extern "C" fn remanence_format_takes_block_bytes(index: usize) -> bool {
     format_views()
         .get(index)
         .is_some_and(|view| view.block_bytes)
+}
+
+/// Whether format `index` reads a collection of sources rather than one
+/// artifact — true for the KryoFlux capture set alone, which is one
+/// disk spread over a stream per head per drive-step position. A
+/// collection format loads through
+/// `remanence_session_load_media_collection` or
+/// `remanence_session_load_media_sources`; every other format loads one
+/// source.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_format_takes_collection(index: usize) -> bool {
+    format_views()
+        .get(index)
+        .is_some_and(|view| view.collection)
 }
 
 /// Takes ownership of a caller-opened OS file handle.
@@ -2014,6 +2030,214 @@ pub unsafe extern "C" fn remanence_session_load_media(
     let file = unsafe { file_from_raw(source) };
     let handle = unsafe { &mut *session };
     match handle.session.load_media(file, format) {
+        Ok(medium) => {
+            let id = medium.id();
+            unsafe { medium_view(session, id) }
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Loads a collection of the caller's own opened artifacts as the format
+/// they **declare** it to be — the collection shape of the load, which
+/// only a format whose claim takes one reads
+/// (`remanence_format_takes_collection`): a KryoFlux capture set is one
+/// disk spread over a stream per head per drive-step position. Answers
+/// with the medium — linked to nothing. The session owns the view; never
+/// free it. Null on failure.
+///
+/// `sources` points at `source_count` OS file handles, each exactly what
+/// `remanence_session_load_media` takes for one. Every member is checked
+/// before any is adopted — a 0 or -1 among them refuses the whole load
+/// and leaves every handle the caller's to close, mirroring the single
+/// form's check — and once all are checked **the library takes ownership
+/// of every one, whatever the outcome**: a refused load closes them, a
+/// successful one closes them at release or at session free.
+///
+/// `format`, `device_type` and `block_bytes` are as
+/// `remanence_session_load_media` takes them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_load_media_collection(
+    session: *mut RemanenceSession,
+    sources: *const isize,
+    source_count: usize,
+    format: *const c_char,
+    device_type: *const c_char,
+    block_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMedium {
+    unsafe { clear_error(error_out, error_rule_out) };
+    if session.is_null() {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let Some(format) = (unsafe { utf8_arg(format) }) else {
+        let error = remanence::Error::io("null format");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let format = match unsafe { declared_format(format.as_ref(), device_type, block_bytes) } {
+        Ok(format) => format,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    if sources.is_null() && source_count > 0 {
+        let error = remanence::Error::io("null sources");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let raw = if source_count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(sources, source_count) }
+    };
+    // Every member is checked before any is adopted: an invalid one is
+    // the caller's to close, and adopting the rest would close handles
+    // out of a collection the load never took.
+    if raw.iter().any(|&source| source == 0 || source == -1) {
+        let error = remanence::Error::io("a source is not an open file handle");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let files: Vec<std::fs::File> = raw
+        .iter()
+        .map(|&source| unsafe { file_from_raw(source) })
+        .collect();
+    let handle = unsafe { &mut *session };
+    match handle.session.load_media(files, format) {
+        Ok(medium) => {
+            let id = medium.id();
+            unsafe { medium_view(session, id) }
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Loads one file from another medium's namespace as the format the
+/// caller declares — the namespace-source shape of the load, taking what
+/// `remanence_file_source` produced.
+///
+/// **The source is consumed and freed whatever the outcome**, exactly as
+/// a discovery is: the pointer must never be used or freed again after
+/// this call, whatever it returns. The source is free-standing — it
+/// rides the claim of the medium it came from, so the walk that named it
+/// ended before this load begins and nothing is opened twice. `format`,
+/// `device_type` and `block_bytes` are as `remanence_session_load_media`
+/// takes them. The session owns the returned view; never free it. Null
+/// on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_load_media_source(
+    session: *mut RemanenceSession,
+    source: *mut RemanenceFileSource,
+    format: *const c_char,
+    device_type: *const c_char,
+    block_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMedium {
+    unsafe { clear_error(error_out, error_rule_out) };
+    if source.is_null() {
+        let error = remanence::Error::io("null source");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    // Taken before anything can fail: the C contract is that this call
+    // consumes the source whatever the outcome, so the two surfaces
+    // cannot disagree about who holds its ride on the claim afterwards.
+    let owned = unsafe { Box::from_raw(source) };
+    if session.is_null() {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let Some(format) = (unsafe { utf8_arg(format) }) else {
+        let error = remanence::Error::io("null format");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let format = match unsafe { declared_format(format.as_ref(), device_type, block_bytes) } {
+        Ok(format) => format,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    let RemanenceFileSource { source, .. } = *owned;
+    let handle = unsafe { &mut *session };
+    match handle.session.load_media(source, format) {
+        Ok(medium) => {
+            let id = medium.id();
+            unsafe { medium_view(session, id) }
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Loads a collection of files gathered from another medium's namespace
+/// as the format the caller declares — the collection beside
+/// `remanence_session_load_media_source`, taking what
+/// `remanence_space_files` gathered, for a format whose claim takes a
+/// collection (`remanence_format_takes_collection`).
+///
+/// **The gathering is consumed and freed whatever the outcome**: the
+/// pointer must never be used or freed again after this call, whatever
+/// it returns. The session owns the returned view; never free it. Null
+/// on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_load_media_sources(
+    session: *mut RemanenceSession,
+    sources: *mut RemanenceFileSourceList,
+    format: *const c_char,
+    device_type: *const c_char,
+    block_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMedium {
+    unsafe { clear_error(error_out, error_rule_out) };
+    if sources.is_null() {
+        let error = remanence::Error::io("null sources");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    // Taken before anything can fail, as the single source is taken:
+    // the gathering is consumed whatever the outcome.
+    let owned = unsafe { Box::from_raw(sources) };
+    if session.is_null() {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let Some(format) = (unsafe { utf8_arg(format) }) else {
+        let error = remanence::Error::io("null format");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let format = match unsafe { declared_format(format.as_ref(), device_type, block_bytes) } {
+        Ok(format) => format,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    let RemanenceFileSourceList { sources, .. } = *owned;
+    let handle = unsafe { &mut *session };
+    match handle.session.load_media(sources, format) {
         Ok(medium) => {
             let id = medium.id();
             unsafe { medium_view(session, id) }
@@ -5408,6 +5632,158 @@ pub unsafe extern "C" fn remanence_file_data_free(data: *mut RemanenceFileData) 
     }
 }
 
+use remanence::FileSource;
+
+/// One file taken from an archive medium's namespace as a load's source
+/// — free-standing, riding the claim of the medium it came from. Free
+/// with `remanence_file_source_free`, unless
+/// `remanence_session_load_media_source` consumed it.
+pub struct RemanenceFileSource {
+    source: FileSource,
+    name: CString,
+}
+
+/// Every file gathered under one namespace path as a load's sources.
+/// Free with `remanence_file_source_list_free`, unless
+/// `remanence_session_load_media_sources` consumed it.
+pub struct RemanenceFileSourceList {
+    sources: Vec<FileSource>,
+    names: Vec<CString>,
+}
+
+/// This file taken as a load's source — what
+/// `remanence_session_load_media_source` consumes.
+///
+/// The source is **free-standing**: it rides the claim of the medium it
+/// came from, so the namespace walk that named the file ends here and
+/// the load opens nothing twice. This release takes a load's source
+/// from an archive's namespace alone — a file on a volume-backed
+/// filesystem is read through the filesystem that names it, and refuses
+/// here by name. Returns null on failure and stores a message in
+/// `error_out` (free with `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_source(
+    file: *mut RemanenceFile,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceFileSource {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { file.as_ref() }) else {
+        let error = remanence::Error::io("null file");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let path = handle.path.to_string_lossy().into_owned();
+    match unsafe { with_space(handle.origin(), |target| target.get_file(&path)?.source()) } {
+        Ok(source) => {
+            let name = to_cstring(source.name());
+            Box::into_raw(Box::new(RemanenceFileSource { source, name }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// The name the namespace holds this source's file under. Owned by the
+/// handle; do not free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_source_name(
+    source: *const RemanenceFileSource,
+) -> *const c_char {
+    unsafe { source.as_ref() }.map_or(ptr::null(), |source| source.name.as_ptr())
+}
+
+/// The file's size in bytes, as the namespace claims it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_source_size_bytes(
+    source: *const RemanenceFileSource,
+) -> u64 {
+    unsafe { source.as_ref() }.map_or(0, |source| source.source.size())
+}
+
+/// Frees a source no load consumed, ending its ride on its medium's
+/// claim.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_source_free(source: *mut RemanenceFileSource) {
+    if !source.is_null() {
+        drop(unsafe { Box::from_raw(source) });
+    }
+}
+
+/// Every file under `path` (`""` or null is the whole namespace),
+/// gathered as a load's sources in one pass — what
+/// `remanence_session_load_media_sources` consumes.
+///
+/// The sources are **free-standing** as the single form's is, and a
+/// solid archive's coded stream decodes once for the whole gathering
+/// (P27). This release gathers from an archive's namespace alone — a
+/// volume-backed filesystem's files are read through the filesystem
+/// that names them, and refuse here by name. Returns null on failure
+/// and stores a message in `error_out` (free with
+/// `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_space_files(
+    space: *mut RemanenceSpace,
+    path: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceFileSourceList {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { space.as_ref() }) else {
+        let error = remanence::Error::io("null space");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let path = unsafe { utf8_arg(path) }.unwrap_or_default();
+    match unsafe { with_space(handle.origin(), |target| target.files(path.as_ref())) } {
+        Ok(sources) => {
+            let names = sources
+                .iter()
+                .map(|source| to_cstring(source.name()))
+                .collect();
+            Box::into_raw(Box::new(RemanenceFileSourceList { sources, names }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// How many sources the gathering holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_source_list_count(
+    list: *const RemanenceFileSourceList,
+) -> usize {
+    unsafe { list.as_ref() }.map_or(0, |list| list.sources.len())
+}
+
+/// The name the namespace holds the `index`th source's file under, or
+/// null out of range. Owned by the handle; do not free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_source_list_name(
+    list: *const RemanenceFileSourceList,
+    index: usize,
+) -> *const c_char {
+    unsafe { list.as_ref() }.map_or(ptr::null(), |list| {
+        list.names
+            .get(index)
+            .map_or(ptr::null(), |name| name.as_ptr())
+    })
+}
+
+/// Frees a gathering no load consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_file_source_list_free(list: *mut RemanenceFileSourceList) {
+    if !list.is_null() {
+        drop(unsafe { Box::from_raw(list) });
+    }
+}
+
 /// The commit point (P2): everything buffered reaches the image, then a
 /// flush. Until this call, nothing has touched the file. The commit is
 /// durable (P9): a private recovery journal is armed before the first
@@ -5450,1057 +5826,13 @@ pub unsafe extern "C" fn remanence_medium_rollback(medium: *mut RemanenceMedium)
 }
 
 // ---------------------------------------------------------------------------
-// The KryoFlux capture set: one disk spread over a stream per head per
-// drive-step position, recognized from a catalog subtree and reported as
-// the adapter recognized it. Counts, identities and shapes cross this
-// surface; the pulses stay behind it.
-
-use remanence::CaptureSet;
-
-struct ObservationView {
-    ordinal: u64,
-    span_ticks: u64,
-    transitions: u64,
-    markers: u64,
-}
-
-struct CaptureRunView {
-    ordinal: u64,
-    transitions: u64,
-    extent_ticks: u64,
-    markers: u64,
-    index_markers: u64,
-    transfer_result: Option<u32>,
-    transitions_before_first_index: u64,
-    transitions_after_last_index: u64,
-    observations: Vec<ObservationView>,
-}
-
-struct CaptureIssueView {
-    code: CString,
-    detail: CString,
-}
-
-struct CaptureMemberView {
-    entry_name: CString,
-    entry_bytes: u64,
-    position_numerator: u64,
-    position_denominator: u64,
-    head: Option<u64>,
-    runs: Vec<CaptureRunView>,
-    issues: Vec<CaptureIssueView>,
-}
-
-/// An open capture set, holding the claim on its archive.
-pub struct RemanenceCaptureSet {
-    set: CaptureSet,
-    path: CString,
-    subtree: Option<CString>,
-    format_id: CString,
-    format_name: CString,
-    archive_format_id: CString,
-    evidence: Vec<CString>,
-    members: Vec<CaptureMemberView>,
-}
-
-impl RemanenceCaptureSet {
-    fn new(set: CaptureSet) -> Self {
-        let report = set.inspect();
-        let members = report
-            .members
-            .iter()
-            .map(|member| CaptureMemberView {
-                entry_name: to_cstring(&member.entry_name),
-                entry_bytes: member.entry_bytes,
-                position_numerator: member.position.numerator,
-                position_denominator: member.position.denominator,
-                head: member.head,
-                runs: member
-                    .runs
-                    .iter()
-                    .map(|run| CaptureRunView {
-                        ordinal: run.ordinal,
-                        transitions: run.transitions,
-                        extent_ticks: run.extent_ticks,
-                        markers: run.markers,
-                        index_markers: run.index_markers,
-                        transfer_result: run.transfer_result,
-                        transitions_before_first_index: run.transitions_before_first_index,
-                        transitions_after_last_index: run.transitions_after_last_index,
-                        observations: run
-                            .observations
-                            .iter()
-                            .map(|observation| ObservationView {
-                                ordinal: observation.ordinal,
-                                span_ticks: observation.span_ticks,
-                                transitions: observation.transitions,
-                                markers: observation.markers,
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-                issues: member
-                    .issues
-                    .iter()
-                    .map(|issue| CaptureIssueView {
-                        code: to_cstring(&issue.code),
-                        detail: to_cstring(&issue.detail),
-                    })
-                    .collect(),
-            })
-            .collect();
-        let evidence = report
-            .evidence
-            .iter()
-            .map(|line| to_cstring(line))
-            .collect();
-        let path = to_cstring(&set.path().display().to_string());
-        let subtree = set.subtree().map(to_cstring);
-        let format_id = to_cstring(set.format_id());
-        let format_name = to_cstring(set.format_name());
-        let archive_format_id = to_cstring(set.archive_format_id());
-        Self {
-            set,
-            path,
-            subtree,
-            format_id,
-            format_name,
-            archive_format_id,
-            evidence,
-            members,
-        }
-    }
-}
-
-unsafe fn capture_member<'a>(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-) -> Option<&'a CaptureMemberView> {
-    unsafe { set.as_ref() }?.members.get(member)
-}
-
-unsafe fn capture_run<'a>(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> Option<&'a CaptureRunView> {
-    unsafe { capture_member(set, member) }?.runs.get(run)
-}
-
-unsafe fn capture_observation<'a>(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-    observation: usize,
-) -> Option<&'a ObservationView> {
-    unsafe { capture_run(set, member, run) }?
-        .observations
-        .get(observation)
-}
-
-unsafe fn open_capture_set(
-    path: *const c_char,
-    cache_bytes: Option<u64>,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceCaptureSet {
-    unsafe { clear_error(error_out, error_rule_out) };
-    if path.is_null() {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    }
-    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
-    let opened = match cache_bytes {
-        Some(cache_bytes) => CaptureSet::open_with_cache(path.as_ref(), cache_bytes),
-        None => CaptureSet::open(path.as_ref()),
-    };
-    match opened {
-        Ok(set) => Box::into_raw(Box::new(RemanenceCaptureSet::new(set))),
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Opens the KryoFlux capture set held by `path` (UTF-8) — an archive
-/// this library reads, optionally followed by the subtree inside it that
-/// holds the members — with the stated default session cache bound.
-/// An incomplete, duplicate, contradictory, or unrelated member refuses
-/// the whole set. Returns null on failure and stores a message in
-/// `error_out` (free with `remanence_string_free`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_open(
-    path: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceCaptureSet {
-    unsafe { open_capture_set(path, None, error_category_out, error_out, error_rule_out) }
-}
-
-/// Opens a capture set as `remanence_capture_set_open` does, under a
-/// declared cache bound: at most `cache_bytes` of the decoded capture
-/// stays resident. The bound narrows the working set; it never refuses
-/// service.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_open_with_cache(
-    path: *const c_char,
-    cache_bytes: u64,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceCaptureSet {
-    unsafe {
-        open_capture_set(
-            path,
-            Some(cache_bytes),
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-/// Frees a capture-set handle, releasing its claim on the archive and
-/// discarding the private session storage the capture decoded into.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_free(set: *mut RemanenceCaptureSet) {
-    if !set.is_null() {
-        drop(unsafe { Box::from_raw(set) });
-    }
-}
-
-/// The path the set was opened from.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_path(
-    set: *const RemanenceCaptureSet,
-) -> *const c_char {
-    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.path.as_ptr())
-}
-
-/// The subtree inside the archive the members were read from, or null
-/// when the whole archive is the set.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_subtree(
-    set: *const RemanenceCaptureSet,
-) -> *const c_char {
-    unsafe { set.as_ref() }.map_or(ptr::null(), |set| {
-        set.subtree
-            .as_ref()
-            .map_or(ptr::null(), |subtree| subtree.as_ptr())
-    })
-}
-
-/// The capture format's stable identifier, "kryoflux".
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_format_id(
-    set: *const RemanenceCaptureSet,
-) -> *const c_char {
-    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.format_id.as_ptr())
-}
-
-/// The capture format's human-readable name.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_format_name(
-    set: *const RemanenceCaptureSet,
-) -> *const c_char {
-    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.format_name.as_ptr())
-}
-
-/// The archive grammar the members were read through, e.g. "7z".
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_archive_format_id(
-    set: *const RemanenceCaptureSet,
-) -> *const c_char {
-    unsafe { set.as_ref() }.map_or(ptr::null(), |set| set.archive_format_id.as_ptr())
-}
-
-/// Which P7 mode the open obtained on the archive file.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_access_mode(
-    set: *const RemanenceCaptureSet,
-) -> RemanenceAccessMode {
-    unsafe { set.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |set| {
-        access_mode(set.set.access_mode())
-    })
-}
-
-/// The capture's declared timing basis, as an exact ratio of ticks per
-/// second. Returns false when the handle is null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_ticks_per_second(
-    set: *const RemanenceCaptureSet,
-    numerator_out: *mut u64,
-    denominator_out: *mut u64,
-) -> bool {
-    let Some(set) = (unsafe { set.as_ref() }) else {
-        return false;
-    };
-    let base = set.set.inspect().time_base;
-    if !numerator_out.is_null() {
-        unsafe { *numerator_out = base.ticks_per_second_numerator };
-    }
-    if !denominator_out.is_null() {
-        unsafe { *denominator_out = base.ticks_per_second_denominator };
-    }
-    true
-}
-
-/// How many bytes of private session storage the decoded capture
-/// occupies.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_backing_bytes(
-    set: *const RemanenceCaptureSet,
-) -> u64 {
-    unsafe { set.as_ref() }.map_or(0, |set| set.set.backing_bytes())
-}
-
-/// How much of that backing is currently resident. The capture is never
-/// held whole.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_resident_bytes(
-    set: *const RemanenceCaptureSet,
-) -> u64 {
-    unsafe { set.as_ref() }.map_or(0, |set| set.set.resident_bytes())
-}
-
-/// Number of evidence lines behind the recognition.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_evidence_count(
-    set: *const RemanenceCaptureSet,
-) -> usize {
-    unsafe { set.as_ref() }.map_or(0, |set| set.evidence.len())
-}
-
-/// One evidence line, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_evidence(
-    set: *const RemanenceCaptureSet,
-    index: usize,
-) -> *const c_char {
-    unsafe { set.as_ref() }.map_or(ptr::null(), |set| {
-        set.evidence
-            .get(index)
-            .map_or(ptr::null(), |line| line.as_ptr())
-    })
-}
-
-/// Number of members the set holds.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_count(
-    set: *const RemanenceCaptureSet,
-) -> usize {
-    unsafe { set.as_ref() }.map_or(0, |set| set.members.len())
-}
-
-/// One member's catalog identity, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_entry_name(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-) -> *const c_char {
-    unsafe { capture_member(set, member) }.map_or(ptr::null(), |member| member.entry_name.as_ptr())
-}
-
-/// One member's size in bytes as the catalog declares it; 0 when out of
-/// range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_entry_bytes(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-) -> u64 {
-    unsafe { capture_member(set, member) }.map_or(0, |member| member.entry_bytes)
-}
-
-/// One member's drive-step position, as an exact ratio. Returns false
-/// when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_position(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    numerator_out: *mut u64,
-    denominator_out: *mut u64,
-) -> bool {
-    let Some(member) = (unsafe { capture_member(set, member) }) else {
-        return false;
-    };
-    if !numerator_out.is_null() {
-        unsafe { *numerator_out = member.position_numerator };
-    }
-    if !denominator_out.is_null() {
-        unsafe { *denominator_out = member.position_denominator };
-    }
-    true
-}
-
-/// The head that captured this position; returns false when the source
-/// numbers no head, which is a different fact from head zero, or when
-/// the index is out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_head(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    out: *mut u64,
-) -> bool {
-    let Some(member) = (unsafe { capture_member(set, member) }) else {
-        return false;
-    };
-    unsafe { write_opt_u64(member.head, out) }
-}
-
-/// Number of things recorded as qualified about this member.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_issue_count(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-) -> usize {
-    unsafe { capture_member(set, member) }.map_or(0, |member| member.issues.len())
-}
-
-/// One issue's stable code, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_issue_code(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    issue: usize,
-) -> *const c_char {
-    unsafe { capture_member(set, member) }.map_or(ptr::null(), |member| {
-        member
-            .issues
-            .get(issue)
-            .map_or(ptr::null(), |issue| issue.code.as_ptr())
-    })
-}
-
-/// One issue's human-readable detail, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_issue_detail(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    issue: usize,
-) -> *const c_char {
-    unsafe { capture_member(set, member) }.map_or(ptr::null(), |member| {
-        member
-            .issues
-            .get(issue)
-            .map_or(ptr::null(), |issue| issue.detail.as_ptr())
-    })
-}
-
-/// Number of source transfers recorded at this member's location.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_member_run_count(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-) -> usize {
-    unsafe { capture_member(set, member) }.map_or(0, |member| member.runs.len())
-}
-
-/// One run's place in the member's recorded order; 0 when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_ordinal(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> u64 {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.ordinal)
-}
-
-/// How many flux transitions the run recorded.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_transitions(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> u64 {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.transitions)
-}
-
-/// The last transition's tick: the extent of what was recorded, not a
-/// circumference. A run states no period.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_extent_ticks(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> u64 {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.extent_ticks)
-}
-
-/// How many timed markers sit on channels parallel to the run's flux.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_markers(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> u64 {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.markers)
-}
-
-/// How many of those markers are index events.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_index_markers(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> u64 {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.index_markers)
-}
-
-/// The result the capture tool declared for this transfer, where it
-/// declared one; zero is a clean read. Returns false when it declared
-/// none or the index is out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_transfer_result(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-    out: *mut u32,
-) -> bool {
-    let Some(run) = (unsafe { capture_run(set, member, run) }) else {
-        return false;
-    };
-    match run.transfer_result {
-        Some(result) => {
-            if !out.is_null() {
-                unsafe { *out = result };
-            }
-            true
-        }
-        None => false,
-    }
-}
-
-/// Transitions recorded before the run's first index: evidence that
-/// bounding into circular observations does not consume.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_transitions_before_first_index(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> u64 {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.transitions_before_first_index)
-}
-
-/// Transitions recorded after the run's last index, on the same terms.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_transitions_after_last_index(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> u64 {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.transitions_after_last_index)
-}
-
-/// How many circular observations the run's indices bounded.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_run_observation_count(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-) -> usize {
-    unsafe { capture_run(set, member, run) }.map_or(0, |run| run.observations.len())
-}
-
-/// One observation's place in the location's source-record order. Not a
-/// rank: nothing here says it is a good or complete revolution.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_observation_ordinal(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-    observation: usize,
-) -> u64 {
-    unsafe { capture_observation(set, member, run, observation) }
-        .map_or(0, |observation| observation.ordinal)
-}
-
-/// The observation's declared circumference, in the capture's own ticks.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_observation_span_ticks(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-    observation: usize,
-) -> u64 {
-    unsafe { capture_observation(set, member, run, observation) }
-        .map_or(0, |observation| observation.span_ticks)
-}
-
-/// How many transitions the observation holds.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_observation_transitions(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-    observation: usize,
-) -> u64 {
-    unsafe { capture_observation(set, member, run, observation) }
-        .map_or(0, |observation| observation.transitions)
-}
-
-/// How many markers the observation holds.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_observation_markers(
-    set: *const RemanenceCaptureSet,
-    member: usize,
-    run: usize,
-    observation: usize,
-) -> u64 {
-    unsafe { capture_observation(set, member, run, observation) }
-        .map_or(0, |observation| observation.markers)
-}
-
-// ---------------------------------------------------------------------------
-// Drive-profile recognition: which family's conventions a capture was
-// recorded under, ranked, with the observations that produced the
-// verdict. A count, a density, an angle and an absence cross this
-// surface; nothing that was decoded, because nothing was.
-
-use remanence::Recognition;
-
-/// One zone as a profile declares it, and what the capture recovered of
-/// it.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RemanenceZoneClaim {
-    pub first_location: u64,
-    pub last_location: u64,
-    /// What the family claims one location in this zone holds.
-    pub records_declared: u32,
-    pub locations_declared: u64,
-    pub locations_claimed: u64,
-    /// The cell this zone claims, in thousandths of a reference cycle.
-    pub nominal_cell_millicycles: u64,
-}
-
-/// What the probe found at one source position. Every `has_*` flag says
-/// whether the value beside it was established at all: an absence is a
-/// finding, not a zero.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RemanenceLocationVerdict {
-    pub position_numerator: u64,
-    pub position_denominator: u64,
-    pub has_head: bool,
-    pub head: u64,
-    /// The family location this position addresses, where the family's
-    /// addressing covers it at all.
-    pub has_family_location: bool,
-    pub family_location: u64,
-    pub has_zone: bool,
-    pub zone: u32,
-    pub records: u32,
-    /// The bit distance between record starts, where it repeats.
-    pub has_record_bits: bool,
-    pub record_bits: u64,
-    /// How far that spacing departs from its own median. Zero is a
-    /// spacing that repeats to the bit.
-    pub record_bits_deviation: u64,
-    /// The one departure from it, as an angle in reference-clock cycles.
-    pub has_seam: bool,
-    pub seam_cycles: u64,
-    /// The derived cell projected onto the family's nominal rotation,
-    /// in thousandths of a reference cycle, beside what the zone claims.
-    pub has_cell: bool,
-    pub cell_millicycles: u64,
-    pub has_nominal_cell: bool,
-    pub nominal_cell_millicycles: u64,
-    /// How much of the interval population classified, per thousand.
-    pub resolved_permille: u32,
-    pub observations: u32,
-    pub observations_agreeing: u32,
-    /// The adjacent position holding the same content, where one does.
-    pub has_duplicate: bool,
-    pub duplicate_numerator: u64,
-    pub duplicate_denominator: u64,
-    pub claimed: bool,
-}
-
-struct VerdictView {
-    profile_id: CString,
-    profile_name: CString,
-    evidence: Vec<CString>,
-    artifacts: Vec<CString>,
-    refusals: Vec<Option<CString>>,
-}
-
-/// A recognition result, ranked highest confidence first.
-pub struct RemanenceRecognition {
-    recognition: Recognition,
-    pinned: Option<CString>,
-    evidence: Vec<CString>,
-    verdicts: Vec<VerdictView>,
-}
-
-impl RemanenceRecognition {
-    fn new(recognition: Recognition) -> Self {
-        let pinned = recognition.pinned.as_deref().map(to_cstring);
-        let evidence = recognition
-            .evidence
-            .iter()
-            .map(|line| to_cstring(line))
-            .collect();
-        let verdicts = recognition
-            .verdicts
-            .iter()
-            .map(|verdict| VerdictView {
-                profile_id: to_cstring(&verdict.profile_id),
-                profile_name: to_cstring(&verdict.profile_name),
-                evidence: verdict
-                    .evidence
-                    .iter()
-                    .map(|line| to_cstring(line))
-                    .collect(),
-                artifacts: verdict
-                    .locations
-                    .iter()
-                    .map(|location| to_cstring(&location.artifact))
-                    .collect(),
-                refusals: verdict
-                    .locations
-                    .iter()
-                    .map(|location| location.refusal.as_deref().map(to_cstring))
-                    .collect(),
-            })
-            .collect();
-        Self {
-            recognition,
-            pinned,
-            evidence,
-            verdicts,
-        }
-    }
-}
-
-unsafe fn recognition_verdict<'a>(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> Option<(&'a remanence::ProfileVerdict, &'a VerdictView)> {
-    let recognition = unsafe { recognition.as_ref() }?;
-    Some((
-        recognition.recognition.verdicts.get(verdict)?,
-        recognition.verdicts.get(verdict)?,
-    ))
-}
-
-/// Recognizes the drive family a capture set was recorded under. Every
-/// enrolled profile is consulted and what claims the capture is ranked;
-/// a capture no profile claims is a named refusal. Returns null on
-/// failure and stores a message in `error_out` (free with
-/// `remanence_string_free`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_recognize(
-    set: *const RemanenceCaptureSet,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceRecognition {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(set) = (unsafe { set.as_ref() }) else {
-        let error = remanence::Error::io("null capture set");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    match set.set.recognize() {
-        Ok(recognition) => Box::into_raw(Box::new(RemanenceRecognition::new(recognition))),
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Recognizes the capture against one named profile, whether or not it
-/// would have won the ranking. A profile this build does not enroll is
-/// refused by name.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_recognize_as(
-    set: *const RemanenceCaptureSet,
-    profile_id: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceRecognition {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let (Some(set), false) = (unsafe { set.as_ref() }, profile_id.is_null()) else {
-        let error = remanence::Error::io("null capture set or profile id");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let id = String::from_utf8_lossy(unsafe { CStr::from_ptr(profile_id) }.to_bytes());
-    match set.set.recognize_as(id.as_ref()) {
-        Ok(recognition) => Box::into_raw(Box::new(RemanenceRecognition::new(recognition))),
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Frees a recognition handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_free(recognition: *mut RemanenceRecognition) {
-    if !recognition.is_null() {
-        drop(unsafe { Box::from_raw(recognition) });
-    }
-}
-
-/// The profile the caller pinned, or null when the ranking was open.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_pinned(
-    recognition: *const RemanenceRecognition,
-) -> *const c_char {
-    unsafe { recognition.as_ref() }.map_or(ptr::null(), |recognition| {
-        recognition
-            .pinned
-            .as_ref()
-            .map_or(ptr::null(), |pinned| pinned.as_ptr())
-    })
-}
-
-/// Number of evidence lines about the recognition itself.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_evidence_count(
-    recognition: *const RemanenceRecognition,
-) -> usize {
-    unsafe { recognition.as_ref() }.map_or(0, |recognition| recognition.evidence.len())
-}
-
-/// One of those lines, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_evidence(
-    recognition: *const RemanenceRecognition,
-    index: usize,
-) -> *const c_char {
-    unsafe { recognition.as_ref() }.map_or(ptr::null(), |recognition| {
-        recognition
-            .evidence
-            .get(index)
-            .map_or(ptr::null(), |line| line.as_ptr())
-    })
-}
-
-/// How many profiles claimed the capture, highest confidence first.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_verdict_count(
-    recognition: *const RemanenceRecognition,
-) -> usize {
-    unsafe { recognition.as_ref() }.map_or(0, |recognition| recognition.verdicts.len())
-}
-
-/// One verdict's profile identifier, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_profile_id(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> *const c_char {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(ptr::null(), |(_, view)| view.profile_id.as_ptr())
-}
-
-/// One verdict's human-readable family name.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_profile_name(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> *const c_char {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(ptr::null(), |(_, view)| view.profile_name.as_ptr())
-}
-
-/// Detection confidence, 0-100. Never an answer on its own: read the
-/// evidence beside it.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_confidence(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> u8 {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(0, |(verdict, _)| verdict.confidence)
-}
-
-/// How many of the profile's declared locations the capture claimed,
-/// and how many it declares.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_locations_claimed(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> u32 {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(0, |(verdict, _)| verdict.locations_claimed)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_locations_declared(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> u64 {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(0, |(verdict, _)| verdict.locations_declared)
-}
-
-/// Number of evidence lines behind this verdict.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_verdict_evidence_count(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> usize {
-    unsafe { recognition_verdict(recognition, verdict) }.map_or(0, |(_, view)| view.evidence.len())
-}
-
-/// One of those lines, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_verdict_evidence(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-    index: usize,
-) -> *const c_char {
-    unsafe { recognition_verdict(recognition, verdict) }.map_or(ptr::null(), |(_, view)| {
-        view.evidence
-            .get(index)
-            .map_or(ptr::null(), |line| line.as_ptr())
-    })
-}
-
-/// How many density zones the profile declares.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_zone_count(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> usize {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(0, |(verdict, _)| verdict.zones.len())
-}
-
-/// One zone, written into `out`. Returns false when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_zone(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-    zone: usize,
-    out: *mut RemanenceZoneClaim,
-) -> bool {
-    let Some((verdict, _)) = (unsafe { recognition_verdict(recognition, verdict) }) else {
-        return false;
-    };
-    let Some(claim) = verdict.zones.get(zone) else {
-        return false;
-    };
-    if !out.is_null() {
-        unsafe {
-            *out = RemanenceZoneClaim {
-                first_location: claim.first_location,
-                last_location: claim.last_location,
-                records_declared: claim.records_declared,
-                locations_declared: claim.locations_declared,
-                locations_claimed: claim.locations_claimed,
-                nominal_cell_millicycles: claim.nominal_cell_millicycles,
-            };
-        }
-    }
-    true
-}
-
-/// How many source positions the probe accounted for.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_location_count(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-) -> usize {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(0, |(verdict, _)| verdict.locations.len())
-}
-
-/// One position's findings, written into `out`. Returns false when out
-/// of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_location(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-    location: usize,
-    out: *mut RemanenceLocationVerdict,
-) -> bool {
-    let Some((verdict, _)) = (unsafe { recognition_verdict(recognition, verdict) }) else {
-        return false;
-    };
-    let Some(found) = verdict.locations.get(location) else {
-        return false;
-    };
-    if !out.is_null() {
-        unsafe {
-            *out = RemanenceLocationVerdict {
-                position_numerator: found.position.numerator,
-                position_denominator: found.position.denominator,
-                has_head: found.head.is_some(),
-                head: found.head.unwrap_or(0),
-                has_family_location: found.family_location.is_some(),
-                family_location: found.family_location.unwrap_or(0),
-                has_zone: found.zone.is_some(),
-                zone: found.zone.unwrap_or(0),
-                records: found.records,
-                has_record_bits: found.record_bits.is_some(),
-                record_bits: found.record_bits.unwrap_or(0),
-                record_bits_deviation: found.record_bits_deviation,
-                has_seam: found.seam_cycles.is_some(),
-                seam_cycles: found.seam_cycles.unwrap_or(0),
-                has_cell: found.cell_millicycles.is_some(),
-                cell_millicycles: found.cell_millicycles.unwrap_or(0),
-                has_nominal_cell: found.nominal_cell_millicycles.is_some(),
-                nominal_cell_millicycles: found.nominal_cell_millicycles.unwrap_or(0),
-                resolved_permille: found.resolved_permille,
-                observations: found.observations,
-                observations_agreeing: found.observations_agreeing,
-                has_duplicate: found.duplicate_of.is_some(),
-                duplicate_numerator: found.duplicate_of.map_or(0, |of| of.numerator),
-                duplicate_denominator: found.duplicate_of.map_or(0, |of| of.denominator),
-                claimed: found.claimed,
-            };
-        }
-    }
-    true
-}
-
-/// The member one position was read from, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_location_artifact(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-    location: usize,
-) -> *const c_char {
-    unsafe { recognition_verdict(recognition, verdict) }.map_or(ptr::null(), |(_, view)| {
-        view.artifacts
-            .get(location)
-            .map_or(ptr::null(), |artifact| artifact.as_ptr())
-    })
-}
-
-/// Why a position was not claimed, in the profile's own terms; null when
-/// it was claimed or the index is out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_recognition_location_refusal(
-    recognition: *const RemanenceRecognition,
-    verdict: usize,
-    location: usize,
-) -> *const c_char {
-    unsafe { recognition_verdict(recognition, verdict) }.map_or(ptr::null(), |(_, view)| {
-        view.refusals
-            .get(location)
-            .and_then(Option::as_ref)
-            .map_or(ptr::null(), |refusal| refusal.as_ptr())
-    })
-}
-
-// ---------------------------------------------------------------------------
-// The P64 image-format adapter: one container claimed in both
-// directions. Reading it decodes a medium at rest; writing it produces a
-// new artifact from a remanence image, under a claim stated before the
-// file exists.
-
-use remanence::{P64Image, P64Report};
+// The P64 rendition: what a p64 container carries, or will carry, of
+// one remanence image, under a claim stated before the file exists.
+// Reading a P64 is a session load like any other medium's — the
+// declared format "p64" — so the report below is the rendition
+// direction's account and no root of its own.
+
+use remanence::P64Report;
 
 /// One half-track a P64 holds, in the container's addressing and the
 /// family's both.
@@ -6553,135 +5885,10 @@ impl P64View {
     }
 }
 
-/// An opened P64 image, holding its claim on the file and the medium it
-/// decoded into private session storage.
-pub struct RemanenceP64Image {
-    image: P64Image,
-    path: CString,
-    report: P64Report,
-    view: P64View,
-}
-
 /// What a container carried, or will carry, of one remanence image.
 pub struct RemanenceP64Report {
     report: P64Report,
     view: P64View,
-}
-
-unsafe fn open_p64(
-    path: *const c_char,
-    cache_bytes: Option<u64>,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceP64Image {
-    unsafe { clear_error(error_out, error_rule_out) };
-    if path.is_null() {
-        let error = remanence::Error::io("null path");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    }
-    let path = String::from_utf8_lossy(unsafe { CStr::from_ptr(path) }.to_bytes());
-    let opened = match cache_bytes {
-        Some(cache_bytes) => P64Image::open_with_cache(path.as_ref(), cache_bytes),
-        None => P64Image::open(path.as_ref()),
-    };
-    match opened {
-        Ok(image) => {
-            let report = image.inspect().clone();
-            let view = P64View::new(&report);
-            Box::into_raw(Box::new(RemanenceP64Image {
-                path: to_cstring(&image.path().to_string_lossy()),
-                image,
-                report,
-                view,
-            }))
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Opens the P64 image at `path` (UTF-8), claiming the file and decoding
-/// every half-track once into private session storage. The version is
-/// checked before anything else is touched, and a version, flag bit, or
-/// chunk signature past this release's claim is refused by name. Returns
-/// null on failure and stores a message in `error_out` (free with
-/// `remanence_string_free`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_open(
-    path: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceP64Image {
-    unsafe { open_p64(path, None, error_category_out, error_out, error_rule_out) }
-}
-
-/// Opens a P64 image as `remanence_p64_image_open` does, under a
-/// declared cache bound: at most `cache_bytes` of the decoded medium
-/// stays resident. The bound narrows the working set; it never refuses
-/// service.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_open_with_cache(
-    path: *const c_char,
-    cache_bytes: u64,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceP64Image {
-    unsafe {
-        open_p64(
-            path,
-            Some(cache_bytes),
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-/// Frees an image handle, releasing its claim on the file and discarding
-/// the private session storage the medium decoded into.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_free(image: *mut RemanenceP64Image) {
-    if !image.is_null() {
-        drop(unsafe { Box::from_raw(image) });
-    }
-}
-
-/// The path the image was opened from.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_path(
-    image: *const RemanenceP64Image,
-) -> *const c_char {
-    unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.path.as_ptr())
-}
-
-/// Which P7 mode the open obtained on the file.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_access_mode(
-    image: *const RemanenceP64Image,
-) -> RemanenceAccessMode {
-    unsafe { image.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |image| {
-        access_mode(image.image.access_mode())
-    })
-}
-
-/// How many bytes of private session storage the decoded medium
-/// occupies, and how much of that is currently resident.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_backing_bytes(image: *const RemanenceP64Image) -> u64 {
-    unsafe { image.as_ref() }.map_or(0, |image| image.image.backing_bytes())
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_resident_bytes(
-    image: *const RemanenceP64Image,
-) -> u64 {
-    unsafe { image.as_ref() }.map_or(0, |image| image.image.resident_bytes())
 }
 
 /// Frees a report handle.
@@ -6692,106 +5899,84 @@ pub unsafe extern "C" fn remanence_p64_report_free(report: *mut RemanenceP64Repo
     }
 }
 
-/// An opened image and a written artifact report the same thing, so the
-/// accessors below take either handle: pass whichever you hold and null
-/// for the other.
+/// A described rendition and a written artifact report the same thing,
+/// so the accessors below serve both doors' reports alike.
 unsafe fn p64_reported<'a>(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> Option<(&'a P64Report, &'a P64View)> {
-    if let Some(image) = unsafe { image.as_ref() } {
-        return Some((&image.report, &image.view));
-    }
     unsafe { report.as_ref() }.map(|report| (&report.report, &report.view))
 }
 
 /// The container format's stable identifier, "p64".
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_format_id(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| view.format_id.as_ptr())
+    unsafe { p64_reported(report) }.map_or(ptr::null(), |(_, view)| view.format_id.as_ptr())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_format_name(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }
-        .map_or(ptr::null(), |(_, view)| view.format_name.as_ptr())
+    unsafe { p64_reported(report) }.map_or(ptr::null(), |(_, view)| view.format_name.as_ptr())
 }
 
 /// The container's declared format version.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_version(
-    image: *const RemanenceP64Image,
-    report: *const RemanenceP64Report,
-) -> u32 {
-    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.version)
+pub unsafe extern "C" fn remanence_p64_version(report: *const RemanenceP64Report) -> u32 {
+    unsafe { p64_reported(report) }.map_or(0, |(report, _)| report.version)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_write_protected(
-    image: *const RemanenceP64Image,
-    report: *const RemanenceP64Report,
-) -> bool {
-    unsafe { p64_reported(image, report) }.is_some_and(|(report, _)| report.write_protected)
+pub unsafe extern "C" fn remanence_p64_write_protected(report: *const RemanenceP64Report) -> bool {
+    unsafe { p64_reported(report) }.is_some_and(|(report, _)| report.write_protected)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_double_sided(
-    image: *const RemanenceP64Image,
-    report: *const RemanenceP64Report,
-) -> bool {
-    unsafe { p64_reported(image, report) }.is_some_and(|(report, _)| report.double_sided)
+pub unsafe extern "C" fn remanence_p64_double_sided(report: *const RemanenceP64Report) -> bool {
+    unsafe { p64_reported(report) }.is_some_and(|(report, _)| report.double_sided)
 }
 
 /// The drive profile the container's own signature names, and the frame
 /// that profile declares.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_profile_id(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| view.profile_id.as_ptr())
+    unsafe { p64_reported(report) }.map_or(ptr::null(), |(_, view)| view.profile_id.as_ptr())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_reference_clock_hz(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> u64 {
-    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.reference_clock_hz)
+    unsafe { p64_reported(report) }.map_or(0, |(report, _)| report.reference_clock_hz)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_cycles_per_rotation(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> u64 {
-    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.cycles_per_rotation)
+    unsafe { p64_reported(report) }.map_or(0, |(report, _)| report.cycles_per_rotation)
 }
 
 /// How many half-tracks the container holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_half_track_count(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> usize {
-    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.half_tracks.len())
+    unsafe { p64_reported(report) }.map_or(0, |(report, _)| report.half_tracks.len())
 }
 
 /// One of them, written into `out`. Returns false when out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_half_track(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
     index: usize,
     out: *mut RemanenceP64HalfTrack,
 ) -> bool {
-    let Some((report, _)) = (unsafe { p64_reported(image, report) }) else {
+    let Some((report, _)) = (unsafe { p64_reported(report) }) else {
         return false;
     };
     let Some(track) = report.half_tracks.get(index) else {
@@ -6817,20 +6002,18 @@ pub unsafe extern "C" fn remanence_p64_half_track(
 /// How many kinds of loss the crossing does not carry.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_declared_loss_count(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> usize {
-    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| report.declared_loss.len())
+    unsafe { p64_reported(report) }.map_or(0, |(report, _)| report.declared_loss.len())
 }
 
 /// One loss entry's stable code, or null when out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_declared_loss_code(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
     index: usize,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| {
+    unsafe { p64_reported(report) }.map_or(ptr::null(), |(_, view)| {
         view.loss_codes
             .get(index)
             .map_or(ptr::null(), |code| code.as_ptr())
@@ -6840,11 +6023,10 @@ pub unsafe extern "C" fn remanence_p64_declared_loss_code(
 /// What was lost, in the source's own terms. A count is not an account.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_declared_loss_detail(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
     index: usize,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| {
+    unsafe { p64_reported(report) }.map_or(ptr::null(), |(_, view)| {
         view.loss_details
             .get(index)
             .map_or(ptr::null(), |detail| detail.as_ptr())
@@ -6854,31 +6036,26 @@ pub unsafe extern "C" fn remanence_p64_declared_loss_detail(
 /// How much of it there was, in whatever the detail counts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_declared_loss_amount(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
     index: usize,
 ) -> u64 {
-    unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| {
+    unsafe { p64_reported(report) }.map_or(0, |(report, _)| {
         report.declared_loss.get(index).map_or(0, |loss| loss.count)
     })
 }
 
 /// How the container was recognized and what this adapter claims of it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_evidence_count(
-    image: *const RemanenceP64Image,
-    report: *const RemanenceP64Report,
-) -> usize {
-    unsafe { p64_reported(image, report) }.map_or(0, |(_, view)| view.evidence.len())
+pub unsafe extern "C" fn remanence_p64_evidence_count(report: *const RemanenceP64Report) -> usize {
+    unsafe { p64_reported(report) }.map_or(0, |(_, view)| view.evidence.len())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_p64_evidence(
-    image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
     index: usize,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| {
+    unsafe { p64_reported(report) }.map_or(ptr::null(), |(_, view)| {
         view.evidence
             .get(index)
             .map_or(ptr::null(), |line| line.as_ptr())
@@ -6892,78 +6069,7 @@ pub unsafe extern "C" fn remanence_p64_evidence(
 // synchronization, headers, sectors or files to what it holds, and there
 // is no way back down.
 
-use remanence::{C1541Bitstream, C1541Bytestream};
-
-/// Which declared density a location is clocked at.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceDensityPolicy {
-    /// The zone the family's density map declares for the location.
-    Declared = 0,
-    /// The zone in `density_zone`, for every location.
-    Fixed = 1,
-}
-
-/// What a location no declared zone covers becomes.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceUnzonedPolicy {
-    Refuse = 0,
-    Omit = 1,
-}
-
-/// How a pulse the medium states does not read the same every time
-/// becomes a definite bit.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceWeakPulsePolicy {
-    /// Every such pulse is taken as `weak_pulse_detected`, uniformly.
-    Declared = 0,
-    /// Each is resolved reproducibly from `seed` and its own angle.
-    Seeded = 1,
-}
-
-/// The complete declared policy for one medium-to-bitstream transition.
-/// There is no default: every field is a decision about evidence.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RemanenceReadChannelPolicy {
-    pub density: RemanenceDensityPolicy,
-    pub density_zone: u32,
-    pub unzoned: RemanenceUnzonedPolicy,
-    pub weak_pulse: RemanenceWeakPulsePolicy,
-    pub weak_pulse_detected: bool,
-    pub seed: u64,
-}
-
-/// Where byte framing begins.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceAlignmentPolicy {
-    /// At the family's declared landmark and nowhere else.
-    Landmark = 0,
-    /// At the circle's origin as well, the caller declaring it a byte
-    /// boundary.
-    Origin = 1,
-}
-
-/// What a group holding a pattern the family's table does not assign
-/// becomes.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceUnassignedSymbolPolicy {
-    Refuse = 0,
-    DeclareLoss = 1,
-}
-
-/// The complete declared policy for one bitstream-to-bytestream
-/// transition.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RemanenceGcrCodecPolicy {
-    pub alignment: RemanenceAlignmentPolicy,
-    pub unassigned_symbol: RemanenceUnassignedSymbolPolicy,
-}
+use remanence::{C1541Bitstream, C1541Bytestream, Location};
 
 /// One location the bitstream holds, and what the channel resolved
 /// there.
@@ -7034,97 +6140,139 @@ impl LayerView {
     }
 }
 
+/// What a bitstream handle stands on: a stream of its own, or the one
+/// cached in a pooled medium.
+enum BitstreamBacking {
+    /// The materialize door's: the handle owns the stream, and freeing
+    /// it discards the stream's private session storage.
+    Owned(C1541Bitstream),
+    /// The medium door's: the stream lives in the session's pool with
+    /// its medium, named by session and pool identity and re-resolved
+    /// on every call, so a released medium answers by name rather than
+    /// through state that has left.
+    Pooled {
+        session: *mut RemanenceSession,
+        media: MediaId,
+    },
+}
+
+/// What a bytestream handle stands on, the same fork.
+enum BytestreamBacking {
+    Owned(C1541Bytestream),
+    Pooled {
+        session: *mut RemanenceSession,
+        media: MediaId,
+    },
+}
+
 /// A hardware bitstream, held in the session. The bits stay behind this
 /// handle; what it reports is the transition that produced them.
+///
+/// Two doors mint it: `remanence_image_materialize_c1541_bitstream`,
+/// whose handle owns the stream it materialized, and
+/// `remanence_medium_bitstream`, whose handle is a view of the stream
+/// cached in the pooled medium — that one **must not outlive its
+/// session**, and stops answering once the medium is released.
 pub struct RemanenceC1541Bitstream {
-    bitstream: C1541Bitstream,
+    backing: BitstreamBacking,
     view: LayerView,
 }
 
-/// An encoded bytestream, held in the session.
-pub struct RemanenceC1541Bytestream {
-    bytestream: C1541Bytestream,
-    view: LayerView,
-}
-
-fn to_channel_policy(policy: &RemanenceReadChannelPolicy) -> remanence::ReadChannelPolicy {
-    remanence::ReadChannelPolicy {
-        density: match policy.density {
-            RemanenceDensityPolicy::Declared => remanence::DensityPolicy::Declared,
-            RemanenceDensityPolicy::Fixed => remanence::DensityPolicy::Fixed {
-                zone: policy.density_zone,
-            },
-        },
-        unzoned: match policy.unzoned {
-            RemanenceUnzonedPolicy::Refuse => remanence::UnzonedPolicy::Refuse,
-            RemanenceUnzonedPolicy::Omit => remanence::UnzonedPolicy::Omit,
-        },
-        weak_pulse: match policy.weak_pulse {
-            RemanenceWeakPulsePolicy::Declared => remanence::WeakPulsePolicy::Declared {
-                detected: policy.weak_pulse_detected,
-            },
-            RemanenceWeakPulsePolicy::Seeded => remanence::WeakPulsePolicy::Seeded,
-        },
-        seed: policy.seed,
-    }
-}
-
-fn to_codec_policy(policy: &RemanenceGcrCodecPolicy) -> remanence::GcrCodecPolicy {
-    remanence::GcrCodecPolicy {
-        alignment: match policy.alignment {
-            RemanenceAlignmentPolicy::Landmark => remanence::AlignmentPolicy::Landmark,
-            RemanenceAlignmentPolicy::Origin => remanence::AlignmentPolicy::Origin,
-        },
-        unassigned_symbol: match policy.unassigned_symbol {
-            RemanenceUnassignedSymbolPolicy::Refuse => remanence::UnassignedSymbolPolicy::Refuse,
-            RemanenceUnassignedSymbolPolicy::DeclareLoss => {
-                remanence::UnassignedSymbolPolicy::DeclareLoss
+impl RemanenceC1541Bitstream {
+    /// The stream this handle names: its own for the materialize
+    /// backing, the pooled medium's for the medium one — `None` once
+    /// that medium is released.
+    fn stream(&self) -> Option<&C1541Bitstream> {
+        match &self.backing {
+            BitstreamBacking::Owned(bitstream) => Some(bitstream),
+            BitstreamBacking::Pooled { session, media } => {
+                let session = unsafe { &mut (**session).session };
+                session.medium_mut(*media)?.bitstream().ok()
             }
-        },
+        }
     }
 }
 
-fn own_bitstream(bitstream: C1541Bitstream) -> *mut RemanenceC1541Bitstream {
+/// An encoded bytestream, held in the session — minted by
+/// `remanence_c1541_bitstream_materialize_bytestream`, whose handle owns
+/// its stream, or by `remanence_medium_bytestream`, whose handle is a
+/// view of the stream cached in the pooled medium and **must not outlive
+/// its session**.
+pub struct RemanenceC1541Bytestream {
+    backing: BytestreamBacking,
+    view: LayerView,
+}
+
+impl RemanenceC1541Bytestream {
+    /// The stream this handle names, as the bitstream's resolves.
+    fn stream(&self) -> Option<&C1541Bytestream> {
+        match &self.backing {
+            BytestreamBacking::Owned(bytestream) => Some(bytestream),
+            BytestreamBacking::Pooled { session, media } => {
+                let session = unsafe { &mut (**session).session };
+                session.medium_mut(*media)?.bytestream().ok()
+            }
+        }
+    }
+}
+
+/// The report view a bitstream handle answers its strings from.
+fn bitstream_view(bitstream: &C1541Bitstream) -> LayerView {
     let report = bitstream.inspect();
-    let view = LayerView::new(
+    LayerView::new(
         &report.profile_id,
         &report.profile_name,
         "",
         &report.declared_loss,
         &report.evidence,
-    );
-    Box::into_raw(Box::new(RemanenceC1541Bitstream { bitstream, view }))
+    )
+}
+
+/// The report view a bytestream handle answers its strings from.
+fn bytestream_view(bytestream: &C1541Bytestream) -> LayerView {
+    let report = bytestream.inspect();
+    LayerView::new(
+        &report.profile_id,
+        &report.codec_id,
+        &report.codec_name,
+        &report.declared_loss,
+        &report.evidence,
+    )
 }
 
 /// Materializes the family's hardware bitstream from what a remanence
-/// image holds, under declared mechanics and read-channel rules.
+/// image holds, under the profile's declared mechanics and read-channel
+/// rules — it takes no policy because the type carries one (P30 reached
+/// through the type), and `cache_bytes` is the P27 working-set bound.
 ///
 /// The image carries no clock, so the ladder stands on the served
 /// projection of it — one multiply per point, at the family's reference
 /// frame — rather than on the image directly. The image is untouched.
-/// Returns null on failure and stores a message in `error_out` (free
-/// with `remanence_string_free`).
+/// The handle owns the stream; free it with
+/// `remanence_c1541_bitstream_free`. Returns null on failure and stores
+/// a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_image_materialize_c1541_bitstream(
     image: *const RemanenceImage,
-    policy: *const RemanenceReadChannelPolicy,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceC1541Bitstream {
     unsafe { clear_error(error_out, error_rule_out) };
-    let (Some(image), Some(policy)) = (unsafe { image.as_ref() }, unsafe { policy.as_ref() })
-    else {
-        let error = remanence::Error::io("null image or policy");
+    let Some(image) = (unsafe { image.as_ref() }) else {
+        let error = remanence::Error::io("null image");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match image
-        .image
-        .materialize_c1541_bitstream(to_channel_policy(policy), cache_bytes)
-    {
-        Ok(bitstream) => own_bitstream(bitstream),
+    match image.image.materialize_c1541_bitstream(cache_bytes) {
+        Ok(bitstream) => {
+            let view = bitstream_view(&bitstream);
+            Box::into_raw(Box::new(RemanenceC1541Bitstream {
+                backing: BitstreamBacking::Owned(bitstream),
+                view,
+            }))
+        }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
@@ -7132,28 +6280,48 @@ pub unsafe extern "C" fn remanence_image_materialize_c1541_bitstream(
     }
 }
 
-/// The same, from the medium a P64 container holds at rest.
+/// The family's hardware bitstream over this medium's recording,
+/// materialized once — lazily, into the pooled medium itself — and
+/// answered from then on. It answers where the device type's profile
+/// bears flux, and refuses by name everywhere else: a block medium's
+/// recording is presented by its format adapter, and the two families
+/// are disjoint (P13).
+///
+/// The handle is a view of the pooled stream, named by session and pool
+/// identity like the medium's own view: it re-resolves on every call,
+/// stops answering once the medium is released, and **must not outlive
+/// the session**. Free it with `remanence_c1541_bitstream_free`, which
+/// discards the view alone — the stream stays with its medium. Returns
+/// null on failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_materialize_c1541_bitstream(
-    image: *const RemanenceP64Image,
-    policy: *const RemanenceReadChannelPolicy,
-    cache_bytes: u64,
+pub unsafe extern "C" fn remanence_medium_bitstream(
+    medium: *mut RemanenceMedium,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceC1541Bitstream {
     unsafe { clear_error(error_out, error_rule_out) };
-    let (Some(image), Some(policy)) = (unsafe { image.as_ref() }, unsafe { policy.as_ref() })
-    else {
-        let error = remanence::Error::io("null P64 image or policy");
+    let Some(handle) = (unsafe { medium.as_mut() }) else {
+        let error = remanence::Error::io("null medium");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match image
-        .image
-        .materialize_c1541_bitstream(to_channel_policy(policy), cache_bytes)
-    {
-        Ok(bitstream) => own_bitstream(bitstream),
+    let Some(pooled) = handle.medium() else {
+        let error = remanence::Error::io("this medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match pooled.bitstream() {
+        Ok(bitstream) => {
+            let view = bitstream_view(bitstream);
+            Box::into_raw(Box::new(RemanenceC1541Bitstream {
+                backing: BitstreamBacking::Pooled {
+                    session: handle.session,
+                    media: handle.id,
+                },
+                view,
+            }))
+        }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
@@ -7161,7 +6329,9 @@ pub unsafe extern "C" fn remanence_p64_image_materialize_c1541_bitstream(
     }
 }
 
-/// Frees a bitstream handle, discarding its private session storage.
+/// Frees a bitstream handle. A materialized stream's private session
+/// storage goes with it; a pooled medium's stream stays with its
+/// medium, and only the view is discarded.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bitstream_free(bitstream: *mut RemanenceC1541Bitstream) {
     if !bitstream.is_null() {
@@ -7170,39 +6340,36 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_free(bitstream: *mut Remanenc
 }
 
 /// Materializes the family's encoded bytestream from a bitstream under
-/// its declared group code. The bitstream is untouched. Returns null on
-/// failure and stores a message in `error_out`.
+/// its declared group code — no policy, because the type carries one.
+/// The bitstream is untouched, and the handle owns the stream it
+/// answers. Returns null on failure and stores a message in
+/// `error_out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bitstream_materialize_bytestream(
     bitstream: *const RemanenceC1541Bitstream,
-    policy: *const RemanenceGcrCodecPolicy,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceC1541Bytestream {
     unsafe { clear_error(error_out, error_rule_out) };
-    let (Some(bitstream), Some(policy)) =
-        (unsafe { bitstream.as_ref() }, unsafe { policy.as_ref() })
-    else {
-        let error = remanence::Error::io("null bitstream or policy");
+    let Some(held) = (unsafe { bitstream.as_ref() }) else {
+        let error = remanence::Error::io("null bitstream");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match bitstream
-        .bitstream
-        .materialize_c1541_bytestream(to_codec_policy(policy), cache_bytes)
-    {
+    let Some(stream) = held.stream() else {
+        let error = remanence::Error::io("this bitstream's medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match stream.materialize_c1541_bytestream(cache_bytes) {
         Ok(bytestream) => {
-            let report = bytestream.inspect();
-            let view = LayerView::new(
-                &report.profile_id,
-                &report.codec_id,
-                &report.codec_name,
-                &report.declared_loss,
-                &report.evidence,
-            );
-            Box::into_raw(Box::new(RemanenceC1541Bytestream { bytestream, view }))
+            let view = bytestream_view(&bytestream);
+            Box::into_raw(Box::new(RemanenceC1541Bytestream {
+                backing: BytestreamBacking::Owned(bytestream),
+                view,
+            }))
         }
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -7211,7 +6378,56 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_materialize_bytestream(
     }
 }
 
-/// Frees a bytestream handle, discarding its private session storage.
+/// The family's encoded bytestream over this medium's recording — the
+/// byte sequence the declared group code makes of the bitstream —
+/// materialized once into the pooled medium and answered from then on,
+/// refusing by name on non-flux media exactly as
+/// `remanence_medium_bitstream` refuses.
+///
+/// The handle is a view of the pooled stream with the same contract as
+/// the bitstream's: re-resolved per call, silent after release, never
+/// to outlive the session, freed with
+/// `remanence_c1541_bytestream_free` — which discards the view alone.
+/// Returns null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_bytestream(
+    medium: *mut RemanenceMedium,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceC1541Bytestream {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { medium.as_mut() }) else {
+        let error = remanence::Error::io("null medium");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let Some(pooled) = handle.medium() else {
+        let error = remanence::Error::io("this medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match pooled.bytestream() {
+        Ok(bytestream) => {
+            let view = bytestream_view(bytestream);
+            Box::into_raw(Box::new(RemanenceC1541Bytestream {
+                backing: BytestreamBacking::Pooled {
+                    session: handle.session,
+                    media: handle.id,
+                },
+                view,
+            }))
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Frees a bytestream handle. A materialized stream's private session
+/// storage goes with it; a pooled medium's stream stays with its
+/// medium, and only the view is discarded.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bytestream_free(
     bytestream: *mut RemanenceC1541Bytestream,
@@ -7241,7 +6457,9 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_profile_name(
 pub unsafe extern "C" fn remanence_c1541_bitstream_profile_version(
     bitstream: *const RemanenceC1541Bitstream,
 ) -> u32 {
-    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().profile_version)
+    unsafe { bitstream.as_ref() }
+        .and_then(RemanenceC1541Bitstream::stream)
+        .map_or(0, |stream| stream.inspect().profile_version)
 }
 
 /// The frame the cells are angles in, carried from the medium unchanged.
@@ -7249,14 +6467,18 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_profile_version(
 pub unsafe extern "C" fn remanence_c1541_bitstream_reference_clock_hz(
     bitstream: *const RemanenceC1541Bitstream,
 ) -> u64 {
-    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().reference_clock_hz)
+    unsafe { bitstream.as_ref() }
+        .and_then(RemanenceC1541Bitstream::stream)
+        .map_or(0, |stream| stream.inspect().reference_clock_hz)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bitstream_cycles_per_rotation(
     bitstream: *const RemanenceC1541Bitstream,
 ) -> u64 {
-    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().cycles_per_rotation)
+    unsafe { bitstream.as_ref() }
+        .and_then(RemanenceC1541Bitstream::stream)
+        .map_or(0, |stream| stream.inspect().cycles_per_rotation)
 }
 
 /// How many bytes of private session storage the bitstream occupies, and
@@ -7265,14 +6487,18 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_cycles_per_rotation(
 pub unsafe extern "C" fn remanence_c1541_bitstream_backing_bytes(
     bitstream: *const RemanenceC1541Bitstream,
 ) -> u64 {
-    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.backing_bytes())
+    unsafe { bitstream.as_ref() }
+        .and_then(RemanenceC1541Bitstream::stream)
+        .map_or(0, |stream| stream.backing_bytes())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bitstream_resident_bytes(
     bitstream: *const RemanenceC1541Bitstream,
 ) -> u64 {
-    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.resident_bytes())
+    unsafe { bitstream.as_ref() }
+        .and_then(RemanenceC1541Bitstream::stream)
+        .map_or(0, |stream| stream.resident_bytes())
 }
 
 /// How many locations the bitstream claims.
@@ -7280,7 +6506,9 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_resident_bytes(
 pub unsafe extern "C" fn remanence_c1541_bitstream_location_count(
     bitstream: *const RemanenceC1541Bitstream,
 ) -> usize {
-    unsafe { bitstream.as_ref() }.map_or(0, |held| held.bitstream.inspect().locations.len())
+    unsafe { bitstream.as_ref() }
+        .and_then(RemanenceC1541Bitstream::stream)
+        .map_or(0, |stream| stream.inspect().locations.len())
 }
 
 /// One of them, written into `out`. Returns false when out of range.
@@ -7290,10 +6518,11 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_location(
     index: usize,
     out: *mut RemanenceBitstreamLocation,
 ) -> bool {
-    let Some(held) = (unsafe { bitstream.as_ref() }) else {
+    let Some(stream) = (unsafe { bitstream.as_ref() }).and_then(RemanenceC1541Bitstream::stream)
+    else {
         return false;
     };
-    let Some(location) = held.bitstream.inspect().locations.get(index) else {
+    let Some(location) = stream.inspect().locations.get(index) else {
         return false;
     };
     if !out.is_null() {
@@ -7360,13 +6589,15 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_amount(
     bitstream: *const RemanenceC1541Bitstream,
     index: usize,
 ) -> u64 {
-    unsafe { bitstream.as_ref() }.map_or(0, |held| {
-        held.bitstream
-            .inspect()
-            .declared_loss
-            .get(index)
-            .map_or(0, |loss| loss.count)
-    })
+    unsafe { bitstream.as_ref() }
+        .and_then(RemanenceC1541Bitstream::stream)
+        .map_or(0, |stream| {
+            stream
+                .inspect()
+                .declared_loss
+                .get(index)
+                .map_or(0, |loss| loss.count)
+        })
 }
 
 /// The channel that produced the bitstream and the policy that produced
@@ -7419,42 +6650,54 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_codec_name(
 pub unsafe extern "C" fn remanence_c1541_bytestream_symbol_bits(
     bytestream: *const RemanenceC1541Bytestream,
 ) -> u32 {
-    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().symbol_bits)
+    unsafe { bytestream.as_ref() }
+        .and_then(RemanenceC1541Bytestream::stream)
+        .map_or(0, |stream| stream.inspect().symbol_bits)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bytestream_data_bits(
     bytestream: *const RemanenceC1541Bytestream,
 ) -> u32 {
-    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().data_bits)
+    unsafe { bytestream.as_ref() }
+        .and_then(RemanenceC1541Bytestream::stream)
+        .map_or(0, |stream| stream.inspect().data_bits)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bytestream_symbols_per_byte(
     bytestream: *const RemanenceC1541Bytestream,
 ) -> u32 {
-    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().symbols_per_byte)
+    unsafe { bytestream.as_ref() }
+        .and_then(RemanenceC1541Bytestream::stream)
+        .map_or(0, |stream| stream.inspect().symbols_per_byte)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bytestream_backing_bytes(
     bytestream: *const RemanenceC1541Bytestream,
 ) -> u64 {
-    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.backing_bytes())
+    unsafe { bytestream.as_ref() }
+        .and_then(RemanenceC1541Bytestream::stream)
+        .map_or(0, |stream| stream.backing_bytes())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bytestream_resident_bytes(
     bytestream: *const RemanenceC1541Bytestream,
 ) -> u64 {
-    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.resident_bytes())
+    unsafe { bytestream.as_ref() }
+        .and_then(RemanenceC1541Bytestream::stream)
+        .map_or(0, |stream| stream.resident_bytes())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bytestream_location_count(
     bytestream: *const RemanenceC1541Bytestream,
 ) -> usize {
-    unsafe { bytestream.as_ref() }.map_or(0, |held| held.bytestream.inspect().locations.len())
+    unsafe { bytestream.as_ref() }
+        .and_then(RemanenceC1541Bytestream::stream)
+        .map_or(0, |stream| stream.inspect().locations.len())
 }
 
 /// One of them, written into `out`. Returns false when out of range.
@@ -7464,10 +6707,11 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_location(
     index: usize,
     out: *mut RemanenceBytestreamLocation,
 ) -> bool {
-    let Some(held) = (unsafe { bytestream.as_ref() }) else {
+    let Some(stream) = (unsafe { bytestream.as_ref() }).and_then(RemanenceC1541Bytestream::stream)
+    else {
         return false;
     };
-    let Some(location) = held.bytestream.inspect().locations.get(index) else {
+    let Some(location) = stream.inspect().locations.get(index) else {
         return false;
     };
     if !out.is_null() {
@@ -7527,13 +6771,15 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_amount(
     bytestream: *const RemanenceC1541Bytestream,
     index: usize,
 ) -> u64 {
-    unsafe { bytestream.as_ref() }.map_or(0, |held| {
-        held.bytestream
-            .inspect()
-            .declared_loss
-            .get(index)
-            .map_or(0, |loss| loss.count)
-    })
+    unsafe { bytestream.as_ref() }
+        .and_then(RemanenceC1541Bytestream::stream)
+        .map_or(0, |stream| {
+            stream
+                .inspect()
+                .declared_loss
+                .get(index)
+                .map_or(0, |loss| loss.count)
+        })
 }
 
 /// The codec, the channel beneath it and the medium policy beneath that,
@@ -7558,6 +6804,100 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_evidence(
     })
 }
 
+/// How many framed bytes one location holds, addressed in the family's
+/// own terms — the Commodore 1541 numbers its tracks from 1 — written
+/// into `bytes_out`. This is the extent
+/// `remanence_c1541_bytestream_location_read_at` reads within.
+///
+/// A track the stream does not hold is refused naming what it does
+/// hold: the stream's locations are what the medium carried, and
+/// nothing is manufactured to answer for a track that is not there.
+/// Returns false on failure and stores a message in `error_out` (free
+/// with `remanence_string_free`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_location_bytes(
+    bytestream: *const RemanenceC1541Bytestream,
+    track: u32,
+    bytes_out: *mut u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(held) = (unsafe { bytestream.as_ref() }) else {
+        let error = remanence::Error::io("null bytestream");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(stream) = held.stream() else {
+        let error = remanence::Error::io("this bytestream's medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match stream.location(Location::track(track)) {
+        Ok(location) => {
+            if !bytes_out.is_null() {
+                unsafe { *bytes_out = location.bytes() };
+            }
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Reads exactly `length` framed bytes at `offset` of one track into
+/// `buffer_out`, whole or not at all. Bytes number from the first
+/// framed byte, because nothing before sync is a byte at all; no byte
+/// here is a header, a sector or a file, and the layers that assign
+/// those sit above.
+///
+/// A byte whose recorded pattern the family's table does not assign has
+/// no value to serve: a read that touches one is refused naming it
+/// rather than answered with an invented value. Returns false on
+/// failure and stores a message in `error_out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_c1541_bytestream_location_read_at(
+    bytestream: *const RemanenceC1541Bytestream,
+    track: u32,
+    offset: u64,
+    buffer_out: *mut u8,
+    length: usize,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(held) = (unsafe { bytestream.as_ref() }) else {
+        let error = remanence::Error::io("null bytestream");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let Some(stream) = held.stream() else {
+        let error = remanence::Error::io("this bytestream's medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    if buffer_out.is_null() {
+        let error = remanence::Error::io("null buffer");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    }
+    let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
+    match stream
+        .location(Location::track(track))
+        .and_then(|location| location.read_at(offset, buffer))
+    {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The C1541 sector layer: the recording's own records, recognized above
 // the encoded bytestream under the family's declared grammar. This is
@@ -7567,37 +6907,6 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_evidence(
 // refusing by name.
 
 use remanence::C1541Sectors;
-
-/// What a block whose stated checksum disagrees with its own bytes
-/// becomes.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceChecksumFailurePolicy {
-    /// The recognition stops and names the location and the address.
-    Refuse = 0,
-    /// The claim is kept, stated unreadable with both checksums on it,
-    /// and counted.
-    DeclareLoss = 1,
-}
-
-/// What a header block the recording does not follow with a data block
-/// becomes.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceUnpairedRecordPolicy {
-    Refuse = 0,
-    DeclareLoss = 1,
-}
-
-/// The complete declared policy for one bytestream-to-sector
-/// recognition. There is no default: both fields are decisions about
-/// evidence.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RemanenceSectorPolicy {
-    pub checksum_failure: RemanenceChecksumFailurePolicy,
-    pub unpaired_record: RemanenceUnpairedRecordPolicy,
-}
 
 /// One location the sector layer read, and what it found there.
 #[repr(C)]
@@ -7668,48 +6977,33 @@ pub struct RemanenceC1541Sectors {
     claim_refusals: Vec<CString>,
 }
 
-fn to_sector_policy(policy: &RemanenceSectorPolicy) -> remanence::SectorPolicy {
-    remanence::SectorPolicy {
-        checksum_failure: match policy.checksum_failure {
-            RemanenceChecksumFailurePolicy::Refuse => remanence::ChecksumFailurePolicy::Refuse,
-            RemanenceChecksumFailurePolicy::DeclareLoss => {
-                remanence::ChecksumFailurePolicy::DeclareLoss
-            }
-        },
-        unpaired_record: match policy.unpaired_record {
-            RemanenceUnpairedRecordPolicy::Refuse => remanence::UnpairedRecordPolicy::Refuse,
-            RemanenceUnpairedRecordPolicy::DeclareLoss => {
-                remanence::UnpairedRecordPolicy::DeclareLoss
-            }
-        },
-    }
-}
-
-/// Recognizes the recording's own sectors out of a bytestream, under the
-/// family's declared record grammar. The bytestream is untouched.
-/// Returns null on failure and stores a message in `error_out` (free
-/// with `remanence_string_free`).
+/// Recognizes the recording's own sectors out of a bytestream, under
+/// the family's declared record grammar — no policy, because the
+/// profile carries one; `cache_bytes` is the P27 working-set bound. The
+/// bytestream is untouched, and either backing serves: a materialized
+/// stream's handle or a pooled medium's view. Returns null on failure
+/// and stores a message in `error_out` (free with
+/// `remanence_string_free`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_c1541_bytestream_recognize_sectors(
     bytestream: *const RemanenceC1541Bytestream,
-    policy: *const RemanenceSectorPolicy,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceC1541Sectors {
     unsafe { clear_error(error_out, error_rule_out) };
-    let (Some(bytestream), Some(policy)) =
-        (unsafe { bytestream.as_ref() }, unsafe { policy.as_ref() })
-    else {
-        let error = remanence::Error::io("null bytestream or policy");
+    let Some(held) = (unsafe { bytestream.as_ref() }) else {
+        let error = remanence::Error::io("null bytestream");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match bytestream
-        .bytestream
-        .recognize_c1541_sectors(to_sector_policy(policy), cache_bytes)
-    {
+    let Some(stream) = held.stream() else {
+        let error = remanence::Error::io("this bytestream's medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    match stream.recognize_c1541_sectors(cache_bytes) {
         Ok(sectors) => {
             let report = sectors.inspect();
             let view = LayerView::new(
@@ -10611,405 +9905,6 @@ pub unsafe extern "C" fn remanence_image_write_p64(
             ptr::null_mut()
         }
     }
-}
-
-// ------------------------------------------- the gap-first reconstruction
-//
-// Reducing an opened capture to one remanence image on the strength of
-// all the evidence rather than the choice of one revolution. The plan
-// computes everything and writes nothing; executing it answers with the
-// family's ordinary image handle rather than a root of its own.
-
-use remanence::{ReconstructionPlan, ReconstructionPolicy, RecordingSelection};
-
-/// How the reduction decides which instrument positions hold
-/// recordings.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RemanenceRecordingSelection {
-    /// Measured from the evidence: a position records where its
-    /// revolutions resolve the same transitions.
-    Measured = 0,
-    /// The caller's own assertion, checked to exist and honoured.
-    Declared = 1,
-}
-
-/// The complete declared policy for one reduction. There is no default:
-/// a reduction the policy does not name is a refusal.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RemanenceReconstructionPolicy {
-    /// Which recorded side the image is reconstructed from. Sides are
-    /// never merged or averaged.
-    pub side: u64,
-    pub recordings: RemanenceRecordingSelection,
-    /// The declared positions, ascending. Read only when `recordings`
-    /// is `Declared`, and ignored otherwise.
-    pub declared_positions: *const u64,
-    pub declared_position_count: usize,
-}
-
-/// One reconstructed orbit, as the plan reports it.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RemanenceReconstructedOrbit {
-    /// The instrument position the orbit was read at — capture
-    /// provenance, not a fact of the medium.
-    pub position: u64,
-    /// Where the orbit is: the rig's radius at that position.
-    pub radius_microns: u64,
-    pub revolutions: u32,
-    /// The count-spread discriminator, in permille of the largest.
-    pub count_spread_permille: u32,
-    pub points: u64,
-    pub coherent_points: u64,
-    pub unaligned_spans: u64,
-    /// The cell the closed revolution implies, in millidivisions.
-    pub implied_cell_millidivisions: u64,
-    /// Intervals kept off the lattice: the medium holding what the
-    /// crystal did not write.
-    pub off_lattice: u32,
-    /// Whether the fat-track merge admitted this orbit into the image.
-    pub admitted: bool,
-}
-
-struct ReconstructionView {
-    format_id: CString,
-    loss_codes: Vec<CString>,
-    loss_details: Vec<CString>,
-    evidence: Vec<CString>,
-}
-
-impl ReconstructionView {
-    fn new(report: &remanence::ReconstructionReport) -> Self {
-        Self {
-            format_id: to_cstring(report.format_id),
-            loss_codes: report
-                .declared_loss
-                .iter()
-                .map(|loss| to_cstring(&loss.code))
-                .collect(),
-            loss_details: report
-                .declared_loss
-                .iter()
-                .map(|loss| to_cstring(&loss.detail))
-                .collect(),
-            evidence: report
-                .evidence
-                .iter()
-                .map(|line| to_cstring(line))
-                .collect(),
-        }
-    }
-}
-
-/// A planned reduction: everything computed, nothing written.
-pub struct RemanenceReconstructionPlan {
-    plan: Option<ReconstructionPlan>,
-    report: remanence::ReconstructionReport,
-    view: ReconstructionView,
-}
-
-/// Plans the gap-first reconstruction of a capture set into one
-/// remanence image. Nothing is written and nothing is mutated: the plan
-/// computes the whole reduction and enumerates everything the image
-/// cannot carry in the capture's own terms. Returns null on failure and
-/// stores a message in `error_out` (free with `remanence_string_free`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_capture_set_plan_reconstruction(
-    set: *const RemanenceCaptureSet,
-    policy: *const RemanenceReconstructionPolicy,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceReconstructionPlan {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let (Some(set), Some(policy)) = (unsafe { set.as_ref() }, unsafe { policy.as_ref() }) else {
-        let error = remanence::Error::io("null capture set or policy");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let recordings = match policy.recordings {
-        RemanenceRecordingSelection::Measured => RecordingSelection::Measured,
-        RemanenceRecordingSelection::Declared => {
-            // An empty declaration is the caller's own, and is carried
-            // rather than silently promoted to a measurement.
-            let positions =
-                if policy.declared_positions.is_null() || policy.declared_position_count == 0 {
-                    Vec::new()
-                } else {
-                    unsafe {
-                        std::slice::from_raw_parts(
-                            policy.declared_positions,
-                            policy.declared_position_count,
-                        )
-                    }
-                    .to_vec()
-                };
-            RecordingSelection::Declared(positions)
-        }
-    };
-    let policy = ReconstructionPolicy {
-        side: policy.side,
-        recordings,
-    };
-    match set.set.plan_reconstruction(&policy) {
-        Ok(plan) => {
-            let report = plan.report().clone();
-            let view = ReconstructionView::new(&report);
-            Box::into_raw(Box::new(RemanenceReconstructionPlan {
-                plan: Some(plan),
-                report,
-                view,
-            }))
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Frees a plan handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_plan_free(
-    plan: *mut RemanenceReconstructionPlan,
-) {
-    if !plan.is_null() {
-        drop(unsafe { Box::from_raw(plan) });
-    }
-}
-
-/// Produces the remanence image the plan described, consuming the plan:
-/// the handle is freed whether this succeeds or fails, and must not be
-/// used again. At most `cache_bytes` of the image's points stay resident
-/// (P27). What comes back is the family's ordinary image handle, freed
-/// with `remanence_image_free`. Returns null on failure.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_plan_execute(
-    plan: *mut RemanenceReconstructionPlan,
-    cache_bytes: u64,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceImage {
-    unsafe { clear_error(error_out, error_rule_out) };
-    if plan.is_null() {
-        let error = remanence::Error::io("null plan");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    }
-    let owned = unsafe { Box::from_raw(plan) };
-    let RemanenceReconstructionPlan {
-        plan: Some(plan), ..
-    } = *owned
-    else {
-        let error = remanence::Error::io("plan has already been executed");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    match plan.execute(cache_bytes) {
-        Ok(image) => {
-            let report = image.inspect();
-            let view = ImageView::new(&image, &report);
-            Box::into_raw(Box::new(RemanenceImage {
-                image,
-                report,
-                view,
-            }))
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
-}
-
-/// The artifact format the reduction produces: `"remanence"`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_format_id(
-    plan: *const RemanenceReconstructionPlan,
-) -> *const c_char {
-    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| plan.view.format_id.as_ptr())
-}
-
-/// The side the image is reconstructed from.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_side(
-    plan: *const RemanenceReconstructionPlan,
-) -> u64 {
-    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.side)
-}
-
-/// Every instrument position the capture holds on that side.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_swept_positions(
-    plan: *const RemanenceReconstructionPlan,
-) -> u32 {
-    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.swept_positions)
-}
-
-/// How many of them the policy's selection names as recordings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_recorded_position_count(
-    plan: *const RemanenceReconstructionPlan,
-) -> usize {
-    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.recorded_positions.len())
-}
-
-/// One of them, written into `out`. False when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_recorded_position(
-    plan: *const RemanenceReconstructionPlan,
-    index: usize,
-    out: *mut u64,
-) -> bool {
-    let (Some(plan), false) = (unsafe { plan.as_ref() }, out.is_null()) else {
-        return false;
-    };
-    let Some(position) = plan.report.recorded_positions.get(index) else {
-        return false;
-    };
-    unsafe { *out = *position };
-    true
-}
-
-/// How many orbits the reduction describes — every position it
-/// reconstructed, admitted into the image or not.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_orbit_count(
-    plan: *const RemanenceReconstructionPlan,
-) -> usize {
-    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.orbits.len())
-}
-
-/// One of them, written into `out`. False when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_orbit(
-    plan: *const RemanenceReconstructionPlan,
-    index: usize,
-    out: *mut RemanenceReconstructedOrbit,
-) -> bool {
-    let (Some(plan), false) = (unsafe { plan.as_ref() }, out.is_null()) else {
-        return false;
-    };
-    let Some(orbit) = plan.report.orbits.get(index) else {
-        return false;
-    };
-    unsafe {
-        *out = RemanenceReconstructedOrbit {
-            position: orbit.position,
-            radius_microns: orbit.radius_microns,
-            revolutions: orbit.revolutions,
-            count_spread_permille: orbit.count_spread_permille,
-            points: orbit.points,
-            coherent_points: orbit.coherent_points,
-            unaligned_spans: orbit.unaligned_spans,
-            implied_cell_millidivisions: orbit.implied_cell_millidivisions,
-            off_lattice: orbit.off_lattice,
-            admitted: orbit.admitted,
-        };
-    }
-    true
-}
-
-/// One orbit's raw transition count for one revolution, before
-/// alignment — the evidence the count-spread discriminator reads.
-/// False when either index is out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_orbit_transitions(
-    plan: *const RemanenceReconstructionPlan,
-    orbit_index: usize,
-    revolution_index: usize,
-    out: *mut u32,
-) -> bool {
-    let (Some(plan), false) = (unsafe { plan.as_ref() }, out.is_null()) else {
-        return false;
-    };
-    let Some(count) = plan
-        .report
-        .orbits
-        .get(orbit_index)
-        .and_then(|orbit| orbit.transition_counts.get(revolution_index))
-    else {
-        return false;
-    };
-    unsafe { *out = *count };
-    true
-}
-
-/// How many kinds of loss the image cannot carry of the capture.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_declared_loss_count(
-    plan: *const RemanenceReconstructionPlan,
-) -> usize {
-    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.declared_loss.len())
-}
-
-/// One loss entry's stable code, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_declared_loss_code(
-    plan: *const RemanenceReconstructionPlan,
-    index: usize,
-) -> *const c_char {
-    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| {
-        plan.view
-            .loss_codes
-            .get(index)
-            .map_or(ptr::null(), |code| code.as_ptr())
-    })
-}
-
-/// What was lost, in the capture's own terms. A count is not an
-/// account.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_declared_loss_detail(
-    plan: *const RemanenceReconstructionPlan,
-    index: usize,
-) -> *const c_char {
-    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| {
-        plan.view
-            .loss_details
-            .get(index)
-            .map_or(ptr::null(), |detail| detail.as_ptr())
-    })
-}
-
-/// How much of it there was, in whatever the detail counts.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_declared_loss_amount(
-    plan: *const RemanenceReconstructionPlan,
-    index: usize,
-) -> u64 {
-    unsafe { plan.as_ref() }.map_or(0, |plan| {
-        plan.report
-            .declared_loss
-            .get(index)
-            .map_or(0, |loss| loss.count)
-    })
-}
-
-/// How many lines of evidence the reduction states for what it did
-/// (P4).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_evidence_count(
-    plan: *const RemanenceReconstructionPlan,
-) -> usize {
-    unsafe { plan.as_ref() }.map_or(0, |plan| plan.report.evidence.len())
-}
-
-/// One of them, or null when out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_reconstruction_evidence(
-    plan: *const RemanenceReconstructionPlan,
-    index: usize,
-) -> *const c_char {
-    unsafe { plan.as_ref() }.map_or(ptr::null(), |plan| {
-        plan.view
-            .evidence
-            .get(index)
-            .map_or(ptr::null(), |line| line.as_ptr())
-    })
 }
 
 #[cfg(test)]

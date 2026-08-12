@@ -432,18 +432,29 @@ fn the_p64_projects_every_coherent_point_and_reads_back() {
     assert_eq!(written.half_tracks, described.half_tracks);
     assert_eq!(written.declared_loss, described.declared_loss);
 
-    // Through the delivered adapter, back out again.
-    let reopened = remanence::P64Image::open(&destination).expect("the adapter reads it back");
-    let restored: u64 = reopened
+    // Through the delivered load, back out again: the artifact is a
+    // medium now (F59), and the served form loads straight in. A clean
+    // synthetic recording detects one bit per pulse, so the bitstream's
+    // own count is the round trip's witness.
+    let mut session = remanence::Session::new();
+    let disk = session
+        .load_media(
+            std::fs::File::open(&destination).expect("the artifact opens"),
+            remanence::Format::P64,
+        )
+        .expect("the delivered load reads it back");
+    let restored: u64 = disk
+        .bitstream()
+        .expect("the channel clocks it")
         .inspect()
-        .half_tracks
+        .locations
         .iter()
-        .map(|half_track| half_track.pulses)
+        .map(|location| location.one_bits)
         .sum();
     assert_eq!(restored, points, "the round trip loses no pulse");
 
     drop(image);
-    drop(reopened);
+    drop(session);
     for path in [source, destination] {
         let _ = std::fs::remove_file(&path);
     }

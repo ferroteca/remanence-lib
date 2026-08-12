@@ -177,68 +177,72 @@ disk already loaded from it takes nothing away. Archives are read and not
 written: a write would have to be encoded back into the grammar's own
 form, and no adapter claims that.
 
-A `CaptureSet` opens a KryoFlux capture of a floppy disk — one stream
-file per head per drive-step position, archived together — as the one
-logical capture it is, rather than as a hundred and sixty-eight
-unrelated members. It reads each stream's flux, its asynchronous index
-records, its transport control records and its transfer result, keeps
-the flux recorded before the first index and after the last, and bounds
-the circular observations the indices bracket. The two heads stay two
-locations: nothing merges them into an ideal disk, chooses a cleanest
-pass, or averages a timing. An incomplete, duplicate, contradictory, or
-unrelated member refuses the whole set by name, with the catalog
-evidence that refused it. The decoded capture lives in private session
-storage and is addressed a bounded section at a time, so a forty-megabyte
-capture opens under whatever working set the caller declared.
+**A flux artifact loads as a medium like any other.** A KryoFlux
+capture of a floppy disk — one stream file per head per drive-step
+position — is the collection-sourced format: `load_media` takes a
+declared collection of the caller's own opened stream files, or of
+files gathered from an archive medium's namespace, and
+`Format::KryoFlux { device }` names the drive family the recording is
+declared for. The member grammar and the set's completeness are checked
+whole — the two heads stay two locations, nothing merges them into an
+ideal disk, and an incomplete, duplicate, contradictory, or unrelated
+member refuses the whole declaration by name — then each stream's flux,
+its asynchronous index records, its transport control records and its
+transfer result are read, with the flux before the first index and
+after the last kept and the circular observations the indices bracket
+bounded.
 
-An opened capture can then be recognized: every enrolled drive profile
-is consulted and what claims the capture is ranked, never resolved by
-catalog order. A profile is where a family's recording conventions are
-declared — the knowledge a capture does not contain — and the probe
-reads only interval lengths and the patterns they form, resolving no
-bit, assembling no byte, naming no sector and validating no checksum.
-What comes back is a bounded confidence and the observations that
-produced it: which of the family's zones were recovered and what each
-location holds, the derived cell against what the zone claims, the seam
-located as an angle, and a named reason for every position not claimed.
+The declared device's profile claim is then checked against the
+evidence: the profile — where a family's recording conventions are
+declared, the knowledge a capture does not contain — probes interval
+lengths and the patterns they form, resolving no bit and naming no
+sector, and a capture that does not bear the claim is refused with the
+verdict's own numbers. Which of the capture's heads carries the
+recording is measured the same way, the unrecorded back of a
+single-sided disk reading as noise. The gap-first reduction then runs
+under the profile's declared materialization defaults — every
+revolution of every location aligned by gap correspondence, the cell
+lattice measured from the intervals themselves, the angles integrated
+so the circle closes exactly, coherence decided per transition with
+indeterminacy recorded rather than repaired, and adjacent steps
+carrying the same recording merged under measured agreement, the fat
+track measured, never asserted. What comes back is a medium of the
+declared family, with the whole story riding it as provenance: the
+set's evidence, the claim's verdict, the policy that ran, and the
+declared-loss account naming everything the reduction could not carry,
+in the capture's own terms. `Format::P64` is the other flux read: a P64
+container already holds a medium at rest, and the load takes the served
+form straight in.
 
-A recognized capture then reduces to a **remanence image** — the
-physical facts of the disk's surfaces, fit to nothing and carrying no
-clock. The reduction is gap-first and works on the strength of all the
-evidence rather than the choice of one revolution: every revolution of
-every location aligned by gap correspondence, the cell lattice measured
-from the intervals themselves, the angles integrated so the circle
-closes exactly, coherence decided per transition with indeterminacy
-recorded rather than repaired, and adjacent steps carrying the same
-recording merged under measured agreement — the fat track measured,
-never asserted. It resolves in two stages, a plan that computes
-everything and writes nothing and an execution that produces the image,
-and the plan carries the complete account of what the image will not
-carry, in the capture's own terms and before anything exists to carry
-it.
-
-That image is the disk from there on. It renders to **d64, g64 and
-p64** — each claimed twice, as a description that writes nothing and a
-write that does both, and each stating what its destination did not
-carry — and it writes back to the library's own `.remanence` artifact.
-
-An image — or the medium a P64 holds at rest — can then be read the way
-a drive reads it. An image carries no clock, so the ladder stands on
-the served projection of it, one multiply per point at the family's
-reference frame. The family's read channel clocks the medium's
-pulses into a circular, track-relative **hardware bitstream**, and its
-declared group code resolves that into the family's **encoded
-bytestream**. Both rules are the drive profile's: the cell comes from
+A flux medium is then read the way a drive reads it, and **the type
+carries the rules**: being a `Commodore1541` medium *means* reading
+through the c1541 channel and codec, so `bitstream()` and
+`bytestream()` take no policy at all. The family's read channel clocks
+the medium's pulses into a circular, track-relative **hardware
+bitstream**, and its declared group code resolves that into the
+family's **encoded bytestream**, whose framed bytes are read by the
+family's own addressing — `location(Location::track(1))`, the first
+byte being the first *framed* byte because nothing before sync is a
+byte at all. Both rules are the drive profile's: the cell comes from
 the density zone the family declares, the counter restarts at every
 transition and admits one within half a cell of a boundary, and the
 bytes come from the published sixteen-symbol GCR table. Every bit says
 whether it was recorded or resolved by a declared rule; a location no
-zone covers is refused rather than clocked at a neighbour's rate; and a
-pattern the table does not assign keeps its own bits rather than
-becoming the nearest value. Neither layer assigns anything above a byte:
-no byte is a header, a data field, a sector or a file, and the framing
-landmark the codec locates says where bytes begin and nothing about what
-follows it.
+zone covers is left out and counted rather than clocked at a
+neighbour's rate; and a pattern the table does not assign keeps its own
+bits rather than becoming the nearest value. Neither layer assigns
+anything above a byte: no byte is a header, a data field, a sector or a
+file, and the framing landmark the codec locates says where bytes begin
+and nothing about what follows it.
+
+The library's own `.remanence` artifact — the **remanence image**, the
+physical facts of a disk's surfaces, fit to nothing and carrying no
+clock — is reached through its own root. It renders to **d64, g64 and
+p64** — each claimed twice, as a description that writes nothing and a
+write that does both, and each stating what its destination did not
+carry — and the same presentation ladder stands on the served
+projection of it, one multiply per point at the family's reference
+frame.
 
 **The rung above them is where that ends** — and it ends by a layer
 stating what it derives rather than by either of those two having
@@ -274,7 +278,7 @@ it. `LOAD"$"` — the directory as the drive's ROM synthesizes it — is
 deliberately not this: that is a Commodore DOS device, and this is the
 filesystem the disk records.
 
-An image can be saved as a P64, and a P64 opened back.
+An image can be saved as a P64, and a P64 loads back as a medium.
 The container's grammar and its own adaptive range coder are the
 adapter's claim, stated in the module from the published format
 description: the version is validated before anything else is touched,
@@ -532,16 +536,43 @@ for mapping in &letters.mappings {
     println!("{}: {:?}", mapping.letter, mapping.outcome);
 }
 
-let capture = remanence::CaptureSet::open("captures.7z")?;
-for member in &capture.inspect().members {
-    let run = &member.runs[0];
-    println!(
-        "step {} head {:?}: {} transitions, {} revolutions",
-        member.position.numerator,
-        member.head,
-        run.transitions,
-        run.observations.len()
-    );
+// A KryoFlux capture is a declared collection: gathered from an
+// archive medium's namespace here, or a Vec of your own opened files.
+let capture = session
+    .load_media(std::fs::File::open("captures.7z")?, remanence::Format::SevenZip)?
+    .id();
+let members = session
+    .medium_mut(capture)
+    .expect("pooled")
+    .partition(0).expect("an archive bears its direct partition")
+    .filesystem().expect("an archive's content is its namespace")
+    .files("")?;
+let c64_disk = session.load_media(
+    members,
+    remanence::Format::KryoFlux { device: remanence::FloppyDrive::Commodore1541 },
+)?;
+for line in &c64_disk.assurance().evidence {
+    println!("{line}");                   // the claim's verdict, the policy,
+}                                         // and the declared-loss account
+
+// The type carries the channel and the codec: no policy to pass.
+let mut first = [0u8; 1];
+c64_disk.bytestream()?
+    .location(remanence::Location::track(1))?
+    .read_at(0, &mut first)?;
+
+// And the directory CBM DOS wrote, through the medium's own namespace
+// door: the direct partition, with the reading declared over it.
+let c64_disk_id = c64_disk.id();
+let c64_disk = session.medium_mut(c64_disk_id).expect("pooled");
+let mut cbm = c64_disk
+    .partition(0).expect("flux media record no scheme")
+    .filesystem_as("cbmdos")?;
+for entry in cbm.entries("")? {
+    println!("{:16} {:>4} {}",
+        entry.name,
+        entry.fact("size-blocks").unwrap_or(""),
+        entry.fact("type").unwrap_or(""));
 }
 ```
 
@@ -608,69 +639,49 @@ with open("captures.7z", "rb") as source:
 for entry in archive.partition(0).filesystem().entries(""):
     print(entry.name, entry.size_bytes)
 
-with remanence.CaptureSet("captures.7z") as capture:
-    for member in capture.inspect().members:
-        run = member.runs[0]
-        print(member.position.numerator, member.head, run.transitions,
-              len(run.observations))
+# A KryoFlux capture is a declared collection: the files gathered from
+# the archive's namespace, and the format naming what they are. The
+# member grammar, the set's completeness, the stream grammar and the
+# 1541 profile's claim are checked whole, then the gap-first reduction
+# runs under the profile's declared defaults — and what comes back is a
+# 1541 disk with the whole story riding it as provenance.
+members = archive.partition(0).filesystem().files("")
+disk = session.load_media(members, "kryoflux")   # one device recorded,
+for line in disk.assurance.evidence:             # so no `device=` needed
+    print(line)                # the verdict, the policy, the loss account
 
-    verdict = capture.recognize().verdicts[0]
-    print(verdict.profile_name, verdict.confidence)
-    for line in verdict.evidence:
-        print(" ", line)
-
-    # The gap-first reduction: every revolution of every location, not
-    # the choice of one. The plan computes it whole and writes nothing.
-    plan = capture.plan_reconstruction(remanence.ReconstructionPolicy(
-        side=0, recordings="measured"))
-    report = plan.report()
-    print(report.swept_positions, len(report.recorded_positions))
-    for loss in report.declared_loss:
-        print(loss.code, loss.count, loss.detail)
-
-# What comes back is the family's own image, and it is the disk from
-# here on: the renditions and the presentation ladder both hang on it.
-image = plan.execute()
-
-# What a 1541's read channel and GCR codec make of what it holds.
-bits = image.materialize_c1541_bitstream(remanence.ReadChannelPolicy(
-    density="declared", unzoned="refuse", weak_pulse="seeded",
-    seed=0x0123456789abcdef))
-bytes_ = bits.materialize_c1541_bytestream(remanence.GcrCodecPolicy(
-    alignment="landmark", unassigned_symbol="declare-loss"))
+# The type carries the channel and the codec: no policy to pass.
+bits = disk.bitstream()
+bytes_ = disk.bytestream()
 for track in bytes_.inspect().locations:
     print(track.half_track_numerator, track.bytes, track.resolved_bytes,
           track.alignments, track.unframed_bits)
+first = bytes_.location(1).read_at(0, 1)   # the first *framed* byte of
+                                           # track 1: nothing before sync
+                                           # is a byte at all
 
 # And the sectors the recording states for itself, above those bytes.
-sectors = bytes_.recognize_c1541_sectors(remanence.SectorPolicy(
-    checksum_failure="declare-loss", unpaired_record="declare-loss"))
+sectors = bytes_.recognize_c1541_sectors()
 for claim in sectors.inspect().claims:
     print(claim.track, claim.sector, claim.readable, claim.rule,
           claim.header_checksum_stated, claim.header_checksum_computed)
 print(sectors.read_sector(18, 0)[:3])   # the BAM: 18, 1, and DOS 'A'
 
-# And the directory CBM DOS wrote across those sectors: the recording's
-# own direct partition, and the reading declared over it.
-space = sectors.partition().filesystem_as("cbmdos")
+# The directory CBM DOS wrote across those sectors, through the
+# medium's own namespace door: the direct partition a recording bears,
+# with the reading declared over it.
+space = disk.partition(0).filesystem_as("cbmdos")
 print(space.kind, space.label().name, space.evidence()[0])
 for entry in space.entries():
     print(entry.name, entry.size_bytes,
           {fact.key: fact.value for fact in entry.declared})
 print(space.read_file("PCS.4000")[:2])  # a PRG's own load address
 
-
-# Each rendition states its loss before it writes anything.
-for loss in image.describe_p64().declared_loss:
-    print(loss.code, loss.count, loss.detail)
-image.write_p64("pinball.p64")
-image.write_d64("pinball.d64")
-image.write_g64("pinball.g64")
-
-with remanence.P64Image("pinball.p64") as image:
-    for track in image.inspect().half_tracks:
-        print(track.index, track.half_track_numerator, track.pulses,
-              track.strong_pulses, track.weak_pulses)
+# A P64 already holds a flux medium at rest, so the load takes the
+# served form straight in — the same verb, the same kind of disk.
+with open("pinball.p64", "rb") as source:
+    p64_disk = session.load_media(source, "p64")
+print(p64_disk.device_type, p64_disk.article)
 ```
 
 ## Changes

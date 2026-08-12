@@ -20,6 +20,66 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **`load_media` gains its source shapes, and a KryoFlux capture loads
+  as a medium.** The one load verb now reads four declared source
+  shapes (`MediaSource`, arrived at by plain conversion): the caller's
+  own opened `std::fs::File`, a collection of them, a `FileSource`
+  taken from an archive medium's namespace, or a collection of those —
+  and **a format declares which shape it reads**, refusing the other by
+  name. `File::source()` takes one namespace file as a load's source
+  and `StorageSpace::files(path)` gathers every file under a path, each
+  free-standing and riding the archive's claim, a solid 7z's coded
+  stream decoded once for the whole gathering (P27). In Python,
+  `load_media` accepts the same four shapes; in C,
+  `remanence_session_load_media_collection` takes an array of OS
+  handles and `remanence_file_source`/`remanence_space_files` with the
+  `remanence_session_load_media_source`/`_sources` pair carry the
+  namespace shapes.
+
+  **`Format::KryoFlux { device }` (id `kryoflux`) is the first
+  collection-sourced format.** The member grammar, the set's
+  completeness, every stream's own grammar and the declared device's
+  profile claim are checked whole — which capture head carries the
+  recording is measured, the unrecorded back reading as noise — then
+  the gap-first reduction runs under the profile's declared
+  `Materialization` defaults, and what pools is a `Commodore1541`
+  medium with the verdicts, the policy and the declared-loss account
+  riding its assurance as provenance (P28, P29). **`Format::P64` (id
+  `p64`) loads the served form straight in** — the one format id F53's
+  declared set did not carry (D31), because a P64 answers with a flux
+  medium and that medium is now an ordinary pooled one: it bears the
+  direct partition, seats in a `Commodore1541` drive, and outlives
+  whatever archive its members were gathered from.
+
+- **The flux presentation is argument-free: the type carries the
+  channel and the codec (P30 reached through the type).**
+  `Medium::bitstream()` and `Medium::bytestream()` answer on a flux
+  medium — materialized once under the profile's declared channel and
+  codec policies, the same state answering every call — and refuse by
+  name where the device type's profile bears no flux (P13). The C1541
+  profile now declares its whole presentation policy: the family's own
+  density map, unzoned locations omitted and counted, weak pulses
+  resolved reproducibly from the profile's stated seed, landmark
+  framing, unassigned symbols kept as their own bits, and checksum
+  failures and unpaired records declared as loss. The rungs above
+  follow: `RemanenceImage::materialize_c1541_bitstream(cache_bytes)`,
+  `C1541Bitstream::materialize_c1541_bytestream(cache_bytes)` and
+  `C1541Bytestream::recognize_c1541_sectors(cache_bytes)` take a P27
+  bound and no policy, and the policy types
+  (`ReadChannelPolicy`, `GcrCodecPolicy`, `SectorPolicy` and their
+  enums) leave all three surfaces — the deviation surfaces stay
+  deferred (D29). A flux medium's `filesystem_as("cbmdos")` opens the
+  directory through the medium's own direct partition, materializing
+  the ladder beneath it.
+
+- **`C1541Bytestream::location(Location::track(n))` reads the framed
+  bytes of one location** — `LocationBytes::read_at`, the first byte
+  being the first *framed* byte because nothing before sync is a byte
+  at all; a track the stream does not hold is absent rather than blank,
+  and a byte the family's table does not assign is refused rather than
+  invented. `Entry::fact(key)` answers one declared fact by the
+  recognizing filesystem's own key.
+
 - **Discovered geometry: the recording's own coordinates, read as
   evidence and never declared.** `Medium::geometry()` answers a
   `Geometry` — what the sources beneath the medium stated about its
@@ -222,6 +282,28 @@ rather than bridged. Read every entry below in that light.
   `partition_types()` catalog functions.
 
 ### Removed
+
+- **The standalone `CaptureSet` and `P64Image` roots are folded into
+  the model.** Gone from all three surfaces: `CaptureSet` and its
+  report types (`CaptureSetReport`, `CaptureSetMember`,
+  `CaptureRunReport`, `ObservationReport`, `CaptureIssue`,
+  `TimeBaseReport`, `StepPosition`), `P64Image` (the root —
+  `P64Report` and `P64HalfTrack` stay, answered by the renditions),
+  the recognition reporting (`Recognition`, `ProfileVerdict`,
+  `LocationVerdict`, `ZoneClaim`), and the reconstruction surface
+  (`ReconstructionPlan`, `ReconstructionPolicy`,
+  `ReconstructionReport`, `ReconstructedOrbit`, `RecordingSelection`).
+  A capture and a P64 are reached through `load_media` like every
+  other medium; the recognition runs inside the declared load, pinned
+  to the declared device's profile, and its verdict rides the medium
+  as provenance. Capture-inspection reporting and plan preview stay
+  out, with the question tier. One consequence is stated in D35 so
+  nobody meets it as a surprise: until U23's destination-format save
+  verb lands, no public path produces a `RemanenceImage` from a
+  capture — the `.remanence` root opens existing artifacts and masters
+  the renditions, and a capture loaded as a medium reaches no writer.
+  The example's `identify --reconstruct` mode goes with the surface
+  that carried it.
 
 - **The medium's resolver and selector retire: `Medium::filesystem()`
   and `Medium::volume(id)`.** One resolved to a namespace wherever

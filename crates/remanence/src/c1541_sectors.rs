@@ -157,8 +157,12 @@ fn refuse(rule: SectorRule, reason: impl Into<String>) -> Error {
 
 /// What a block whose stated checksum disagrees with its own bytes
 /// becomes.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChecksumFailurePolicy {
+pub(crate) enum ChecksumFailurePolicy {
     /// The recognition stops and names the location and the address.
     Refuse,
     /// The claim is kept, stated as unreadable with the two checksums
@@ -170,8 +174,12 @@ pub enum ChecksumFailurePolicy {
 
 /// What a header block the recording does not follow with a data block
 /// becomes.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnpairedRecordPolicy {
+pub(crate) enum UnpairedRecordPolicy {
     /// The recognition stops and names the location and the address.
     Refuse,
     /// The claim is kept, stated as holding no data, and counted.
@@ -183,11 +191,13 @@ pub enum UnpairedRecordPolicy {
 ///
 /// There is no `Default`: both fields are decisions about evidence, and
 /// a recognition that arrived at one by construction rather than by
-/// declaration is what P30 exists to prevent.
+/// declaration is what P30 exists to prevent. The one every caller
+/// reaches is the profile's declared `sector_policy` (P30 reached
+/// through the type), which is why nothing here is public.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SectorPolicy {
-    pub checksum_failure: ChecksumFailurePolicy,
-    pub unpaired_record: UnpairedRecordPolicy,
+pub(crate) struct SectorPolicy {
+    pub(crate) checksum_failure: ChecksumFailurePolicy,
+    pub(crate) unpaired_record: UnpairedRecordPolicy,
 }
 
 // -------------------------------------------------------- the reporting
@@ -1186,19 +1196,21 @@ impl C1541Sectors {
 
 impl C1541Bytestream {
     /// Recognizes the recording's own sectors out of this bytestream,
-    /// under the family's declared record grammar (P23, P30).
+    /// under the family's declared record grammar and sector reading
+    /// (P23, P30 reached through the type).
     ///
-    /// The bytestream is untouched and stays exactly what it was; the
-    /// sector layer is separate session state, carrying this
-    /// bytestream's provenance beneath the grammar and policy that
-    /// produced it. There is no way back down (P33): a sector is not
-    /// lowered into bytes.
-    pub fn recognize_c1541_sectors(
-        &self,
-        policy: SectorPolicy,
-        cache_bytes: u64,
-    ) -> Result<C1541Sectors> {
-        recognize(self.inner(), policy, cache_bytes)
+    /// It takes no policy because the profile carries one, and what was
+    /// used travels into the result as provenance. The bytestream is
+    /// untouched and stays exactly what it was; the sector layer is
+    /// separate session state, carrying this bytestream's provenance
+    /// beneath the grammar and policy that produced it. There is no way
+    /// back down (P33): a sector is not lowered into bytes.
+    pub fn recognize_c1541_sectors(&self, cache_bytes: u64) -> Result<C1541Sectors> {
+        recognize(
+            self.inner(),
+            crate::drive_profile::C1541.presentation.sector_policy,
+            cache_bytes,
+        )
     }
 }
 
@@ -1206,8 +1218,7 @@ impl C1541Bytestream {
 mod tests {
     use super::*;
     use crate::c1541_presentation::{
-        AlignmentPolicy, DensityPolicy, GcrCodecPolicy, ReadChannelPolicy, UnassignedSymbolPolicy,
-        UnzonedPolicy, WeakPulsePolicy, materialize_bitstream,
+        DensityPolicy, ReadChannelPolicy, UnzonedPolicy, WeakPulsePolicy, materialize_bitstream,
     };
     use crate::flux_capture::TimeBase;
     use crate::flux_medium::{
@@ -1368,15 +1379,9 @@ mod tests {
         )
         .expect("the channel clocks it");
         let bytestream = bitstream
-            .materialize_c1541_bytestream(
-                GcrCodecPolicy {
-                    alignment: AlignmentPolicy::Landmark,
-                    unassigned_symbol: UnassignedSymbolPolicy::DeclareLoss,
-                },
-                1 << 20,
-            )
+            .materialize_c1541_bytestream(1 << 20)
             .expect("the codec resolves it");
-        bytestream.recognize_c1541_sectors(policy, 1 << 20)
+        recognize(bytestream.inner(), policy, 1 << 20)
     }
 
     #[test]

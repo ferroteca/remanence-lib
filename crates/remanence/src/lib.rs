@@ -8,15 +8,23 @@
 //! medium is the content handle**: [`Medium`] is the node a caller
 //! holds, and everything a recording can answer answers on it.
 //!
-//! [`Session::load_media`] is the declared reading: the caller's own
-//! opened [`std::fs::File`] and one concrete [`Format`], checked by that
-//! format's own adapter and refused by name where the evidence cannot
-//! bear it. **The declaration carries the device its content was
-//! recorded by** — bare where the format records one ([`Format::H8d`]
-//! is a Heathkit H-17 recording), stated by the caller where it records
-//! several ([`Format::Qcow2`] and its `device: HardDrive`) — and a
-//! [`Medium`] answers [`Medium::device_type`] with it, beside the
-//! [`Medium::article`] that says what the substrate is. **Whoever opens owns the lock** (P7 as amended) — that open
+//! [`Session::load_media`] is the declared reading: one declared
+//! source and one concrete [`Format`], checked by that format's own
+//! adapter and refused by name where the evidence cannot bear it.
+//! **The source takes one of four shapes** ([`MediaSource`], arrived
+//! at by plain conversion): the caller's own opened [`std::fs::File`],
+//! a collection of them, one [`FileSource`] taken from another
+//! medium's namespace ([`File::source`], [`StorageSpace::files`]), or
+//! a collection of those — and **a format declares which shape it
+//! reads**, a KryoFlux capture set being a declared collection and
+//! every other claimed format one artifact. **The declaration carries
+//! the device its content was recorded by** — bare where the format
+//! records one ([`Format::H8d`] is a Heathkit H-17 recording), stated
+//! by the caller where it records several ([`Format::Qcow2`] and its
+//! `device: HardDrive`, [`Format::KryoFlux`] and its
+//! `device: FloppyDrive`) — and a [`Medium`] answers
+//! [`Medium::device_type`] with it, beside the [`Medium::article`]
+//! that says what the substrate is. **Whoever opens owns the lock** (P7 as amended) — that open
 //! is the claim, the library checks it for exactly one thing (may it
 //! write?), honours the answer exactly, and takes no lock of its own; a
 //! name is recovered from the handle for location alone, under an
@@ -117,36 +125,45 @@
 //! verb that computes everything and writes nothing, and each stating
 //! what its destination did not carry (P29).
 //!
-//! **A capture reduces to one of those images.**
-//! [`CaptureSet::plan_reconstruction`] takes a declared
-//! [`ReconstructionPolicy`] and computes the whole gap-first reduction
-//! without writing anything — every revolution of every location
-//! aligned by gap correspondence, the cell lattice measured from the
-//! intervals themselves, the angles integrated gap-first, and the fat
-//! track merged under measured agreement. [`ReconstructionPlan::report`]
-//! is that reduction stated whole, and [`ReconstructionPlan::execute`]
-//! answers with the [`RemanenceImage`] itself rather than a root of its
-//! own.
+//! **A flux artifact loads as a medium like any other** (F59). A
+//! KryoFlux capture set is the collection-sourced format:
+//! `Format::KryoFlux { device }` over a declared collection checks the
+//! member grammar, the set's completeness, every stream's own grammar
+//! and the declared device's profile claim whole, runs the gap-first
+//! reduction under the profile's declared materialization defaults —
+//! every revolution of every location aligned by gap correspondence,
+//! the cell lattice measured from the intervals themselves, the angles
+//! integrated gap-first, and the fat track merged under measured
+//! agreement — and pools a medium of the declared family with the
+//! verdicts, the policy and the declared-loss account as provenance
+//! ([`Medium::assurance`]). [`Format::P64`] loads the served form
+//! straight in: a P64 already holds a flux medium at rest.
 //!
-//! **An image, or the medium a P64 holds, is then read the way a drive
-//! reads it**, one declared rung at a time:
-//! [`RemanenceImage::materialize_c1541_bitstream`] clocks the family's
-//! pulses into a [`C1541Bitstream`],
-//! [`C1541Bitstream::materialize_c1541_bytestream`] resolves that into
-//! the [`C1541Bytestream`] a declared group code makes of it, and
-//! [`C1541Bytestream::recognize_c1541_sectors`] reads the recording's
-//! own records out of those bytes under the family's declared grammar.
-//! The two lower rungs assign nothing above a byte; the third is where
-//! that ends, and it ends by stating what it derives — every record
-//! carrying its evidence, and [`C1541Sectors::read_sector`] refusing by
-//! name (its own [`SectorRule`] set) rather than filling in a block the
-//! recording does not hold. [`C1541Sectors::partition`] is the rung
-//! above that: the direct partition over the recording, whose
-//! `filesystem_as("cbmdos")` answers the same [`StorageSpace`] a disk
-//! image's partition does, because the file verbs live on the namespace
-//! and on nothing else — carrying the BAM header as its label, the
-//! directory in the order it was written, and a size established by
-//! walking each file's chain.
+//! **A flux medium is then read the way a drive reads it**, and the
+//! type carries the rules (P30 reached through the type):
+//! [`Medium::bitstream`] clocks the family's pulses into a
+//! [`C1541Bitstream`] under the profile's declared channel,
+//! [`Medium::bytestream`] resolves that into the [`C1541Bytestream`]
+//! the family's declared group code makes of it — argument-free both,
+//! because being a `Commodore1541` medium *means* reading through the
+//! c1541 channel and codec — and
+//! [`C1541Bytestream::location`] serves the framed bytes of one
+//! [`Location`]. The same rungs stand on a `.remanence` image through
+//! [`RemanenceImage::materialize_c1541_bitstream`] and
+//! [`C1541Bitstream::materialize_c1541_bytestream`]. The rungs assign
+//! nothing above a byte; [`C1541Bytestream::recognize_c1541_sectors`]
+//! is where that ends, and it ends by stating what it derives — every
+//! record carrying its evidence, and [`C1541Sectors::read_sector`]
+//! refusing by name (its own [`SectorRule`] set) rather than filling in
+//! a block the recording does not hold. The filesystem door is the
+//! medium's own: the direct partition a flux medium bears at ordinal 0,
+//! whose `filesystem_as("cbmdos")` answers the same [`StorageSpace`] a
+//! disk image's partition does, because the file verbs live on the
+//! namespace and on nothing else — carrying the BAM header as its
+//! label, the directory in the order it was written, and a size
+//! established by walking each file's chain.
+//! [`C1541Sectors::partition`] is the same composition over a layer
+//! reached through the `.remanence` root's own ladder.
 //!
 //! Every open also states what it established about the evidence beneath
 //! it ([`Medium::assurance`]): a source short of what its own
@@ -179,6 +196,7 @@ mod filesystem;
 mod filesystem_catalog;
 mod flux_analysis;
 mod flux_capture;
+mod flux_media;
 mod flux_medium;
 mod geometry;
 mod handle;
@@ -210,13 +228,11 @@ mod zip;
 pub use assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
 pub use c64_renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
 pub use c1541_presentation::{
-    AlignmentPolicy, BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport,
-    C1541Bitstream, C1541Bytestream, DensityPolicy, GcrCodecPolicy, ReadChannelPolicy,
-    UnassignedSymbolPolicy, UnzonedPolicy, WeakPulsePolicy,
+    BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport, C1541Bitstream,
+    C1541Bytestream, Location, LocationBytes,
 };
 pub use c1541_sectors::{
-    C1541Sectors, ChecksumFailurePolicy, ContestedAddress, SectorClaim, SectorLocation,
-    SectorPolicy, SectorReport, SectorRule, UnpairedRecordPolicy,
+    C1541Sectors, ContestedAddress, SectorClaim, SectorLocation, SectorReport, SectorRule,
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode, Claim};
@@ -228,7 +244,6 @@ pub use dos_letters::{
     ResidentCondition,
 };
 pub use dos_name::DosNameRule;
-pub use drive_profile::{LocationVerdict, ProfileVerdict, Recognition, ZoneClaim};
 pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
 pub use fat::FatKind;
@@ -236,20 +251,12 @@ pub use filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace}
 pub use geometry::{
     Geometry, GeometryReading, GeometryRule, GeometrySource, GeometryState, RecordingGeometry,
 };
-pub use kryoflux::{
-    CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
-    ObservationReport, StepPosition, TimeBaseReport,
-};
 pub use machine::{Machine, MachineView, Session};
-pub use media::{Format, FormatClaim, MediaId, Medium};
-pub use p64::{P64HalfTrack, P64Image, P64Report};
+pub use media::{Format, FormatClaim, MediaId, MediaSource, Medium};
+pub use p64::{P64HalfTrack, P64Report};
 pub use partition::{Partition, PartitionRule, PartitionScheme, PartitionType, PartitionView};
 pub use remanence_format::RemanenceWriteReport;
 pub use remanence_image::{RemanenceHole, RemanenceImage, RemanenceImageReport, RemanenceOrbit};
-pub use remanence_reconstruction::{
-    ReconstructedOrbit, ReconstructionPlan, ReconstructionPolicy, ReconstructionReport,
-    RecordingSelection,
-};
 pub use report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,
@@ -259,4 +266,5 @@ pub use session::{
     ArchiveLayout, DiskLayout, FilesystemLayout, Identification, ImageLayout, Layer, LayerKind,
     LayerLayout, PhysicalMediaLayout, SectorLayout, SizeInformation, TrackSectorLayout,
 };
+pub use source::FileSource;
 pub use storage_device::{AttachmentId, DeviceView, StorageDevice};

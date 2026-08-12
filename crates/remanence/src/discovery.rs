@@ -85,9 +85,9 @@ pub fn discover_media_with_cache(
     let medium = MediumState::open(path, intent, cache_bytes)?;
     if let Some(foreign) = medium.foreign_family() {
         return Err(Error::unsupported(format!(
-            "'{}' is a {foreign}-family artifact and no device in this \
-             release holds a {foreign} medium; a {foreign} artifact is \
-             read through its own type",
+            "'{}' is a {foreign}-family artifact, and this release \
+             discovers no {foreign} medium; a {foreign} artifact is \
+             loaded by its own declaration at `load_media`",
             path.display()
         )));
     }

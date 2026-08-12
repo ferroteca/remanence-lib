@@ -31,7 +31,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use crate::checksum::Crc32;
-use crate::device::{self, AccessIntent, AccessMode};
+use crate::device;
 use crate::drive_profile::C1541;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::{DeclaredLoss, LossAccount, Provenance};
@@ -40,6 +40,7 @@ use crate::flux_medium::{
     Cycle, Derivation, FluxMedium, LocationKey, MediumBuilder, MediumFactKind, OriginRule,
     OriginStatement, Pulse, RotationalFrame, Strength,
 };
+use crate::source::ImageSource;
 
 // --------------------------------------------------------- the grammar
 
@@ -564,7 +565,7 @@ struct HalfTrackChunk {
 /// all of it, so it is streamed for that even where a chunk's own bytes
 /// are read again later.
 struct ChunkStream<'a> {
-    file: &'a File,
+    source: &'a ImageSource,
     base: u64,
     length: u64,
     at: u64,
@@ -580,7 +581,8 @@ impl ChunkStream<'_> {
             ));
         }
         let mut buffer = vec![0u8; count as usize];
-        device::read_exact_at(self.file, self.base + self.at, &mut buffer)
+        self.source
+            .read_at(self.base + self.at, &mut buffer)
             .map_err(|error| Error::io(format!("failed to read a P64 chunk: {error}")))?;
         self.crc.update(&buffer);
         self.at += count;
@@ -603,7 +605,8 @@ impl ChunkStream<'_> {
         while remaining > 0 {
             let take = remaining.min(buffer.len() as u64) as usize;
             let block = &mut buffer[..take];
-            device::read_exact_at(self.file, self.base + self.at, block)
+            self.source
+                .read_at(self.base + self.at, block)
                 .map_err(|error| Error::io(format!("failed to read a P64 chunk: {error}")))?;
             self.crc.update(block);
             chunk.update(block);
@@ -639,21 +642,21 @@ pub(crate) fn has_signature(prefix: &[u8]) -> bool {
     prefix.len() >= SIGNATURE.len() && prefix[..SIGNATURE.len()] == SIGNATURE
 }
 
-fn read_header(file: &File, length: u64, path: &Path) -> Result<Header> {
+fn read_header(source: &ImageSource, named: &str) -> Result<Header> {
+    let length = source.len();
     if length < HEADER_BYTES {
         return Err(refuse(format!(
-            "'{}' holds {length} bytes, fewer than the {HEADER_BYTES} a P64 header \
-             occupies",
-            path.display()
+            "{named} holds {length} bytes, fewer than the {HEADER_BYTES} a P64 header \
+             occupies"
         )));
     }
     let mut header = [0u8; HEADER_BYTES as usize];
-    device::read_exact_at(file, 0, &mut header)
+    source
+        .read_at(0, &mut header)
         .map_err(|error| Error::io(format!("failed to read the P64 header: {error}")))?;
     if header[..8] != SIGNATURE {
         return Err(refuse(format!(
-            "'{}' does not open with the eight bytes '{}' every P64 opens with",
-            path.display(),
+            "{named} does not open with the eight bytes '{}' every P64 opens with",
             String::from_utf8_lossy(&SIGNATURE)
         )));
     }
@@ -695,9 +698,9 @@ fn read_header(file: &File, length: u64, path: &Path) -> Result<Header> {
 /// adapter claims, every chunk's checksum is its own, the stream ends
 /// with the chunk that says it ends, and the whole of it checksums to
 /// what the header said.
-fn walk_chunks(file: &File, header: &Header) -> Result<Vec<HalfTrackChunk>> {
+fn walk_chunks(source: &ImageSource, header: &Header) -> Result<Vec<HalfTrackChunk>> {
     let mut stream = ChunkStream {
-        file,
+        source,
         base: HEADER_BYTES,
         length: header.stream_bytes,
         at: 0,
@@ -792,7 +795,7 @@ fn walk_chunks(file: &File, header: &Header) -> Result<Vec<HalfTrackChunk>> {
 /// Both are stated independently — one by the format description, one by
 /// the P30 profile — so they are compared rather than one being taken
 /// for the other.
-fn container_frame(origin: Provenance) -> Result<RotationalFrame> {
+pub(crate) fn container_frame(origin: Provenance) -> Result<RotationalFrame> {
     if C1541.rotation.reference_clock != REFERENCE_CLOCK_HZ
         || C1541.rotation.cycles_per_rotation != PULSE_SAMPLES_PER_ROTATION
     {
@@ -811,248 +814,153 @@ fn container_frame(origin: Provenance) -> Result<RotationalFrame> {
     )
 }
 
-/// One P64 container, opened and read.
+/// Decodes one container into the medium it holds at rest, with the
+/// container's own account beside it.
 ///
-/// Opening claims the file (P7) — writes denied to every other process —
-/// decodes every half-track once into private session storage, and holds
-/// the claim until the image is dropped.
-pub struct P64Image {
-    path: PathBuf,
-    /// Held for the image's whole life: the claim is not released and
-    /// retaken between reads.
-    _claimed: File,
-    mode: AccessMode,
-    medium: FluxMedium,
-    report: P64Report,
-}
+/// This is the served form loaded straight in: the container records no
+/// policy for the content it holds and this library derives none of it,
+/// so what comes back says exactly that. The medium's pulses decode
+/// once into private session storage under `cache_bytes` of working set
+/// (P27), and `named` is how refusals name the artifact — the caller's
+/// handle may have no recoverable name.
+pub(crate) fn decode(
+    source: &ImageSource,
+    named: &str,
+    cache_bytes: u64,
+) -> Result<(FluxMedium, P64Report)> {
+    let header = read_header(source, named)?;
+    let chunks = walk_chunks(source, &header)?;
 
-impl std::fmt::Debug for P64Image {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("P64Image")
-            .field("path", &self.path)
-            .field("half_tracks", &self.report.half_tracks.len())
-            .field("backing_bytes", &self.medium.backing_bytes())
-            .finish()
+    let mut evidence = vec![
+        format!(
+            "{named} opens with the P64 signature and declares format version              {:#010x}, the version this release claims",
+            header.version
+        ),
+        format!(
+            "{} half-track chunks and the end chunk account for every byte of the              {}-byte chunk stream, each checksummed against its own stored value              and all of them against the header's",
+            chunks.len(),
+            header.stream_bytes
+        ),
+    ];
+    if header.flags & FLAG_WRITE_PROTECT != 0 {
+        evidence.push("the container declares the medium write-protected".to_owned());
     }
-}
+    evidence.push(format!(
+        "positions read as angles on a {PULSE_SAMPLES_PER_ROTATION}-cycle circle          of the {REFERENCE_CLOCK_HZ} Hz reference the container declares, which is          what the {} profile declares for the same drive",
+        C1541.id
+    ));
+    evidence.push(format!(
+        "strength read in the family's own vocabulary: {:#010x} is strong,          {:#010x} is absent, and every value between is a pulse that sometimes          triggers, which the family states as weak",
+        STRENGTH_ALWAYS, STRENGTH_NEVER
+    ));
 
-impl P64Image {
-    /// Opens the P64 image at `path` with the stated default session
-    /// cache bound ([`crate::DEFAULT_CACHE_BYTES`]).
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_cache(path, crate::DEFAULT_CACHE_BYTES)
-    }
+    // The container addresses side 0 before side 1 and the medium
+    // addresses by position, so the chunks are put in the medium's
+    // order before any of them is decoded.
+    let mut located: Vec<(LocationKey, HalfTrackChunk)> = chunks
+        .into_iter()
+        .map(|chunk| Ok((location_of(chunk.index, C1541.id)?, chunk)))
+        .collect::<Result<Vec<_>>>()?;
+    located.sort_by(|left, right| left.0.cmp(&right.0));
 
-    /// Opens the image under a caller-declared cache bound (P27): at
-    /// most `cache_bytes` of the decoded medium stays resident. The
-    /// bound narrows the working set; it never refuses service.
-    pub fn open_with_cache(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
-        let path = path.as_ref();
-        let claimed = device::open_declared(path, AccessIntent::Read)?;
-        let length = claimed
-            .metadata()
-            .map_err(|error| Error::io(format!("cannot size '{}': {error}", path.display())))?
-            .len();
-
-        let header = read_header(&claimed, length, path)?;
-        let chunks = walk_chunks(&claimed, &header)?;
-
-        let mut evidence = vec![
-            format!(
-                "'{}' opens with the P64 signature and declares format version \
-                 {:#010x}, the version this release claims",
-                path.display(),
-                header.version
+    let mut builder = MediumBuilder::new(
+        C1541.id,
+        C1541.media,
+        container_frame(Provenance::new(P64).note(
+            "the container places every pulse on a circle whose start it does not              state, so cycle zero is the container's own datum rather than a seam              or an index any evidence located",
+        ))?,
+        Derivation::Stored,
+        Provenance::new(P64)
+            .note(format!(
+                "decoded from the P64 container {named}, which holds a medium at rest"
+            ))
+            .note(
+                "the container records no policy for the content it holds, and                  this library derived none of it: these pulses are what was                  stored, not an observation of a recording",
             ),
-            format!(
-                "{} half-track chunks and the end chunk account for every byte of the \
-                 {}-byte chunk stream, each checksummed against its own stored value \
-                 and all of them against the header's",
-                chunks.len(),
-                header.stream_bytes
-            ),
-        ];
-        if header.flags & FLAG_WRITE_PROTECT != 0 {
-            evidence.push("the container declares the medium write-protected".to_owned());
-        }
-        evidence.push(format!(
-            "positions read as angles on a {PULSE_SAMPLES_PER_ROTATION}-cycle circle \
-             of the {REFERENCE_CLOCK_HZ} Hz reference the container declares, which is \
-             what the {} profile declares for the same drive",
-            C1541.id
-        ));
-        evidence.push(format!(
-            "strength read in the family's own vocabulary: {:#010x} is strong, \
-             {:#010x} is absent, and every value between is a pulse that sometimes \
-             triggers, which the family states as weak",
-            STRENGTH_ALWAYS, STRENGTH_NEVER
-        ));
+        SessionBacking::create()?,
+    )?;
 
-        // The container addresses side 0 before side 1 and the medium
-        // addresses by position, so the chunks are put in the medium's
-        // order before any of them is decoded.
-        let mut located: Vec<(LocationKey, HalfTrackChunk)> = chunks
-            .into_iter()
-            .map(|chunk| Ok((location_of(chunk.index, C1541.id)?, chunk)))
-            .collect::<Result<Vec<_>>>()?;
-        located.sort_by(|left, right| left.0.cmp(&right.0));
-
-        let mut builder = MediumBuilder::new(
-            C1541.id,
-            C1541.media,
-            container_frame(Provenance::new(P64).note(
-                "the container places every pulse on a circle whose start it does not \
-                 state, so cycle zero is the container's own datum rather than a seam \
-                 or an index any evidence located",
-            ))?,
-            Derivation::Stored,
-            Provenance::new(P64)
-                .note(format!(
-                    "decoded from the P64 container '{}', which holds a medium at rest",
-                    path.display()
-                ))
-                .note(
-                    "the container records no policy for the content it holds, and \
-                     this library derived none of it: these pulses are what was \
-                     stored, not an observation of a recording",
-                ),
-            SessionBacking::create()?,
-        )?;
-
-        let mut models = Models::new();
-        let mut loss = LossAccount::new();
-        let mut half_tracks = Vec::with_capacity(located.len());
-        for (key, chunk) in located {
-            let stored = read_half_track(&claimed, &mut models, chunk)?;
-            let (numerator, denominator) = key.position();
-            let mut counts = [0u64; 3];
-            let mut pulses = Vec::with_capacity(stored.len());
-            for pulse in &stored {
-                let state = strength_state(pulse.strength);
-                counts[state as usize] += 1;
-                if state == STATE_WEAK && pulse.strength != STRENGTH_WEAK {
-                    loss.add(
-                        "strength-resolution",
-                        "pulses stored at a trigger value between never and always \
-                         that the family's vocabulary states only as weak",
-                        1,
-                    );
-                }
-                pulses.push(Pulse::new(
-                    Cycle::from(pulse.position),
-                    Strength::certain(state),
-                ));
+    let mut models = Models::new();
+    let mut loss = LossAccount::new();
+    let mut half_tracks = Vec::with_capacity(located.len());
+    for (key, chunk) in located {
+        let stored = read_half_track(source, &mut models, chunk)?;
+        let (numerator, denominator) = key.position();
+        let mut counts = [0u64; 3];
+        let mut pulses = Vec::with_capacity(stored.len());
+        for pulse in &stored {
+            let state = strength_state(pulse.strength);
+            counts[state as usize] += 1;
+            if state == STATE_WEAK && pulse.strength != STRENGTH_WEAK {
+                loss.add(
+                    "strength-resolution",
+                    "pulses stored at a trigger value between never and always                      that the family's vocabulary states only as weak",
+                    1,
+                );
             }
-            half_tracks.push(P64HalfTrack {
-                index: chunk.index,
-                side: key.surface().unwrap_or(0),
-                half_track_numerator: numerator,
-                half_track_denominator: denominator,
-                pulses: stored.len() as u64,
-                strong_pulses: counts[STATE_STRONG as usize],
-                weak_pulses: counts[STATE_WEAK as usize],
-                absent_pulses: counts[STATE_ABSENT as usize],
-            });
-            builder.add_location(
-                key,
-                &pulses,
-                &[],
-                Provenance::new(P64).note(format!(
-                    "stored in the container's half-track chunk {}",
-                    chunk.index
-                )),
-            )?;
+            pulses.push(Pulse::new(
+                Cycle::from(pulse.position),
+                Strength::certain(state),
+            ));
         }
-
-        loss.add(
-            "container-provenance",
-            "the reduction that produced this medium, which the container records \
-             nothing of; what is here is what was stored",
-            half_tracks.len() as u64,
-        );
-        loss.add(
-            "located-origin",
-            "the rule that placed the circle's start, which the container does not \
-             state: its cycle zero is a datum rather than a seam or an index",
-            1,
-        );
-
-        let (mut medium, sink, total) = builder.seal()?;
-        medium.attach_backing(Box::new(sink.into_source()), total, cache_bytes);
-        evidence.push(format!(
-            "every half-track decoded once into a {total}-byte section backing in \
-             private session storage, addressed by half-track"
-        ));
-
-        let report = P64Report {
-            format_id: P64.to_owned(),
-            format_name: P64_NAME.to_owned(),
-            version: header.version,
-            write_protected: header.flags & FLAG_WRITE_PROTECT != 0,
-            double_sided: header.flags & FLAG_DOUBLE_SIDED != 0,
-            profile_id: C1541.id.to_owned(),
-            reference_clock_hz: REFERENCE_CLOCK_HZ,
-            cycles_per_rotation: PULSE_SAMPLES_PER_ROTATION,
-            half_tracks,
-            declared_loss: loss.into_entries(),
-            evidence,
-        };
-
-        Ok(Self {
-            path: path.to_path_buf(),
-            _claimed: claimed,
-            mode: AccessMode::ReadOnly,
-            medium,
-            report,
-        })
+        half_tracks.push(P64HalfTrack {
+            index: chunk.index,
+            side: key.surface().unwrap_or(0),
+            half_track_numerator: numerator,
+            half_track_denominator: denominator,
+            pulses: stored.len() as u64,
+            strong_pulses: counts[STATE_STRONG as usize],
+            weak_pulses: counts[STATE_WEAK as usize],
+            absent_pulses: counts[STATE_ABSENT as usize],
+        });
+        builder.add_location(
+            key,
+            &pulses,
+            &[],
+            Provenance::new(P64).note(format!(
+                "stored in the container's half-track chunk {}",
+                chunk.index
+            )),
+        )?;
     }
 
-    /// The path the image was opened from.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
+    loss.add(
+        "container-provenance",
+        "the reduction that produced this medium, which the container records          nothing of; what is here is what was stored",
+        half_tracks.len() as u64,
+    );
+    loss.add(
+        "located-origin",
+        "the rule that placed the circle's start, which the container does not          state: its cycle zero is a datum rather than a seam or an index",
+        1,
+    );
 
-    /// The container format's stable identifier.
-    pub fn format_id(&self) -> &'static str {
-        P64
-    }
+    let (mut medium, sink, total) = builder.seal()?;
+    medium.attach_backing(Box::new(sink.into_source()), total, cache_bytes);
+    evidence.push(format!(
+        "every half-track decoded once into a {total}-byte section backing in          private session storage, addressed by half-track"
+    ));
 
-    pub fn format_name(&self) -> &'static str {
-        P64_NAME
-    }
+    let report = P64Report {
+        format_id: P64.to_owned(),
+        format_name: P64_NAME.to_owned(),
+        version: header.version,
+        write_protected: header.flags & FLAG_WRITE_PROTECT != 0,
+        double_sided: header.flags & FLAG_DOUBLE_SIDED != 0,
+        profile_id: C1541.id.to_owned(),
+        reference_clock_hz: REFERENCE_CLOCK_HZ,
+        cycles_per_rotation: PULSE_SAMPLES_PER_ROTATION,
+        half_tracks,
+        declared_loss: loss.into_entries(),
+        evidence,
+    };
 
-    /// Which P7 mode the open obtained on the file.
-    pub fn access_mode(&self) -> AccessMode {
-        self.mode
-    }
-
-    /// The container as the adapter read it.
-    pub fn inspect(&self) -> &P64Report {
-        &self.report
-    }
-
-    /// How many bytes of private session storage the decoded medium
-    /// occupies, and how much of that is currently resident. The medium
-    /// is never held whole (P27); this is what says so.
-    pub fn backing_bytes(&self) -> u64 {
-        self.medium.backing_bytes()
-    }
-
-    pub fn resident_bytes(&self) -> u64 {
-        self.medium.resident_bytes()
-    }
-
-    /// The decoded medium itself. The pulses stay behind the public
-    /// surface: the presentation above the medium reads them, and
-    /// nothing outside the crate does.
-    pub(crate) fn medium(&self) -> &FluxMedium {
-        &self.medium
-    }
+    Ok((medium, report))
 }
 
 /// Reads and decodes one half-track chunk's data.
 fn read_half_track(
-    file: &File,
+    source: &ImageSource,
     models: &mut Models,
     chunk: HalfTrackChunk,
 ) -> Result<Vec<StoredPulse>> {
@@ -1064,7 +972,8 @@ fn read_half_track(
         )));
     }
     let mut data = vec![0u8; chunk.bytes as usize];
-    device::read_exact_at(file, chunk.at, &mut data)
+    source
+        .read_at(chunk.at, &mut data)
         .map_err(|error| Error::io(format!("failed to read a P64 half-track: {error}")))?;
     let count = u64::from(read_u32(&data, 0));
     let coded = u64::from(read_u32(&data, 4));
@@ -1451,6 +1360,19 @@ mod tests {
         }
     }
 
+    /// Decodes the artifact at `path` the way a declared load does:
+    /// resolved to a streamed source, then read through the one decode
+    /// path the crate has.
+    fn decode_at(path: &Path, cache_bytes: u64) -> Result<(FluxMedium, P64Report)> {
+        let resolved =
+            crate::source::resolve_image(path, crate::device::AccessIntent::Read, cache_bytes)?;
+        decode(
+            &resolved.source,
+            &format!("'{}'", path.display()),
+            cache_bytes,
+        )
+    }
+
     fn temp_path(tag: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1568,7 +1490,7 @@ mod tests {
         let path = temp_path("round-trip");
 
         let written = write_new_artifact(&source, &path).expect("the artifact is written");
-        let reopened = P64Image::open(&path).expect("the artifact reopens");
+        let (medium, report) = decode_at(&path, 1 << 20).expect("the artifact reopens");
 
         let expected: Vec<(u8, u64, u64, u64)> = written
             .half_tracks
@@ -1582,8 +1504,7 @@ mod tests {
                 )
             })
             .collect();
-        let found: Vec<(u8, u64, u64, u64)> = reopened
-            .inspect()
+        let found: Vec<(u8, u64, u64, u64)> = report
             .half_tracks
             .iter()
             .map(|track| {
@@ -1598,11 +1519,8 @@ mod tests {
         assert_eq!(found, expected);
         assert_eq!(found.len(), 2);
 
-        for location in reopened.medium().locations() {
-            let pulses = reopened
-                .medium()
-                .pulses(location)
-                .expect("the pulses read back");
+        for location in medium.locations() {
+            let pulses = medium.pulses(location).expect("the pulses read back");
             assert_eq!(
                 pulses
                     .iter()
@@ -1620,10 +1538,10 @@ mod tests {
         // A medium read out of a container was not derived by this
         // library, and says so rather than borrowing a reduction's word
         // for it.
-        assert_eq!(reopened.medium().derivation(), Derivation::Stored);
-        assert_eq!(reopened.medium().derivation().as_str(), "stored");
+        assert_eq!(medium.derivation(), Derivation::Stored);
+        assert_eq!(medium.derivation().as_str(), "stored");
 
-        drop(reopened);
+        drop((medium, report));
         std::fs::remove_file(&path).ok();
     }
 
@@ -1728,7 +1646,7 @@ mod tests {
         std::fs::write(&path, b"G64 or something else entirely, but not this")
             .expect("the file is written");
 
-        let error = P64Image::open(&path).expect_err("a foreign file is refused");
+        let error = decode_at(&path, 1 << 20).expect_err("a foreign file is refused");
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         assert!(error.to_string().contains("P64-1541"), "{error}");
@@ -1749,7 +1667,7 @@ mod tests {
         bytes.extend_from_slice(&0u32.to_le_bytes());
         std::fs::write(&path, &bytes).expect("the file is written");
 
-        let error = P64Image::open(&path).expect_err("a version past the claim is refused");
+        let error = decode_at(&path, 1 << 20).expect_err("a version past the claim is refused");
 
         assert_eq!(error.category(), ErrorCategory::Unsupported);
         assert!(error.to_string().contains("version 0x00000001"), "{error}");
@@ -1768,7 +1686,7 @@ mod tests {
         bytes.extend_from_slice(&0u32.to_le_bytes());
         std::fs::write(&path, &bytes).expect("the file is written");
 
-        let error = P64Image::open(&path).expect_err("a reserved bit is refused");
+        let error = decode_at(&path, 1 << 20).expect_err("a reserved bit is refused");
 
         assert_eq!(error.category(), ErrorCategory::Unsupported);
         assert!(error.to_string().contains("reserved"), "{error}");
@@ -1787,7 +1705,7 @@ mod tests {
         bytes[at] ^= 0x01;
         std::fs::write(&path, &bytes).expect("it rewrites");
 
-        let error = P64Image::open(&path).expect_err("a changed chunk is refused");
+        let error = decode_at(&path, 1 << 20).expect_err("a changed chunk is refused");
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         assert!(error.to_string().contains("did not arrive"), "{error}");
@@ -1811,7 +1729,7 @@ mod tests {
         bytes[20..24].copy_from_slice(&checksum);
         std::fs::write(&path, &bytes).expect("it rewrites");
 
-        let error = P64Image::open(&path).expect_err("an unclaimed chunk is refused");
+        let error = decode_at(&path, 1 << 20).expect_err("an unclaimed chunk is refused");
 
         assert_eq!(error.category(), ErrorCategory::Unsupported);
         assert!(error.to_string().contains("and no others"), "{error}");
@@ -1824,17 +1742,16 @@ mod tests {
         let path = temp_path("bounded");
         write_new_artifact(&source, &path).expect("the artifact is written");
 
-        let image = P64Image::open_with_cache(&path, 64).expect("the artifact reopens");
-        for location in image.medium().locations() {
-            image.medium().pulses(location).expect("the pulses read");
+        let (medium, report) = decode_at(&path, 64).expect("the artifact reopens");
+        for location in medium.locations() {
+            medium.pulses(location).expect("the pulses read");
         }
 
-        assert!(image.backing_bytes() > 0);
-        assert!(image.resident_bytes() <= 64, "{}", image.resident_bytes());
-        assert_eq!(image.access_mode(), AccessMode::ReadOnly);
-        assert_eq!(image.format_id(), "p64");
+        assert!(medium.backing_bytes() > 0);
+        assert!(medium.resident_bytes() <= 64, "{}", medium.resident_bytes());
+        assert_eq!(report.format_id, "p64");
 
-        drop(image);
+        drop((medium, report));
         std::fs::remove_file(&path).ok();
     }
 }

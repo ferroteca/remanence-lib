@@ -698,12 +698,17 @@ impl<'a> PartitionView<'a> {
             }
             Backing::Medium(medium) => {
                 if id == crate::cbm_dos::CBM_DOS {
-                    return Err(refuse(
-                        PartitionRule::UnclaimedNamespace,
-                        "CBM DOS is read off the record layer of a recording, \
-                         which is reached through its own types rather than \
-                         through a medium (P13)"
-                            .to_owned(),
+                    // CBM DOS is read off the record layer of a
+                    // recording, so the declaration opens the flux
+                    // medium's presentation ladder — materialized under
+                    // the profile's declared policies — and refuses by
+                    // name on a medium whose family bears no flux
+                    // (P13, P30 reached through the type).
+                    let sectors = medium.c1541_sectors()?;
+                    let catalog = crate::cbm_dos::CbmDosCatalog::open(sectors)?;
+                    return Ok(StorageSpace::over_catalog(
+                        crate::cbm_dos::CBM_DOS,
+                        Box::new(catalog),
                     ));
                 }
                 let Some(extent) = extent else {
@@ -846,6 +851,27 @@ impl PartitionPool {
                  medium's native vantage is a namespace, so it records no \
                  partition scheme and has no addressed extent to be a \
                  position within — synthetic, and never evidence",
+            )],
+        }
+    }
+
+    /// The pool a flux medium bears: one direct partition, extent-less
+    /// and namespace-less — a recording records no partition scheme,
+    /// its blocks are addressed by the recording rather than by
+    /// position, and the one namespace over it is a declared reading
+    /// (`filesystem_as`), because nothing here determines one and this
+    /// layer will not pick one.
+    pub(crate) fn over_recording() -> Self {
+        Self {
+            scheme: None,
+            schema_evidence: Vec::new(),
+            content: DiskContent::DirectVolume,
+            partitions: vec![Partition::direct_over_namespace(
+                None,
+                "the library's own composition of the whole recording: a flux \
+                 medium records no partition scheme, so the direct partition \
+                 is what its content is reached through — synthetic, and \
+                 never evidence",
             )],
         }
     }

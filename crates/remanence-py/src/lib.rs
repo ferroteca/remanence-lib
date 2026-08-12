@@ -6,9 +6,11 @@
 //! The module mirrors the Rust crate's public surface: a `Session` owns
 //! two pools — `Machine`s, which are configuration, and media, which are
 //! state — and the **medium is the content handle**.
-//! `Session.load_media(source, format)` takes the caller's own open file
-//! and one declared format, checked by that format's own adapter, and
-//! answers with a `Medium` linked to nothing;
+//! `Session.load_media(source, format)` takes the caller's own open
+//! file — or a list of them, or a `FileSource` taken from an archive
+//! medium's namespace, or a list of those — and one declared format,
+//! checked by that format's own adapter, and answers with a `Medium`
+//! linked to nothing;
 //! `StorageDevice.insert(media_id)` seats it in a drive and
 //! `StorageDevice.eject()` severs, taking nothing away.
 //!
@@ -50,7 +52,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyList};
 
 create_exception!(
     remanence,
@@ -589,16 +591,20 @@ impl DeviceSlot {
 }
 
 /// Every format a load may declare (P3): its stable spelling, its name,
-/// the device types its adapter records, and whether its declaration
-/// carries a block size.
+/// the device types its adapter records, whether its declaration
+/// carries a block size, and whether it reads a collection of sources.
 ///
 /// A format that records exactly one device type carries it bare, so a
 /// load of it needs no `device` argument; one that records several needs
 /// the caller to name which, and a type absent from its list is refused
 /// by name even where the class is right. A word that names a kind
 /// rather than one catalog entry is not among these at all.
+///
+/// The last flag is `takes_collection`: a format bearing it reads one
+/// disk spread over many streams — a list of sources — and every other
+/// claimed format reads one artifact.
 #[pyfunction]
-fn formats() -> Vec<(String, String, Vec<String>, bool)> {
+fn formats() -> Vec<(String, String, Vec<String>, bool, bool)> {
     remanence::Format::claimed()
         .iter()
         .map(|claim| {
@@ -611,6 +617,7 @@ fn formats() -> Vec<(String, String, Vec<String>, bool)> {
                     .map(|device| device.id().to_owned())
                     .collect(),
                 claim.takes_block_bytes(),
+                claim.takes_collection(),
             )
         })
         .collect()
@@ -1600,14 +1607,23 @@ impl Session {
         })
     }
 
-    /// Loads the caller's own opened artifact as the `format` they
-    /// declare it to be, and returns the medium — **linked to nothing**.
+    /// Loads the caller's own opened artifact — or a declared collection
+    /// of sources — as the `format` they declare it to be, and returns
+    /// the medium — **linked to nothing**.
     ///
-    /// `source` is an open file: anything with a `fileno()` — the object
-    /// `open(path, "rb")` returns — or a raw descriptor. The descriptor
-    /// is **duplicated**, so closing the Python file afterwards leaves
-    /// the medium's claim intact and the library closes its own copy
-    /// when the medium is released.
+    /// `source` arrives in one of four shapes. One open file: anything
+    /// with a `fileno()` — the object `open(path, "rb")` returns — or a
+    /// raw descriptor; the descriptor is **duplicated**, so closing the
+    /// Python file afterwards leaves the medium's claim intact and the
+    /// library closes its own copy when the medium is released. A list
+    /// of open files: the collection shape, for a format that reads one
+    /// disk spread over many streams. A `FileSource` taken from an
+    /// archive medium's namespace, or a list of those: the load
+    /// **consumes** each — the source moves into the load, exactly as
+    /// `load_discovery` consumes a `Discovery`, whether or not the load
+    /// is refused. **A format declares which shape it reads** —
+    /// `formats()` says which take a collection — and a shape the
+    /// format does not read is refused by name.
     ///
     /// **Whoever opens owns the lock.** That open is the claim: the
     /// library checks it for exactly one thing — may it write through
@@ -1615,7 +1631,8 @@ impl Session {
     /// lock of its own. A name is recovered from the handle for location
     /// alone, under an identity check; a handle this host cannot name
     /// serves everything but the commit journal and a backing chain's
-    /// parent, and refuses those two by name.
+    /// parent, and refuses those two by name. A `FileSource` rides the
+    /// claim of the medium it came from, so nothing is opened at all.
     ///
     /// The declaration is checked by that one format's own adapter and
     /// refused by name where the evidence cannot bear it. `format` is a
@@ -1641,11 +1658,11 @@ impl Session {
             None => None,
         };
         let format = remanence::Format::declared(format, device, block_bytes).map_err(to_py_err)?;
-        let file = duplicated_file(source)?;
+        let source = media_source(source)?;
         let mut session = self.lock();
         let loaded = match cache_bytes {
-            Some(cache_bytes) => session.load_media_with_cache(file, format, cache_bytes),
-            None => session.load_media(file, format),
+            Some(cache_bytes) => session.load_media_with_cache(source, format, cache_bytes),
+            None => session.load_media(source, format),
         };
         let id = loaded.map_err(to_py_err)?.id();
         drop(session);
@@ -2456,6 +2473,51 @@ impl Medium {
             .map_err(to_py_err)
     }
 
+    /// The family's hardware bitstream over this medium's recording,
+    /// materialized once under the profile's declared mechanics and
+    /// read-channel rules and answered from then on.
+    ///
+    /// **It takes no arguments because the type carries the rules**:
+    /// being a Commodore 1541 medium *means* clocking through the c1541
+    /// channel, and what was used travels into the result's account. It
+    /// answers where the device type's profile bears flux, and raises by
+    /// name everywhere else — a block medium's recording is presented by
+    /// its format adapter, and the two families are disjoint.
+    fn bitstream(&self) -> PyResult<C1541Bitstream> {
+        let report = {
+            let mut medium = self.get()?;
+            BitstreamReport::new(medium.bitstream().map_err(to_py_err)?.inspect())
+        };
+        Ok(C1541Bitstream {
+            provider: BitstreamProvider::Medium {
+                session: Arc::clone(&self.session),
+                id: self.id,
+            },
+            report,
+        })
+    }
+
+    /// The family's encoded bytestream — the byte sequence the declared
+    /// group code makes of the bitstream — materialized once under the
+    /// same rule and answered from then on.
+    ///
+    /// The framed bytes of one location are read through
+    /// `C1541Bytestream.location`; no byte here is a header, a sector or
+    /// a file, and the layers that assign those sit above.
+    fn bytestream(&self) -> PyResult<C1541Bytestream> {
+        let report = {
+            let mut medium = self.get()?;
+            BytestreamReport::new(medium.bytestream().map_err(to_py_err)?.inspect())
+        };
+        Ok(C1541Bytestream {
+            provider: BytestreamProvider::Medium {
+                session: Arc::clone(&self.session),
+                id: self.id,
+            },
+            report,
+        })
+    }
+
     /// The scheme this medium's content is laid out under — `"mbr"` — or
     /// `None` where it records none and the direct partition stands.
     ///
@@ -2986,6 +3048,57 @@ fn duplicate_descriptor(raw: i32) -> PyResult<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_fd(copy) })
 }
 
+/// The load's source, in whichever of its four shapes arrived: one open
+/// file, a list of them, one `FileSource` taken from an archive medium's
+/// namespace, or a list of those.
+///
+/// **A collection is one kind of source throughout** — its first member
+/// says which kind, and a member of the other kind is refused by name. A
+/// `FileSource` is consumed on the way through, whether or not the load
+/// is then refused, exactly as a `Discovery` is.
+fn media_source(source: &Bound<'_, PyAny>) -> PyResult<remanence::MediaSource> {
+    if let Ok(entry) = source.cast::<FileSource>() {
+        return Ok(entry.borrow().take()?.into());
+    }
+    let Ok(list) = source.cast::<PyList>() else {
+        return Ok(duplicated_file(source)?.into());
+    };
+    let leading_entry = list
+        .get_item(0)
+        .is_ok_and(|first| first.cast::<FileSource>().is_ok());
+    if leading_entry {
+        let mut entries = Vec::with_capacity(list.len());
+        for (at, item) in list.iter().enumerate() {
+            let entry = item.cast::<FileSource>().map_err(|_| {
+                categorized_py_err(
+                    remanence::ErrorCategory::Unsupported,
+                    format!(
+                        "a collection is one kind of source throughout, and \
+                         member {at} is no FileSource like the members before \
+                         it"
+                    ),
+                )
+            })?;
+            entries.push(entry.borrow().take()?);
+        }
+        return Ok(entries.into());
+    }
+    let mut handles = Vec::with_capacity(list.len());
+    for (at, item) in list.iter().enumerate() {
+        if item.cast::<FileSource>().is_ok() {
+            return Err(categorized_py_err(
+                remanence::ErrorCategory::Unsupported,
+                format!(
+                    "a collection is one kind of source throughout, and \
+                     member {at} is a FileSource among opened files"
+                ),
+            ));
+        }
+        handles.push(duplicated_file(&item)?);
+    }
+    Ok(handles.into())
+}
+
 /// Re-opens the space one partition composes and runs `action` over it.
 ///
 /// Every verb below passes through here, so the refusals a caller meets
@@ -3244,6 +3357,30 @@ impl StorageSpace {
         Ok(entries.iter().map(Entry::new).collect())
     }
 
+    /// Every file under `path` (`""` is the whole namespace), gathered
+    /// as a load's sources — the collection shape of
+    /// `Session.load_media`.
+    ///
+    /// The sources are **free-standing**: each rides the claim of the
+    /// medium it came from, so the walk that gathered them ends before
+    /// the load begins and nothing is opened twice. A solid archive's
+    /// coded stream decodes once for the whole gathering, not once per
+    /// member. This release gathers from an archive's namespace alone —
+    /// a volume-backed filesystem's files are read through the
+    /// filesystem that names them, and this raises by name there.
+    #[pyo3(signature = (path = ""))]
+    fn files(&self, path: &str) -> PyResult<Vec<FileSource>> {
+        let sources = with_filesystem(
+            self.session.as_ref(),
+            self.media,
+            self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
+            |filesystem| filesystem.files(path),
+        )?;
+        Ok(sources.into_iter().map(FileSource::over).collect())
+    }
+
     /// Answers one path with its entry, or `None` when nothing exists
     /// there — a missing leaf, a missing parent, or a parent that is a
     /// file alike. Absence is an answer, distinguished from failure,
@@ -3422,6 +3559,28 @@ impl File {
         Ok(Discovery::over(discovery))
     }
 
+    /// This file taken as a load's source — the single-`FileSource`
+    /// shape of `Session.load_media`.
+    ///
+    /// The source is **free-standing**: it rides the claim of the medium
+    /// it came from, so the walk that named it ends before the load
+    /// begins and nothing is opened twice. This release takes a load's
+    /// source from an archive's namespace alone — a file on a
+    /// volume-backed filesystem is read through the filesystem that
+    /// names it, and raises here by name.
+    fn source(&self) -> PyResult<FileSource> {
+        let path = self.path.clone();
+        let source = with_filesystem(
+            self.session.as_ref(),
+            self.media,
+            self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
+            |filesystem| filesystem.get_file(&path)?.source(),
+        )?;
+        Ok(FileSource::over(source))
+    }
+
     /// The whole file, copied out.
     fn bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let path = self.path.clone();
@@ -3481,579 +3640,89 @@ impl File {
     }
 }
 
-/// A capture's declared timing basis: an exact count of ticks per
-/// second, as a ratio, because the common capture clocks are not exactly
-/// representable any other way.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct TimeBaseReport {
-    pub ticks_per_second_numerator: u64,
-    pub ticks_per_second_denominator: u64,
-}
-
-#[pymethods]
-impl TimeBaseReport {
-    fn __repr__(&self) -> String {
-        format!(
-            "TimeBaseReport({}/{} Hz)",
-            self.ticks_per_second_numerator, self.ticks_per_second_denominator
-        )
-    }
-}
-
-/// A source's own drive-step position, held exactly. Sources step in
-/// fractions, so this is a ratio and never a rounded whole number.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct StepPosition {
-    pub numerator: u64,
-    pub denominator: u64,
-}
-
-#[pymethods]
-impl StepPosition {
-    fn __repr__(&self) -> String {
-        format!("StepPosition({}/{})", self.numerator, self.denominator)
-    }
-}
-
-/// Something qualified about a member, recorded rather than repaired.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct CaptureIssue {
-    /// The adapter's stable spelling for this kind of issue.
-    pub code: String,
-    pub detail: String,
-}
-
-#[pymethods]
-impl CaptureIssue {
-    fn __repr__(&self) -> String {
-        format!("CaptureIssue(code={:?})", self.code)
-    }
-}
-
-/// One circular observation bounded out of a capture run.
+/// One file taken out of another medium's namespace as a load's source —
+/// one of `Session.load_media`'s source shapes, minted by
+/// `File.source()` and `StorageSpace.files()`.
 ///
-/// It reports the observation's shape, never its pulses: the evidence
-/// stays behind this surface.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ObservationReport {
-    /// Its place in this location's source-record order — not a rank,
-    /// and no claim that it is a good or complete revolution.
-    pub ordinal: u64,
-    /// The declared circumference, in the capture's own ticks.
-    pub span_ticks: u64,
-    pub transitions: u64,
-    pub markers: u64,
+/// It is **free-standing**: it rides the claim of the medium it came
+/// from, so the namespace walk that named it ends before the load begins
+/// and nothing is opened twice. `Session.load_media` **consumes** it —
+/// the source moves into the load, exactly as `load_discovery` consumes
+/// a `Discovery`, whether or not the load is refused — and every
+/// attribute below raises by name once it has been.
+#[pyclass(module = "remanence")]
+pub struct FileSource {
+    /// `None` once a load has consumed it.
+    inner: Mutex<Option<remanence::FileSource>>,
 }
 
-#[pymethods]
-impl ObservationReport {
-    fn __repr__(&self) -> String {
-        format!(
-            "ObservationReport(ordinal={}, span_ticks={}, transitions={})",
-            self.ordinal, self.span_ticks, self.transitions
-        )
-    }
+/// The refusal a consumed source answers everything with.
+fn consumed_file_source() -> PyErr {
+    categorized_py_err(
+        remanence::ErrorCategory::NotFound,
+        "this file source was consumed by a load; ask again from the \
+         namespace that named it",
+    )
 }
 
-/// One source transfer, as the set holds it.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct CaptureRunReport {
-    pub ordinal: u64,
-    pub transitions: u64,
-    /// The last transition's tick: the extent of what was recorded, not
-    /// a circumference. A run states no period.
-    pub extent_ticks: u64,
-    pub markers: u64,
-    pub index_markers: u64,
-    /// The result the capture tool declared for this transfer, where it
-    /// declared one. Zero is a clean read.
-    pub transfer_result: Option<u32>,
-    /// Transitions recorded before the first index and after the last:
-    /// evidence bounding into circular observations does not consume.
-    pub transitions_before_first_index: u64,
-    pub transitions_after_last_index: u64,
-    pub observations: Vec<ObservationReport>,
-}
-
-#[pymethods]
-impl CaptureRunReport {
-    fn __repr__(&self) -> String {
-        format!(
-            "CaptureRunReport(ordinal={}, transitions={}, index_markers={})",
-            self.ordinal, self.transitions, self.index_markers
-        )
-    }
-}
-
-/// One member of the set, and everything read out of it.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct CaptureSetMember {
-    /// The catalog's own identity for this member.
-    pub entry_name: String,
-    pub entry_bytes: u64,
-    pub position: StepPosition,
-    /// The head that captured this position. `None` is a source that
-    /// numbers no head, which is a different fact from head zero.
-    pub head: Option<u64>,
-    pub runs: Vec<CaptureRunReport>,
-    pub issues: Vec<CaptureIssue>,
-}
-
-#[pymethods]
-impl CaptureSetMember {
-    fn __repr__(&self) -> String {
-        format!(
-            "CaptureSetMember(entry_name={:?}, position={}/{}, head={})",
-            self.entry_name,
-            self.position.numerator,
-            self.position.denominator,
-            self.head
-                .map_or_else(|| "None".to_owned(), |head| head.to_string())
-        )
-    }
-}
-
-/// The set as the adapter recognized it.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct CaptureSetReport {
-    pub format_id: String,
-    pub format_name: String,
-    pub time_base: TimeBaseReport,
-    pub members: Vec<CaptureSetMember>,
-    /// How the set was recognized, in human-readable terms.
-    pub evidence: Vec<String>,
-}
-
-#[pymethods]
-impl CaptureSetReport {
-    fn __repr__(&self) -> String {
-        format!(
-            "CaptureSetReport(format_id={:?}, members={})",
-            self.format_id,
-            self.members.len()
-        )
-    }
-}
-
-impl CaptureSetReport {
-    fn new(report: &remanence::CaptureSetReport) -> Self {
+impl FileSource {
+    /// A source over one the core minted — from a file view, or one
+    /// member of a space's gathering.
+    fn over(source: remanence::FileSource) -> Self {
         Self {
-            format_id: report.format_id.clone(),
-            format_name: report.format_name.clone(),
-            time_base: TimeBaseReport {
-                ticks_per_second_numerator: report.time_base.ticks_per_second_numerator,
-                ticks_per_second_denominator: report.time_base.ticks_per_second_denominator,
-            },
-            members: report
-                .members
-                .iter()
-                .map(|member| CaptureSetMember {
-                    entry_name: member.entry_name.clone(),
-                    entry_bytes: member.entry_bytes,
-                    position: StepPosition {
-                        numerator: member.position.numerator,
-                        denominator: member.position.denominator,
-                    },
-                    head: member.head,
-                    runs: member
-                        .runs
-                        .iter()
-                        .map(|run| CaptureRunReport {
-                            ordinal: run.ordinal,
-                            transitions: run.transitions,
-                            extent_ticks: run.extent_ticks,
-                            markers: run.markers,
-                            index_markers: run.index_markers,
-                            transfer_result: run.transfer_result,
-                            transitions_before_first_index: run.transitions_before_first_index,
-                            transitions_after_last_index: run.transitions_after_last_index,
-                            observations: run
-                                .observations
-                                .iter()
-                                .map(|observation| ObservationReport {
-                                    ordinal: observation.ordinal,
-                                    span_ticks: observation.span_ticks,
-                                    transitions: observation.transitions,
-                                    markers: observation.markers,
-                                })
-                                .collect(),
-                        })
-                        .collect(),
-                    issues: member
-                        .issues
-                        .iter()
-                        .map(|issue| CaptureIssue {
-                            code: issue.code.clone(),
-                            detail: issue.detail.clone(),
-                        })
-                        .collect(),
-                })
-                .collect(),
-            evidence: report.evidence.clone(),
+            inner: Mutex::new(Some(source)),
         }
     }
-}
 
-/// One KryoFlux capture set, opened from a catalog subtree.
-///
-/// A capture of a disk is one stream file per head per drive-step
-/// position, and the logical capture is all of them together. Opening
-/// claims the archive — writes denied to every other process — decodes
-/// every member once into private session storage, and holds the claim
-/// until the object is closed or dropped. An incomplete, duplicate,
-/// contradictory, or unrelated member refuses the whole set by name.
-#[pyclass(module = "remanence")]
-pub struct CaptureSet {
-    inner: Option<remanence::CaptureSet>,
-}
+    /// Reads one fact off the source, or refuses by name where a load
+    /// has already taken it.
+    fn read<T>(&self, read: impl FnOnce(&remanence::FileSource) -> T) -> PyResult<T> {
+        let source = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match source.as_ref() {
+            Some(source) => Ok(read(source)),
+            None => Err(consumed_file_source()),
+        }
+    }
 
-impl CaptureSet {
-    fn get(&self) -> PyResult<&remanence::CaptureSet> {
-        self.inner.as_ref().ok_or_else(|| {
-            categorized_py_err(remanence::ErrorCategory::Io, "capture set is closed")
-        })
+    /// Takes the source for the load that consumes it.
+    fn take(&self) -> PyResult<remanence::FileSource> {
+        let mut source = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        source.take().ok_or_else(consumed_file_source)
     }
 }
 
 #[pymethods]
-impl CaptureSet {
-    /// Opens the capture set held by `path` — an archive this library
-    /// reads, optionally followed by the subtree inside it that holds
-    /// the members. `cache_bytes` declares the session working set; the
-    /// bound narrows what stays resident and never refuses service.
-    #[new]
-    #[pyo3(signature = (path, *, cache_bytes = None))]
-    fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
-        let opened = match cache_bytes {
-            Some(cache_bytes) => remanence::CaptureSet::open_with_cache(path, cache_bytes),
-            None => remanence::CaptureSet::open(path),
-        };
-        opened
-            .map(|inner| Self { inner: Some(inner) })
-            .map_err(to_py_err)
-    }
-
-    /// The path the set was opened from.
+impl FileSource {
+    /// The name the namespace holds this file under.
     #[getter]
-    fn path(&self) -> PyResult<String> {
-        Ok(self.get()?.path().display().to_string())
+    fn name(&self) -> PyResult<String> {
+        self.read(|source| source.name().to_owned())
     }
 
-    /// The subtree inside the archive the members were read from, or
-    /// `None` when the whole archive is the set.
+    /// The file's size in bytes, as the namespace claims it.
     #[getter]
-    fn subtree(&self) -> PyResult<Option<String>> {
-        Ok(self.get()?.subtree().map(str::to_owned))
+    fn size_bytes(&self) -> PyResult<u64> {
+        self.read(remanence::FileSource::size)
     }
 
-    /// The capture format's stable identifier: `"kryoflux"`.
-    #[getter]
-    fn format_id(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.format_id())
-    }
-
-    /// The capture format's human-readable name.
-    #[getter]
-    fn format_name(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.format_name())
-    }
-
-    /// The archive grammar the members were read through.
-    #[getter]
-    fn archive_format_id(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.archive_format_id())
-    }
-
-    /// `"read-write"` or `"read-only"`: which mode the deny-write claim
-    /// on the archive file was obtained in.
-    #[getter]
-    fn access_mode(&self) -> PyResult<&'static str> {
-        Ok(mode_str(self.get()?.access_mode()))
-    }
-
-    /// How many bytes of private session storage the decoded capture
-    /// occupies.
-    #[getter]
-    fn backing_bytes(&self) -> PyResult<u64> {
-        Ok(self.get()?.backing_bytes())
-    }
-
-    /// How much of that backing is currently resident. The capture is
-    /// never held whole.
-    #[getter]
-    fn resident_bytes(&self) -> PyResult<u64> {
-        Ok(self.get()?.resident_bytes())
-    }
-
-    /// The set as the adapter recognized it: its members, their catalog
-    /// identities, positions and heads, the transfers read out of them,
-    /// and the evidence behind the recognition.
-    fn inspect(&self) -> PyResult<CaptureSetReport> {
-        Ok(CaptureSetReport::new(self.get()?.inspect()))
-    }
-
-    /// Recognizes the drive family this capture belongs to.
-    ///
-    /// Every enrolled profile is consulted and what claims the capture
-    /// is ranked, never resolved by catalog order; a capture no profile
-    /// claims is a named refusal, and a lone enrolled profile never wins
-    /// by being the only one. The verdict carries the observations that
-    /// produced its confidence, because a confidence figure on its own
-    /// is not an answer.
-    fn recognize(&self) -> PyResult<Recognition> {
-        self.get()?
-            .recognize()
-            .map(|recognition| Recognition::new(&recognition))
-            .map_err(to_py_err)
-    }
-
-    /// Recognizes the capture against one named profile, whether or not
-    /// it would have won the ranking.
-    fn recognize_as(&self, profile_id: &str) -> PyResult<Recognition> {
-        self.get()?
-            .recognize_as(profile_id)
-            .map(|recognition| Recognition::new(&recognition))
-            .map_err(to_py_err)
-    }
-
-    /// Plans the gap-first reconstruction of this capture into one
-    /// remanence image under a declared policy.
-    ///
-    /// Nothing is written and nothing is mutated: the plan computes the
-    /// whole reduction — every revolution of every location aligned by
-    /// gap correspondence, the cell lattice measured from the intervals
-    /// themselves, the angles integrated gap-first, coherence decided
-    /// per transition, and the fat track merged under measured
-    /// agreement — and enumerates everything the image cannot carry in
-    /// the capture's own terms.
-    fn plan_reconstruction(&self, policy: &ReconstructionPolicy) -> PyResult<ReconstructionPlan> {
-        let plan = self
-            .get()?
-            .plan_reconstruction(&policy.to_core()?)
-            .map_err(to_py_err)?;
-        let report = ReconstructionReport::new(plan.report());
-        Ok(ReconstructionPlan {
-            inner: Some(plan),
-            report,
-        })
-    }
-
-    /// Releases the claim on the archive file and discards the private
-    /// session storage the capture decoded into.
-    fn close(&mut self) {
-        self.inner = None;
-    }
-
-    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __exit__(
-        &mut self,
-        _exception_type: Bound<'_, PyAny>,
-        _exception: Bound<'_, PyAny>,
-        _traceback: Bound<'_, PyAny>,
-    ) -> bool {
-        self.inner = None;
-        false
-    }
-}
-
-/// One zone as a profile declares it, and what the capture recovered of
-/// it.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ZoneClaim {
-    pub first_location: u64,
-    pub last_location: u64,
-    /// What the family claims one location in this zone holds.
-    pub records_declared: u32,
-    pub locations_declared: u64,
-    pub locations_claimed: u64,
-    /// The cell this zone claims, in thousandths of a reference cycle.
-    pub nominal_cell_millicycles: u64,
-}
-
-#[pymethods]
-impl ZoneClaim {
     fn __repr__(&self) -> String {
-        format!(
-            "ZoneClaim({}-{}, {} records, {}/{} claimed)",
-            self.first_location,
-            self.last_location,
-            self.records_declared,
-            self.locations_claimed,
-            self.locations_declared
-        )
-    }
-}
-
-/// What the probe found at one source position.
-///
-/// Every field is an observation, not a conclusion: a count, a density,
-/// an angle, an absence. Nothing here names a sector or reads a byte.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct LocationVerdict {
-    /// The member this position was read from.
-    pub artifact: String,
-    pub position: StepPosition,
-    pub head: Option<u64>,
-    /// The family location this position addresses, where the family's
-    /// addressing covers it at all.
-    pub family_location: Option<u64>,
-    pub zone: Option<u32>,
-    pub records: u32,
-    /// The bit distance between record starts, where it repeats.
-    pub record_bits: Option<u64>,
-    /// How far that spacing departs from its own median. Zero is a
-    /// spacing that repeats to the bit.
-    pub record_bits_deviation: u64,
-    /// The one departure from it, as an angle in reference-clock cycles.
-    pub seam_cycles: Option<u64>,
-    /// The derived cell projected onto the family's nominal rotation,
-    /// in thousandths of a reference cycle, beside what the zone claims.
-    pub cell_millicycles: Option<u64>,
-    pub nominal_cell_millicycles: Option<u64>,
-    /// How much of the interval population classified, per thousand.
-    pub resolved_permille: u32,
-    pub observations: u32,
-    pub observations_agreeing: u32,
-    /// The adjacent position holding the same content, where one does.
-    /// Reported, never resolved.
-    pub duplicate_of: Option<StepPosition>,
-    pub claimed: bool,
-    /// Why this position was not claimed, in the profile's own terms.
-    pub refusal: Option<String>,
-}
-
-#[pymethods]
-impl LocationVerdict {
-    fn __repr__(&self) -> String {
-        format!(
-            "LocationVerdict(position={}/{}, claimed={}, records={})",
-            self.position.numerator, self.position.denominator, self.claimed, self.records
-        )
-    }
-}
-
-/// One profile's answer, with the observations that produced it.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ProfileVerdict {
-    pub profile_id: String,
-    pub profile_name: String,
-    pub profile_version: u32,
-    /// Bounded and comparable, 0 to 100. Never an answer on its own.
-    pub confidence: u8,
-    pub locations_claimed: u32,
-    pub locations_declared: u64,
-    pub zones: Vec<ZoneClaim>,
-    pub locations: Vec<LocationVerdict>,
-    pub evidence: Vec<String>,
-}
-
-#[pymethods]
-impl ProfileVerdict {
-    fn __repr__(&self) -> String {
-        format!(
-            "ProfileVerdict(profile_id={:?}, confidence={}, {}/{} locations)",
-            self.profile_id, self.confidence, self.locations_claimed, self.locations_declared
-        )
-    }
-}
-
-/// What the enrolled profiles made of one capture, ranked.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct Recognition {
-    /// Highest confidence first. Several profiles may claim one
-    /// capture, and the ranking is reported rather than resolved.
-    pub verdicts: Vec<ProfileVerdict>,
-    /// The profile the caller pinned, where one was pinned.
-    pub pinned: Option<String>,
-    pub evidence: Vec<String>,
-}
-
-#[pymethods]
-impl Recognition {
-    fn __repr__(&self) -> String {
-        format!(
-            "Recognition(verdicts={}, pinned={})",
-            self.verdicts.len(),
-            self.pinned
-                .as_deref()
-                .map_or_else(|| "None".to_owned(), |pinned| format!("{pinned:?}"))
-        )
-    }
-}
-
-impl Recognition {
-    fn new(recognition: &remanence::Recognition) -> Self {
-        Self {
-            verdicts: recognition
-                .verdicts
-                .iter()
-                .map(|verdict| ProfileVerdict {
-                    profile_id: verdict.profile_id.clone(),
-                    profile_name: verdict.profile_name.clone(),
-                    profile_version: verdict.profile_version,
-                    confidence: verdict.confidence,
-                    locations_claimed: verdict.locations_claimed,
-                    locations_declared: verdict.locations_declared,
-                    zones: verdict
-                        .zones
-                        .iter()
-                        .map(|zone| ZoneClaim {
-                            first_location: zone.first_location,
-                            last_location: zone.last_location,
-                            records_declared: zone.records_declared,
-                            locations_declared: zone.locations_declared,
-                            locations_claimed: zone.locations_claimed,
-                            nominal_cell_millicycles: zone.nominal_cell_millicycles,
-                        })
-                        .collect(),
-                    locations: verdict
-                        .locations
-                        .iter()
-                        .map(|location| LocationVerdict {
-                            artifact: location.artifact.clone(),
-                            position: StepPosition {
-                                numerator: location.position.numerator,
-                                denominator: location.position.denominator,
-                            },
-                            head: location.head,
-                            family_location: location.family_location,
-                            zone: location.zone,
-                            records: location.records,
-                            record_bits: location.record_bits,
-                            record_bits_deviation: location.record_bits_deviation,
-                            seam_cycles: location.seam_cycles,
-                            cell_millicycles: location.cell_millicycles,
-                            nominal_cell_millicycles: location.nominal_cell_millicycles,
-                            resolved_permille: location.resolved_permille,
-                            observations: location.observations,
-                            observations_agreeing: location.observations_agreeing,
-                            duplicate_of: location.duplicate_of.map(|of| StepPosition {
-                                numerator: of.numerator,
-                                denominator: of.denominator,
-                            }),
-                            claimed: location.claimed,
-                            refusal: location.refusal.clone(),
-                        })
-                        .collect(),
-                    evidence: verdict.evidence.clone(),
-                })
-                .collect(),
-            pinned: recognition.pinned.clone(),
-            evidence: recognition.evidence.clone(),
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match inner.as_ref() {
+            Some(source) => format!(
+                "FileSource(name={:?}, size_bytes={})",
+                source.name(),
+                source.size()
+            ),
+            None => "FileSource(consumed)".to_owned(),
         }
     }
 }
@@ -4277,152 +3946,40 @@ impl BytestreamReport {
     }
 }
 
-/// The complete declared policy for one medium-to-bitstream transition.
-///
-/// Every argument is keyword-only and required, deliberately: each is a
-/// decision about evidence, and a channel that arrived at one by
-/// construction rather than by declaration is what the drive profile
-/// exists to prevent. `density` is `"declared"` or `"fixed"` with
-/// `density_zone`; `unzoned` is `"refuse"` or `"omit"`; `weak_pulse` is
-/// `"declared"` with `weak_pulse_detected` or `"seeded"`.
-#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ReadChannelPolicy {
-    pub density: String,
-    pub density_zone: u32,
-    pub unzoned: String,
-    pub weak_pulse: String,
-    pub weak_pulse_detected: bool,
-    /// What makes any stochastic element of the channel reproducible.
-    pub seed: u64,
+/// Where a bitstream's state lives: its own session storage, for one a
+/// caller materialized from an image, or the pooled medium that caches
+/// it — re-resolved on every access, so a released medium refuses by
+/// name rather than reaching state that is gone.
+enum BitstreamProvider {
+    Owned(remanence::C1541Bitstream),
+    Medium {
+        session: Arc<Mutex<remanence::Session>>,
+        id: remanence::MediaId,
+    },
 }
 
-#[pymethods]
-impl ReadChannelPolicy {
-    #[new]
-    #[pyo3(signature = (
-        *,
-        density,
-        unzoned,
-        weak_pulse,
-        seed,
-        density_zone = 0,
-        weak_pulse_detected = false,
-    ))]
-    fn new(
-        density: String,
-        unzoned: String,
-        weak_pulse: String,
-        seed: u64,
-        density_zone: u32,
-        weak_pulse_detected: bool,
-    ) -> Self {
-        Self {
-            density,
-            density_zone,
-            unzoned,
-            weak_pulse,
-            weak_pulse_detected,
-            seed,
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "ReadChannelPolicy(density={:?}, unzoned={:?}, weak_pulse={:?})",
-            self.density, self.unzoned, self.weak_pulse
-        )
-    }
-}
-
-impl ReadChannelPolicy {
-    fn to_core(&self) -> PyResult<remanence::ReadChannelPolicy> {
-        Ok(remanence::ReadChannelPolicy {
-            density: match self.density.as_str() {
-                "declared" => remanence::DensityPolicy::Declared,
-                "fixed" => remanence::DensityPolicy::Fixed {
-                    zone: self.density_zone,
-                },
-                other => return Err(unadmitted("density", other, &["declared", "fixed"])),
-            },
-            unzoned: match self.unzoned.as_str() {
-                "refuse" => remanence::UnzonedPolicy::Refuse,
-                "omit" => remanence::UnzonedPolicy::Omit,
-                other => return Err(unadmitted("unzoned", other, &["refuse", "omit"])),
-            },
-            weak_pulse: match self.weak_pulse.as_str() {
-                "declared" => remanence::WeakPulsePolicy::Declared {
-                    detected: self.weak_pulse_detected,
-                },
-                "seeded" => remanence::WeakPulsePolicy::Seeded,
-                other => return Err(unadmitted("weak pulse", other, &["declared", "seeded"])),
-            },
-            seed: self.seed,
-        })
-    }
-}
-
-/// The complete declared policy for one bitstream-to-bytestream
-/// transition. `alignment` is `"landmark"` or `"origin"`;
-/// `unassigned_symbol` is `"refuse"` or `"declare-loss"`.
-#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct GcrCodecPolicy {
-    pub alignment: String,
-    pub unassigned_symbol: String,
-}
-
-#[pymethods]
-impl GcrCodecPolicy {
-    #[new]
-    #[pyo3(signature = (*, alignment, unassigned_symbol))]
-    fn new(alignment: String, unassigned_symbol: String) -> Self {
-        Self {
-            alignment,
-            unassigned_symbol,
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "GcrCodecPolicy(alignment={:?}, unassigned_symbol={:?})",
-            self.alignment, self.unassigned_symbol
-        )
-    }
-}
-
-impl GcrCodecPolicy {
-    fn to_core(&self) -> PyResult<remanence::GcrCodecPolicy> {
-        Ok(remanence::GcrCodecPolicy {
-            alignment: match self.alignment.as_str() {
-                "landmark" => remanence::AlignmentPolicy::Landmark,
-                "origin" => remanence::AlignmentPolicy::Origin,
-                other => return Err(unadmitted("alignment", other, &["landmark", "origin"])),
-            },
-            unassigned_symbol: match self.unassigned_symbol.as_str() {
-                "refuse" => remanence::UnassignedSymbolPolicy::Refuse,
-                "declare-loss" => remanence::UnassignedSymbolPolicy::DeclareLoss,
-                other => {
-                    return Err(unadmitted(
-                        "unassigned symbol",
-                        other,
-                        &["refuse", "declare-loss"],
+impl BitstreamProvider {
+    fn with<T>(
+        &self,
+        action: impl FnOnce(&remanence::C1541Bitstream) -> remanence::Result<T>,
+    ) -> PyResult<T> {
+        match self {
+            Self::Owned(bitstream) => action(bitstream).map_err(to_py_err),
+            Self::Medium { session, id } => {
+                let mut guard = session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let Some(medium) = guard.medium_mut(*id) else {
+                    return Err(categorized_py_err(
+                        remanence::ErrorCategory::NotFound,
+                        "the medium this bitstream reads was released",
                     ));
-                }
-            },
-        })
+                };
+                let bitstream = medium.bitstream().map_err(to_py_err)?;
+                action(bitstream).map_err(to_py_err)
+            }
+        }
     }
-}
-
-/// A policy spelling this library does not admit.
-fn unadmitted(what: &str, given: &str, admitted: &[&str]) -> PyErr {
-    categorized_py_err(
-        remanence::ErrorCategory::Unsupported,
-        format!(
-            "{what} policy {given:?} is not one this library admits; it takes one of \
-             {admitted:?}"
-        ),
-    )
 }
 
 /// A hardware bitstream, held in the session. The bits stay behind this
@@ -4430,15 +3987,8 @@ fn unadmitted(what: &str, given: &str, admitted: &[&str]) -> PyErr {
 /// business.
 #[pyclass(module = "remanence")]
 pub struct C1541Bitstream {
-    inner: remanence::C1541Bitstream,
+    provider: BitstreamProvider,
     report: BitstreamReport,
-}
-
-impl C1541Bitstream {
-    fn produce(inner: remanence::C1541Bitstream) -> PyResult<Self> {
-        let report = BitstreamReport::new(inner.inspect());
-        Ok(Self { inner, report })
-    }
 }
 
 #[pymethods]
@@ -4451,48 +4001,89 @@ impl C1541Bitstream {
 
     /// How many locations the bitstream claims.
     #[getter]
-    fn locations(&self) -> u64 {
-        self.inner.locations()
+    fn locations(&self) -> PyResult<u64> {
+        self.provider.with(|bitstream| Ok(bitstream.locations()))
     }
 
     #[getter]
-    fn backing_bytes(&self) -> u64 {
-        self.inner.backing_bytes()
+    fn backing_bytes(&self) -> PyResult<u64> {
+        self.provider
+            .with(|bitstream| Ok(bitstream.backing_bytes()))
     }
 
     #[getter]
-    fn resident_bytes(&self) -> u64 {
-        self.inner.resident_bytes()
+    fn resident_bytes(&self) -> PyResult<u64> {
+        self.provider
+            .with(|bitstream| Ok(bitstream.resident_bytes()))
     }
 
     /// Materializes the family's encoded bytestream from this bitstream
-    /// under its declared group code. The bitstream is untouched.
-    #[pyo3(signature = (policy, *, cache_bytes = None))]
-    fn materialize_c1541_bytestream(
-        &self,
-        policy: &GcrCodecPolicy,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<C1541Bytestream> {
-        let inner = self
-            .inner
-            .materialize_c1541_bytestream(
-                policy.to_core()?,
-                cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
-            )
-            .map_err(to_py_err)?;
+    /// under the family's declared group code and codec reading.
+    ///
+    /// It takes no policy because the type carries one: being a
+    /// bitstream of this family *means* resolving through the profile's
+    /// declared codec policy, and what was used travels into the result
+    /// as provenance. The bitstream is untouched and stays exactly what
+    /// it was; the bytestream is separate session state with its own
+    /// provenance, which is this bitstream's with the codec added to it.
+    #[pyo3(signature = (*, cache_bytes = None))]
+    fn materialize_c1541_bytestream(&self, cache_bytes: Option<u64>) -> PyResult<C1541Bytestream> {
+        let inner = self.provider.with(|bitstream| {
+            bitstream
+                .materialize_c1541_bytestream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+        })?;
         let report = BytestreamReport::new(inner.inspect());
-        Ok(C1541Bytestream { inner, report })
+        Ok(C1541Bytestream {
+            provider: BytestreamProvider::Owned(Arc::new(inner)),
+            report,
+        })
     }
 
     fn __repr__(&self) -> String {
-        format!("C1541Bitstream(locations={})", self.inner.locations())
+        format!("C1541Bitstream(locations={})", self.report.locations.len())
+    }
+}
+
+/// Where a bytestream's state lives, under the same rule as the
+/// bitstream's provider. It is shared rather than held, because the
+/// location reads below re-resolve through it.
+#[derive(Clone)]
+enum BytestreamProvider {
+    Owned(Arc<remanence::C1541Bytestream>),
+    Medium {
+        session: Arc<Mutex<remanence::Session>>,
+        id: remanence::MediaId,
+    },
+}
+
+impl BytestreamProvider {
+    fn with<T>(
+        &self,
+        action: impl FnOnce(&remanence::C1541Bytestream) -> remanence::Result<T>,
+    ) -> PyResult<T> {
+        match self {
+            Self::Owned(bytestream) => action(bytestream).map_err(to_py_err),
+            Self::Medium { session, id } => {
+                let mut guard = session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let Some(medium) = guard.medium_mut(*id) else {
+                    return Err(categorized_py_err(
+                        remanence::ErrorCategory::NotFound,
+                        "the medium this bytestream reads was released",
+                    ));
+                };
+                let bytestream = medium.bytestream().map_err(to_py_err)?;
+                action(bytestream).map_err(to_py_err)
+            }
+        }
     }
 }
 
 /// An encoded bytestream, held in the session.
 #[pyclass(module = "remanence")]
 pub struct C1541Bytestream {
-    inner: remanence::C1541Bytestream,
+    provider: BytestreamProvider,
     report: BytestreamReport,
 }
 
@@ -4503,36 +4094,55 @@ impl C1541Bytestream {
     }
 
     #[getter]
-    fn locations(&self) -> u64 {
-        self.inner.locations()
+    fn locations(&self) -> PyResult<u64> {
+        self.provider.with(|bytestream| Ok(bytestream.locations()))
     }
 
     #[getter]
-    fn backing_bytes(&self) -> u64 {
-        self.inner.backing_bytes()
+    fn backing_bytes(&self) -> PyResult<u64> {
+        self.provider
+            .with(|bytestream| Ok(bytestream.backing_bytes()))
     }
 
     #[getter]
-    fn resident_bytes(&self) -> u64 {
-        self.inner.resident_bytes()
+    fn resident_bytes(&self) -> PyResult<u64> {
+        self.provider
+            .with(|bytestream| Ok(bytestream.resident_bytes()))
+    }
+
+    /// The framed bytes one whole track holds, addressed in the family's
+    /// own terms — the Commodore 1541 numbers its tracks from 1.
+    ///
+    /// A location the stream does not hold is refused naming what it
+    /// does hold: the stream's locations are what the medium carried,
+    /// and a track it does not hold is absent rather than blank.
+    fn location(&self, track: u32) -> PyResult<LocationBytes> {
+        let bytes = self.provider.with(|bytestream| {
+            Ok(bytestream
+                .location(remanence::Location::track(track))?
+                .bytes())
+        })?;
+        Ok(LocationBytes {
+            provider: self.provider.clone(),
+            track,
+            bytes,
+        })
     }
 
     /// Recognizes the recording's own sectors out of this bytestream,
-    /// under the family's declared record grammar. The bytestream is
-    /// untouched.
-    #[pyo3(signature = (policy, *, cache_bytes = None))]
-    fn recognize_c1541_sectors(
-        &self,
-        policy: &SectorPolicy,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<C1541Sectors> {
-        let inner = self
-            .inner
-            .recognize_c1541_sectors(
-                policy.to_core()?,
-                cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
-            )
-            .map_err(to_py_err)?;
+    /// under the family's declared record grammar and sector reading.
+    ///
+    /// It takes no policy because the profile carries one, and what was
+    /// used travels into the result as provenance. The bytestream is
+    /// untouched and stays exactly what it was; the sector layer is
+    /// separate session state, and there is no way back down — a sector
+    /// is not lowered into bytes.
+    #[pyo3(signature = (*, cache_bytes = None))]
+    fn recognize_c1541_sectors(&self, cache_bytes: Option<u64>) -> PyResult<C1541Sectors> {
+        let inner = self.provider.with(|bytestream| {
+            bytestream
+                .recognize_c1541_sectors(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+        })?;
         let report = SectorReport::new(inner.inspect());
         Ok(C1541Sectors {
             inner: Arc::new(inner),
@@ -4541,64 +4151,63 @@ impl C1541Bytestream {
     }
 
     fn __repr__(&self) -> String {
-        format!("C1541Bytestream(locations={})", self.inner.locations())
+        format!("C1541Bytestream(locations={})", self.report.locations.len())
     }
 }
 
-/// The complete declared policy for one bytestream-to-sector
-/// recognition. Both fields are `"refuse"` or `"declare-loss"`.
-#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct SectorPolicy {
-    pub checksum_failure: String,
-    pub unpaired_record: String,
+/// The framed bytes one location holds — the byte sequence the declared
+/// group code resolved there, and nothing beneath it.
+///
+/// Bytes number from the first framed byte, because nothing before sync
+/// is a byte at all; the unframed bits and the bit-level state stay
+/// behind the surface, reported in the stream's own account. The reads
+/// re-resolve through whatever provides the bytestream, so a released
+/// medium refuses by name rather than reaching state that is gone.
+#[pyclass(module = "remanence")]
+pub struct LocationBytes {
+    provider: BytestreamProvider,
+    track: u32,
+    bytes: u64,
 }
 
 #[pymethods]
-impl SectorPolicy {
-    #[new]
-    #[pyo3(signature = (*, checksum_failure, unpaired_record))]
-    fn new(checksum_failure: String, unpaired_record: String) -> Self {
-        Self {
-            checksum_failure,
-            unpaired_record,
-        }
+impl LocationBytes {
+    /// The whole track this location addresses — the family's own
+    /// numbering, which starts at 1.
+    #[getter]
+    fn track(&self) -> u32 {
+        self.track
+    }
+
+    /// How many framed bytes this location holds.
+    #[getter]
+    fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// Exactly `length` framed bytes at `offset`, whole or not at all.
+    ///
+    /// A byte whose recorded pattern the family's table does not assign
+    /// has no value to serve: it is stated as unresolved in the stream's
+    /// account, and a read that touches one is refused naming it rather
+    /// than answered with an invented value.
+    fn read_at<'py>(
+        &self,
+        py: Python<'py>,
+        offset: u64,
+        length: usize,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let mut buffer = vec![0u8; length];
+        self.provider.with(|bytestream| {
+            bytestream
+                .location(remanence::Location::track(self.track))?
+                .read_at(offset, &mut buffer)
+        })?;
+        Ok(PyBytes::new(py, &buffer))
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "SectorPolicy(checksum_failure={:?}, unpaired_record={:?})",
-            self.checksum_failure, self.unpaired_record
-        )
-    }
-}
-
-impl SectorPolicy {
-    fn to_core(&self) -> PyResult<remanence::SectorPolicy> {
-        Ok(remanence::SectorPolicy {
-            checksum_failure: match self.checksum_failure.as_str() {
-                "refuse" => remanence::ChecksumFailurePolicy::Refuse,
-                "declare-loss" => remanence::ChecksumFailurePolicy::DeclareLoss,
-                other => {
-                    return Err(unadmitted(
-                        "checksum failure",
-                        other,
-                        &["refuse", "declare-loss"],
-                    ));
-                }
-            },
-            unpaired_record: match self.unpaired_record.as_str() {
-                "refuse" => remanence::UnpairedRecordPolicy::Refuse,
-                "declare-loss" => remanence::UnpairedRecordPolicy::DeclareLoss,
-                other => {
-                    return Err(unadmitted(
-                        "unpaired record",
-                        other,
-                        &["refuse", "declare-loss"],
-                    ));
-                }
-            },
-        })
+        format!("LocationBytes(track={}, bytes={})", self.track, self.bytes)
     }
 }
 
@@ -4968,126 +4577,6 @@ impl P64Report {
     }
 }
 
-/// One P64 image, opened and read.
-///
-/// Opening claims the file — writes denied to every other process —
-/// decodes every half-track once into private session storage, and holds
-/// the claim until the image is closed or collected.
-#[pyclass(module = "remanence")]
-pub struct P64Image {
-    inner: Option<remanence::P64Image>,
-    report: P64Report,
-}
-
-#[pymethods]
-impl P64Image {
-    /// Opens the P64 image at `path`. The version is checked before
-    /// anything else is touched, and a version, flag bit, or chunk
-    /// signature past this release's claim is refused by name.
-    #[new]
-    #[pyo3(signature = (path, *, cache_bytes = None))]
-    fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
-        let image = match cache_bytes {
-            Some(cache_bytes) => remanence::P64Image::open_with_cache(path, cache_bytes),
-            None => remanence::P64Image::open(path),
-        }
-        .map_err(to_py_err)?;
-        let report = P64Report::new(image.inspect());
-        Ok(Self {
-            inner: Some(image),
-            report,
-        })
-    }
-
-    /// The container as the adapter read it.
-    fn inspect(&self) -> P64Report {
-        self.report.clone()
-    }
-
-    /// The path the image was opened from.
-    #[getter]
-    fn path(&self) -> PyResult<String> {
-        Ok(self.get()?.path().to_string_lossy().into_owned())
-    }
-
-    #[getter]
-    fn format_id(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.format_id())
-    }
-
-    #[getter]
-    fn format_name(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.format_name())
-    }
-
-    /// How many bytes of private session storage the decoded medium
-    /// occupies, and how much of that is currently resident.
-    #[getter]
-    fn backing_bytes(&self) -> PyResult<u64> {
-        Ok(self.get()?.backing_bytes())
-    }
-
-    #[getter]
-    fn resident_bytes(&self) -> PyResult<u64> {
-        Ok(self.get()?.resident_bytes())
-    }
-
-    /// Materializes the family's hardware bitstream from the medium
-    /// this container holds at rest.
-    ///
-    /// The container is read and nothing else. What the bitstream says
-    /// about how its medium came to exist is what the container said:
-    /// that it was found already a medium and this library derived none
-    /// of it.
-    #[pyo3(signature = (policy, *, cache_bytes = None))]
-    fn materialize_c1541_bitstream(
-        &self,
-        policy: &ReadChannelPolicy,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<C1541Bitstream> {
-        C1541Bitstream::produce(
-            self.get()?
-                .materialize_c1541_bitstream(
-                    policy.to_core()?,
-                    cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
-                )
-                .map_err(to_py_err)?,
-        )
-    }
-
-    /// Releases the claim on the file and discards the private session
-    /// storage the medium decoded into.
-    fn close(&mut self) {
-        self.inner = None;
-    }
-
-    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __exit__(
-        &mut self,
-        _exception_type: Bound<'_, PyAny>,
-        _exception: Bound<'_, PyAny>,
-        _traceback: Bound<'_, PyAny>,
-    ) -> bool {
-        self.inner = None;
-        false
-    }
-
-    fn __repr__(&self) -> String {
-        format!("P64Image(half_tracks={})", self.report.half_tracks.len())
-    }
-}
-
-impl P64Image {
-    fn get(&self) -> PyResult<&remanence::P64Image> {
-        self.inner
-            .as_ref()
-            .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "image is closed"))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The remanence image: the flux family's physical stratum, and the
 // `.remanence` artifact it is read from and written to. The model
@@ -5236,213 +4725,6 @@ impl RemanenceWriteReport {
         format!(
             "RemanenceWriteReport(path={:?}, orbits={}, points={})",
             self.path, self.orbits, self.points
-        )
-    }
-}
-
-/// The complete declared policy for one gap-first reconstruction.
-///
-/// There is no default: a reduction the policy does not name is a
-/// refusal. `recordings` is `"measured"` — a position records where its
-/// revolutions resolve the same transitions, which is the count-spread
-/// discriminator reading the evidence — or `"declared"`, in which case
-/// `declared_positions` is the caller's own assertion and is checked to
-/// exist before it is honoured.
-#[pyclass(frozen, get_all, from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ReconstructionPolicy {
-    /// Which recorded side the image is reconstructed from. Sides are
-    /// never merged or averaged.
-    pub side: u64,
-    pub recordings: String,
-    pub declared_positions: Vec<u64>,
-}
-
-#[pymethods]
-impl ReconstructionPolicy {
-    #[new]
-    #[pyo3(signature = (*, side, recordings, declared_positions = Vec::new()))]
-    fn new(side: u64, recordings: String, declared_positions: Vec<u64>) -> Self {
-        Self {
-            side,
-            recordings,
-            declared_positions,
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "ReconstructionPolicy(side={}, recordings={:?})",
-            self.side, self.recordings
-        )
-    }
-}
-
-impl ReconstructionPolicy {
-    fn to_core(&self) -> PyResult<remanence::ReconstructionPolicy> {
-        Ok(remanence::ReconstructionPolicy {
-            side: self.side,
-            recordings: match self.recordings.as_str() {
-                "measured" => remanence::RecordingSelection::Measured,
-                "declared" => {
-                    remanence::RecordingSelection::Declared(self.declared_positions.clone())
-                }
-                other => {
-                    return Err(unadmitted(
-                        "recording selection",
-                        other,
-                        &["measured", "declared"],
-                    ));
-                }
-            },
-        })
-    }
-}
-
-/// One reconstructed orbit, as the plan reports it.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ReconstructedOrbit {
-    /// The instrument position the orbit was read at — capture
-    /// provenance, not a fact of the medium.
-    pub position: u64,
-    /// Where the orbit is: the rig's radius at that position.
-    pub radius_microns: u64,
-    pub revolutions: u32,
-    /// Raw transitions per revolution, before alignment.
-    pub transition_counts: Vec<u32>,
-    /// The count-spread discriminator, in permille of the largest.
-    pub count_spread_permille: u32,
-    pub points: u64,
-    pub coherent_points: u64,
-    pub unaligned_spans: u64,
-    /// The cell the closed revolution implies, in millidivisions.
-    pub implied_cell_millidivisions: u64,
-    /// Intervals kept off the lattice: the medium holding what the
-    /// crystal did not write.
-    pub off_lattice: u32,
-    /// Whether the fat-track merge admitted this orbit into the image.
-    pub admitted: bool,
-}
-
-#[pymethods]
-impl ReconstructedOrbit {
-    fn __repr__(&self) -> String {
-        format!(
-            "ReconstructedOrbit(position={}, radius_microns={}, points={}, admitted={})",
-            self.position,
-            self.radius_microns,
-            self.points,
-            if self.admitted { "True" } else { "False" }
-        )
-    }
-}
-
-/// What the reconstruction will produce, computed whole before anything
-/// is written.
-#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
-#[derive(Clone)]
-pub struct ReconstructionReport {
-    pub format_id: String,
-    pub side: u64,
-    /// Every position the capture holds on the side.
-    pub swept_positions: u32,
-    /// The positions the policy's selection names as recordings.
-    pub recorded_positions: Vec<u64>,
-    pub orbits: Vec<ReconstructedOrbit>,
-    /// What the image cannot carry of the capture. A count is not an
-    /// account, so each entry says what it was.
-    pub declared_loss: Vec<DeclaredLoss>,
-    /// What the reduction claims of what it did.
-    pub evidence: Vec<String>,
-}
-
-#[pymethods]
-impl ReconstructionReport {
-    fn __repr__(&self) -> String {
-        format!(
-            "ReconstructionReport(side={}, orbits={}, declared_loss={})",
-            self.side,
-            self.orbits.len(),
-            self.declared_loss.len()
-        )
-    }
-}
-
-impl ReconstructionReport {
-    fn new(report: &remanence::ReconstructionReport) -> Self {
-        Self {
-            format_id: report.format_id.to_owned(),
-            side: report.side,
-            swept_positions: report.swept_positions,
-            recorded_positions: report.recorded_positions.clone(),
-            orbits: report
-                .orbits
-                .iter()
-                .map(|orbit| ReconstructedOrbit {
-                    position: orbit.position,
-                    radius_microns: orbit.radius_microns,
-                    revolutions: orbit.revolutions,
-                    transition_counts: orbit.transition_counts.clone(),
-                    count_spread_permille: orbit.count_spread_permille,
-                    points: orbit.points,
-                    coherent_points: orbit.coherent_points,
-                    unaligned_spans: orbit.unaligned_spans,
-                    implied_cell_millidivisions: orbit.implied_cell_millidivisions,
-                    off_lattice: orbit.off_lattice,
-                    admitted: orbit.admitted,
-                })
-                .collect(),
-            declared_loss: declared_loss(&report.declared_loss),
-            evidence: report.evidence.clone(),
-        }
-    }
-}
-
-/// A planned reduction: everything computed, nothing written.
-#[pyclass(module = "remanence")]
-pub struct ReconstructionPlan {
-    inner: Option<remanence::ReconstructionPlan>,
-    report: ReconstructionReport,
-}
-
-#[pymethods]
-impl ReconstructionPlan {
-    /// What the reduction will produce, and everything the image will
-    /// not carry. Read before executing: executing adds nothing to it.
-    fn report(&self) -> ReconstructionReport {
-        self.report.clone()
-    }
-
-    /// Produces the remanence image. The capture is untouched, and at
-    /// most `cache_bytes` of the image's points stay resident.
-    ///
-    /// What comes back is the family's ordinary `RemanenceImage` — the
-    /// same handle a `.remanence` artifact opens to — carrying this
-    /// reduction's declared policy and evidence as its provenance.
-    #[pyo3(signature = (*, cache_bytes = None))]
-    fn execute(&mut self, cache_bytes: Option<u64>) -> PyResult<RemanenceImage> {
-        let plan = self.inner.take().ok_or_else(|| {
-            categorized_py_err(
-                remanence::ErrorCategory::Io,
-                "plan has already been executed",
-            )
-        })?;
-        let image = plan
-            .execute(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
-            .map_err(to_py_err)?;
-        let report = RemanenceImageReport::new(&image.inspect());
-        Ok(RemanenceImage {
-            inner: Some(image),
-            report,
-        })
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "ReconstructionPlan(side={}, orbits={})",
-            self.report.side,
-            self.report.orbits.len()
         )
     }
 }
@@ -5784,8 +5066,11 @@ impl RemanenceImage {
     }
 
     /// Materializes the family's hardware bitstream from what this image
-    /// holds, under declared mechanics and read-channel rules.
+    /// holds, under the family's declared mechanics and read-channel
+    /// rules.
     ///
+    /// It takes no policy because the profile carries one; `cache_bytes`
+    /// is the working-set bound, which is a bound rather than a reading.
     /// The image carries no clock — a cell length is a property of a
     /// recording, recoverable from the image, never a field of it — so
     /// the ladder stands on the served projection of it rather than on
@@ -5793,20 +5078,17 @@ impl RemanenceImage {
     /// it was: the bitstream is separate session state, carrying the
     /// image's own provenance beneath the channel that produced it.
     /// There is no way back down.
-    #[pyo3(signature = (policy, *, cache_bytes = None))]
-    fn materialize_c1541_bitstream(
-        &self,
-        policy: &ReadChannelPolicy,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<C1541Bitstream> {
-        C1541Bitstream::produce(
-            self.get()?
-                .materialize_c1541_bitstream(
-                    policy.to_core()?,
-                    cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES),
-                )
-                .map_err(to_py_err)?,
-        )
+    #[pyo3(signature = (*, cache_bytes = None))]
+    fn materialize_c1541_bitstream(&self, cache_bytes: Option<u64>) -> PyResult<C1541Bitstream> {
+        let inner = self
+            .get()?
+            .materialize_c1541_bitstream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+            .map_err(to_py_err)?;
+        let report = BitstreamReport::new(inner.inspect());
+        Ok(C1541Bitstream {
+            provider: BitstreamProvider::Owned(inner),
+            report,
+        })
     }
 
     /// Releases the claim on the artifact and discards the private
@@ -5859,42 +5141,23 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", version)?;
     m.add("DEFAULT_CACHE_BYTES", remanence::DEFAULT_CACHE_BYTES)?;
     m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
-    m.add_class::<CaptureSet>()?;
-    m.add_class::<CaptureSetReport>()?;
-    m.add_class::<CaptureSetMember>()?;
-    m.add_class::<CaptureRunReport>()?;
-    m.add_class::<ObservationReport>()?;
-    m.add_class::<CaptureIssue>()?;
-    m.add_class::<StepPosition>()?;
-    m.add_class::<TimeBaseReport>()?;
-    m.add_class::<Recognition>()?;
-    m.add_class::<ProfileVerdict>()?;
-    m.add_class::<LocationVerdict>()?;
-    m.add_class::<ZoneClaim>()?;
-    m.add_class::<ReadChannelPolicy>()?;
-    m.add_class::<GcrCodecPolicy>()?;
     m.add_class::<C1541Bitstream>()?;
     m.add_class::<C1541Bytestream>()?;
+    m.add_class::<LocationBytes>()?;
     m.add_class::<BitstreamReport>()?;
     m.add_class::<BitstreamLocation>()?;
     m.add_class::<BytestreamReport>()?;
     m.add_class::<BytestreamLocation>()?;
-    m.add_class::<SectorPolicy>()?;
     m.add_class::<C1541Sectors>()?;
     m.add_class::<SectorReport>()?;
     m.add_class::<SectorLocation>()?;
     m.add_class::<SectorClaim>()?;
     m.add_class::<ContestedAddress>()?;
-    m.add_class::<P64Image>()?;
     m.add_class::<RemanenceImage>()?;
     m.add_class::<RemanenceImageReport>()?;
     m.add_class::<RemanenceHole>()?;
     m.add_class::<RemanenceOrbit>()?;
     m.add_class::<RemanenceWriteReport>()?;
-    m.add_class::<ReconstructionPolicy>()?;
-    m.add_class::<ReconstructionPlan>()?;
-    m.add_class::<ReconstructionReport>()?;
-    m.add_class::<ReconstructedOrbit>()?;
     m.add_class::<D64Report>()?;
     m.add_class::<D64Block>()?;
     m.add_class::<G64Report>()?;
@@ -5932,6 +5195,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<EntryFact>()?;
     m.add_class::<StorageSpace>()?;
     m.add_class::<File>()?;
+    m.add_class::<FileSource>()?;
     m.add_class::<DosMachine>()?;
     m.add_class::<DriveMap>()?;
     m.add_class::<DriveMapping>()?;

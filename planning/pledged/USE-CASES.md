@@ -467,28 +467,29 @@ Neither should grow a second orchestration path to serve the other.
 ## U23 — I save a KryoFlux capture of a C64 disk as a P64 image
 
 > **Withdrawn from the in-force list, 2026-08-10 (D28), and rewritten
-> around the shape it is owed in.** The journey below is media-first and
-> is not what runs today: today it runs through a surface built for
-> captures alone — a `CaptureSet` root outside the device model, a plan
-> and an image reached from it, and a `write_p64` verb belonging to that
-> image. Of the four steps below, the first
-> is built and the rest are not: `load_media` takes one path and no
-> collection (the collection-sourced load is F59's), there is no disk
-> kind a capture loads into, and every write verb is format-specific and
-> hangs on the root that produced it. **Step 2 does not fold into step
-> 1** — step 1's call already answers with the archive, and one verb
-> giving two answers chosen by inspecting content is the discovery the
-> declared tier exists to keep out (D28).
+> around the shape it is owed in.** Of the four steps below, the first
+> three are built — F59 delivered the collection-sourced `load_media`
+> and the disk it masters (D35) — and two gaps remain. **Step 4 is
+> unbuilt**: the write verbs are format-specific, hang on the
+> `.remanence` image root, and no verb takes a destination format on
+> the medium, so a capture loaded as a medium reaches no writer at all
+> until this lands. And **the load declares the drive where this entry
+> is owed a recognition**: `Format::KryoFlux { device }` takes the
+> caller's declaration, where a commercially mastered C64 disk carries
+> no 1541's signature and requiring the caller to name the drive would
+> refuse good captures. The recognition this entry leans on is built
+> and runs inside the declared load — a pinned verdict with its
+> evidence, riding the medium as provenance — but no load takes the
+> *ranking* yet, and `disk.recognition()` is unbuilt with it. **Step 2
+> does not fold into step 1** — step 1's call already answers with the
+> archive, and one verb giving two answers chosen by inspecting content
+> is the discovery the declared tier exists to keep out (D28).
 >
 > **Two shortcuts are deliberate, approved at the owner's direction on
 > 2026-08-10, and neither is laziness.** The namespace is reached
 > without a partition step, the direct-partition ceremony buying nothing
-> for a medium that records no scheme. And **the drive is recognized
-> rather than declared** — see the body: a commercially mastered C64
-> disk carries no 1541's signature, so requiring the caller to name the
-> drive would refuse good captures. The recognition this leans on is
-> already built (`CaptureSet::recognize`, a ranked verdict with its
-> evidence); what is missing is the load taking it. This entry sits
+> for a medium that records no scheme. And the drive is recognized
+> rather than declared, as above. This entry sits
 > above the media-first walks and is not governed by their
 > declared-tier preamble.
 
@@ -634,7 +635,12 @@ transformation is the surface and the evidence stays behind it.
 Consuming the image is a separate journey that meets this one at the
 file.)*
 
-## The media-first walks — U25 through U34
+## The media-first walks
+
+Ten walks were pledged with the media-first storage model, numbered U25
+through U34; the delivered ones live at root
+[USE-CASES.md](../../USE-CASES.md), keeping their numbers, and the rest
+wait here.
 
 **No discovery, complete user specification — the defining attribute of
 every use case below.** The caller declares what they have — the
@@ -660,93 +666,13 @@ work belong to the question tier
 proposed and argued separately — and **these walks are permanent**:
 they remain valid, supported workflows even when discovery and other
 conveniences evolve to make the same results easier to achieve.
-Conveniences layer above the declared tier; they never replace it. Together the ten exercise every core
+Conveniences layer above the declared tier; they never replace it. Together the ten walks exercise every core
 concept the media-first storage model
 ([design/media-first-storage-model.md](design/media-first-storage-model.md))
 pledges: the pools and their lifecycles, the declared creation grammar
 and its source shapes, the device types, the partition pool and
 the vantage doors, the edge, writing and the commit point, authorship,
 and the machine tier's own half.
-
-## U25 — I master a 1541 disk from the captures on my filesystem and read its first byte
-
-I have a directory of KryoFlux stream files — 168 of them, two heads by
-eighty-four step positions, straight off the instrument — and I know
-what they are: a capture of a Commodore 1541 disk. Nothing here is
-inside any image or archive; these are loose files on my own
-filesystem, opened by me — the locks are mine. I name what I have, and
-I get back the disk itself.
-
-```rust
-let mut session = Session::new();
-
-let members: Vec<File> = capture_paths          // …00.0.raw, …00.1.raw, all 168
-    .iter().map(File::open)
-    .collect::<io::Result<_>>()?;               // my opens — my locks, read-only
-
-let disk = session.load_media(
-    members, Format::KryoFlux { device: FloppyDrive::Commodore1541 })?;
-assert_eq!(disk.device_type(),
-           Some(DeviceType::Floppy(FloppyDrive::Commodore1541)));
-
-let mut first = [0u8; 1];
-disk.bytestream()?
-    .location(Location::track(1))?
-    .read_at(0, &mut first)?;
-```
-
-My declaration is checked, not trusted: the member names must carry
-their positions, the set must be complete, the streams must parse, and
-the capture must actually bear the c1541 claim — any failure refuses
-the whole declaration by name. The reduction runs under the profile's
-declared defaults; a choice no family convention can make refuses by
-name and I answer it by growing my declaration. What I get back is a
-1541 disk with the whole story as provenance — evidence, policy, and
-the declared account of what the reduction could not carry — and the
-byte I read is the first *framed* byte, because nothing before sync is
-a byte at all.
-
-## U26 — I open a captured C64 disk from a zip and list its CBM DOS directory
-
-The same capture, but zipped, the way archives actually circulate. The
-zip is a medium; its entries are a namespace; the capture is a
-collection of files I gather from that namespace and declare — the same
-journey as U25 with one more link in front. Then I want what any C64
-user wants first: the directory.
-
-```rust
-let mut session = Session::new();
-
-let arc     = session.load_media(File::open("pcs_disk1.zip")?, Format::Zip)?;
-let members = arc
-    .partition(0).expect("an archive bears its direct partition")
-    .filesystem().expect("an archive's content is its namespace")
-    .files("")?;
-let disk    = session.load_media(
-    members, Format::KryoFlux { device: FloppyDrive::Commodore1541 })?;
-
-let cbm = disk
-    .partition(0).expect("flux media record no scheme: the direct partition")
-    .filesystem_as("cbmdos")?;   // MY reading, checked against the recorded
-                                 // structures: a protected or blank disk
-                                 // refuses it by name — and the sectors and
-                                 // streams beneath still answer
-
-println!("{}", cbm.label()?);            // 0 "PINBALL     " PC 2A — the BAM header
-for entry in cbm.files("")? {
-    println!("{:16} {:>4} {}",
-        entry.name,                      // PETSCII: raw beside its reading
-        entry.fact("blocks"),            // CBM records size in blocks
-        entry.fact("type"));             // PRG · SEQ · USR · REL, flags beside
-}
-```
-
-The listing is the recorded directory in directory order — the order is
-evidence — with the disk name and ID as the BAM recorded them. This is
-the file-access presentation reading recorded structures; it is not CBM
-DOS running, and `LOAD"$"` — the directory as the drive's ROM
-synthesizes it — is the future Commodore DOS device seam's journey, not
-this one.
 
 ## U27 — I walk a qcow2 hard disk to its DOS root directory
 
@@ -936,33 +862,6 @@ artifact. The arc from authored to recorded stays reserved: a future
 partition editor consumes my geometry into MBR end tuples and BPBs,
 after which any later discovery recovers it as evidence — the artifact
 testifying for itself.
-
-## U33 — The disk outlives its source, and enters a machine of its own
-
-Media are session state, independent of every machine and of each
-other. The archive I mastered a disk out of is not the disk's parent —
-I can release it, and the disk keeps answering; I can seat the disk in
-a reconstructed machine, unseat it, and tear the machine down, and the
-disk is untouched throughout.
-
-```rust
-// …after U26's chain: `arc` (zip archive) and `disk` (1541 disk) in the pool
-
-session.release_media(arc_id)?;          // the source archive leaves the
-                                         // session; the mastered disk is
-                                         // free-standing and still answers:
-let mut b = [0u8; 1];
-disk.bytestream()?.location(Location::track(1))?.read_at(0, &mut b)?;
-
-let c64 = session.add_machine("c64")?;
-c64.add_device(cbmfloppy0)?.insert(disk_id)?;   // the drive an emulator will
-                                                // one day address as unit 8
-
-c64.device(cbmfloppy0).expect("just added").eject()?;   // sever — claim and
-                                                        // state survive pooled
-session.release_machine("c64")?;         // the cascade: configuration falls
-                                         // with its owner; state never does
-```
 
 ## U34 — I load the one image inside an archive, by naming it
 

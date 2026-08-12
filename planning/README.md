@@ -83,8 +83,8 @@ proposals, and none of them has a lifecycle state to be in:
 
 The in-force artifacts live at the **repository root**, not here,
 because they are claims about the code as it exists today:
-[USE-CASES.md](../USE-CASES.md) (U1–U6 and U22, every entry met by
-the code) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the whole-system
+[USE-CASES.md](../USE-CASES.md) (U1–U6, U22, U25, U26 and U33,
+every entry met by the code) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the whole-system
 view, the application surface inventory S1–S3, and the
 architectural principles, every principle honored by
 the code). Together with the norms — currently the defining code, as

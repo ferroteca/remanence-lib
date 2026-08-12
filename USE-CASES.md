@@ -252,3 +252,131 @@ attachment order from filename, array position, or image content; guessing
 a label from a directory name, a filesystem kind, or a file inside the
 volume; and repairing a name the caller supplied, which is refused rather
 than truncated, transliterated, or renamed to fit.)*
+
+## The media-first walks
+
+**No discovery, complete user specification — the defining attribute of
+the walks below.** The caller declares what they have — the format, the
+device it records, every interpretation — and every declaration is
+checked against evidence, refused by name where the evidence cannot
+bear it. Local artifacts arrive as the caller's own opened files —
+`File::open` below is `std::fs::File`, the portable file; files from
+inside media are this library's own views — and whoever opens owns the
+lock: my open is my safeguard and the library's claim, checked for what
+it affords (may it write?), honoured exactly, never escalated. These
+walks are **permanent**: they remain valid, supported workflows even
+when discovery and other conveniences evolve to make the same results
+easier to achieve. Conveniences layer above the declared tier; they
+never replace it.
+
+## U25 — I master a 1541 disk from the captures on my filesystem and read its first byte
+
+I have a directory of KryoFlux stream files — 168 of them, two heads by
+eighty-four step positions, straight off the instrument — and I know
+what they are: a capture of a Commodore 1541 disk. Nothing here is
+inside any image or archive; these are loose files on my own
+filesystem, opened by me — the locks are mine. I name what I have, and
+I get back the disk itself.
+
+```rust
+let mut session = Session::new();
+
+let members: Vec<File> = capture_paths          // …00.0.raw, …00.1.raw, all 168
+    .iter().map(File::open)
+    .collect::<io::Result<_>>()?;               // my opens — my locks, read-only
+
+let disk = session.load_media(
+    members, Format::KryoFlux { device: FloppyDrive::Commodore1541 })?;
+assert_eq!(disk.device_type(),
+           Some(DeviceType::Floppy(FloppyDrive::Commodore1541)));
+
+let mut first = [0u8; 1];
+disk.bytestream()?
+    .location(Location::track(1))?
+    .read_at(0, &mut first)?;
+```
+
+My declaration is checked, not trusted: the member names must carry
+their positions, the set must be complete, the streams must parse, and
+the capture must actually bear the c1541 claim — any failure refuses
+the whole declaration by name. The reduction runs under the profile's
+declared defaults; a choice no family convention can make refuses by
+name and I answer it by growing my declaration. What I get back is a
+1541 disk with the whole story as provenance — evidence, policy, and
+the declared account of what the reduction could not carry — and the
+byte I read is the first *framed* byte, because nothing before sync is
+a byte at all.
+
+## U26 — I open a captured C64 disk from an archive and list its CBM DOS directory
+
+The same capture, but archived, the way captures actually circulate.
+The archive is a medium; its entries are a namespace; the capture is a
+collection of files I gather from that namespace and declare — the same
+journey as U25 with one more link in front. Then I want what any C64
+user wants first: the directory.
+
+```rust
+let mut session = Session::new();
+
+let arc     = session.load_media(File::open("pcs_disk1.7z")?, Format::SevenZip)?;
+let members = arc
+    .partition(0).expect("an archive bears its direct partition")
+    .filesystem().expect("an archive's content is its namespace")
+    .files("")?;
+let disk    = session.load_media(
+    members, Format::KryoFlux { device: FloppyDrive::Commodore1541 })?;
+
+let mut cbm = disk
+    .partition(0).expect("flux media record no scheme: the direct partition")
+    .filesystem_as("cbmdos")?;   // MY reading, checked against the recorded
+                                 // structures: a protected or blank disk
+                                 // refuses it by name — and the streams
+                                 // beneath still answer
+
+println!("{:?}", cbm.label()?);          // the BAM header: the disk's own name
+for entry in cbm.entries("")? {
+    println!("{:16} {:>4} {}",
+        entry.name,                              // PETSCII: raw beside its reading
+        entry.fact("size-blocks").unwrap_or(""), // CBM records size in blocks
+        entry.fact("type").unwrap_or(""));       // PRG · SEQ · USR · REL
+}
+```
+
+The listing is the recorded directory in directory order — the order is
+evidence — with the disk name and ID as the BAM recorded them. This is
+the file-access presentation reading recorded structures; it is not CBM
+DOS running, and `LOAD"$"` — the directory as the drive's ROM
+synthesizes it — is the future Commodore DOS device seam's journey, not
+this one.
+
+## U33 — The disk outlives its source, and enters a machine of its own
+
+Media are session state, independent of every machine and of each
+other. The archive I mastered a disk out of is not the disk's parent —
+I can release it, and the disk keeps answering; I can seat the disk in
+a reconstructed machine, unseat it, and tear the machine down, and the
+disk is untouched throughout.
+
+```rust
+// …after U26's chain: `arc` (the archive) and `disk` (1541 disk) in the pool
+
+session.release_media(arc_id)?;          // the source archive leaves the
+                                         // session; the mastered disk is
+                                         // free-standing and still answers:
+let mut b = [0u8; 1];
+disk.bytestream()?.location(Location::track(1))?.read_at(0, &mut b)?;
+
+let mut c64 = session.add_machine("c64")?;
+let unit8 = c64                          // the drive an emulator will one
+    .add_device(FloppyDrive::Commodore1541)?   // day address as unit 8
+    .attachment();
+session.machine_mut("c64").expect("just added")
+    .device_mut(unit8).expect("just added")
+    .insert(disk_id)?;
+
+session.machine_mut("c64").expect("still here")
+    .device_mut(unit8).expect("still here")
+    .eject()?;                           // sever — claim and state survive
+session.release_machine("c64")?;         // the cascade: configuration falls
+                                         // with its owner; state never does
+```

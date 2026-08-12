@@ -34,6 +34,8 @@ use std::path::Path;
 use crate::adapters::RECORDED_HARD_DRIVES;
 use crate::archive::ArchiveMedium;
 use crate::assurance::Assurance;
+use crate::c1541_presentation::{C1541Bitstream, C1541Bytestream};
+use crate::c1541_sectors::C1541Sectors;
 use crate::device::AccessMode;
 use crate::device_type::{Addressing, DeviceSlot, DeviceType, FloppyDrive, HardDrive};
 use crate::discovery::Discovery;
@@ -46,6 +48,7 @@ use crate::geometry::{self, Geometry, GeometryRule, RecordingGeometry};
 use crate::partition::{Partition, PartitionPool, PartitionScheme, PartitionView};
 use crate::report::DiskReport;
 use crate::session::Identification;
+use crate::source::FileSource;
 use crate::storage_device::AttachmentId;
 
 /// How a refusal names an artifact whose handle may have no name.
@@ -98,6 +101,24 @@ pub enum Format {
     Zip,
     /// 7z, whose content is a namespace.
     SevenZip,
+    /// KryoFlux capture set — the collection-sourced format: one disk
+    /// spread over a stream per head per drive-step position, read as a
+    /// declared collection of the caller's opened files or of files
+    /// from another medium's namespace. The field is typed by the class
+    /// the adapter records, so a flux capture of a hard drive fails to
+    /// compile; the pairing within the class is the catalog's check.
+    ///
+    /// The member grammar, the set's completeness, every stream's own
+    /// grammar and the declared device's profile claim are checked
+    /// whole, then the reduction runs under the profile's declared
+    /// materialization defaults — and the result is a medium of the
+    /// declared family with the verdicts, the policy and the
+    /// declared-loss account as provenance (P29, P30).
+    KryoFlux { device: FloppyDrive },
+    /// P64 flux container — a Commodore 1541 recording, and the format
+    /// admits no other. A P64 already holds a flux medium at rest, so
+    /// the load takes the served form straight in (D31).
+    P64,
 }
 
 /// What one declarable format admits: its identity, the device types its
@@ -112,6 +133,10 @@ pub struct FormatClaim {
     name: &'static str,
     devices: &'static [DeviceType],
     block_bytes: bool,
+    /// Whether this format reads a collection of sources rather than
+    /// one artifact — a capture set is one disk spread over many
+    /// streams, and nothing else is.
+    collection: bool,
 }
 
 impl FormatClaim {
@@ -138,6 +163,14 @@ impl FormatClaim {
         self.block_bytes
     }
 
+    /// Which source shape this format reads: `true` for a collection
+    /// of sources — a KryoFlux capture set is one disk spread over a
+    /// stream per head per step position — and `false` for one
+    /// artifact.
+    pub const fn takes_collection(&self) -> bool {
+        self.collection
+    }
+
     /// The device type this format declares where it admits exactly one,
     /// and `None` where the caller states it.
     pub fn declared_device(&self) -> Option<DeviceType> {
@@ -150,42 +183,62 @@ impl FormatClaim {
 
 /// Every format a load may declare, and what each admits. The catalog is
 /// the claim: a pairing absent from it is refused by name.
-static CLAIMED: [FormatClaim; 6] = [
+static CLAIMED: [FormatClaim; 8] = [
     FormatClaim {
         id: "raw",
         name: "Raw disk image",
         devices: &RECORDED_HARD_DRIVES,
         block_bytes: true,
+        collection: false,
     },
     FormatClaim {
         id: "qcow2",
         name: "QEMU copy-on-write disk image",
         devices: &RECORDED_HARD_DRIVES,
         block_bytes: false,
+        collection: false,
     },
     FormatClaim {
         id: "vdi",
         name: "VirtualBox disk image",
         devices: &RECORDED_HARD_DRIVES,
         block_bytes: false,
+        collection: false,
     },
     FormatClaim {
         id: "h8d",
         name: "Heathkit H8 H17 disk image",
         devices: &[DeviceType::Floppy(FloppyDrive::HeathH17)],
         block_bytes: false,
+        collection: false,
     },
     FormatClaim {
         id: "zip",
         name: "ZIP archive",
         devices: &[],
         block_bytes: false,
+        collection: false,
     },
     FormatClaim {
         id: "7z",
         name: "7z archive",
         devices: &[],
         block_bytes: false,
+        collection: false,
+    },
+    FormatClaim {
+        id: "kryoflux",
+        name: "KryoFlux capture set",
+        devices: &[DeviceType::Floppy(FloppyDrive::Commodore1541)],
+        block_bytes: false,
+        collection: true,
+    },
+    FormatClaim {
+        id: "p64",
+        name: "P64 flux image",
+        devices: &[DeviceType::Floppy(FloppyDrive::Commodore1541)],
+        block_bytes: false,
+        collection: false,
     },
 ];
 
@@ -205,6 +258,8 @@ impl Format {
             Self::H8d => "h8d",
             Self::Zip => "zip",
             Self::SevenZip => "7z",
+            Self::KryoFlux { .. } => "kryoflux",
+            Self::P64 => "p64",
         }
     }
 
@@ -217,6 +272,8 @@ impl Format {
             Self::H8d => "Heathkit H8 H17 disk image",
             Self::Zip => "ZIP archive",
             Self::SevenZip => "7z archive",
+            Self::KryoFlux { .. } => "KryoFlux capture set",
+            Self::P64 => "P64 flux image",
         }
     }
 
@@ -236,6 +293,8 @@ impl Format {
                 Some(DeviceType::HardDrive(device))
             }
             Self::H8d => Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
+            Self::KryoFlux { device } => Some(DeviceType::Floppy(device)),
+            Self::P64 => Some(DeviceType::Floppy(FloppyDrive::Commodore1541)),
             Self::Zip | Self::SevenZip => None,
         }
     }
@@ -334,6 +393,28 @@ impl Format {
                 ))),
             }
         };
+        let floppy = |device: Option<DeviceType>| -> Result<FloppyDrive> {
+            match device {
+                Some(DeviceType::Floppy(drive)) => Ok(drive),
+                Some(other) => Err(Error::unsupported(format!(
+                    "the {} records a floppy drive, and '{}' is a {} device",
+                    claim.name,
+                    other.id(),
+                    other.class()
+                ))),
+                None => Err(Error::unsupported(format!(
+                    "the {} records more than one device type, so a load \
+                     declares which: it records {}",
+                    claim.name,
+                    claim
+                        .devices
+                        .iter()
+                        .map(|device| device.id())
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                ))),
+            }
+        };
 
         if device.is_some() && claim.devices.is_empty() {
             return Err(Error::unsupported(format!(
@@ -364,6 +445,10 @@ impl Format {
             "h8d" => Self::H8d,
             "zip" => Self::Zip,
             "7z" => Self::SevenZip,
+            "kryoflux" => Self::KryoFlux {
+                device: floppy(device)?,
+            },
+            "p64" => Self::P64,
             other => unreachable!("'{other}' is not a claimed format id"),
         };
 
@@ -398,7 +483,28 @@ impl Format {
     pub(crate) fn archive_grammar(self) -> Option<&'static str> {
         match self {
             Self::Zip | Self::SevenZip => Some(self.id()),
-            Self::Raw { .. } | Self::Qcow2 { .. } | Self::Vdi { .. } | Self::H8d => None,
+            Self::Raw { .. }
+            | Self::Qcow2 { .. }
+            | Self::Vdi { .. }
+            | Self::H8d
+            | Self::KryoFlux { .. }
+            | Self::P64 => None,
+        }
+    }
+
+    /// The flux family's fork: what a flux-family declaration loads —
+    /// `None` for every format whose medium is a block device or an
+    /// archive (P13).
+    pub(crate) fn flux_family(self) -> Option<FluxFormat> {
+        match self {
+            Self::KryoFlux { device } => Some(FluxFormat::KryoFlux { device }),
+            Self::P64 => Some(FluxFormat::P64),
+            Self::Raw { .. }
+            | Self::Qcow2 { .. }
+            | Self::Vdi { .. }
+            | Self::H8d
+            | Self::Zip
+            | Self::SevenZip => None,
         }
     }
 }
@@ -406,6 +512,80 @@ impl Format {
 impl fmt::Display for Format {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.id())
+    }
+}
+
+/// A flux-family declaration, forked out of [`Format`] for the load
+/// that builds the medium.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum FluxFormat {
+    KryoFlux { device: FloppyDrive },
+    P64,
+}
+
+/// What a load reads — the source shapes of
+/// [`Session::load_media`](crate::Session::load_media).
+///
+/// Four shapes, each arriving by plain conversion so a caller passes
+/// the thing itself: one opened [`std::fs::File`] (the portable file,
+/// the caller's own open and the caller's own lock — P7 as amended), a
+/// collection of them, one [`FileSource`] taken from another medium's
+/// namespace, or a collection of those. **A format declares which
+/// shape it reads**, as it declares everything else: a KryoFlux
+/// capture set is a collection, and every other claimed format is one
+/// artifact — a shape the format does not read is refused by name at
+/// the load.
+#[derive(Debug)]
+pub struct MediaSource(pub(crate) SourceShape);
+
+#[derive(Debug)]
+pub(crate) enum SourceShape {
+    Handle(std::fs::File),
+    Handles(Vec<std::fs::File>),
+    Entry(FileSource),
+    Entries(Vec<FileSource>),
+}
+
+impl SourceShape {
+    /// How a refusal names the shape that arrived.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            Self::Handle(_) => "one opened file".to_owned(),
+            Self::Handles(handles) => {
+                format!("a collection of {} opened files", handles.len())
+            }
+            Self::Entry(entry) => {
+                format!("the file '{}' from a medium's namespace", entry.name())
+            }
+            Self::Entries(entries) => format!(
+                "a collection of {} files from a medium's namespace",
+                entries.len()
+            ),
+        }
+    }
+}
+
+impl From<std::fs::File> for MediaSource {
+    fn from(file: std::fs::File) -> Self {
+        Self(SourceShape::Handle(file))
+    }
+}
+
+impl From<Vec<std::fs::File>> for MediaSource {
+    fn from(files: Vec<std::fs::File>) -> Self {
+        Self(SourceShape::Handles(files))
+    }
+}
+
+impl From<FileSource> for MediaSource {
+    fn from(file: FileSource) -> Self {
+        Self(SourceShape::Entry(file))
+    }
+}
+
+impl From<Vec<FileSource>> for MediaSource {
+    fn from(files: Vec<FileSource>) -> Self {
+        Self(SourceShape::Entries(files))
     }
 }
 
@@ -778,6 +958,41 @@ impl Medium {
         self.geometry.require(&self.state.named())
     }
 
+    // -------------------------------------------- the flux presentation
+
+    /// The family's hardware bitstream over this medium's recording,
+    /// materialized once under the profile's declared mechanics and
+    /// read-channel rules and answered from then on.
+    ///
+    /// **It takes no arguments because the type carries the rules**
+    /// (P30 reached through the type): being a `Commodore1541` medium
+    /// *means* clocking through the c1541 channel, and what was used
+    /// travels into the result's account. It answers where the device
+    /// type's profile bears flux, and refuses by name everywhere else —
+    /// a block medium's recording is presented by its format adapter,
+    /// and the two families are disjoint (P13).
+    pub fn bitstream(&mut self) -> Result<&C1541Bitstream> {
+        self.state.flux_mut("bitstream")?.bitstream()
+    }
+
+    /// The family's encoded bytestream — the byte sequence the declared
+    /// group code makes of the bitstream — materialized once under the
+    /// same rule and answered from then on.
+    ///
+    /// The framed bytes of one location are read through
+    /// [`C1541Bytestream::location`]; no byte here is a header, a
+    /// sector or a file, and the layers that assign those sit above.
+    pub fn bytestream(&mut self) -> Result<&C1541Bytestream> {
+        self.state.flux_mut("bytestream")?.bytestream()
+    }
+
+    /// The recording's own record layer, for the namespace door: the
+    /// sector layer the CBM DOS reading opens over, recognized once
+    /// under the profile's declared grammar.
+    pub(crate) fn c1541_sectors(&mut self) -> Result<&C1541Sectors> {
+        self.state.flux_mut("filesystem_as(\"cbmdos\")")?.sectors()
+    }
+
     // ------------------------------------------------ the partition pool
 
     /// The scheme this medium's content is laid out under, or `None`
@@ -859,6 +1074,33 @@ impl Medium {
     /// already read the index this presents.
     pub(crate) fn archive_namespace(&mut self) -> Option<(&'static str, Box<dyn Catalog>)> {
         self.state.archive().map(ArchiveMedium::namespace)
+    }
+
+    /// One entry of the archive this medium is, taken as a load's
+    /// source — reached from the file view that names it.
+    pub(crate) fn entry_source(&mut self, name: &str) -> Result<FileSource> {
+        let archive = self.state.archive().ok_or_else(|| {
+            Error::unsupported(format!(
+                "{} is no archive medium, and this release takes a load's \
+                 source from an archive's namespace alone",
+                self.state.named()
+            ))
+        })?;
+        archive.entry_file_source(name)
+    }
+
+    /// Every file of this archive under `path`, taken as a load's
+    /// sources in one pass — reached from the space that bears the
+    /// namespace.
+    pub(crate) fn entry_group_sources(&mut self, path: &str) -> Result<Vec<FileSource>> {
+        let archive = self.state.archive().ok_or_else(|| {
+            Error::unsupported(format!(
+                "{} is no archive medium, and this release gathers a load's \
+                 collection from an archive's namespace alone",
+                self.state.named()
+            ))
+        })?;
+        archive.entry_group_sources(path)
     }
 
     /// A discovery over one entry of the archive this medium is — the

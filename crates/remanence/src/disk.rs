@@ -39,10 +39,11 @@ use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::filesystem::Catalog;
 use crate::filesystem_catalog::FilesystemAdapter;
+use crate::flux_media::{self, CollectionMember, FluxState};
 use crate::geometry::{self, Geometry, GeometrySources};
 use crate::journal;
 use crate::mbr::{self, Discovery};
-use crate::media::Format;
+use crate::media::{FluxFormat, Format, MediaSource, SourceShape};
 use crate::media_profile::MediaProfile;
 use crate::partition::PartitionPool;
 use crate::session::{self, Identification, Layer};
@@ -301,6 +302,13 @@ pub(crate) enum MediumState {
     /// A medium whose native vantage is a namespace: an archive, whose
     /// content is names and whose bytes are its encoding (P13).
     Archive(ArchiveMedium),
+    /// A flux medium: the served form — one circular pulse stream per
+    /// family-addressed location — with the presentation ladder above
+    /// it and no byte-addressed space at all (P13). It arrives through
+    /// the two flux-family declarations: a KryoFlux collection reduced
+    /// under the profile's declared defaults, and a P64 loaded straight
+    /// in (F59).
+    Flux(FluxState),
 }
 
 impl MediumState {
@@ -326,7 +334,7 @@ impl MediumState {
         )?))
     }
 
-    /// Loads the caller's own opened artifact as the format they
+    /// Loads the caller's declared source as the format they
     /// **declared** it to be.
     ///
     /// This is the declared reading, and the declaration is checked
@@ -342,17 +350,100 @@ impl MediumState {
     /// declaration rather than about the artifact: reading the evidence
     /// first would answer a question nobody could act on, and would
     /// report a blank image as an invalid qcow2 when what was wrong was
-    /// the pairing (P3, P6).
-    pub(crate) fn load(file: std::fs::File, format: Format, cache_bytes: u64) -> Result<Self> {
+    /// the pairing (P3, P6). The **source shape is part of the same
+    /// declaration** (F59): a format declares whether it reads one
+    /// artifact or a collection, and a shape it does not read is
+    /// refused by name before anything else runs.
+    pub(crate) fn load(source: MediaSource, format: Format, cache_bytes: u64) -> Result<Self> {
         format.check_pairing()?;
-        if let Some(grammar) = format.archive_grammar() {
-            return Ok(Self::Archive(ArchiveMedium::load(
-                file,
-                grammar,
-                cache_bytes,
-            )?));
+        let MediaSource(shape) = source;
+        let claim = format.claim();
+        let collection_offered = matches!(shape, SourceShape::Handles(_) | SourceShape::Entries(_));
+        if claim.takes_collection() != collection_offered {
+            return Err(Error::unsupported(format!(
+                "the {} reads {}, and the load offered {}",
+                claim.name(),
+                if claim.takes_collection() {
+                    "a declared collection of sources — one disk spread over a \
+                     stream per head per step position"
+                } else {
+                    "one artifact"
+                },
+                shape.describe()
+            )));
         }
-        Ok(Self::Space(MediaState::load(file, format, cache_bytes)?))
+        if let Some(flux) = format.flux_family() {
+            return match flux {
+                FluxFormat::KryoFlux { device } => {
+                    let members = match shape {
+                        SourceShape::Handles(files) => {
+                            files.into_iter().map(CollectionMember::Handle).collect()
+                        }
+                        SourceShape::Entries(entries) => {
+                            entries.into_iter().map(CollectionMember::Entry).collect()
+                        }
+                        SourceShape::Handle(_) | SourceShape::Entry(_) => {
+                            unreachable!("the shape check admitted a collection")
+                        }
+                    };
+                    Ok(Self::Flux(FluxState::load_kryoflux(
+                        members,
+                        device,
+                        cache_bytes,
+                    )?))
+                }
+                FluxFormat::P64 => {
+                    let resolved = match shape {
+                        SourceShape::Handle(file) => source::resolve_handle(file, cache_bytes)?,
+                        SourceShape::Entry(entry) => entry.resolve(),
+                        SourceShape::Handles(_) | SourceShape::Entries(_) => {
+                            unreachable!("the shape check admitted one artifact")
+                        }
+                    };
+                    let path = resolved
+                        .source_path
+                        .as_deref()
+                        .map(|path| path.display().to_string());
+                    Ok(Self::Flux(FluxState::load_p64(
+                        &resolved.source,
+                        path,
+                        resolved.claim,
+                        cache_bytes,
+                    )?))
+                }
+            };
+        }
+        if let Some(grammar) = format.archive_grammar() {
+            return match shape {
+                SourceShape::Handle(file) => Ok(Self::Archive(ArchiveMedium::load(
+                    file,
+                    grammar,
+                    cache_bytes,
+                )?)),
+                SourceShape::Entry(entry) => Err(Error::unsupported(format!(
+                    "this release reads an archive from the caller's own opened \
+                     file: '{}' was reached through another medium's namespace, \
+                     and a nested archive is not claimed",
+                    entry.name()
+                ))),
+                SourceShape::Handles(_) | SourceShape::Entries(_) => {
+                    unreachable!("the shape check admitted one artifact")
+                }
+            };
+        }
+        match shape {
+            SourceShape::Handle(file) => {
+                Ok(Self::Space(MediaState::load(file, format, cache_bytes)?))
+            }
+            SourceShape::Entry(entry) => Ok(Self::Space(MediaState::load_resolved(
+                entry.resolve(),
+                format,
+                cache_bytes,
+            )?)),
+            SourceShape::Handles(_) | SourceShape::Entries(_) => {
+                unreachable!("the shape check admitted one artifact")
+            }
+        }
     }
 
     /// Opens one archive entry as a medium of its own — the nested
@@ -370,6 +461,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.path(),
             Self::Archive(archive) => archive.path(),
+            Self::Flux(flux) => flux.path(),
         }
     }
 
@@ -385,6 +477,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.image_path(),
             Self::Archive(archive) => archive.path().map(Path::new),
+            Self::Flux(flux) => flux.path().map(Path::new),
         }
     }
 
@@ -394,6 +487,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.image_size_bytes(),
             Self::Archive(archive) => archive.size_bytes(),
+            Self::Flux(flux) => flux.source_bytes(),
         }
     }
 
@@ -402,6 +496,11 @@ impl MediumState {
         match self {
             Self::Space(space) => space.read_at(offset, buf),
             Self::Archive(archive) => archive.read_at(offset, buf),
+            // A flux medium's evidence stays behind the surface: there
+            // is no public flux, pulse, or capture-run iterator, and no
+            // byte plane either — the collection has no one artifact,
+            // and the reading of one is the presentation ladder's.
+            Self::Flux(flux) => Err(flux_media::no_space("read_at", flux)),
         }
     }
 
@@ -409,6 +508,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.media(),
             Self::Archive(archive) => archive.media(),
+            Self::Flux(flux) => flux.media(),
         }
     }
 
@@ -425,6 +525,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.device_type(),
             Self::Archive(_) => None,
+            Self::Flux(flux) => Some(flux.device_type()),
         }
     }
 
@@ -434,6 +535,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.device_type().map(DeviceSlot::Recorded),
             Self::Archive(_) => Some(DeviceSlot::Archive),
+            Self::Flux(flux) => Some(DeviceSlot::Recorded(flux.device_type())),
         }
     }
 
@@ -447,6 +549,8 @@ impl MediumState {
     /// nothing, and the caller who tried is refused before reaching
     /// here.
     pub(crate) fn declare_device(&mut self, device: DeviceType) {
+        // A flux medium's device is its declaration already; only a
+        // space-native reading reached without one takes it here.
         if let Self::Space(space) = self {
             space.declare_device(device);
         }
@@ -456,6 +560,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.mode(),
             Self::Archive(archive) => archive.mode(),
+            Self::Flux(flux) => flux.mode(),
         }
     }
 
@@ -463,6 +568,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.assurance(),
             Self::Archive(archive) => archive.assurance(),
+            Self::Flux(flux) => flux.assurance(),
         }
     }
 
@@ -470,6 +576,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.identify(),
             Self::Archive(archive) => archive.identify(),
+            Self::Flux(flux) => flux.identify(),
         }
     }
 
@@ -477,7 +584,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.is_modified(),
             // Read-only, so there is never anything buffered to lose.
-            Self::Archive(_) => false,
+            Self::Archive(_) | Self::Flux(_) => false,
         }
     }
 
@@ -487,6 +594,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.descriptor().id,
             Self::Archive(archive) => archive.format_id(),
+            Self::Flux(flux) => flux.format_id(),
         }
     }
 
@@ -495,6 +603,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.descriptor().name,
             Self::Archive(archive) => archive.format_name(),
+            Self::Flux(flux) => flux.format_name(),
         }
     }
 
@@ -505,6 +614,7 @@ impl MediumState {
         match self {
             Self::Space(space) => space.descriptor().devices,
             Self::Archive(_) => &[],
+            Self::Flux(_) => &FLUX_RECORDED_DEVICES,
         }
     }
 
@@ -513,7 +623,9 @@ impl MediumState {
     pub(crate) fn foreign_family(&self) -> Option<&'static str> {
         match self {
             Self::Space(space) => space.foreign_family(),
-            Self::Archive(_) => None,
+            // A flux medium loaded by its own declaration is not a
+            // foreign family — it is the family, at home.
+            Self::Archive(_) | Self::Flux(_) => None,
         }
     }
 
@@ -528,6 +640,7 @@ impl MediumState {
         match self {
             Self::Space(space) => Ok(space),
             Self::Archive(archive) => Err(no_space(verb, archive)),
+            Self::Flux(flux) => Err(flux_media::no_space(verb, flux)),
         }
     }
 
@@ -535,14 +648,37 @@ impl MediumState {
         match self {
             Self::Space(space) => Ok(space),
             Self::Archive(archive) => Err(no_space(verb, archive)),
+            Self::Flux(flux) => Err(flux_media::no_space(verb, flux)),
         }
     }
 
     /// The archive this medium is, where it is one.
     pub(crate) fn archive(&self) -> Option<&ArchiveMedium> {
         match self {
-            Self::Space(_) => None,
+            Self::Space(_) | Self::Flux(_) => None,
             Self::Archive(archive) => Some(archive),
+        }
+    }
+
+    /// The flux state this medium homes, or the refusal naming the
+    /// family it holds instead: the flux questions answer where the
+    /// device type's profile bears flux, and nowhere else (P13, P30).
+    pub(crate) fn flux_mut(&mut self, verb: &str) -> Result<&mut FluxState> {
+        match self {
+            Self::Flux(flux) => Ok(flux),
+            Self::Space(space) => Err(Error::unsupported(format!(
+                "'{verb}' reads a flux recording's presentation, and {} holds a \
+                 block medium, whose recording is presented by its format \
+                 adapter: the flux questions answer where the device type's \
+                 profile bears flux (P13, P30)",
+                space.named()
+            ))),
+            Self::Archive(archive) => Err(Error::unsupported(format!(
+                "'{verb}' reads a flux recording's presentation, and {} holds an \
+                 archive medium, which no device recorded: the flux questions \
+                 answer where the device type's profile bears flux (P13, P30)",
+                archive.named()
+            ))),
         }
     }
 
@@ -566,6 +702,7 @@ impl MediumState {
     pub(crate) fn establish_partitions(&mut self) -> Result<PartitionPool> {
         match self {
             Self::Archive(_) => Ok(PartitionPool::native_namespace()),
+            Self::Flux(_) => Ok(PartitionPool::over_recording()),
             Self::Space(space) => {
                 let device = space.device_type().ok_or_else(|| {
                     Error::unsupported(format!(
@@ -607,11 +744,20 @@ impl MediumState {
     /// name — so it answers unstated without reading anything.
     pub(crate) fn establish_geometry(&mut self, partitions: &PartitionPool) -> Geometry {
         match self {
-            Self::Archive(_) => Geometry::unstated(),
+            // A flux recording's coordinates are the family's own
+            // addressing, read through the presentation ladder; no
+            // source below it states a cylinder-head-sector geometry.
+            Self::Archive(_) | Self::Flux(_) => Geometry::unstated(),
             Self::Space(space) => space.establish_geometry(partitions),
         }
     }
 }
+
+/// The device types the flux-family formats record — both record the
+/// Commodore 1541 and nothing else in this release.
+static FLUX_RECORDED_DEVICES: [DeviceType; 1] = [DeviceType::Floppy(
+    crate::device_type::FloppyDrive::Commodore1541,
+)];
 
 /// The refusal a space verb makes on a namespace-native medium.
 fn no_space(verb: &str, archive: &ArchiveMedium) -> Error {
@@ -737,6 +883,18 @@ impl MediaState {
     pub(crate) fn open_resolved(resolved: ResolvedImage, cache_bytes: u64) -> Result<Self> {
         let recovery = resolved.image_path.as_deref().map(journal::sidecar_path);
         Self::over(resolved, recovery, None, cache_bytes)
+    }
+
+    /// The same entry journey under the caller's own declaration — a
+    /// `File` from another medium's namespace, loaded as the format the
+    /// caller names rather than probed for one (F59's source shape).
+    pub(crate) fn load_resolved(
+        resolved: ResolvedImage,
+        format: Format,
+        cache_bytes: u64,
+    ) -> Result<Self> {
+        let recovery = resolved.image_path.as_deref().map(journal::sidecar_path);
+        Self::over(resolved, recovery, Some(format), cache_bytes)
     }
 
     /// The open every journey shares: the format adapter over the
@@ -991,8 +1149,9 @@ impl MediaState {
     /// A P64 records timed pulses, and the block catalog opens anything
     /// it cannot identify at the raw adapter — so without this the block
     /// layer would be declared authoritative where the artifact's own
-    /// adapter declares flux, which in-force P13 forbids. It is reached
-    /// through its own type, as the capture-set adapter is.
+    /// adapter declares flux, which in-force P13 forbids. It is loaded
+    /// by its own declaration — `Format::P64`, which answers with a
+    /// flux medium — never as a block reading.
     pub(crate) fn foreign_family(&self) -> Option<&'static str> {
         let mut prefix = [0u8; 8];
         if self.read_at(0, &mut prefix).is_err() {

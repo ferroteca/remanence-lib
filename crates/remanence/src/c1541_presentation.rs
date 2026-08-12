@@ -59,8 +59,12 @@ fn refuse(reason: impl Into<String>) -> Error {
 // ------------------------------------------------- read-channel policy
 
 /// Which declared density the channel clocks a location at.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DensityPolicy {
+pub(crate) enum DensityPolicy {
     /// The zone the family's density map declares for the location. A
     /// location no zone covers — a half-track between two of them — is
     /// answered by [`UnzonedPolicy`], because no published rate reaches
@@ -72,8 +76,12 @@ pub enum DensityPolicy {
 }
 
 /// What a location no declared zone covers becomes.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnzonedPolicy {
+pub(crate) enum UnzonedPolicy {
     /// The materialization stops and names the location.
     Refuse,
     /// It is left out and counted; the bitstream claims nothing there.
@@ -86,8 +94,12 @@ pub enum UnzonedPolicy {
 /// The medium's strength vocabulary cannot survive into a bit — a cell
 /// reads one or zero — so this is where that is decided, and the answer
 /// travels with every bit it produced.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WeakPulsePolicy {
+pub(crate) enum WeakPulsePolicy {
     /// Every such pulse is taken as detected, or as not, uniformly.
     Declared { detected: bool },
     /// Each is resolved reproducibly from the policy's seed and the
@@ -100,21 +112,30 @@ pub enum WeakPulsePolicy {
 ///
 /// There is no `Default`: every field is a decision about evidence, and
 /// a channel that arrived at one by construction rather than by
-/// declaration is what P30 exists to prevent.
+/// declaration is what P30 exists to prevent. The one every caller
+/// reaches is the family's own — the profile's declared
+/// `channel_policy` (P30 reached through the type) — which is why
+/// nothing here is public: the argument-free presentation verbs read
+/// the declaration off the profile, and what was used travels into the
+/// result as provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReadChannelPolicy {
-    pub density: DensityPolicy,
-    pub unzoned: UnzonedPolicy,
-    pub weak_pulse: WeakPulsePolicy,
+pub(crate) struct ReadChannelPolicy {
+    pub(crate) density: DensityPolicy,
+    pub(crate) unzoned: UnzonedPolicy,
+    pub(crate) weak_pulse: WeakPulsePolicy,
     /// What makes any stochastic element of the channel reproducible.
-    pub seed: u64,
+    pub(crate) seed: u64,
 }
 
 // ------------------------------------------------------- codec policy
 
 /// Where byte framing begins.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AlignmentPolicy {
+pub(crate) enum AlignmentPolicy {
     /// At the family's declared landmark, and nowhere else: bits before
     /// the first one are stated as unframed rather than guessed into
     /// bytes.
@@ -126,8 +147,12 @@ pub enum AlignmentPolicy {
 
 /// What a group holding a pattern the family's table does not assign
 /// becomes.
+// The non-default choices are the deferred policy-deviation
+// surface (D29): the pipeline's seams admit them, and the delivered
+// caller is the profile's own declaration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnassignedSymbolPolicy {
+pub(crate) enum UnassignedSymbolPolicy {
     /// The materialization stops and names the location and the bit.
     Refuse,
     /// The group keeps its own bits, stated as unresolved, and is
@@ -136,11 +161,12 @@ pub enum UnassignedSymbolPolicy {
 }
 
 /// The complete declared policy for one bitstream-to-bytestream
-/// transition.
+/// transition — the profile's declared `codec_policy` in every
+/// delivered journey, exactly as the channel policy above.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GcrCodecPolicy {
-    pub alignment: AlignmentPolicy,
-    pub unassigned_symbol: UnassignedSymbolPolicy,
+pub(crate) struct GcrCodecPolicy {
+    pub(crate) alignment: AlignmentPolicy,
+    pub(crate) unassigned_symbol: UnassignedSymbolPolicy,
 }
 
 // -------------------------------------------------------- the reporting
@@ -265,17 +291,21 @@ impl C1541Bitstream {
     }
 
     /// Materializes the family's encoded bytestream from this bitstream
-    /// under a declared group code (P23, P33).
+    /// under the family's declared group code and codec reading (P23,
+    /// P30 reached through the type, P33).
     ///
-    /// The bitstream is untouched and stays exactly what it was; the
-    /// bytestream is separate session state with its own provenance,
-    /// which is this bitstream's with the codec added to it.
-    pub fn materialize_c1541_bytestream(
-        &self,
-        policy: GcrCodecPolicy,
-        cache_bytes: u64,
-    ) -> Result<C1541Bytestream> {
-        materialize_bytestream(&self.bitstream, policy, cache_bytes)
+    /// It takes no policy because the type carries one: being a
+    /// bitstream of this family *means* resolving through the profile's
+    /// declared codec policy, and what was used travels into the result
+    /// as provenance. The bitstream is untouched and stays exactly what
+    /// it was; the bytestream is separate session state with its own
+    /// provenance, which is this bitstream's with the codec added to it.
+    pub fn materialize_c1541_bytestream(&self, cache_bytes: u64) -> Result<C1541Bytestream> {
+        materialize_bytestream(
+            &self.bitstream,
+            C1541.presentation.codec_policy,
+            cache_bytes,
+        )
     }
 }
 
@@ -311,11 +341,128 @@ impl C1541Bytestream {
         self.bytestream.resident_bytes()
     }
 
-    /// The bytestream itself. The bytes stay behind the public surface:
-    /// the sector layer above reads them into the recording's own
-    /// records, and no consumer is handed a byte.
+    /// The framed bytes one location holds, addressed in the family's
+    /// own terms.
+    ///
+    /// A location the stream does not hold is refused naming what it
+    /// does hold: the stream's locations are what the medium carried,
+    /// and nothing is manufactured to answer for a track that is not
+    /// there.
+    pub fn location(&self, at: Location) -> Result<LocationBytes<'_>> {
+        let location = self
+            .bytestream
+            .locations()
+            .find(|location| {
+                let (numerator, denominator) = location.key().position();
+                u128::from(numerator) * u128::from(at.denominator)
+                    == u128::from(at.numerator) * u128::from(denominator)
+            })
+            .ok_or_else(|| {
+                Error::not_found(format!(
+                    "this bytestream holds no {at}: the medium beneath it carried \
+                     {} locations, and a track it does not hold is absent rather \
+                     than blank",
+                    self.report.locations.len()
+                ))
+            })?;
+        Ok(LocationBytes {
+            stream: &self.bytestream,
+            location,
+            at,
+        })
+    }
+
+    /// The bytestream itself. The unframed bits stay behind the public
+    /// surface: the sector layer reads the records out of these bytes,
+    /// and [`location`](Self::location) serves the framed bytes alone.
     pub(crate) fn inner(&self) -> &EncodedBytestream {
         &self.bytestream
+    }
+}
+
+/// One location of the family's addressing, spelled the family's own
+/// way: the Commodore 1541 numbers its tracks from 1.
+///
+/// This is the argument of the kind-declared read verbs (P30 reached
+/// through the type): the channel, the codec and the framing are the
+/// profile's declarations, so a location is the whole of what a caller
+/// states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Location {
+    numerator: u64,
+    denominator: u64,
+}
+
+impl Location {
+    /// The family location one whole track addresses.
+    pub fn track(track: u32) -> Self {
+        Self {
+            numerator: u64::from(track),
+            denominator: 1,
+        }
+    }
+}
+
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.denominator == 1 {
+            write!(f, "track {}", self.numerator)
+        } else {
+            write!(f, "track {}/{}", self.numerator, self.denominator)
+        }
+    }
+}
+
+/// The framed bytes one location holds — the byte sequence the declared
+/// group code resolved there, and nothing beneath it.
+///
+/// Bytes number from the first framed byte, because nothing before sync
+/// is a byte at all; the unframed bits and the bit-level state stay
+/// behind the surface, reported in the stream's own account.
+#[derive(Debug)]
+pub struct LocationBytes<'a> {
+    stream: &'a EncodedBytestream,
+    location: &'a crate::encoded_bytestream::Location,
+    at: Location,
+}
+
+impl LocationBytes<'_> {
+    /// How many framed bytes this location holds.
+    pub fn bytes(&self) -> u64 {
+        self.location.bytes()
+    }
+
+    /// Reads framed bytes at `offset` into `buf`, whole or not at all.
+    ///
+    /// A byte whose recorded pattern the family's table does not assign
+    /// has no value to serve: it is stated as unresolved in the
+    /// stream's account, and a read that touches one is refused naming
+    /// it rather than answered with an invented value.
+    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let held = self.location.bytes();
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or_else(|| refuse("the read's extent does not fit in an offset"))?;
+        if end > held {
+            return Err(refuse(format!(
+                "{} holds {held} framed bytes and the read wants {offset}..{end}: \
+                 nothing before the first sync is a byte at all, and nothing past \
+                 the circle's last frame is either",
+                self.at
+            )));
+        }
+        let records = self.stream.bytes(self.location)?;
+        for (slot, record) in buf.iter_mut().zip(&records[offset as usize..end as usize]) {
+            *slot = record.value().ok_or_else(|| {
+                refuse(format!(
+                    "a byte in {offset}..{end} of {} holds a pattern the family's \
+                     table does not assign: it is stated as unresolved in the \
+                     stream's account, and serving a value for it would invent one",
+                    self.at
+                ))
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -1162,42 +1309,23 @@ fn describe_codec(
 
 impl crate::RemanenceImage {
     /// Materializes the family's hardware bitstream from what this image
-    /// holds, under declared mechanics and read-channel rules (P23, P30,
-    /// P33).
+    /// holds, under the family's declared mechanics and read-channel
+    /// rules (P23, P30 reached through the type, P33).
     ///
-    /// The image is the physical stratum and carries no clock — a cell
-    /// length is a property of a *recording*, recoverable from the
-    /// image, never a field of it — so the ladder stands on the served
-    /// projection of it, the same one multiply per point the p64
+    /// It takes no policy because the profile carries one; `cache_bytes`
+    /// is the P27 working-set bound, which is a bound rather than a
+    /// reading. The image is the physical stratum and carries no clock —
+    /// a cell length is a property of a *recording*, recoverable from
+    /// the image, never a field of it — so the ladder stands on the
+    /// served projection of it, the same one multiply per point the p64
     /// rendition uses, at the family's reference frame. The image is
     /// untouched and stays exactly what it was: the bitstream is
     /// separate session state, carrying the image's own provenance
     /// beneath the channel that produced it. There is no way back down
     /// (P33).
-    pub fn materialize_c1541_bitstream(
-        &self,
-        policy: ReadChannelPolicy,
-        cache_bytes: u64,
-    ) -> Result<C1541Bitstream> {
+    pub fn materialize_c1541_bitstream(&self, cache_bytes: u64) -> Result<C1541Bitstream> {
         let (medium, _) = self.served_medium()?;
-        materialize_bitstream(&medium, policy, cache_bytes)
-    }
-}
-
-impl crate::p64::P64Image {
-    /// Materializes the family's hardware bitstream from the medium this
-    /// container holds (P23, P30, P33).
-    ///
-    /// The container is read and nothing else. What the bitstream says
-    /// about how its medium came to exist is what the container said:
-    /// that it was found already a medium and this library derived none
-    /// of it.
-    pub fn materialize_c1541_bitstream(
-        &self,
-        policy: ReadChannelPolicy,
-        cache_bytes: u64,
-    ) -> Result<C1541Bitstream> {
-        materialize_bitstream(self.medium(), policy, cache_bytes)
+        materialize_bitstream(&medium, C1541.presentation.channel_policy, cache_bytes)
     }
 }
 
@@ -1342,8 +1470,7 @@ mod tests {
 
         let bitstream = materialize_bitstream(&medium, channel_policy(), 1 << 20)
             .expect("the channel clocks it");
-        let bytestream = bitstream
-            .materialize_c1541_bytestream(codec_policy(), 1 << 20)
+        let bytestream = materialize_bytestream(&bitstream.bitstream, codec_policy(), 1 << 20)
             .expect("the codec resolves it");
 
         let inner = bytestream.inner();
@@ -1380,20 +1507,19 @@ mod tests {
         let bitstream = materialize_bitstream(&medium, channel_policy(), 1 << 20)
             .expect("the channel clocks it");
 
-        let error = bitstream
-            .materialize_c1541_bytestream(
-                GcrCodecPolicy {
-                    unassigned_symbol: UnassignedSymbolPolicy::Refuse,
-                    ..codec_policy()
-                },
-                1 << 20,
-            )
-            .expect_err("a pattern the table does not assign is refused");
+        let error = materialize_bytestream(
+            &bitstream.bitstream,
+            GcrCodecPolicy {
+                unassigned_symbol: UnassignedSymbolPolicy::Refuse,
+                ..codec_policy()
+            },
+            1 << 20,
+        )
+        .expect_err("a pattern the table does not assign is refused");
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         assert!(error.to_string().contains("does not assign"), "{error}");
 
-        let bytestream = bitstream
-            .materialize_c1541_bytestream(codec_policy(), 1 << 20)
+        let bytestream = materialize_bytestream(&bitstream.bitstream, codec_policy(), 1 << 20)
             .expect("the other policy keeps it");
         assert!(bytestream.inspect().locations[0].unassigned_groups >= 1);
         assert!(
@@ -1560,8 +1686,7 @@ mod tests {
         let medium = medium_of(LocationKey::new(C1541.id, 18, 0), &recorded(&[0x12]), &[]);
         let bitstream = materialize_bitstream(&medium, channel_policy(), 1 << 20)
             .expect("the channel clocks it");
-        let bytestream = bitstream
-            .materialize_c1541_bytestream(codec_policy(), 1 << 20)
+        let bytestream = materialize_bytestream(&bitstream.bitstream, codec_policy(), 1 << 20)
             .expect("the codec resolves it");
 
         let evidence = &bytestream.inspect().evidence;

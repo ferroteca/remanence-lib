@@ -34,7 +34,7 @@
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::assurance::{Assurance, AssuranceOutcome, ByteRange};
@@ -150,34 +150,6 @@ impl<'a> ArchiveCatalogRegistry<'a> {
             .find(|adapter| adapter.descriptor().claims_extension(extension))
     }
 
-    /// Splits `path` at the first component an enrolled grammar claims,
-    /// into `(archive_path, entry_path)`.
-    fn split(&self, path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
-        let mut archive_path = PathBuf::new();
-        let mut entry_path = PathBuf::new();
-        let mut found = false;
-
-        for component in path.components() {
-            if found {
-                if matches!(component, Component::CurDir) {
-                    continue;
-                }
-                entry_path.push(component.as_os_str());
-                continue;
-            }
-            archive_path.push(component.as_os_str());
-            if self.adapter_for(Path::new(component.as_os_str())).is_some() {
-                found = true;
-            }
-        }
-
-        if !found {
-            return None;
-        }
-        let entry = (!entry_path.as_os_str().is_empty()).then_some(entry_path);
-        Some((archive_path, entry))
-    }
-
     /// The adapter a declared grammar names.
     fn adapter_by_id(&self, id: &str) -> Option<&'a dyn ArchiveFormatAdapter> {
         self.adapters
@@ -262,12 +234,6 @@ pub(crate) struct ClaimedArchive {
     pub catalog: Arc<dyn ArchiveCatalog>,
 }
 
-/// Splits a path at the first archive component into
-/// `(archive_path, optional entry_path)`.
-pub(crate) fn split_archive_path(path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
-    archive_catalogs().split(path)
-}
-
 /// Claims and opens the archive at `path`.
 pub(crate) fn open_archive(path: &Path) -> Result<ClaimedArchive> {
     archive_catalogs().open(path)
@@ -276,21 +242,6 @@ pub(crate) fn open_archive(path: &Path) -> Result<ClaimedArchive> {
 /// Opens the caller's own opened archive under a declared grammar.
 pub(crate) fn load_archive(file: File, grammar: &str, named: &str) -> Result<ClaimedArchive> {
     archive_catalogs().load(file, grammar, named)
-}
-
-/// Joins the normal components of an entry path with `/`.
-pub(crate) fn normalize_entry_name(path: &Path) -> String {
-    let mut result = String::new();
-    for component in path.components() {
-        let Component::Normal(component) = component else {
-            continue;
-        };
-        if !result.is_empty() {
-            result.push('/');
-        }
-        result.push_str(&component.to_string_lossy());
-    }
-    result
 }
 
 /// The archive medium: the artifact claimed, the catalog its grammar
@@ -489,6 +440,93 @@ impl ArchiveMedium {
                 file: Arc::clone(&self.claimed.file),
             }),
         )
+    }
+
+    /// One entry taken as a load's source, under this archive's own
+    /// claim — the single-`File` source shape.
+    pub(crate) fn entry_file_source(&self, name: &str) -> Result<source::FileSource> {
+        let catalog = self.claimed.catalog.as_ref();
+        let index = entry_index(catalog, name)?;
+        let entry = &catalog.entries()[index];
+        if entry.is_dir {
+            return Err(Error::categorized_archive(
+                ErrorCategory::IsDirectory,
+                catalog.descriptor().id,
+                format!("entry '{name}' is a directory"),
+            ));
+        }
+        Ok(source::FileSource {
+            claim: Arc::clone(&self.claimed.file),
+            mode: self.claimed.mode,
+            claim_class: self.assurance.claim,
+            layer: self.entry_layer(entry),
+            entry: catalog.entry_source(index)?,
+            cache_bytes: self.cache_bytes,
+        })
+    }
+
+    /// Every file under `path` taken as a load's sources, in the
+    /// archive's own order, obtained in **one pass** over the coded
+    /// stream — a collection spread over a solid archive decodes once,
+    /// not once per member (P27).
+    pub(crate) fn entry_group_sources(&self, path: &str) -> Result<Vec<source::FileSource>> {
+        let catalog = self.claimed.catalog.as_ref();
+        let prefix = path.trim_matches('/');
+        let indices: Vec<usize> = catalog
+            .entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.is_dir)
+            .filter(|(_, entry)| {
+                prefix.is_empty()
+                    || entry
+                        .name
+                        .strip_prefix(prefix)
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if indices.is_empty() {
+            return Err(Error::categorized_archive(
+                ErrorCategory::NotFound,
+                catalog.descriptor().id,
+                format!(
+                    "'{path}' names no files in {}: there is nothing to gather",
+                    self.named()
+                ),
+            ));
+        }
+        let sources = catalog.entry_group(&indices)?;
+        Ok(indices
+            .into_iter()
+            .zip(sources)
+            .map(|(index, entry_source)| {
+                let entry = &catalog.entries()[index];
+                source::FileSource {
+                    claim: Arc::clone(&self.claimed.file),
+                    mode: self.claimed.mode,
+                    claim_class: self.assurance.claim,
+                    layer: self.entry_layer(entry),
+                    entry: entry_source,
+                    cache_bytes: self.cache_bytes,
+                }
+            })
+            .collect())
+    }
+
+    /// The archive layer an entry is reached through, for its
+    /// provenance.
+    fn entry_layer(&self, entry: &ArchiveEntry) -> ArchiveLayer {
+        let descriptor = self.claimed.catalog.descriptor();
+        ArchiveLayer {
+            id: descriptor.id.to_owned(),
+            name: descriptor.name.to_owned(),
+            path: self.path.as_deref().map(PathBuf::from),
+            entry_name: entry.name.clone(),
+            archive_size: Some(self.claimed.catalog.archive_size()),
+            compressed_size: entry.compressed_size,
+            uncompressed_size: Some(entry.uncompressed_size),
+        }
     }
 
     /// Resolves one entry to a source a device can load, under this
@@ -794,30 +832,13 @@ mod tests {
 
     #[test]
     fn an_archive_grammar_is_reached_by_enrollment_alone() {
-        let (archive, entry) = test_registry()
-            .split(Path::new("sample.test/inner/disk.img"))
-            .expect("the enrolled extension splits the path");
-        assert_eq!(archive, Path::new("sample.test"));
-        assert_eq!(entry.as_deref(), Some(Path::new("inner/disk.img")));
-    }
-
-    #[test]
-    fn a_path_no_grammar_claims_does_not_split() {
-        assert!(test_registry().split(Path::new("disk.img")).is_none());
-        assert!(split_archive_path(Path::new("disk.img")).is_none());
-    }
-
-    #[test]
-    fn the_built_in_grammars_claim_their_extensions() {
-        let (archive, entry) =
-            split_archive_path(Path::new("captures.7z/track00.raw")).expect("7z splits the path");
-        assert_eq!(archive, Path::new("captures.7z"));
-        assert_eq!(entry.as_deref(), Some(Path::new("track00.raw")));
-
-        let (archive, entry) =
-            split_archive_path(Path::new("Disks.ZIP")).expect("the match ignores case");
-        assert_eq!(archive, Path::new("Disks.ZIP"));
-        assert_eq!(entry, None);
+        assert!(
+            test_registry()
+                .adapter_for(Path::new("sample.test"))
+                .is_some(),
+            "the enrolled extension is claimed"
+        );
+        assert!(test_registry().adapter_for(Path::new("disk.img")).is_none());
     }
 
     #[test]
@@ -852,14 +873,6 @@ mod tests {
         assert!(
             error.to_string().contains("reads and does not write"),
             "{error}"
-        );
-    }
-
-    #[test]
-    fn entry_names_normalize_to_forward_slashes() {
-        assert_eq!(
-            normalize_entry_name(Path::new("inner/./deeper/disk.img")),
-            "inner/deeper/disk.img"
         );
     }
 }

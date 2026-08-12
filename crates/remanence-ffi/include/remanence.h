@@ -132,62 +132,6 @@ typedef enum {
   REMANENCE_ENTRY_KIND_DIRECTORY,
 } RemanenceEntryKind;
 
-// Which declared density a location is clocked at.
-typedef enum {
-  // The zone the family's density map declares for the location.
-  REMANENCE_DENSITY_POLICY_DECLARED = 0,
-  // The zone in `density_zone`, for every location.
-  REMANENCE_DENSITY_POLICY_FIXED = 1,
-} RemanenceDensityPolicy;
-
-// What a location no declared zone covers becomes.
-typedef enum {
-  REMANENCE_UNZONED_POLICY_REFUSE = 0,
-  REMANENCE_UNZONED_POLICY_OMIT = 1,
-} RemanenceUnzonedPolicy;
-
-// How a pulse the medium states does not read the same every time
-// becomes a definite bit.
-typedef enum {
-  // Every such pulse is taken as `weak_pulse_detected`, uniformly.
-  REMANENCE_WEAK_PULSE_POLICY_DECLARED = 0,
-  // Each is resolved reproducibly from `seed` and its own angle.
-  REMANENCE_WEAK_PULSE_POLICY_SEEDED = 1,
-} RemanenceWeakPulsePolicy;
-
-// Where byte framing begins.
-typedef enum {
-  // At the family's declared landmark and nowhere else.
-  REMANENCE_ALIGNMENT_POLICY_LANDMARK = 0,
-  // At the circle's origin as well, the caller declaring it a byte
-  // boundary.
-  REMANENCE_ALIGNMENT_POLICY_ORIGIN = 1,
-} RemanenceAlignmentPolicy;
-
-// What a group holding a pattern the family's table does not assign
-// becomes.
-typedef enum {
-  REMANENCE_UNASSIGNED_SYMBOL_POLICY_REFUSE = 0,
-  REMANENCE_UNASSIGNED_SYMBOL_POLICY_DECLARE_LOSS = 1,
-} RemanenceUnassignedSymbolPolicy;
-
-// What a block whose stated checksum disagrees with its own bytes
-// becomes.
-typedef enum {
-  // The recognition stops and names the location and the address.
-  REMANENCE_CHECKSUM_FAILURE_POLICY_REFUSE = 0,
-  // The claim is kept, stated unreadable with both checksums on it,
-  // and counted.
-  REMANENCE_CHECKSUM_FAILURE_POLICY_DECLARE_LOSS = 1,
-} RemanenceChecksumFailurePolicy;
-
-// What a header block the recording does not follow with a data block
-// becomes.
-typedef enum {
-  REMANENCE_UNPAIRED_RECORD_POLICY_REFUSE = 0,
-  REMANENCE_UNPAIRED_RECORD_POLICY_DECLARE_LOSS = 1,
-} RemanenceUnpairedRecordPolicy;
-
 // What the device's leading structure turned out to be. The report states
 // this rather than leaving a caller to reconstruct it from empty lists.
 typedef enum {
@@ -221,33 +165,30 @@ typedef enum {
   REMANENCE_LETTER_OUTCOME_UNDETERMINED = 3,
 } RemanenceLetterOutcome;
 
-// How the reduction decides which instrument positions hold
-// recordings.
-typedef enum {
-  // Measured from the evidence: a position records where its
-  // revolutions resolve the same transitions.
-  REMANENCE_RECORDING_SELECTION_MEASURED = 0,
-  // The caller's own assertion, checked to exist and honoured.
-  REMANENCE_RECORDING_SELECTION_DECLARED = 1,
-} RemanenceRecordingSelection;
-
 // One open's assurance state (P28). Free with
 // `remanence_assurance_free`; the strings it returns are owned by it.
 typedef struct RemanenceAssurance RemanenceAssurance;
 
 // A hardware bitstream, held in the session. The bits stay behind this
 // handle; what it reports is the transition that produced them.
+//
+// Two doors mint it: `remanence_image_materialize_c1541_bitstream`,
+// whose handle owns the stream it materialized, and
+// `remanence_medium_bitstream`, whose handle is a view of the stream
+// cached in the pooled medium — that one **must not outlive its
+// session**, and stops answering once the medium is released.
 typedef struct RemanenceC1541Bitstream RemanenceC1541Bitstream;
 
-// An encoded bytestream, held in the session.
+// An encoded bytestream, held in the session — minted by
+// `remanence_c1541_bitstream_materialize_bytestream`, whose handle owns
+// its stream, or by `remanence_medium_bytestream`, whose handle is a
+// view of the stream cached in the pooled medium and **must not outlive
+// its session**.
 typedef struct RemanenceC1541Bytestream RemanenceC1541Bytestream;
 
 // The recording's own sectors, held in the session. The payloads stay
 // behind this handle and are read by the address the recording states.
 typedef struct RemanenceC1541Sectors RemanenceC1541Sectors;
-
-// An open capture set, holding the claim on its archive.
-typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 
 // What a d64 rendition carried, or will carry, of one image.
 typedef struct RemanenceD64Report RemanenceD64Report;
@@ -296,6 +237,17 @@ typedef struct RemanenceFile RemanenceFile;
 // Bytes read out of a volume or catalog.
 typedef struct RemanenceFileData RemanenceFileData;
 
+// One file taken from an archive medium's namespace as a load's source
+// — free-standing, riding the claim of the medium it came from. Free
+// with `remanence_file_source_free`, unless
+// `remanence_session_load_media_source` consumed it.
+typedef struct RemanenceFileSource RemanenceFileSource;
+
+// Every file gathered under one namespace path as a load's sources.
+// Free with `remanence_file_source_list_free`, unless
+// `remanence_session_load_media_sources` consumed it.
+typedef struct RemanenceFileSourceList RemanenceFileSourceList;
+
 // What a g64 rendition carried, or will carry, of one image.
 typedef struct RemanenceG64Report RemanenceG64Report;
 
@@ -328,10 +280,6 @@ typedef struct RemanenceMachine RemanenceMachine;
 // never make it point at a stranger.
 typedef struct RemanenceMedium RemanenceMedium;
 
-// An opened P64 image, holding its claim on the file and the medium it
-// decoded into private session storage.
-typedef struct RemanenceP64Image RemanenceP64Image;
-
 // What a container carried, or will carry, of one remanence image.
 typedef struct RemanenceP64Report RemanenceP64Report;
 
@@ -351,12 +299,6 @@ typedef struct RemanenceP64Report RemanenceP64Report;
 // what comes back: both doors compose the same node.
 typedef struct RemanencePartition RemanencePartition;
 
-// A recognition result, ranked highest confidence first.
-typedef struct RemanenceRecognition RemanenceRecognition;
-
-// A planned reduction: everything computed, nothing written.
-typedef struct RemanenceReconstructionPlan RemanenceReconstructionPlan;
-
 // An open session: the claim and cache scope, holding the machines
 // within it (P32).
 typedef struct RemanenceSession RemanenceSession;
@@ -364,60 +306,6 @@ typedef struct RemanenceSession RemanenceSession;
 // One space of a medium's content, composed over the partition that
 // bears it. Free with `remanence_space_free`.
 typedef struct RemanenceSpace RemanenceSpace;
-
-// One zone as a profile declares it, and what the capture recovered of
-// it.
-typedef struct {
-  uint64_t first_location;
-  uint64_t last_location;
-  // What the family claims one location in this zone holds.
-  uint32_t records_declared;
-  uint64_t locations_declared;
-  uint64_t locations_claimed;
-  // The cell this zone claims, in thousandths of a reference cycle.
-  uint64_t nominal_cell_millicycles;
-} RemanenceZoneClaim;
-
-// What the probe found at one source position. Every `has_*` flag says
-// whether the value beside it was established at all: an absence is a
-// finding, not a zero.
-typedef struct {
-  uint64_t position_numerator;
-  uint64_t position_denominator;
-  bool has_head;
-  uint64_t head;
-  // The family location this position addresses, where the family's
-  // addressing covers it at all.
-  bool has_family_location;
-  uint64_t family_location;
-  bool has_zone;
-  uint32_t zone;
-  uint32_t records;
-  // The bit distance between record starts, where it repeats.
-  bool has_record_bits;
-  uint64_t record_bits;
-  // How far that spacing departs from its own median. Zero is a
-  // spacing that repeats to the bit.
-  uint64_t record_bits_deviation;
-  // The one departure from it, as an angle in reference-clock cycles.
-  bool has_seam;
-  uint64_t seam_cycles;
-  // The derived cell projected onto the family's nominal rotation,
-  // in thousandths of a reference cycle, beside what the zone claims.
-  bool has_cell;
-  uint64_t cell_millicycles;
-  bool has_nominal_cell;
-  uint64_t nominal_cell_millicycles;
-  // How much of the interval population classified, per thousand.
-  uint32_t resolved_permille;
-  uint32_t observations;
-  uint32_t observations_agreeing;
-  // The adjacent position holding the same content, where one does.
-  bool has_duplicate;
-  uint64_t duplicate_numerator;
-  uint64_t duplicate_denominator;
-  bool claimed;
-} RemanenceLocationVerdict;
 
 // One half-track a P64 holds, in the container's addressing and the
 // family's both.
@@ -433,24 +321,6 @@ typedef struct {
   uint64_t weak_pulses;
   uint64_t absent_pulses;
 } RemanenceP64HalfTrack;
-
-// The complete declared policy for one medium-to-bitstream transition.
-// There is no default: every field is a decision about evidence.
-typedef struct {
-  RemanenceDensityPolicy density;
-  uint32_t density_zone;
-  RemanenceUnzonedPolicy unzoned;
-  RemanenceWeakPulsePolicy weak_pulse;
-  bool weak_pulse_detected;
-  uint64_t seed;
-} RemanenceReadChannelPolicy;
-
-// The complete declared policy for one bitstream-to-bytestream
-// transition.
-typedef struct {
-  RemanenceAlignmentPolicy alignment;
-  RemanenceUnassignedSymbolPolicy unassigned_symbol;
-} RemanenceGcrCodecPolicy;
 
 // One location the bitstream holds, and what the channel resolved
 // there.
@@ -488,14 +358,6 @@ typedef struct {
   uint64_t longest_landmark_bits;
   uint64_t unframed_bits;
 } RemanenceBytestreamLocation;
-
-// The complete declared policy for one bytestream-to-sector
-// recognition. There is no default: both fields are decisions about
-// evidence.
-typedef struct {
-  RemanenceChecksumFailurePolicy checksum_failure;
-  RemanenceUnpairedRecordPolicy unpaired_record;
-} RemanenceSectorPolicy;
 
 // One location the sector layer read, and what it found there.
 typedef struct {
@@ -591,41 +453,6 @@ typedef struct {
   // its own measured figure was not a recording's.
   bool clocked_at_nominal;
 } RemanenceG64HalfTrack;
-
-// The complete declared policy for one reduction. There is no default:
-// a reduction the policy does not name is a refusal.
-typedef struct {
-  // Which recorded side the image is reconstructed from. Sides are
-  // never merged or averaged.
-  uint64_t side;
-  RemanenceRecordingSelection recordings;
-  // The declared positions, ascending. Read only when `recordings`
-  // is `Declared`, and ignored otherwise.
-  const uint64_t *declared_positions;
-  size_t declared_position_count;
-} RemanenceReconstructionPolicy;
-
-// One reconstructed orbit, as the plan reports it.
-typedef struct {
-  // The instrument position the orbit was read at — capture
-  // provenance, not a fact of the medium.
-  uint64_t position;
-  // Where the orbit is: the rig's radius at that position.
-  uint64_t radius_microns;
-  uint32_t revolutions;
-  // The count-spread discriminator, in permille of the largest.
-  uint32_t count_spread_permille;
-  uint64_t points;
-  uint64_t coherent_points;
-  uint64_t unaligned_spans;
-  // The cell the closed revolution implies, in millidivisions.
-  uint64_t implied_cell_millidivisions;
-  // Intervals kept off the lattice: the medium holding what the
-  // crystal did not write.
-  uint32_t off_lattice;
-  // Whether the fat-track merge admitted this orbit into the image.
-  bool admitted;
-} RemanenceReconstructedOrbit;
 
 #ifdef __cplusplus
 extern "C" {
@@ -1075,6 +902,15 @@ const char *remanence_format_device(size_t index, size_t device);
 // its own.
 bool remanence_format_takes_block_bytes(size_t index);
 
+// Whether format `index` reads a collection of sources rather than one
+// artifact — true for the KryoFlux capture set alone, which is one
+// disk spread over a stream per head per drive-step position. A
+// collection format loads through
+// `remanence_session_load_media_collection` or
+// `remanence_session_load_media_sources`; every other format loads one
+// source.
+bool remanence_format_takes_collection(size_t index);
+
 // Loads the caller's own opened artifact as the format they **declare**
 // it to be, and answers with the medium — linked to nothing. The session
 // owns the view; never free it. Null on failure.
@@ -1109,6 +945,74 @@ RemanenceMedium *remanence_session_load_media(RemanenceSession *session,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
                                               char **error_rule_out);
+
+// Loads a collection of the caller's own opened artifacts as the format
+// they **declare** it to be — the collection shape of the load, which
+// only a format whose claim takes one reads
+// (`remanence_format_takes_collection`): a KryoFlux capture set is one
+// disk spread over a stream per head per drive-step position. Answers
+// with the medium — linked to nothing. The session owns the view; never
+// free it. Null on failure.
+//
+// `sources` points at `source_count` OS file handles, each exactly what
+// `remanence_session_load_media` takes for one. Every member is checked
+// before any is adopted — a 0 or -1 among them refuses the whole load
+// and leaves every handle the caller's to close, mirroring the single
+// form's check — and once all are checked **the library takes ownership
+// of every one, whatever the outcome**: a refused load closes them, a
+// successful one closes them at release or at session free.
+//
+// `format`, `device_type` and `block_bytes` are as
+// `remanence_session_load_media` takes them.
+RemanenceMedium *remanence_session_load_media_collection(RemanenceSession *session,
+                                                         const ptrdiff_t *sources,
+                                                         size_t source_count,
+                                                         const char *format,
+                                                         const char *device_type,
+                                                         uint64_t block_bytes,
+                                                         RemanenceErrorCategory *error_category_out,
+                                                         char **error_out,
+                                                         char **error_rule_out);
+
+// Loads one file from another medium's namespace as the format the
+// caller declares — the namespace-source shape of the load, taking what
+// `remanence_file_source` produced.
+//
+// **The source is consumed and freed whatever the outcome**, exactly as
+// a discovery is: the pointer must never be used or freed again after
+// this call, whatever it returns. The source is free-standing — it
+// rides the claim of the medium it came from, so the walk that named it
+// ended before this load begins and nothing is opened twice. `format`,
+// `device_type` and `block_bytes` are as `remanence_session_load_media`
+// takes them. The session owns the returned view; never free it. Null
+// on failure.
+RemanenceMedium *remanence_session_load_media_source(RemanenceSession *session,
+                                                     RemanenceFileSource *source,
+                                                     const char *format,
+                                                     const char *device_type,
+                                                     uint64_t block_bytes,
+                                                     RemanenceErrorCategory *error_category_out,
+                                                     char **error_out,
+                                                     char **error_rule_out);
+
+// Loads a collection of files gathered from another medium's namespace
+// as the format the caller declares — the collection beside
+// `remanence_session_load_media_source`, taking what
+// `remanence_space_files` gathered, for a format whose claim takes a
+// collection (`remanence_format_takes_collection`).
+//
+// **The gathering is consumed and freed whatever the outcome**: the
+// pointer must never be used or freed again after this call, whatever
+// it returns. The session owns the returned view; never free it. Null
+// on failure.
+RemanenceMedium *remanence_session_load_media_sources(RemanenceSession *session,
+                                                      RemanenceFileSourceList *sources,
+                                                      const char *format,
+                                                      const char *device_type,
+                                                      uint64_t block_bytes,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out,
+                                                      char **error_rule_out);
 
 // Loads the medium a discovery already opened into the session's pool,
 // **consuming and freeing the discovery**.
@@ -2056,6 +1960,59 @@ const uint8_t *remanence_file_data_bytes(const RemanenceFileData *data, size_t *
 // Frees read-out file bytes.
 void remanence_file_data_free(RemanenceFileData *data);
 
+// This file taken as a load's source — what
+// `remanence_session_load_media_source` consumes.
+//
+// The source is **free-standing**: it rides the claim of the medium it
+// came from, so the namespace walk that named the file ends here and
+// the load opens nothing twice. This release takes a load's source
+// from an archive's namespace alone — a file on a volume-backed
+// filesystem is read through the filesystem that names it, and refuses
+// here by name. Returns null on failure and stores a message in
+// `error_out` (free with `remanence_string_free`).
+RemanenceFileSource *remanence_file_source(RemanenceFile *file,
+                                           RemanenceErrorCategory *error_category_out,
+                                           char **error_out,
+                                           char **error_rule_out);
+
+// The name the namespace holds this source's file under. Owned by the
+// handle; do not free.
+const char *remanence_file_source_name(const RemanenceFileSource *source);
+
+// The file's size in bytes, as the namespace claims it.
+uint64_t remanence_file_source_size_bytes(const RemanenceFileSource *source);
+
+// Frees a source no load consumed, ending its ride on its medium's
+// claim.
+void remanence_file_source_free(RemanenceFileSource *source);
+
+// Every file under `path` (`""` or null is the whole namespace),
+// gathered as a load's sources in one pass — what
+// `remanence_session_load_media_sources` consumes.
+//
+// The sources are **free-standing** as the single form's is, and a
+// solid archive's coded stream decodes once for the whole gathering
+// (P27). This release gathers from an archive's namespace alone — a
+// volume-backed filesystem's files are read through the filesystem
+// that names them, and refuse here by name. Returns null on failure
+// and stores a message in `error_out` (free with
+// `remanence_string_free`).
+RemanenceFileSourceList *remanence_space_files(RemanenceSpace *space,
+                                               const char *path,
+                                               RemanenceErrorCategory *error_category_out,
+                                               char **error_out,
+                                               char **error_rule_out);
+
+// How many sources the gathering holds.
+size_t remanence_file_source_list_count(const RemanenceFileSourceList *list);
+
+// The name the namespace holds the `index`th source's file under, or
+// null out of range. Owned by the handle; do not free.
+const char *remanence_file_source_list_name(const RemanenceFileSourceList *list, size_t index);
+
+// Frees a gathering no load consumed.
+void remanence_file_source_list_free(RemanenceFileSourceList *list);
+
 // The commit point (P2): everything buffered reaches the image, then a
 // flush. Until this call, nothing has touched the file. The commit is
 // durable (P9): a private recovery journal is armed before the first
@@ -2070,419 +2027,124 @@ bool remanence_medium_commit(RemanenceMedium *medium,
 // Discards everything buffered; the image is untouched.
 void remanence_medium_rollback(RemanenceMedium *medium);
 
-// Opens the KryoFlux capture set held by `path` (UTF-8) — an archive
-// this library reads, optionally followed by the subtree inside it that
-// holds the members — with the stated default session cache bound.
-// An incomplete, duplicate, contradictory, or unrelated member refuses
-// the whole set. Returns null on failure and stores a message in
-// `error_out` (free with `remanence_string_free`).
-RemanenceCaptureSet *remanence_capture_set_open(const char *path,
-                                                RemanenceErrorCategory *error_category_out,
-                                                char **error_out,
-                                                char **error_rule_out);
-
-// Opens a capture set as `remanence_capture_set_open` does, under a
-// declared cache bound: at most `cache_bytes` of the decoded capture
-// stays resident. The bound narrows the working set; it never refuses
-// service.
-RemanenceCaptureSet *remanence_capture_set_open_with_cache(const char *path,
-                                                           uint64_t cache_bytes,
-                                                           RemanenceErrorCategory *error_category_out,
-                                                           char **error_out,
-                                                           char **error_rule_out);
-
-// Frees a capture-set handle, releasing its claim on the archive and
-// discarding the private session storage the capture decoded into.
-void remanence_capture_set_free(RemanenceCaptureSet *set);
-
-// The path the set was opened from.
-const char *remanence_capture_set_path(const RemanenceCaptureSet *set);
-
-// The subtree inside the archive the members were read from, or null
-// when the whole archive is the set.
-const char *remanence_capture_set_subtree(const RemanenceCaptureSet *set);
-
-// The capture format's stable identifier, "kryoflux".
-const char *remanence_capture_set_format_id(const RemanenceCaptureSet *set);
-
-// The capture format's human-readable name.
-const char *remanence_capture_set_format_name(const RemanenceCaptureSet *set);
-
-// The archive grammar the members were read through, e.g. "7z".
-const char *remanence_capture_set_archive_format_id(const RemanenceCaptureSet *set);
-
-// Which P7 mode the open obtained on the archive file.
-RemanenceAccessMode remanence_capture_set_access_mode(const RemanenceCaptureSet *set);
-
-// The capture's declared timing basis, as an exact ratio of ticks per
-// second. Returns false when the handle is null.
-bool remanence_capture_set_ticks_per_second(const RemanenceCaptureSet *set,
-                                            uint64_t *numerator_out,
-                                            uint64_t *denominator_out);
-
-// How many bytes of private session storage the decoded capture
-// occupies.
-uint64_t remanence_capture_set_backing_bytes(const RemanenceCaptureSet *set);
-
-// How much of that backing is currently resident. The capture is never
-// held whole.
-uint64_t remanence_capture_set_resident_bytes(const RemanenceCaptureSet *set);
-
-// Number of evidence lines behind the recognition.
-size_t remanence_capture_set_evidence_count(const RemanenceCaptureSet *set);
-
-// One evidence line, or null when out of range.
-const char *remanence_capture_set_evidence(const RemanenceCaptureSet *set, size_t index);
-
-// Number of members the set holds.
-size_t remanence_capture_set_member_count(const RemanenceCaptureSet *set);
-
-// One member's catalog identity, or null when out of range.
-const char *remanence_capture_set_member_entry_name(const RemanenceCaptureSet *set, size_t member);
-
-// One member's size in bytes as the catalog declares it; 0 when out of
-// range.
-uint64_t remanence_capture_set_member_entry_bytes(const RemanenceCaptureSet *set, size_t member);
-
-// One member's drive-step position, as an exact ratio. Returns false
-// when out of range.
-bool remanence_capture_set_member_position(const RemanenceCaptureSet *set,
-                                           size_t member,
-                                           uint64_t *numerator_out,
-                                           uint64_t *denominator_out);
-
-// The head that captured this position; returns false when the source
-// numbers no head, which is a different fact from head zero, or when
-// the index is out of range.
-bool remanence_capture_set_member_head(const RemanenceCaptureSet *set,
-                                       size_t member,
-                                       uint64_t *out);
-
-// Number of things recorded as qualified about this member.
-size_t remanence_capture_set_member_issue_count(const RemanenceCaptureSet *set, size_t member);
-
-// One issue's stable code, or null when out of range.
-const char *remanence_capture_set_member_issue_code(const RemanenceCaptureSet *set,
-                                                    size_t member,
-                                                    size_t issue);
-
-// One issue's human-readable detail, or null when out of range.
-const char *remanence_capture_set_member_issue_detail(const RemanenceCaptureSet *set,
-                                                      size_t member,
-                                                      size_t issue);
-
-// Number of source transfers recorded at this member's location.
-size_t remanence_capture_set_member_run_count(const RemanenceCaptureSet *set, size_t member);
-
-// One run's place in the member's recorded order; 0 when out of range.
-uint64_t remanence_capture_set_run_ordinal(const RemanenceCaptureSet *set,
-                                           size_t member,
-                                           size_t run);
-
-// How many flux transitions the run recorded.
-uint64_t remanence_capture_set_run_transitions(const RemanenceCaptureSet *set,
-                                               size_t member,
-                                               size_t run);
-
-// The last transition's tick: the extent of what was recorded, not a
-// circumference. A run states no period.
-uint64_t remanence_capture_set_run_extent_ticks(const RemanenceCaptureSet *set,
-                                                size_t member,
-                                                size_t run);
-
-// How many timed markers sit on channels parallel to the run's flux.
-uint64_t remanence_capture_set_run_markers(const RemanenceCaptureSet *set,
-                                           size_t member,
-                                           size_t run);
-
-// How many of those markers are index events.
-uint64_t remanence_capture_set_run_index_markers(const RemanenceCaptureSet *set,
-                                                 size_t member,
-                                                 size_t run);
-
-// The result the capture tool declared for this transfer, where it
-// declared one; zero is a clean read. Returns false when it declared
-// none or the index is out of range.
-bool remanence_capture_set_run_transfer_result(const RemanenceCaptureSet *set,
-                                               size_t member,
-                                               size_t run,
-                                               uint32_t *out);
-
-// Transitions recorded before the run's first index: evidence that
-// bounding into circular observations does not consume.
-uint64_t remanence_capture_set_run_transitions_before_first_index(const RemanenceCaptureSet *set,
-                                                                  size_t member,
-                                                                  size_t run);
-
-// Transitions recorded after the run's last index, on the same terms.
-uint64_t remanence_capture_set_run_transitions_after_last_index(const RemanenceCaptureSet *set,
-                                                                size_t member,
-                                                                size_t run);
-
-// How many circular observations the run's indices bounded.
-size_t remanence_capture_set_run_observation_count(const RemanenceCaptureSet *set,
-                                                   size_t member,
-                                                   size_t run);
-
-// One observation's place in the location's source-record order. Not a
-// rank: nothing here says it is a good or complete revolution.
-uint64_t remanence_capture_set_observation_ordinal(const RemanenceCaptureSet *set,
-                                                   size_t member,
-                                                   size_t run,
-                                                   size_t observation);
-
-// The observation's declared circumference, in the capture's own ticks.
-uint64_t remanence_capture_set_observation_span_ticks(const RemanenceCaptureSet *set,
-                                                      size_t member,
-                                                      size_t run,
-                                                      size_t observation);
-
-// How many transitions the observation holds.
-uint64_t remanence_capture_set_observation_transitions(const RemanenceCaptureSet *set,
-                                                       size_t member,
-                                                       size_t run,
-                                                       size_t observation);
-
-// How many markers the observation holds.
-uint64_t remanence_capture_set_observation_markers(const RemanenceCaptureSet *set,
-                                                   size_t member,
-                                                   size_t run,
-                                                   size_t observation);
-
-// Recognizes the drive family a capture set was recorded under. Every
-// enrolled profile is consulted and what claims the capture is ranked;
-// a capture no profile claims is a named refusal. Returns null on
-// failure and stores a message in `error_out` (free with
-// `remanence_string_free`).
-RemanenceRecognition *remanence_capture_set_recognize(const RemanenceCaptureSet *set,
-                                                      RemanenceErrorCategory *error_category_out,
-                                                      char **error_out,
-                                                      char **error_rule_out);
-
-// Recognizes the capture against one named profile, whether or not it
-// would have won the ranking. A profile this build does not enroll is
-// refused by name.
-RemanenceRecognition *remanence_capture_set_recognize_as(const RemanenceCaptureSet *set,
-                                                         const char *profile_id,
-                                                         RemanenceErrorCategory *error_category_out,
-                                                         char **error_out,
-                                                         char **error_rule_out);
-
-// Frees a recognition handle.
-void remanence_recognition_free(RemanenceRecognition *recognition);
-
-// The profile the caller pinned, or null when the ranking was open.
-const char *remanence_recognition_pinned(const RemanenceRecognition *recognition);
-
-// Number of evidence lines about the recognition itself.
-size_t remanence_recognition_evidence_count(const RemanenceRecognition *recognition);
-
-// One of those lines, or null when out of range.
-const char *remanence_recognition_evidence(const RemanenceRecognition *recognition, size_t index);
-
-// How many profiles claimed the capture, highest confidence first.
-size_t remanence_recognition_verdict_count(const RemanenceRecognition *recognition);
-
-// One verdict's profile identifier, or null when out of range.
-const char *remanence_recognition_profile_id(const RemanenceRecognition *recognition,
-                                             size_t verdict);
-
-// One verdict's human-readable family name.
-const char *remanence_recognition_profile_name(const RemanenceRecognition *recognition,
-                                               size_t verdict);
-
-// Detection confidence, 0-100. Never an answer on its own: read the
-// evidence beside it.
-uint8_t remanence_recognition_confidence(const RemanenceRecognition *recognition, size_t verdict);
-
-// How many of the profile's declared locations the capture claimed,
-// and how many it declares.
-uint32_t remanence_recognition_locations_claimed(const RemanenceRecognition *recognition,
-                                                 size_t verdict);
-
-uint64_t remanence_recognition_locations_declared(const RemanenceRecognition *recognition,
-                                                  size_t verdict);
-
-// Number of evidence lines behind this verdict.
-size_t remanence_recognition_verdict_evidence_count(const RemanenceRecognition *recognition,
-                                                    size_t verdict);
-
-// One of those lines, or null when out of range.
-const char *remanence_recognition_verdict_evidence(const RemanenceRecognition *recognition,
-                                                   size_t verdict,
-                                                   size_t index);
-
-// How many density zones the profile declares.
-size_t remanence_recognition_zone_count(const RemanenceRecognition *recognition, size_t verdict);
-
-// One zone, written into `out`. Returns false when out of range.
-bool remanence_recognition_zone(const RemanenceRecognition *recognition,
-                                size_t verdict,
-                                size_t zone,
-                                RemanenceZoneClaim *out);
-
-// How many source positions the probe accounted for.
-size_t remanence_recognition_location_count(const RemanenceRecognition *recognition,
-                                            size_t verdict);
-
-// One position's findings, written into `out`. Returns false when out
-// of range.
-bool remanence_recognition_location(const RemanenceRecognition *recognition,
-                                    size_t verdict,
-                                    size_t location,
-                                    RemanenceLocationVerdict *out);
-
-// The member one position was read from, or null when out of range.
-const char *remanence_recognition_location_artifact(const RemanenceRecognition *recognition,
-                                                    size_t verdict,
-                                                    size_t location);
-
-// Why a position was not claimed, in the profile's own terms; null when
-// it was claimed or the index is out of range.
-const char *remanence_recognition_location_refusal(const RemanenceRecognition *recognition,
-                                                   size_t verdict,
-                                                   size_t location);
-
-// Opens the P64 image at `path` (UTF-8), claiming the file and decoding
-// every half-track once into private session storage. The version is
-// checked before anything else is touched, and a version, flag bit, or
-// chunk signature past this release's claim is refused by name. Returns
-// null on failure and stores a message in `error_out` (free with
-// `remanence_string_free`).
-RemanenceP64Image *remanence_p64_image_open(const char *path,
-                                            RemanenceErrorCategory *error_category_out,
-                                            char **error_out,
-                                            char **error_rule_out);
-
-// Opens a P64 image as `remanence_p64_image_open` does, under a
-// declared cache bound: at most `cache_bytes` of the decoded medium
-// stays resident. The bound narrows the working set; it never refuses
-// service.
-RemanenceP64Image *remanence_p64_image_open_with_cache(const char *path,
-                                                       uint64_t cache_bytes,
-                                                       RemanenceErrorCategory *error_category_out,
-                                                       char **error_out,
-                                                       char **error_rule_out);
-
-// Frees an image handle, releasing its claim on the file and discarding
-// the private session storage the medium decoded into.
-void remanence_p64_image_free(RemanenceP64Image *image);
-
-// The path the image was opened from.
-const char *remanence_p64_image_path(const RemanenceP64Image *image);
-
-// Which P7 mode the open obtained on the file.
-RemanenceAccessMode remanence_p64_image_access_mode(const RemanenceP64Image *image);
-
-// How many bytes of private session storage the decoded medium
-// occupies, and how much of that is currently resident.
-uint64_t remanence_p64_image_backing_bytes(const RemanenceP64Image *image);
-
-uint64_t remanence_p64_image_resident_bytes(const RemanenceP64Image *image);
-
 // Frees a report handle.
 void remanence_p64_report_free(RemanenceP64Report *report);
 
 // The container format's stable identifier, "p64".
-const char *remanence_p64_format_id(const RemanenceP64Image *image,
-                                    const RemanenceP64Report *report);
+const char *remanence_p64_format_id(const RemanenceP64Report *report);
 
-const char *remanence_p64_format_name(const RemanenceP64Image *image,
-                                      const RemanenceP64Report *report);
+const char *remanence_p64_format_name(const RemanenceP64Report *report);
 
 // The container's declared format version.
-uint32_t remanence_p64_version(const RemanenceP64Image *image, const RemanenceP64Report *report);
+uint32_t remanence_p64_version(const RemanenceP64Report *report);
 
-bool remanence_p64_write_protected(const RemanenceP64Image *image,
-                                   const RemanenceP64Report *report);
+bool remanence_p64_write_protected(const RemanenceP64Report *report);
 
-bool remanence_p64_double_sided(const RemanenceP64Image *image, const RemanenceP64Report *report);
+bool remanence_p64_double_sided(const RemanenceP64Report *report);
 
 // The drive profile the container's own signature names, and the frame
 // that profile declares.
-const char *remanence_p64_profile_id(const RemanenceP64Image *image,
-                                     const RemanenceP64Report *report);
+const char *remanence_p64_profile_id(const RemanenceP64Report *report);
 
-uint64_t remanence_p64_reference_clock_hz(const RemanenceP64Image *image,
-                                          const RemanenceP64Report *report);
+uint64_t remanence_p64_reference_clock_hz(const RemanenceP64Report *report);
 
-uint64_t remanence_p64_cycles_per_rotation(const RemanenceP64Image *image,
-                                           const RemanenceP64Report *report);
+uint64_t remanence_p64_cycles_per_rotation(const RemanenceP64Report *report);
 
 // How many half-tracks the container holds.
-size_t remanence_p64_half_track_count(const RemanenceP64Image *image,
-                                      const RemanenceP64Report *report);
+size_t remanence_p64_half_track_count(const RemanenceP64Report *report);
 
 // One of them, written into `out`. Returns false when out of range.
-bool remanence_p64_half_track(const RemanenceP64Image *image,
-                              const RemanenceP64Report *report,
+bool remanence_p64_half_track(const RemanenceP64Report *report,
                               size_t index,
                               RemanenceP64HalfTrack *out);
 
 // How many kinds of loss the crossing does not carry.
-size_t remanence_p64_declared_loss_count(const RemanenceP64Image *image,
-                                         const RemanenceP64Report *report);
+size_t remanence_p64_declared_loss_count(const RemanenceP64Report *report);
 
 // One loss entry's stable code, or null when out of range.
-const char *remanence_p64_declared_loss_code(const RemanenceP64Image *image,
-                                             const RemanenceP64Report *report,
-                                             size_t index);
+const char *remanence_p64_declared_loss_code(const RemanenceP64Report *report, size_t index);
 
 // What was lost, in the source's own terms. A count is not an account.
-const char *remanence_p64_declared_loss_detail(const RemanenceP64Image *image,
-                                               const RemanenceP64Report *report,
-                                               size_t index);
+const char *remanence_p64_declared_loss_detail(const RemanenceP64Report *report, size_t index);
 
 // How much of it there was, in whatever the detail counts.
-uint64_t remanence_p64_declared_loss_amount(const RemanenceP64Image *image,
-                                            const RemanenceP64Report *report,
-                                            size_t index);
+uint64_t remanence_p64_declared_loss_amount(const RemanenceP64Report *report, size_t index);
 
 // How the container was recognized and what this adapter claims of it.
-size_t remanence_p64_evidence_count(const RemanenceP64Image *image,
-                                    const RemanenceP64Report *report);
+size_t remanence_p64_evidence_count(const RemanenceP64Report *report);
 
-const char *remanence_p64_evidence(const RemanenceP64Image *image,
-                                   const RemanenceP64Report *report,
-                                   size_t index);
+const char *remanence_p64_evidence(const RemanenceP64Report *report, size_t index);
 
 // Materializes the family's hardware bitstream from what a remanence
-// image holds, under declared mechanics and read-channel rules.
+// image holds, under the profile's declared mechanics and read-channel
+// rules — it takes no policy because the type carries one (P30 reached
+// through the type), and `cache_bytes` is the P27 working-set bound.
 //
 // The image carries no clock, so the ladder stands on the served
 // projection of it — one multiply per point, at the family's reference
 // frame — rather than on the image directly. The image is untouched.
-// Returns null on failure and stores a message in `error_out` (free
-// with `remanence_string_free`).
+// The handle owns the stream; free it with
+// `remanence_c1541_bitstream_free`. Returns null on failure and stores
+// a message in `error_out` (free with `remanence_string_free`).
 RemanenceC1541Bitstream *remanence_image_materialize_c1541_bitstream(const RemanenceImage *image,
-                                                                     const RemanenceReadChannelPolicy *policy,
                                                                      uint64_t cache_bytes,
                                                                      RemanenceErrorCategory *error_category_out,
                                                                      char **error_out,
                                                                      char **error_rule_out);
 
-// The same, from the medium a P64 container holds at rest.
-RemanenceC1541Bitstream *remanence_p64_image_materialize_c1541_bitstream(const RemanenceP64Image *image,
-                                                                         const RemanenceReadChannelPolicy *policy,
-                                                                         uint64_t cache_bytes,
-                                                                         RemanenceErrorCategory *error_category_out,
-                                                                         char **error_out,
-                                                                         char **error_rule_out);
+// The family's hardware bitstream over this medium's recording,
+// materialized once — lazily, into the pooled medium itself — and
+// answered from then on. It answers where the device type's profile
+// bears flux, and refuses by name everywhere else: a block medium's
+// recording is presented by its format adapter, and the two families
+// are disjoint (P13).
+//
+// The handle is a view of the pooled stream, named by session and pool
+// identity like the medium's own view: it re-resolves on every call,
+// stops answering once the medium is released, and **must not outlive
+// the session**. Free it with `remanence_c1541_bitstream_free`, which
+// discards the view alone — the stream stays with its medium. Returns
+// null on failure.
+RemanenceC1541Bitstream *remanence_medium_bitstream(RemanenceMedium *medium,
+                                                    RemanenceErrorCategory *error_category_out,
+                                                    char **error_out,
+                                                    char **error_rule_out);
 
-// Frees a bitstream handle, discarding its private session storage.
+// Frees a bitstream handle. A materialized stream's private session
+// storage goes with it; a pooled medium's stream stays with its
+// medium, and only the view is discarded.
 void remanence_c1541_bitstream_free(RemanenceC1541Bitstream *bitstream);
 
 // Materializes the family's encoded bytestream from a bitstream under
-// its declared group code. The bitstream is untouched. Returns null on
-// failure and stores a message in `error_out`.
+// its declared group code — no policy, because the type carries one.
+// The bitstream is untouched, and the handle owns the stream it
+// answers. Returns null on failure and stores a message in
+// `error_out`.
 RemanenceC1541Bytestream *remanence_c1541_bitstream_materialize_bytestream(const RemanenceC1541Bitstream *bitstream,
-                                                                           const RemanenceGcrCodecPolicy *policy,
                                                                            uint64_t cache_bytes,
                                                                            RemanenceErrorCategory *error_category_out,
                                                                            char **error_out,
                                                                            char **error_rule_out);
 
-// Frees a bytestream handle, discarding its private session storage.
+// The family's encoded bytestream over this medium's recording — the
+// byte sequence the declared group code makes of the bitstream —
+// materialized once into the pooled medium and answered from then on,
+// refusing by name on non-flux media exactly as
+// `remanence_medium_bitstream` refuses.
+//
+// The handle is a view of the pooled stream with the same contract as
+// the bitstream's: re-resolved per call, silent after release, never
+// to outlive the session, freed with
+// `remanence_c1541_bytestream_free` — which discards the view alone.
+// Returns null on failure.
+RemanenceC1541Bytestream *remanence_medium_bytestream(RemanenceMedium *medium,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out,
+                                                      char **error_rule_out);
+
+// Frees a bytestream handle. A materialized stream's private session
+// storage goes with it; a pooled medium's stream stays with its
+// medium, and only the view is discarded.
 void remanence_c1541_bytestream_free(RemanenceC1541Bytestream *bytestream);
 
 // The profile the channel was declared by.
@@ -2577,12 +2239,50 @@ size_t remanence_c1541_bytestream_evidence_count(const RemanenceC1541Bytestream 
 const char *remanence_c1541_bytestream_evidence(const RemanenceC1541Bytestream *bytestream,
                                                 size_t index);
 
-// Recognizes the recording's own sectors out of a bytestream, under the
-// family's declared record grammar. The bytestream is untouched.
-// Returns null on failure and stores a message in `error_out` (free
+// How many framed bytes one location holds, addressed in the family's
+// own terms — the Commodore 1541 numbers its tracks from 1 — written
+// into `bytes_out`. This is the extent
+// `remanence_c1541_bytestream_location_read_at` reads within.
+//
+// A track the stream does not hold is refused naming what it does
+// hold: the stream's locations are what the medium carried, and
+// nothing is manufactured to answer for a track that is not there.
+// Returns false on failure and stores a message in `error_out` (free
 // with `remanence_string_free`).
+bool remanence_c1541_bytestream_location_bytes(const RemanenceC1541Bytestream *bytestream,
+                                               uint32_t track,
+                                               uint64_t *bytes_out,
+                                               RemanenceErrorCategory *error_category_out,
+                                               char **error_out,
+                                               char **error_rule_out);
+
+// Reads exactly `length` framed bytes at `offset` of one track into
+// `buffer_out`, whole or not at all. Bytes number from the first
+// framed byte, because nothing before sync is a byte at all; no byte
+// here is a header, a sector or a file, and the layers that assign
+// those sit above.
+//
+// A byte whose recorded pattern the family's table does not assign has
+// no value to serve: a read that touches one is refused naming it
+// rather than answered with an invented value. Returns false on
+// failure and stores a message in `error_out`.
+bool remanence_c1541_bytestream_location_read_at(const RemanenceC1541Bytestream *bytestream,
+                                                 uint32_t track,
+                                                 uint64_t offset,
+                                                 uint8_t *buffer_out,
+                                                 size_t length,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
+
+// Recognizes the recording's own sectors out of a bytestream, under
+// the family's declared record grammar — no policy, because the
+// profile carries one; `cache_bytes` is the P27 working-set bound. The
+// bytestream is untouched, and either backing serves: a materialized
+// stream's handle or a pooled medium's view. Returns null on failure
+// and stores a message in `error_out` (free with
+// `remanence_string_free`).
 RemanenceC1541Sectors *remanence_c1541_bytestream_recognize_sectors(const RemanenceC1541Bytestream *bytestream,
-                                                                    const RemanenceSectorPolicy *policy,
                                                                     uint64_t cache_bytes,
                                                                     RemanenceErrorCategory *error_category_out,
                                                                     char **error_out,
@@ -3315,89 +3015,6 @@ RemanenceP64Report *remanence_image_write_p64(const RemanenceImage *image,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
                                               char **error_rule_out);
-
-// Plans the gap-first reconstruction of a capture set into one
-// remanence image. Nothing is written and nothing is mutated: the plan
-// computes the whole reduction and enumerates everything the image
-// cannot carry in the capture's own terms. Returns null on failure and
-// stores a message in `error_out` (free with `remanence_string_free`).
-RemanenceReconstructionPlan *remanence_capture_set_plan_reconstruction(const RemanenceCaptureSet *set,
-                                                                       const RemanenceReconstructionPolicy *policy,
-                                                                       RemanenceErrorCategory *error_category_out,
-                                                                       char **error_out,
-                                                                       char **error_rule_out);
-
-// Frees a plan handle.
-void remanence_reconstruction_plan_free(RemanenceReconstructionPlan *plan);
-
-// Produces the remanence image the plan described, consuming the plan:
-// the handle is freed whether this succeeds or fails, and must not be
-// used again. At most `cache_bytes` of the image's points stay resident
-// (P27). What comes back is the family's ordinary image handle, freed
-// with `remanence_image_free`. Returns null on failure.
-RemanenceImage *remanence_reconstruction_plan_execute(RemanenceReconstructionPlan *plan,
-                                                      uint64_t cache_bytes,
-                                                      RemanenceErrorCategory *error_category_out,
-                                                      char **error_out,
-                                                      char **error_rule_out);
-
-// The artifact format the reduction produces: `"remanence"`.
-const char *remanence_reconstruction_format_id(const RemanenceReconstructionPlan *plan);
-
-// The side the image is reconstructed from.
-uint64_t remanence_reconstruction_side(const RemanenceReconstructionPlan *plan);
-
-// Every instrument position the capture holds on that side.
-uint32_t remanence_reconstruction_swept_positions(const RemanenceReconstructionPlan *plan);
-
-// How many of them the policy's selection names as recordings.
-size_t remanence_reconstruction_recorded_position_count(const RemanenceReconstructionPlan *plan);
-
-// One of them, written into `out`. False when out of range.
-bool remanence_reconstruction_recorded_position(const RemanenceReconstructionPlan *plan,
-                                                size_t index,
-                                                uint64_t *out);
-
-// How many orbits the reduction describes — every position it
-// reconstructed, admitted into the image or not.
-size_t remanence_reconstruction_orbit_count(const RemanenceReconstructionPlan *plan);
-
-// One of them, written into `out`. False when out of range.
-bool remanence_reconstruction_orbit(const RemanenceReconstructionPlan *plan,
-                                    size_t index,
-                                    RemanenceReconstructedOrbit *out);
-
-// One orbit's raw transition count for one revolution, before
-// alignment — the evidence the count-spread discriminator reads.
-// False when either index is out of range.
-bool remanence_reconstruction_orbit_transitions(const RemanenceReconstructionPlan *plan,
-                                                size_t orbit_index,
-                                                size_t revolution_index,
-                                                uint32_t *out);
-
-// How many kinds of loss the image cannot carry of the capture.
-size_t remanence_reconstruction_declared_loss_count(const RemanenceReconstructionPlan *plan);
-
-// One loss entry's stable code, or null when out of range.
-const char *remanence_reconstruction_declared_loss_code(const RemanenceReconstructionPlan *plan,
-                                                        size_t index);
-
-// What was lost, in the capture's own terms. A count is not an
-// account.
-const char *remanence_reconstruction_declared_loss_detail(const RemanenceReconstructionPlan *plan,
-                                                          size_t index);
-
-// How much of it there was, in whatever the detail counts.
-uint64_t remanence_reconstruction_declared_loss_amount(const RemanenceReconstructionPlan *plan,
-                                                       size_t index);
-
-// How many lines of evidence the reduction states for what it did
-// (P4).
-size_t remanence_reconstruction_evidence_count(const RemanenceReconstructionPlan *plan);
-
-// One of them, or null when out of range.
-const char *remanence_reconstruction_evidence(const RemanenceReconstructionPlan *plan,
-                                              size_t index);
 
 #ifdef __cplusplus
 }  // extern "C"

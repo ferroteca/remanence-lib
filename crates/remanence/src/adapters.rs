@@ -952,6 +952,9 @@ fn adapter_for(format: Format) -> &'static dyn ImageFormatAdapter {
         Format::Zip | Format::SevenZip => {
             unreachable!("an archive grammar is opened by its own catalog")
         }
+        Format::KryoFlux { .. } | Format::P64 => {
+            unreachable!("a flux format builds a flux medium, and no image adapter opens one")
+        }
     }
 }
 

@@ -58,6 +58,78 @@ removes it is the record either way.
 
 ## Decisions
 
+### D35 — Rulings made delivering the collection-sourced load and the flux fold-in
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-12. **Supports** S1, S2, S3; in-force P3, P13, P27, P29, P30;
+U23 (pledged), U25, U26, U33; D29, D31.
+
+F59's delivery is recorded by the commit; these are the calls made in
+its course.
+
+**The source-gathering verbs claim archive namespaces alone.** A
+`File::source` and a `StorageSpace::files` answer from an archive's
+namespace — free-standing sources riding the archive's claim, a solid
+archive's coded stream decoded once for the whole gathering (P27) —
+and a volume-backed filesystem refuses by name, its files being read
+through the filesystem that names them. The claim mirrors
+`File::discover`'s, and widening it is later work with its own
+evidence, not a looser match here.
+
+**A nested archive is refused by name.** A namespace file declared an
+archive grammar would need the catalog seam to read through an entry
+source rather than a claimed file, which no grammar does yet; the
+refusal names the claim ("this release reads an archive from the
+caller's own opened file") rather than failing inside a grammar that
+was never asked.
+
+**The recognition and capture-inspection reporting fold to
+provenance.** The declared load pins recognition to the declared
+device's profile and requires the claim borne; which capture head
+carries the recording is measured from the claimed locations, a claim
+on both heads refusing by name (the family records one surface). The
+verdict, the policy and the declared-loss account ride the medium's
+assurance evidence (P28's ordered evidence, P29's account), and the
+ranked-verdict, plan-preview and capture-inspection *surfaces* stay
+out with the question tier, exactly as F59 pledged. The fixture-driven
+recognition claims moved to the crate's own test tier with the surface
+that carried them.
+
+**The profile's presentation defaults are declarations, stated whole.**
+The C1541 profile now declares its channel policy (the family's own
+density map, unzoned locations omitted and counted, weak pulses
+resolved reproducibly from the profile's stated seed), its codec
+policy (landmark framing, unassigned symbols kept as their own bits
+and counted), and its sector reading (checksum failures and unpaired
+records declared as loss) — P30 reached through the type, every value
+travelling into the result as provenance. The non-default choices stay
+in the code as the deferred policy-deviation surface D29 records,
+constructible by nothing public.
+
+**The family addressing is spelled `Location::track` and nothing
+more.** The delivered journeys read whole tracks; half-track
+addressing waits for a journey that needs it, and the reports state
+half-tracks meanwhile.
+
+**A consequence, stated so nobody meets it as a surprise:** with the
+`CaptureSet` root folded and U23's step 4 (one verb taking a
+destination format) still unpledged work, no public path produces a
+`RemanenceImage` — the `.remanence` root opens existing artifacts and
+masters the renditions, and a capture loaded as a medium reaches no
+writer. That is the gap D28 already names as what U23 uniquely adds,
+not a new removal; it closes when that verb is argued and built.
+
+**Weighed and declined:** keeping `CaptureSet::plan_reconstruction`
+public so captures could still reach the renditions (that is the old
+root wearing one verb, and F59's substance is that the capture is a
+declared collection reading); a public medium-to-image bridge for the
+same purpose (an unpledged surface entry, and the save verb U23 is
+owed would obsolete it on arrival); spelling the collection formats'
+source shape as a second load verb rather than a source conversion
+(two verbs would make the shape the caller's problem twice, where one
+declared `MediaSource` lets the format's claim refuse the wrong shape
+by name); and half-track spelling on `Location` (above).
+
 ### D34 — Rulings made delivering the discovered geometry and the recording's coordinates
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -927,6 +999,11 @@ rather than ahead of it.
 This is recorded because F51's number retires with its delivery: without
 an entry the deferral would leave no trace at all, and the next reader of
 F48 or F49 would have nothing telling them the form is theirs to finish.
+
+*Annotation (D35, 2026-08-12): the deferral is spent. F59 delivered the
+typed spelling — a `File` from another medium's namespace, and a
+collection of them, as `load_media` source shapes — landing with the
+type exactly as this entry said it would.*
 
 ### D23 — Rulings made pledging the storage model
 

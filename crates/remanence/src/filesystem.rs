@@ -80,6 +80,7 @@ use crate::evidence::{DeclaredFact, Issue, Provenance};
 use crate::fat::{FatEntry, FatEntryKind};
 use crate::media::Medium;
 use crate::report::{VolumeId, VolumeLabel};
+use crate::source::FileSource;
 
 /// Which rule of the storage-space seam's enumerated set a refusal broke
 /// (P10).
@@ -219,6 +220,17 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// One declared fact, by the key the recognizing filesystem spells
+    /// it with — `fact("size-blocks")` on a CBM DOS entry, because CBM
+    /// records size in blocks. `None` where the filesystem declared no
+    /// such fact, absence being an answer.
+    pub fn fact(&self, key: &str) -> Option<&str> {
+        self.declared
+            .iter()
+            .find(|fact| fact.key == key)
+            .map(|fact| fact.value.as_str())
+    }
+
     fn from_fat(entry: &FatEntry) -> Self {
         Self {
             name: entry.name.clone(),
@@ -752,6 +764,34 @@ impl<'a> StorageSpace<'a> {
         })
     }
 
+    /// Every file under `path` (`""` is the whole namespace), gathered
+    /// as a load's sources — the collection shape of
+    /// [`Session::load_media`](crate::Session::load_media).
+    ///
+    /// The sources are **free-standing**: each rides the claim of the
+    /// medium it came from, so the walk that gathered them ends before
+    /// the load begins and nothing is opened twice. A solid archive's
+    /// coded stream decodes once for the whole gathering, not once per
+    /// member (P27). This release gathers from an archive's namespace
+    /// alone — a volume-backed filesystem's files are read through the
+    /// filesystem that names them.
+    pub fn files(&mut self, path: &str) -> Result<Vec<FileSource>> {
+        match &self.namespace {
+            NamespaceState::Absent(absence) => Err(absence.clone()),
+            NamespaceState::Present(Namespace::Volume { kind, .. }) => Err(refuse(
+                SpaceRule::NotAddressable,
+                format!(
+                    "this release gathers a load's collection from an archive's \
+                     namespace, and this is a {kind} volume: read its files \
+                     through this filesystem"
+                ),
+            )),
+            NamespaceState::Present(Namespace::Medium { .. }) => {
+                self.medium()?.entry_group_sources(path)
+            }
+        }
+    }
+
     /// Copies a file's bytes out — the whole-value convenience beside
     /// [`File::read_at`].
     pub fn read_file(&mut self, path: &str) -> Result<Vec<u8>> {
@@ -905,6 +945,33 @@ impl File<'_> {
             Namespace::Medium { .. } => {
                 let path = self.path.clone();
                 self.medium()?.discover_entry(&path)
+            }
+        }
+    }
+
+    /// This file taken as a load's source — the single-`File` source
+    /// shape of [`Session::load_media`](crate::Session::load_media).
+    ///
+    /// The source is **free-standing**: it rides the claim of the
+    /// medium it came from, so the walk that named it ends before the
+    /// load begins and nothing is opened twice. This release takes a
+    /// load's source from an archive's namespace alone — a file on a
+    /// volume-backed filesystem is read through the filesystem that
+    /// names it.
+    pub fn source(&mut self) -> Result<FileSource> {
+        match self.namespace {
+            Namespace::Volume { kind, .. } => Err(refuse(
+                SpaceRule::NotAddressable,
+                format!(
+                    "this release takes a load's source from an archive's \
+                     namespace, and '{}' is a file on a {kind} volume: read \
+                     its bytes through this filesystem",
+                    self.path
+                ),
+            )),
+            Namespace::Medium { .. } => {
+                let path = self.path.clone();
+                self.medium()?.entry_source(&path)
             }
         }
     }

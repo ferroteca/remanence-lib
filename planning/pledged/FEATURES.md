@@ -49,29 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F59 — Collection sources, and the flux family folds in
-
-`load_media` gains its source shapes: a collection of the caller's
-opened files, a `File` from another medium's namespace, and a
-collection of `File`s — each format declaring which shape it reads. `Format::KryoFlux { disk }`
-is the first collection-sourced format: member grammar, completeness,
-stream grammar and the profile claim checked whole, then the reduction
-under the profile's declared `Materialization` defaults — a choice no
-family convention can make refuses by name and the answer grows the
-declaration (P29, nothing unnamed). The result is a `Commodore1541` medium with
-the verdicts, policy and declared-loss account as provenance.
-`Format::P64` loads the served form straight in — the one format id
-F53's declared set does not carry, because a P64 answers with a flux
-medium and that is this feature's own substance (D31). `bitstream()` and
-`bytestream()` become argument-free — the type carries the channel and
-codec (P30 reached through the type) — and the standalone `CaptureSet`
-and `P64Image` roots fold into the model, closing the second root.
-Capture-inspection reporting and plan preview stay out, with the
-question tier.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P7, P13,
-P22, P27, P29, P30, P31; U23, U25, U26, U33.
-
 ## F60 — Authored media
 
 `new_media(kind)` creates blank media whole: the blank article kinds

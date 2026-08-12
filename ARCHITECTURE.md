@@ -29,9 +29,12 @@ One core, two bindings:
   family** beside it, never crossing into it: the flux-capture and
   flux-medium models, the drive-profile seam, the gap-first
   reconstruction and the remanence image it answers with, the C1541
-  presentation ladder above that image — bitstream, bytestream, the
+  presentation ladder — bitstream, bytestream, the
   sectors the recording states for itself, and the CBM DOS directory
-  written across them — the C64 renditions, and the P64 container.
+  written across them — the C64 renditions, and the P64 container. A
+  KryoFlux capture and a P64 load as media of the storage model — the
+  collection-sourced and served-form reads — while the family's
+  representations stay its own.
   [AGENTS.md](AGENTS.md) maps these onto modules.
 - **`crates/remanence-ffi`** — a C ABI over the core: opaque handles,
   accessor functions, borrowed strings owned by their handle. The header

@@ -237,6 +237,12 @@ impl ImageSource {
         Ok(bytes)
     }
 
+    /// The claimed handle itself, shared — for a medium that holds the
+    /// claim past the source that carried it.
+    pub(crate) fn claim_handle(&self) -> Arc<File> {
+        Arc::clone(&self.claim)
+    }
+
     /// A [`MediumDevice`] over the same claim and the same backing this
     /// source reads.
     ///
@@ -301,6 +307,91 @@ pub(crate) struct ResolvedImage {
     pub archive_layers: Vec<ArchiveLayer>,
     /// Whose open the claim beneath this source is.
     pub claim: Claim,
+}
+
+/// A file taken out of another medium's namespace as a load's source —
+/// one of `load_media`'s source shapes.
+///
+/// It is **free-standing**: it rides the claim of the medium it came
+/// from (a stored entry holds the claimed archive, a coded one its
+/// private session spool), so the namespace walk that named it ends
+/// before the load begins and the borrow ends with it. Nothing is
+/// opened and nothing runs twice — the load consumes what the walk
+/// already resolved, exactly as a discovery is consumed.
+pub struct FileSource {
+    pub(crate) claim: Arc<File>,
+    pub(crate) mode: AccessMode,
+    pub(crate) claim_class: Claim,
+    pub(crate) layer: ArchiveLayer,
+    pub(crate) entry: EntrySource,
+    pub(crate) cache_bytes: u64,
+}
+
+impl std::fmt::Debug for FileSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileSource")
+            .field("entry", &self.layer.entry_name)
+            .field("bytes", &self.size())
+            .finish()
+    }
+}
+
+impl FileSource {
+    /// The name the namespace holds this file under.
+    pub fn name(&self) -> &str {
+        &self.layer.entry_name
+    }
+
+    /// The file's size in bytes, as the namespace claims it.
+    pub fn size(&self) -> u64 {
+        match &self.entry {
+            EntrySource::InPlace { length, .. } | EntrySource::Spooled { length, .. } => *length,
+        }
+    }
+
+    /// The claimed handle beneath this source, shared — the archive's
+    /// own claim for a stored entry, the session spool for a coded one.
+    pub(crate) fn claim_handle(&self) -> Arc<File> {
+        match &self.entry {
+            EntrySource::InPlace { .. } => Arc::clone(&self.claim),
+            EntrySource::Spooled { spool, .. } => Arc::clone(spool),
+        }
+    }
+
+    /// The file's bytes, whole — for a collection member whose stream
+    /// is decoded once and not kept. A streamed load resolves through
+    /// [`FileSource::resolve`] instead.
+    pub(crate) fn read_whole(&self) -> Result<Vec<u8>> {
+        let (file, offset, length) = match &self.entry {
+            EntrySource::InPlace { offset, length } => (&self.claim, *offset, *length),
+            EntrySource::Spooled {
+                spool,
+                offset,
+                length,
+            } => (spool, *offset, *length),
+        };
+        let mut bytes = vec![0u8; length as usize];
+        read_exact_at(file, offset, &mut bytes).map_err(|error| {
+            Error::io(format!(
+                "failed to read '{}': {error}",
+                self.layer.entry_name
+            ))
+        })?;
+        Ok(bytes)
+    }
+
+    /// The source resolved to a streamed image, for a single-artifact
+    /// load.
+    pub(crate) fn resolve(self) -> ResolvedImage {
+        resolve_entry(
+            self.claim,
+            self.mode,
+            self.claim_class,
+            self.layer,
+            self.entry,
+            self.cache_bytes,
+        )
+    }
 }
 
 /// Resolves one archive entry — reached through the namespace its medium

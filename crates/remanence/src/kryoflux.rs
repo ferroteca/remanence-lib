@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! The KryoFlux capture-set adapter: one logical capture assembled from
-//! a catalog subtree, not one image-like member.
+//! a declared collection of members, not one image-like member.
 //!
 //! A KryoFlux capture of a disk is a stream file per head per drive-step
 //! position — a hundred and sixty-eight of them for a two-head pass over
-//! eighty-four positions — archived together as the artifact the capture
+//! eighty-four positions — kept together as the artifact the capture
 //! produced. This adapter owns what that set is: the member grammar and
 //! its completeness, the track and side identity a member's *name* is
 //! the only record of, the stream grammar each member is decoded by, the
@@ -19,21 +19,17 @@
 //! [`crate::flux_capture::FluxCapture`] — evidence, ordered, attributed,
 //! and refused by name where the set does not hold together.
 //!
-//! The archive catalog does the reading and knows none of this: it
-//! reports the members and produces their bytes, and the grammar below
-//! is the whole of what says which of them are a capture set (P12, P19).
+//! The members arrive as a **declared collection** — the source shape
+//! this format reads: the caller's own opened files, or files gathered
+//! from another medium's namespace. Whatever produced their bytes knows
+//! none of this grammar, and the grammar below is the whole of what says
+//! which of them are a capture set (P12, P19).
 //!
-//! Nothing is resident whole (P27). The members decode once, one at a
-//! time, into the flux layer's section-addressable backing in private
+//! Nothing stays resident whole (P27). The members decode once, one at
+//! a time, into the flux layer's section-addressable backing in private
 //! session storage; what stays in memory is identity and shape, and the
 //! pulses load a bounded section at a time from there.
 
-use std::path::{Path, PathBuf};
-
-use crate::archive::{
-    ClaimedArchive, EntrySource, normalize_entry_name, open_archive, split_archive_path,
-};
-use crate::device::{AccessMode, read_exact_at};
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::{Issue, Provenance};
 use crate::flux_capture::{
@@ -126,61 +122,51 @@ fn parse_member_name(name: &str) -> Option<MemberName> {
     })
 }
 
-/// One member the grammar admitted, and where the catalog holds it.
+/// One member the grammar admitted, and which member of the collection
+/// it is.
 #[derive(Debug, Clone)]
 struct AdmittedMember {
-    /// The catalog's own identity for this member.
-    entry_name: String,
-    entry_index: usize,
-    entry_bytes: u64,
+    /// The member's grammar-bearing name.
+    name: String,
+    /// Its place in the declared collection, which is where its bytes
+    /// are.
+    index: usize,
     step: u64,
     head: u64,
 }
 
-/// Reads the catalog subtree as one capture set, or names why it is not
-/// one.
+/// Reads the declared collection's names as one capture set, or names
+/// why they are not one.
 ///
-/// Every refusal states the discovered catalog evidence — the member,
-/// the position, the head — because "not a capture set" without it is a
+/// Every refusal states the discovered evidence — the member, the
+/// position, the head — because "not a capture set" without it is a
 /// verdict with nothing behind it (P4).
-fn admit_capture_set(
-    entries: &[crate::archive::ArchiveEntry],
-    subtree: Option<&str>,
-    archive: &Path,
-) -> Result<Vec<AdmittedMember>> {
+fn admit_capture_set(names: &[String], collection: &str) -> Result<Vec<AdmittedMember>> {
     let mut members: Vec<AdmittedMember> = Vec::new();
     let mut capture: Option<String> = None;
 
-    for (entry_index, entry) in entries.iter().enumerate() {
-        if entry.is_dir {
-            continue;
-        }
-        let Some(relative) = within(&entry.name, subtree) else {
-            continue;
-        };
-        let parsed = parse_member_name(relative).ok_or_else(|| {
+    for (index, name) in names.iter().enumerate() {
+        let parsed = parse_member_name(name).ok_or_else(|| {
             refuse(format!(
-                "'{}' is not a KryoFlux stream member: this version admits \
-                 '<capture><SS>.<H>.raw' and nothing else, so the subtree holds \
-                 something that is not part of one capture set",
-                entry.name
+                "'{name}' is not a KryoFlux stream member: this version admits \
+                 '<capture><SS>.<H>.raw' and nothing else, so {collection} holds \
+                 something that is not part of one capture set"
             ))
         })?;
         match &capture {
             None => capture = Some(parsed.capture.clone()),
             Some(named) if *named != parsed.capture => {
                 return Err(refuse(format!(
-                    "'{}' names the capture '{}' where an earlier member named \
-                     '{named}', so the subtree holds more than one capture set",
-                    entry.name, parsed.capture
+                    "'{name}' names the capture '{}' where an earlier member named \
+                     '{named}', so {collection} holds more than one capture set",
+                    parsed.capture
                 )));
             }
             Some(_) => {}
         }
         members.push(AdmittedMember {
-            entry_name: entry.name.clone(),
-            entry_index,
-            entry_bytes: entry.uncompressed_size,
+            name: name.clone(),
+            index,
             step: parsed.step,
             head: parsed.head,
         });
@@ -189,11 +175,7 @@ fn admit_capture_set(
     if members.is_empty() {
         return Err(refuse_as(
             ErrorCategory::NotFound,
-            format!(
-                "'{}' holds no KryoFlux stream members{}",
-                archive.display(),
-                subtree.map_or(String::new(), |subtree| format!(" under '{subtree}'"))
-            ),
+            format!("{collection} holds no KryoFlux stream members"),
         ));
     }
 
@@ -203,7 +185,7 @@ fn admit_capture_set(
             return Err(refuse(format!(
                 "step position {} head {} is captured twice, by '{}' and '{}', so \
                  the set states two different things about one location",
-                pair[0].step, pair[0].head, pair[0].entry_name, pair[1].entry_name
+                pair[0].step, pair[0].head, pair[0].name, pair[1].name
             )));
         }
     }
@@ -255,16 +237,6 @@ fn admit_capture_set(
     Ok(members)
 }
 
-/// The part of `name` inside `subtree`, or `None` when it sits outside.
-fn within<'a>(name: &'a str, subtree: Option<&str>) -> Option<&'a str> {
-    match subtree {
-        None => Some(name),
-        Some(subtree) => name
-            .strip_prefix(subtree)
-            .and_then(|rest| rest.strip_prefix('/')),
-    }
-}
-
 // --------------------------------------------------------------- stream
 
 /// An index record read out of the stream, waiting for the flux it
@@ -293,6 +265,11 @@ struct StreamFacts {
     foreign: Vec<(String, SourceRange, Vec<u8>)>,
     issues: Vec<Issue>,
     /// The transfer result the stream declared, if it declared one.
+    /// Read by the unit tests alone today: the run's issues already
+    /// carry an unclean result, and reporting the clean ones is the
+    /// capture-inspection surface, which stays out with the question
+    /// tier (F59).
+    #[cfg_attr(not(test), allow(dead_code))]
     transfer_result: Option<u32>,
     /// The sample clock the stream declared, in its own decimal.
     declared_sample_clock: Option<String>,
@@ -632,438 +609,158 @@ fn check_sample_clock(name: &str, declared: &str) -> Result<()> {
     Ok(())
 }
 
-// -------------------------------------------------------------- backing
-
-// --------------------------------------------------------------- report
-
-/// A capture's declared timing basis: an exact count of ticks per
-/// second, as a ratio, because the common capture clocks are not exactly
-/// representable any other way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TimeBaseReport {
-    pub ticks_per_second_numerator: u64,
-    pub ticks_per_second_denominator: u64,
-}
+// ------------------------------------------------------------------ set
 
 /// A source's own drive-step position, held exactly. Sources step in
 /// fractions, so this is a ratio and never a rounded whole number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StepPosition {
-    pub numerator: u64,
-    pub denominator: u64,
+pub(crate) struct StepPosition {
+    pub(crate) numerator: u64,
+    pub(crate) denominator: u64,
 }
 
-/// Something qualified about a member, recorded rather than repaired.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CaptureIssue {
-    /// The adapter's stable spelling for this kind of issue.
-    pub code: String,
-    pub detail: String,
+/// One member of a declared collection, as the assembler reads it: a
+/// name the grammar places, and the bytes behind it, produced only
+/// after the name and the size have both been admitted.
+pub(crate) trait MemberSource {
+    /// The grammar-bearing name — the only record of the member's
+    /// position, a stream declaring no track or side of its own.
+    fn name(&self) -> &str;
+    /// The member's size, checked against the bound before a byte of it
+    /// is read (P27).
+    fn size(&self) -> u64;
+    /// The member's bytes, whole: one stream of one position, decoded
+    /// once into the capture's own backing and not kept.
+    fn bytes(&self) -> Result<Vec<u8>>;
 }
 
-/// One circular observation bounded out of a capture run, as the set
-/// holds it.
-///
-/// It reports the observation's shape, never its pulses: what a drive or
-/// a mastering policy makes of the evidence is a later journey, and the
-/// evidence stays behind this surface.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ObservationReport {
-    /// Its place in this location's source-record order — not a rank,
-    /// and no claim that it is a good or complete revolution.
-    pub ordinal: u64,
-    /// The declared circumference, in the capture's own ticks.
-    pub span_ticks: u64,
-    pub transitions: u64,
-    pub markers: u64,
+impl<M: MemberSource + ?Sized> MemberSource for Box<M> {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+
+    fn size(&self) -> u64 {
+        (**self).size()
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>> {
+        (**self).bytes()
+    }
 }
 
-/// One source transfer, as the set holds it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CaptureRunReport {
-    pub ordinal: u64,
-    pub transitions: u64,
-    /// The last transition's tick: the extent of what was recorded, not
-    /// a circumference. A run states no period.
-    pub extent_ticks: u64,
-    pub markers: u64,
-    pub index_markers: u64,
-    /// The result the capture tool declared for this transfer, if it
-    /// declared one. Zero is a clean read.
-    pub transfer_result: Option<u32>,
-    /// Transitions recorded before the first index and after the last:
-    /// evidence bounding into circular observations does not consume.
-    pub transitions_before_first_index: u64,
-    pub transitions_after_last_index: u64,
-    pub observations: Vec<ObservationReport>,
-}
-
-/// One member of the set, and everything read out of it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CaptureSetMember {
-    /// The catalog's own identity for this member.
-    pub entry_name: String,
-    pub entry_bytes: u64,
-    pub position: StepPosition,
-    /// The head that captured this position. A capture set records the
-    /// disk's sides as its heads; which of them carries a recording is
-    /// not this layer's to decide.
-    pub head: Option<u64>,
-    pub runs: Vec<CaptureRunReport>,
-    pub issues: Vec<CaptureIssue>,
-}
-
-/// The set as the adapter recognized it: its members, their catalog
-/// identities, their positions and heads, and the evidence behind the
-/// recognition.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CaptureSetReport {
-    pub format_id: String,
-    pub format_name: String,
-    pub time_base: TimeBaseReport,
-    pub members: Vec<CaptureSetMember>,
+/// One capture assembled from a declared collection, and the evidence
+/// of how.
+pub(crate) struct AssembledCapture {
+    pub(crate) capture: FluxCapture,
     /// How the set was recognized, in human-readable terms (P4).
-    pub evidence: Vec<String>,
+    pub(crate) evidence: Vec<String>,
+    /// The collection's own bytes, summed — the raw plane's extent.
+    pub(crate) source_bytes: u64,
 }
 
-// ------------------------------------------------------------------ set
-
-/// One KryoFlux capture set, opened from a catalog subtree.
+/// Assembles the declared collection into one capture, or names why it
+/// is not one (P29's "checked whole": the member grammar, the set's
+/// completeness, and every stream's own grammar, before anything else
+/// runs).
 ///
-/// Opening claims the archive (P7) — writes denied to every other
-/// process — decodes every member of the set once into private session
-/// storage, and holds the claim until the set is dropped. An incomplete,
-/// duplicate, contradictory, or unrelated member refuses the whole set
-/// by name: a member is never quietly treated as a disk of its own when
-/// the logical capture is all of them together.
-pub struct CaptureSet {
-    path: PathBuf,
-    subtree: Option<String>,
-    claimed: ClaimedArchive,
-    capture: FluxCapture,
-    report: CaptureSetReport,
-}
+/// `collection` is how refusals name the set — the caller's collection
+/// has no one path, so the refusal says what the caller declared.
+/// An incomplete, duplicate, contradictory, or unrelated member refuses
+/// the whole set by name: a member is never quietly treated as a disk
+/// of its own when the logical capture is all of them together.
+pub(crate) fn assemble<M: MemberSource>(
+    collection: &str,
+    members: &[M],
+    cache_bytes: u64,
+) -> Result<AssembledCapture> {
+    let names: Vec<String> = members
+        .iter()
+        .map(|member| member.name().to_owned())
+        .collect();
+    let admitted = admit_capture_set(&names, collection)?;
+    let last_step = admitted.last().expect("the set is not empty").step;
+    let heads = admitted.iter().filter(|member| member.step == 0).count() as u64;
+    let mut evidence = vec![format!(
+        "{collection} holds {} KryoFlux stream members, covering step positions \
+         0 to {last_step} by {heads} heads",
+        admitted.len(),
+    )];
 
-impl std::fmt::Debug for CaptureSet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CaptureSet")
-            .field("path", &self.path)
-            .field("members", &self.report.members.len())
-            .field("backing_bytes", &self.capture.backing_bytes())
-            .finish()
-    }
-}
+    let time_base = TimeBase::new(KRYOFLUX, SAMPLE_CLOCK_NUMERATOR, SAMPLE_CLOCK_DENOMINATOR)?;
+    let mut builder = CaptureBuilder::new(time_base, SessionBacking::create()?);
 
-impl CaptureSet {
-    /// Opens the capture set held by `path` — an archive this library
-    /// reads, optionally followed by the subtree inside it that holds
-    /// the members — with the stated default session cache bound
-    /// ([`crate::DEFAULT_CACHE_BYTES`]).
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_cache(path, crate::DEFAULT_CACHE_BYTES)
-    }
-
-    /// Opens the capture set under a caller-declared cache bound (P27):
-    /// at most `cache_bytes` of the decoded capture stays resident. The
-    /// bound narrows the working set; it never refuses service.
-    pub fn open_with_cache(path: impl AsRef<Path>, cache_bytes: u64) -> Result<Self> {
-        let path = path.as_ref();
-        let (archive_path, entry_path) = split_archive_path(path).ok_or_else(|| {
-            Error::unsupported(format!(
-                "'{}' names no archive this library reads; a KryoFlux capture set \
-                 is one disk spread over a stream per head per step position, and \
-                 is read from a catalog rather than from a single file",
-                path.display()
-            ))
-        })?;
-        let subtree = entry_path.as_deref().map(normalize_entry_name);
-        let claimed = open_archive(&archive_path)?;
-
-        let members =
-            admit_capture_set(claimed.catalog.entries(), subtree.as_deref(), &archive_path)?;
-        let mut evidence = vec![format!(
-            "'{}' holds {} KryoFlux stream members{}, covering step positions 0 to \
-             {} by {} heads",
-            archive_path.display(),
-            members.len(),
-            subtree
-                .as_deref()
-                .map_or(String::new(), |subtree| format!(" under '{subtree}'")),
-            members.last().expect("the set is not empty").step,
-            members.iter().filter(|member| member.step == 0).count(),
-        )];
-
-        let indices: Vec<usize> = members.iter().map(|member| member.entry_index).collect();
-        let sources = claimed.catalog.entry_group(&indices)?;
-
-        let time_base = TimeBase::new(KRYOFLUX, SAMPLE_CLOCK_NUMERATOR, SAMPLE_CLOCK_DENOMINATOR)?;
-        let mut builder = CaptureBuilder::new(time_base, SessionBacking::create()?);
-
-        let mut reported = Vec::with_capacity(members.len());
-        for (member, source) in members.iter().zip(sources.iter()) {
-            let bytes = member_bytes(&claimed, source, &member.entry_name)?;
-            let facts = decode_stream(&member.entry_name, &bytes)?;
-            if let Some(declared) = &facts.declared_sample_clock {
-                check_sample_clock(&member.entry_name, declared)?;
-            }
-
-            let key = TrackKey::new(KRYOFLUX, member.step, member.head);
-            let envelope = builder.envelope_mut();
-            let id = envelope.declare_source(SourceDescriptor::new(
-                KRYOFLUX,
-                member.entry_name.clone(),
-                SourceRange::new(0, bytes.len() as u64),
-            ));
-            for (key, value) in &facts.metadata {
-                envelope.record_metadata(MetadataRecord::new(KRYOFLUX, id, key, value));
-            }
-            for (type_id, range, payload) in &facts.foreign {
-                envelope.retain_foreign(ForeignRecord::new(
-                    id,
-                    KRYOFLUX,
-                    type_id,
-                    *range,
-                    payload.clone(),
-                ));
-            }
-
-            let transfer_result = facts.transfer_result;
-            builder.add_location(
-                key.clone(),
-                id,
-                std::slice::from_ref(&facts.run),
-                facts.issues,
-            )?;
-            reported.push((member.clone(), key, transfer_result));
+    let mut source_bytes = 0u64;
+    for member in &admitted {
+        let source = &members[member.index];
+        if source.size() > MEMBER_BOUND {
+            return Err(refuse(format!(
+                "'{}' is {} bytes; a KryoFlux stream member is bounded at \
+                 {MEMBER_BOUND} bytes",
+                member.name,
+                source.size()
+            )));
+        }
+        let bytes = source.bytes()?;
+        source_bytes += bytes.len() as u64;
+        let facts = decode_stream(&member.name, &bytes)?;
+        if let Some(declared) = &facts.declared_sample_clock {
+            check_sample_clock(&member.name, declared)?;
         }
 
-        let (mut capture, backing, total_bytes) = builder.seal()?;
-        capture.attach_backing(
-            Box::new(backing.into_source()),
-            total_bytes,
-            cache_bytes,
-            vec![KRYOFLUX],
-        );
-
-        evidence.push(format!(
-            "every member decoded once into a {total_bytes}-byte section backing in \
-             private session storage, addressed by location"
+        let key = TrackKey::new(KRYOFLUX, member.step, member.head);
+        let envelope = builder.envelope_mut();
+        let id = envelope.declare_source(SourceDescriptor::new(
+            KRYOFLUX,
+            member.name.clone(),
+            SourceRange::new(0, bytes.len() as u64),
         ));
-        evidence.push(format!(
-            "capture timed against a declared {SAMPLE_CLOCK_NUMERATOR}/\
-             {SAMPLE_CLOCK_DENOMINATOR} Hz sample clock, checked against each \
-             member's own declaration"
-        ));
+        for (key, value) in &facts.metadata {
+            envelope.record_metadata(MetadataRecord::new(KRYOFLUX, id, key, value));
+        }
+        for (type_id, range, payload) in &facts.foreign {
+            envelope.retain_foreign(ForeignRecord::new(
+                id,
+                KRYOFLUX,
+                type_id,
+                *range,
+                payload.clone(),
+            ));
+        }
 
-        let report = CaptureSetReport {
-            format_id: KRYOFLUX.to_owned(),
-            format_name: "KryoFlux capture set".to_owned(),
-            time_base: TimeBaseReport {
-                ticks_per_second_numerator: SAMPLE_CLOCK_NUMERATOR,
-                ticks_per_second_denominator: SAMPLE_CLOCK_DENOMINATOR,
-            },
-            members: reported
-                .into_iter()
-                .map(|(member, key, transfer_result)| {
-                    report_member(&capture, &member, &key, transfer_result)
-                })
-                .collect(),
-            evidence,
-        };
-
-        Ok(Self {
-            path: path.to_path_buf(),
-            subtree,
-            claimed,
-            capture,
-            report,
-        })
+        builder.add_location(key, id, std::slice::from_ref(&facts.run), facts.issues)?;
     }
 
-    /// The path the set was opened from.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
+    let (mut capture, backing, total_bytes) = builder.seal()?;
+    capture.attach_backing(
+        Box::new(backing.into_source()),
+        total_bytes,
+        cache_bytes,
+        vec![KRYOFLUX],
+    );
 
-    /// The subtree inside the archive the members were read from, when
-    /// one was named.
-    pub fn subtree(&self) -> Option<&str> {
-        self.subtree.as_deref()
-    }
+    evidence.push(format!(
+        "every member decoded once into a {total_bytes}-byte section backing in \
+         private session storage, addressed by location"
+    ));
+    evidence.push(format!(
+        "capture timed against a declared {SAMPLE_CLOCK_NUMERATOR}/\
+         {SAMPLE_CLOCK_DENOMINATOR} Hz sample clock, checked against each \
+         member's own declaration"
+    ));
 
-    /// The capture format's stable identifier.
-    pub fn format_id(&self) -> &'static str {
-        KRYOFLUX
-    }
-
-    /// The capture format's human-readable name.
-    pub fn format_name(&self) -> &'static str {
-        "KryoFlux capture set"
-    }
-
-    /// The archive grammar the members were read through.
-    pub fn archive_format_id(&self) -> &'static str {
-        self.claimed.catalog.descriptor().id
-    }
-
-    /// Which P7 mode the open obtained on the archive file.
-    pub fn access_mode(&self) -> AccessMode {
-        self.claimed.mode
-    }
-
-    /// How many bytes of private session storage the decoded capture
-    /// occupies.
-    pub fn backing_bytes(&self) -> u64 {
-        self.capture.backing_bytes()
-    }
-
-    /// How much of that backing is currently resident. The capture is
-    /// never held whole (P27); this is what says so.
-    pub fn resident_bytes(&self) -> u64 {
-        self.capture.resident_bytes()
-    }
-
-    /// The set as the adapter recognized it.
-    pub fn inspect(&self) -> &CaptureSetReport {
-        &self.report
-    }
-
-    /// Recognizes the drive family this capture belongs to (P30).
-    ///
-    /// Every enrolled profile is consulted and what claims the capture
-    /// is ranked, never resolved by catalog order; a capture no profile
-    /// claims is a named refusal, and a lone enrolled profile never wins
-    /// by being the only one. The verdict carries the observations that
-    /// produced its confidence, because a confidence figure on its own
-    /// is not an answer (P4).
-    pub fn recognize(&self) -> Result<crate::Recognition> {
-        crate::drive_profile::recognition(&self.capture, None)
-    }
-
-    /// Recognizes the capture against one named profile, whether or not
-    /// it would have won the ranking. What the caller pinned travels
-    /// into the result.
-    pub fn recognize_as(&self, profile_id: &str) -> Result<crate::Recognition> {
-        crate::drive_profile::recognition(&self.capture, Some(profile_id))
-    }
-
-    /// Plans the gap-first reconstruction of this capture into one
-    /// remanence image under a declared policy (P29).
-    ///
-    /// Nothing is written and nothing is mutated: the plan computes the
-    /// whole reduction — every revolution of every location aligned by
-    /// gap correspondence, the cell lattice measured from the intervals
-    /// themselves, the angles integrated gap-first, coherence decided
-    /// per transition, and the fat track merged under measured
-    /// agreement — reports the image it will produce, and enumerates
-    /// everything that image cannot carry in the capture's own terms. A
-    /// reduction the policy does not name is a refusal rather than a
-    /// default, so the plan either accounts for the whole capture or
-    /// does not exist.
-    pub fn plan_reconstruction(
-        &self,
-        policy: &crate::ReconstructionPolicy,
-    ) -> Result<crate::ReconstructionPlan> {
-        crate::remanence_reconstruction::plan(&self.capture, policy)
-    }
-
-    /// The capture model this set opened — the evidence the flux
-    /// reduction consumes. The reduction reaches it through
-    /// [`plan_reconstruction`](Self::plan_reconstruction); this is the
-    /// same model, for the tests that build one directly.
-    #[allow(dead_code)]
-    pub(crate) fn capture(&self) -> &FluxCapture {
-        &self.capture
-    }
-}
-
-fn report_member(
-    capture: &FluxCapture,
-    member: &AdmittedMember,
-    key: &TrackKey,
-    transfer_result: Option<u32>,
-) -> CaptureSetMember {
-    let track = capture.track(key).expect("every admitted member was added");
-    let runs = track
-        .runs()
-        .iter()
-        .map(|run| CaptureRunReport {
-            ordinal: run.ordinal(),
-            transitions: run.transitions(),
-            extent_ticks: run.extent(),
-            markers: run.markers(),
-            index_markers: run.indices(),
-            transfer_result,
-            transitions_before_first_index: run.before_first_index(),
-            transitions_after_last_index: run.after_last_index(),
-            observations: track
-                .observations()
-                .iter()
-                .filter(|observation| observation.source().run_ordinal() == run.ordinal())
-                .map(|observation| ObservationReport {
-                    ordinal: observation.ordinal(),
-                    span_ticks: observation.span(),
-                    transitions: observation.transitions(),
-                    markers: observation.markers(),
-                })
-                .collect(),
-        })
-        .collect();
-    CaptureSetMember {
-        entry_name: member.entry_name.clone(),
-        entry_bytes: member.entry_bytes,
-        position: StepPosition {
-            numerator: member.step,
-            denominator: 1,
-        },
-        head: key.head(),
-        runs,
-        issues: track
-            .issues()
-            .iter()
-            .map(|issue| CaptureIssue {
-                code: issue.code.to_owned(),
-                detail: issue.detail.clone(),
-            })
-            .collect(),
-    }
-}
-
-/// Reads one member's bytes, refusing one past the bound before
-/// anything is allocated for it.
-fn member_bytes(claimed: &ClaimedArchive, source: &EntrySource, name: &str) -> Result<Vec<u8>> {
-    let (file, offset, length) = match source {
-        EntrySource::InPlace { offset, length } => (&claimed.file, *offset, *length),
-        EntrySource::Spooled {
-            spool,
-            offset,
-            length,
-        } => (spool, *offset, *length),
-    };
-    if length > MEMBER_BOUND {
-        return Err(refuse(format!(
-            "'{name}' is {length} bytes; a KryoFlux stream member is bounded at \
-             {MEMBER_BOUND} bytes"
-        )));
-    }
-    let mut bytes = vec![0u8; length as usize];
-    read_exact_at(file, offset, &mut bytes)
-        .map_err(|error| Error::io(format!("failed to read '{name}': {error}")))?;
-    Ok(bytes)
+    Ok(AssembledCapture {
+        capture,
+        evidence,
+        source_bytes,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::archive::ArchiveEntry;
 
-    fn entry(name: &str) -> ArchiveEntry {
-        ArchiveEntry {
-            name: name.to_owned(),
-            is_dir: false,
-            compressed_size: None,
-            uncompressed_size: 16,
-        }
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
     }
 
     /// A minimal stream: the device information, some flux, two index
@@ -1117,13 +814,11 @@ mod tests {
     fn an_absent_position_refuses_the_whole_set() {
         // Step 1 head 1 is missing. The set is one disk, so a hole in
         // it is not a member that reads a little short.
-        let entries = vec![
-            entry("cap00.0.raw"),
-            entry("cap00.1.raw"),
-            entry("cap01.0.raw"),
-        ];
-        let error = admit_capture_set(&entries, None, Path::new("c.7z"))
-            .expect_err("an incomplete set is refused");
+        let error = admit_capture_set(
+            &names(&["cap00.0.raw", "cap00.1.raw", "cap01.0.raw"]),
+            "the declared collection",
+        )
+        .expect_err("an incomplete set is refused");
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         assert!(
             error
@@ -1135,21 +830,21 @@ mod tests {
 
     #[test]
     fn a_duplicated_position_refuses_the_set_naming_both_members() {
-        let entries = vec![
-            entry("cap00.0.raw"),
-            entry("cap00.0.raw"),
-            entry("cap00.1.raw"),
-        ];
-        let error = admit_capture_set(&entries, None, Path::new("c.7z"))
-            .expect_err("a duplicate is refused");
+        let error = admit_capture_set(
+            &names(&["cap00.0.raw", "cap00.0.raw", "cap00.1.raw"]),
+            "the declared collection",
+        )
+        .expect_err("a duplicate is refused");
         assert!(error.to_string().contains("captured twice"), "{error}");
     }
 
     #[test]
-    fn a_second_capture_in_the_same_subtree_refuses_the_set() {
-        let entries = vec![entry("one00.0.raw"), entry("two00.0.raw")];
-        let error = admit_capture_set(&entries, None, Path::new("c.7z"))
-            .expect_err("two captures are not one set");
+    fn a_second_capture_in_the_same_collection_refuses_the_set() {
+        let error = admit_capture_set(
+            &names(&["one00.0.raw", "two00.0.raw"]),
+            "the declared collection",
+        )
+        .expect_err("two captures are not one set");
         assert!(
             error.to_string().contains("more than one capture set"),
             "{error}"
@@ -1158,11 +853,13 @@ mod tests {
 
     #[test]
     fn an_unrelated_member_refuses_the_set_rather_than_being_skipped() {
-        // Skipping it would let a set look complete while the subtree
-        // held something nobody accounted for.
-        let entries = vec![entry("cap00.0.raw"), entry("readme.txt")];
-        let error = admit_capture_set(&entries, None, Path::new("c.7z"))
-            .expect_err("an unrelated member is refused");
+        // Skipping it would let a set look complete while the declared
+        // collection held something nobody accounted for.
+        let error = admit_capture_set(
+            &names(&["cap00.0.raw", "readme.txt"]),
+            "the declared collection",
+        )
+        .expect_err("an unrelated member is refused");
         assert!(
             error
                 .to_string()
@@ -1172,16 +869,17 @@ mod tests {
     }
 
     #[test]
-    fn a_subtree_scopes_the_set_to_what_sits_under_it() {
-        let entries = vec![
-            entry("notes.txt"),
-            entry("disk1/cap00.0.raw"),
-            entry("disk1/cap00.1.raw"),
-        ];
-        let members = admit_capture_set(&entries, Some("disk1"), Path::new("c.7z"))
-            .expect("the subtree holds one whole set");
+    fn members_under_one_directory_prefix_are_one_capture_set() {
+        // A collection gathered from an archive's namespace carries the
+        // entry names as they are, prefix included; a shared prefix is
+        // part of one capture's name rather than a second grammar.
+        let members = admit_capture_set(
+            &names(&["disk1/cap00.0.raw", "disk1/cap00.1.raw"]),
+            "the declared collection",
+        )
+        .expect("one whole set");
         assert_eq!(members.len(), 2);
-        assert_eq!(members[0].entry_name, "disk1/cap00.0.raw");
+        assert_eq!(members[0].name, "disk1/cap00.0.raw");
     }
 
     #[test]
