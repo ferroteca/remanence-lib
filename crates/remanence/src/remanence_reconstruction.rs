@@ -723,14 +723,9 @@ pub(crate) static CAPTURE_FIXTURE_GATE: std::sync::Mutex<()> = std::sync::Mutex:
 /// for it, so what a test masters off here is what a run of its own
 /// would have given it.
 #[cfg(test)]
-pub(crate) struct ReconstructedCapture {
-    pub(crate) image: crate::remanence_image::RemanenceImage,
-    pub(crate) report: ReconstructionReport,
-}
-
-#[cfg(test)]
-pub(crate) fn reconstructed_capture() -> &'static ReconstructedCapture {
-    static SHARED: std::sync::OnceLock<ReconstructedCapture> = std::sync::OnceLock::new();
+pub(crate) fn reconstructed_capture() -> &'static crate::remanence_image::RemanenceImage {
+    static SHARED: std::sync::OnceLock<crate::remanence_image::RemanenceImage> =
+        std::sync::OnceLock::new();
     SHARED.get_or_init(|| {
         // The archive is opened under a P7 claim, so every test that
         // needs this disk takes the same gate rather than racing the
@@ -756,11 +751,8 @@ pub(crate) fn reconstructed_capture() -> &'static ReconstructedCapture {
             },
         )
         .expect("the reduction plans");
-        let report = plan.report().clone();
-        let image = plan
-            .execute(crate::cache::DEFAULT_CACHE_BYTES)
-            .expect("the plan executes");
-        ReconstructedCapture { image, report }
+        plan.execute(crate::cache::DEFAULT_CACHE_BYTES)
+            .expect("the plan executes")
     })
 }
 

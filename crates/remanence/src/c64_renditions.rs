@@ -1164,7 +1164,7 @@ mod tests {
         // the reduction produced rather than a stand-in for it, so what
         // the renditions are mastered off here is what a run of their
         // own would have given them.
-        let image = &crate::remanence_reconstruction::reconstructed_capture().image;
+        let image = crate::remanence_reconstruction::reconstructed_capture();
 
         // ---- d64: the grid the format fixes, whatever was recovered ----
         let (mine, report) = image.d64_artifact().expect("the d64 assembles");
