@@ -341,7 +341,10 @@ fn seeded_bit(seed: u64, key: &LocationKey, position: u64) -> bool {
     let mut state = seed
         ^ numerator.wrapping_mul(0x9e37_79b9_7f4a_7c15)
         ^ denominator.wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
-        ^ key.surface().unwrap_or(u64::MAX).wrapping_mul(0x1656_67b1_9e37_79f9)
+        ^ key
+            .surface()
+            .unwrap_or(u64::MAX)
+            .wrapping_mul(0x1656_67b1_9e37_79f9)
         ^ position.wrapping_mul(0xff51_afd7_ed55_8ccd);
     state ^= state >> 30;
     state = state.wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -450,9 +453,9 @@ fn clock(
     let mut resolved = 0u64;
 
     let close_run = |cells: &Vec<BitCell>,
-                         facts: &mut Vec<BitstreamFact>,
-                         zero_run: &mut u64,
-                         longest: &mut u64| {
+                     facts: &mut Vec<BitstreamFact>,
+                     zero_run: &mut u64,
+                     longest: &mut u64| {
         *longest = (*longest).max(*zero_run);
         if *zero_run > admitted_zeros {
             facts.push(BitstreamFact::new(
@@ -511,7 +514,11 @@ fn clock(
             ));
         }
         for step in 1..carried {
-            cells.push(BitCell::new(end + cell * step, false, BitEvidence::Recorded));
+            cells.push(BitCell::new(
+                end + cell * step,
+                false,
+                BitEvidence::Recorded,
+            ));
             zero_run += 1;
         }
         close_run(&cells, &mut facts, &mut zero_run, &mut longest_zero_run);
@@ -620,8 +627,7 @@ pub(crate) fn materialize_bitstream(
             );
             continue;
         };
-        let (cell_numerator, cell_denominator) =
-            reduce_cell(zone.nominal_cell(&profile.rotation))?;
+        let (cell_numerator, cell_denominator) = reduce_cell(zone.nominal_cell(&profile.rotation))?;
         let rotation_scaled = cycles_per_rotation
             .checked_mul(cell_denominator)
             .ok_or_else(|| refuse("the circle scales past what exact arithmetic holds here"))?;
@@ -776,19 +782,21 @@ fn describe_channel(
             profile.name, profile.version, profile.provenance
         ))
         .note(match policy.density {
-            DensityPolicy::Declared =>
-                "each location is clocked at the cell its declared density zone states"
-                    .to_owned(),
+            DensityPolicy::Declared => {
+                "each location is clocked at the cell its declared density zone states".to_owned()
+            }
             DensityPolicy::Fixed { zone } => format!(
                 "every location is clocked at zone {zone}'s cell, the caller declaring \
                  one density for the whole medium"
             ),
         })
         .note(match policy.unzoned {
-            UnzonedPolicy::Refuse =>
-                "a location no declared zone covers stops the materialization".to_owned(),
-            UnzonedPolicy::Omit =>
-                "a location no declared zone covers is left out and counted".to_owned(),
+            UnzonedPolicy::Refuse => {
+                "a location no declared zone covers stops the materialization".to_owned()
+            }
+            UnzonedPolicy::Omit => {
+                "a location no declared zone covers is left out and counted".to_owned()
+            }
         })
         .note(format!(
             "the cell counter {} at every detected transition, and a transition is \
@@ -909,7 +917,10 @@ fn materialize_bytestream(
                 }
                 records.push(ByteRecord::new(
                     at as u64,
-                    outcome.map_or(ByteOutcome::Unresolved { bits: value }, ByteOutcome::Resolved),
+                    outcome.map_or(
+                        ByteOutcome::Unresolved { bits: value },
+                        ByteOutcome::Resolved,
+                    ),
                 ));
                 at += group_bits as usize;
             }
@@ -932,9 +943,10 @@ fn materialize_bytestream(
                     at_bit: *at as u64,
                     bits: *span as u64,
                 },
-                Provenance::new(PROFILE)
-                    .note("bits framing does not reach, no landmark having placed a byte \
-                           boundary ahead of them"),
+                Provenance::new(PROFILE).note(
+                    "bits framing does not reach, no landmark having placed a byte \
+                           boundary ahead of them",
+                ),
             ));
         }
 
@@ -1118,20 +1130,22 @@ fn describe_codec(
             codec.symbol_bits, codec.data_bits
         ))
         .note(match policy.alignment {
-            AlignmentPolicy::Landmark =>
-                "byte framing begins at the family's declared landmark and nowhere else"
-                    .to_owned(),
-            AlignmentPolicy::Origin =>
+            AlignmentPolicy::Landmark => {
+                "byte framing begins at the family's declared landmark and nowhere else".to_owned()
+            }
+            AlignmentPolicy::Origin => {
                 "byte framing begins at the circle's origin as well, the caller \
                  declaring it a byte boundary"
-                    .to_owned(),
+                    .to_owned()
+            }
         })
         .note(match policy.unassigned_symbol {
-            UnassignedSymbolPolicy::Refuse =>
-                "a pattern the table does not assign stops the materialization".to_owned(),
-            UnassignedSymbolPolicy::DeclareLoss =>
-                "a pattern the table does not assign keeps its own bits and is counted"
-                    .to_owned(),
+            UnassignedSymbolPolicy::Refuse => {
+                "a pattern the table does not assign stops the materialization".to_owned()
+            }
+            UnassignedSymbolPolicy::DeclareLoss => {
+                "a pattern the table does not assign keeps its own bits and is counted".to_owned()
+            }
         })
         .note(
             "no byte here is a header, a data field, a sector or a file, and no \
@@ -1191,11 +1205,11 @@ impl crate::p64::P64Image {
 mod tests {
     use super::*;
     use crate::error::ErrorCategory;
+    use crate::flux_capture::TimeBase;
     use crate::flux_medium::{
         Derivation, MediumBuilder, MediumFact, OriginRule, OriginStatement, RotationalFrame,
         Strength,
     };
-    use crate::flux_capture::TimeBase;
 
     const CYCLES_PER_ROTATION: u64 = 3_200_000;
 
@@ -1297,8 +1311,7 @@ mod tests {
     /// then each byte as two five-bit symbols of the declared table.
     fn recorded(bytes: &[u8]) -> Vec<bool> {
         let codec = &C1541.presentation.codec;
-        let mut bits =
-            vec![true; C1541.presentation.read_channel.alignment_one_bits as usize];
+        let mut bits = vec![true; C1541.presentation.read_channel.alignment_one_bits as usize];
         for byte in bytes {
             for nibble in [byte >> 4, byte & 0x0f] {
                 let symbol = codec.symbols[nibble as usize];
@@ -1398,7 +1411,9 @@ mod tests {
         // same seed give the same bitstream, and a different seed is
         // allowed to differ.
         let bits = recorded(&[0x5a; 8]);
-        let strengths: Vec<u32> = (0..bits.len()).map(|index| 1 + (index as u32 % 2)).collect();
+        let strengths: Vec<u32> = (0..bits.len())
+            .map(|index| 1 + (index as u32 % 2))
+            .collect();
         let location = LocationKey::new(C1541.id, 18, 0);
         let medium = medium_of(location, &bits, &strengths);
 

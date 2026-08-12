@@ -28,6 +28,7 @@
 //! how it came to be belongs to the *plan*, which computed it before
 //! anything was written.
 
+use crate::DeclaredLoss;
 use crate::error::{Error, Result};
 use crate::evidence::{LossAccount, Provenance};
 use crate::flux_analysis::{
@@ -35,10 +36,9 @@ use crate::flux_analysis::{
 };
 use crate::flux_capture::{FluxCapture, TrackKey};
 use crate::remanence_image::{
-    ANGULAR_DIVISIONS, Hole, MediaFormFactor, Magnetization, OrbitKey, OrbitPoint, REMANENCE,
+    ANGULAR_DIVISIONS, Hole, Magnetization, MediaFormFactor, OrbitKey, OrbitPoint, REMANENCE,
     RemanenceImage, RemanenceImageBuilder, WriteWidths,
 };
-use crate::DeclaredLoss;
 
 /// The capture rig's radial lattice: the reference 5.25-inch rig steps
 /// at 96 tpi from a first-step radius of 2250 mil. Declared facts of
@@ -247,8 +247,9 @@ fn gather(capture: &FluxCapture, key: &TrackKey) -> Result<Option<LocationEviden
         for pair in transitions.windows(2) {
             let interval = pair[1] - pair[0];
             if interval > 0 {
-                intervals
-                    .push((u128::from(interval) * u128::from(ANGULAR_DIVISIONS) / mean_span) as i64);
+                intervals.push(
+                    (u128::from(interval) * u128::from(ANGULAR_DIVISIONS) / mean_span) as i64,
+                );
             }
         }
     }
@@ -267,11 +268,7 @@ fn gather(capture: &FluxCapture, key: &TrackKey) -> Result<Option<LocationEviden
 /// become alternating points, runs of incoherent angles wide enough
 /// become one `Unaligned` span point each, and the write geometry is
 /// stated on the first coherent point.
-fn points_from(
-    angles: &[i64],
-    coheres: &[bool],
-    coherence: &Coherence,
-) -> Result<Vec<OrbitPoint>> {
+fn points_from(angles: &[i64], coheres: &[bool], coherence: &Coherence) -> Result<Vec<OrbitPoint>> {
     let divisions = ANGULAR_DIVISIONS as i64;
     let mut in_span = vec![false; angles.len()];
     let mut scan = 0;
@@ -312,7 +309,9 @@ fn points_from(
                 OrbitPoint::stating(angle as u64, sense, Some(written))?
             });
             widths_stated = true;
-            sense = sense.opposite().expect("the gauge alternates coherent senses");
+            sense = sense
+                .opposite()
+                .expect("the gauge alternates coherent senses");
             within_span = false;
         } else if !within_span {
             // One point opens a span that runs to the next transition;
@@ -413,8 +412,7 @@ pub(crate) fn plan(
         }
         let mut matched: Vec<Vec<i64>> = vec![reference.clone()];
         for revolution in evidence.revolutions.iter().skip(1) {
-            let indices =
-                correspondence::match_indices(&reference, revolution, in_divisions(24));
+            let indices = correspondence::match_indices(&reference, revolution, in_divisions(24));
             matched.push(
                 indices
                     .iter()
@@ -493,7 +491,8 @@ pub(crate) fn plan(
                 let high = orbit.raw_counts.iter().copied().max().unwrap_or(0);
                 let low = orbit.raw_counts.iter().copied().min().unwrap_or(0);
                 // Strictly below the threshold fraction, as measured.
-                u64::from(high - low) * 1000 < u64::from(RESOLVES_A_RECORDING_PERMILLE) * u64::from(high)
+                u64::from(high - low) * 1000
+                    < u64::from(RESOLVES_A_RECORDING_PERMILLE) * u64::from(high)
             })
             .map(|orbit| orbit.position)
             .collect(),
@@ -798,7 +797,10 @@ mod tests {
         let points = points_from(&angles, &coheres, &coherence).expect("points compose");
         // Forty alternating points, one span opener, two reopened.
         assert_eq!(points.len(), 43);
-        assert!(points[0].states_widths(), "the first coherent point states widths");
+        assert!(
+            points[0].states_widths(),
+            "the first coherent point states widths"
+        );
         assert_eq!(points[0].magnetization(), Magnetization::Positive);
         assert_eq!(points[1].magnetization(), Magnetization::Negative);
         assert_eq!(points[40].magnetization(), Magnetization::Unaligned);
@@ -818,7 +820,11 @@ mod tests {
         // The marginal reading is recorded as a reversal like any
         // other; how well it was measured is the report's business.
         assert_eq!(points.len(), 10);
-        assert!(points.iter().all(|point| point.magnetization().is_coherent()));
+        assert!(
+            points
+                .iter()
+                .all(|point| point.magnetization().is_coherent())
+        );
     }
 
     /// The whole pipeline over the repository's own capture fixture:
@@ -859,7 +865,9 @@ mod tests {
             report.recorded_positions
         );
 
-        let image = plan.execute(crate::cache::DEFAULT_CACHE_BYTES).expect("the plan executes");
+        let image = plan
+            .execute(crate::cache::DEFAULT_CACHE_BYTES)
+            .expect("the plan executes");
         // What the reduction produced, checked against the model's own
         // rules rather than against another program's run of it: every
         // orbit sits at a positive radius and carries transitions, and

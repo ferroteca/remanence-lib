@@ -48,7 +48,13 @@ struct SpoolSink<'a> {
 
 impl<'a> SpoolSink<'a> {
     fn new(file: &'a File, cap: u64) -> Self {
-        Self { file, window: Vec::new(), flushed: 0, cap, failed: false }
+        Self {
+            file,
+            window: Vec::new(),
+            flushed: 0,
+            cap,
+            failed: false,
+        }
     }
 
     fn flush_half(&mut self) -> bool {
@@ -149,7 +155,12 @@ struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     fn new(source: &'a mut dyn ByteSource) -> Self {
-        Self { source, bit_buffer: 0, bit_count: 0, error: false }
+        Self {
+            source,
+            bit_buffer: 0,
+            bit_count: 0,
+            error: false,
+        }
     }
 
     fn bits(&mut self, need: u32) -> u32 {
@@ -175,7 +186,10 @@ struct Huffman {
 
 impl Huffman {
     fn new() -> Self {
-        Self { count: [0; MAX_BITS + 1], symbol: [0; MAX_CODES] }
+        Self {
+            count: [0; MAX_BITS + 1],
+            symbol: [0; MAX_CODES],
+        }
     }
 }
 
@@ -238,20 +252,19 @@ fn codes(
     distcode: &Huffman,
 ) -> bool {
     const LENGTH_BASE: [i32; 29] = [
-        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83,
-        99, 115, 131, 163, 195, 227, 258,
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
+        131, 163, 195, 227, 258,
     ];
     const LENGTH_EXTRA: [u32; 29] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5,
-        5, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
     ];
     const DIST_BASE: [i32; 30] = [
-        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769,
-        1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+        2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
     ];
     const DIST_EXTRA: [u32; 30] = [
-        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11,
-        12, 12, 13, 13,
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
+        13, 13,
     ];
 
     loop {
@@ -337,7 +350,9 @@ fn fixed(reader: &mut BitReader<'_>, sink: &mut dyn InflateSink) -> bool {
 }
 
 fn dynamic(reader: &mut BitReader<'_>, sink: &mut dyn InflateSink) -> bool {
-    const ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+    const ORDER: [usize; 19] = [
+        16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+    ];
 
     let hlit = reader.bits(5) as usize + 257;
     let hdist = reader.bits(5) as usize + 1;
@@ -436,7 +451,10 @@ fn inflate_into(source: &mut dyn ByteSource, sink: &mut dyn InflateSink) -> bool
 /// `expected_size`.
 pub(crate) fn inflate(data: &[u8], expected_size: usize) -> Option<Vec<u8>> {
     let mut source = SliceByteSource::new(data);
-    let mut sink = VecSink { out: Vec::with_capacity(expected_size), cap: expected_size };
+    let mut sink = VecSink {
+        out: Vec::with_capacity(expected_size),
+        cap: expected_size,
+    };
     inflate_into(&mut source, &mut sink).then_some(sink.out)
 }
 
@@ -446,7 +464,10 @@ pub(crate) fn inflate(data: &[u8], expected_size: usize) -> Option<Vec<u8>> {
 /// generous allocation.
 pub(crate) fn inflate_bounded(data: &[u8], cap: usize) -> Option<Vec<u8>> {
     let mut source = SliceByteSource::new(data);
-    let mut sink = VecSink { out: Vec::new(), cap };
+    let mut sink = VecSink {
+        out: Vec::new(),
+        cap,
+    };
     inflate_into(&mut source, &mut sink).then_some(sink.out)
 }
 
@@ -470,14 +491,18 @@ pub(crate) fn inflate_file_to_spool(
         return Err(Error::io("reading the compressed stream failed".to_owned()));
     }
     if sink.failed {
-        return Err(Error::io("spooling the decompressed stream failed".to_owned()));
+        return Err(Error::io(
+            "spooling the decompressed stream failed".to_owned(),
+        ));
     }
     if !ok {
         return Ok(None);
     }
     match sink.finish() {
         Ok(total) => Ok(Some(total)),
-        Err(()) => Err(Error::io("spooling the decompressed stream failed".to_owned())),
+        Err(()) => Err(Error::io(
+            "spooling the decompressed stream failed".to_owned(),
+        )),
     }
 }
 
@@ -535,15 +560,10 @@ mod tests {
         write_all_at(&input, 0, &stream).expect("stream writes");
         let spool = crate::cache::session_storage_file().expect("spool storage");
 
-        let total = inflate_file_to_spool(
-            &input,
-            0,
-            stream.len() as u64,
-            payload.len() as u64,
-            &spool,
-        )
-        .expect("io succeeds")
-        .expect("stream decodes");
+        let total =
+            inflate_file_to_spool(&input, 0, stream.len() as u64, payload.len() as u64, &spool)
+                .expect("io succeeds")
+                .expect("stream decodes");
         assert_eq!(total, payload.len() as u64);
 
         let mut back = vec![0u8; payload.len()];

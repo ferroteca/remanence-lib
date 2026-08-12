@@ -104,7 +104,6 @@ fn coder_name(id: &[u8]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-
 /// A reader over header bytes already in memory.
 struct Cursor<'a> {
     data: &'a [u8],
@@ -201,7 +200,11 @@ impl<'a> Cursor<'a> {
         let defined = self.defined_vector(count)?;
         let mut digests = Vec::new();
         for is_defined in defined {
-            digests.push(if is_defined { Some(self.u32le()?) } else { None });
+            digests.push(if is_defined {
+                Some(self.u32le()?)
+            } else {
+                None
+            });
         }
         Ok(digests)
     }
@@ -356,7 +359,12 @@ impl SevenZipCatalog {
                     sink,
                 )?;
             }
-            id => return Err(unsupported(format!("compression method {}", coder_name(id)))),
+            id => {
+                return Err(unsupported(format!(
+                    "compression method {}",
+                    coder_name(id)
+                )));
+            }
         }
         if source.failed() {
             return Err(Error::io("reading the coded stream failed".to_owned()));
@@ -796,35 +804,33 @@ fn parse_streams_info(cursor: &mut Cursor<'_>, len: u64) -> Result<StreamsInfo> 
                     return Err(malformed("pack info declares no sizes"));
                 }
             }
-            K_UNPACK_INFO => {
-                loop {
-                    match cursor.number()? {
-                        K_END => break,
-                        K_FOLDER => {
-                            let count = cursor.size()?;
-                            if cursor.byte()? != 0 {
-                                return Err(unsupported("folders held in an external stream"));
-                            }
-                            coders = (0..count)
-                                .map(|_| parse_folder(cursor))
-                                .collect::<Result<Vec<_>>>()?;
+            K_UNPACK_INFO => loop {
+                match cursor.number()? {
+                    K_END => break,
+                    K_FOLDER => {
+                        let count = cursor.size()?;
+                        if cursor.byte()? != 0 {
+                            return Err(unsupported("folders held in an external stream"));
                         }
-                        K_CODERS_UNPACK_SIZE => {
-                            unpacked_sizes = (0..coders.len())
-                                .map(|_| cursor.number())
-                                .collect::<Result<Vec<_>>>()?;
-                        }
-                        K_CRC => {
-                            folder_digests = cursor.digests(coders.len())?;
-                        }
-                        other => {
-                            return Err(malformed(format!(
-                                "unpack info names unknown property {other:#04x}"
-                            )));
-                        }
+                        coders = (0..count)
+                            .map(|_| parse_folder(cursor))
+                            .collect::<Result<Vec<_>>>()?;
+                    }
+                    K_CODERS_UNPACK_SIZE => {
+                        unpacked_sizes = (0..coders.len())
+                            .map(|_| cursor.number())
+                            .collect::<Result<Vec<_>>>()?;
+                    }
+                    K_CRC => {
+                        folder_digests = cursor.digests(coders.len())?;
+                    }
+                    other => {
+                        return Err(malformed(format!(
+                            "unpack info names unknown property {other:#04x}"
+                        )));
                     }
                 }
-            }
+            },
             K_SUBSTREAMS_INFO => {
                 has_substreams = true;
                 parse_substreams_info(
@@ -865,7 +871,9 @@ fn parse_streams_info(cursor: &mut Cursor<'_>, len: u64) -> Result<StreamsInfo> 
     for (index, coder) in coders.into_iter().enumerate() {
         let pack_size = pack_sizes[index];
         if offset.checked_add(pack_size).is_none_or(|end| end > len) {
-            return Err(malformed("a packed stream reaches past the end of the file"));
+            return Err(malformed(
+                "a packed stream reaches past the end of the file",
+            ));
         }
         folders.push(Folder {
             coder,
@@ -978,7 +986,9 @@ fn parse_substreams_info(
         sizes.clear();
         for (folder, &count) in counts.iter().enumerate() {
             if count > 1 {
-                return Err(malformed("a folder splits into members of no declared size"));
+                return Err(malformed(
+                    "a folder splits into members of no declared size",
+                ));
             }
             if count == 1 {
                 sizes.push(unpacked_sizes[folder]);
@@ -1092,7 +1102,9 @@ fn parse_header(cursor: &mut Cursor<'_>, len: u64) -> Result<ParsedHeader> {
         }
 
         let location = *streams.locations.get(stream_index).ok_or_else(|| {
-            malformed(format!("'{name}' claims a member the archive does not hold"))
+            malformed(format!(
+                "'{name}' claims a member the archive does not hold"
+            ))
         })?;
         stream_index += 1;
         let folder = &streams.folders[location.folder];
@@ -1198,10 +1210,7 @@ mod tests {
         assert_eq!(cursor.number().expect("three bytes"), 0x0001_0302);
 
         let mut cursor = Cursor::new(&[0xff, 1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(
-            cursor.number().expect("eight bytes"),
-            0x0807_0605_0403_0201
-        );
+        assert_eq!(cursor.number().expect("eight bytes"), 0x0807_0605_0403_0201);
     }
 
     #[test]
@@ -1210,7 +1219,10 @@ mod tests {
         // on the claim, never sized to it.
         let mut cursor = Cursor::new(&[0x83, 0x00, 0xaa, 0xbb]);
         let error = cursor.size().expect_err("the count is refused");
-        assert!(error.to_string().contains("reaches past the end"), "{error}");
+        assert!(
+            error.to_string().contains("reaches past the end"),
+            "{error}"
+        );
     }
 
     #[test]

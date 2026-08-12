@@ -20,9 +20,13 @@ fn fs(medium: &mut remanence::Medium, ordinal: u32) -> remanence::StorageSpace<'
         .partition(ordinal)
         .expect("the pool bears this partition");
     if partition.partition().bears_namespace() {
-        partition.filesystem().expect("the declared type determines one")
+        partition
+            .filesystem()
+            .expect("the declared type determines one")
     } else {
-        partition.filesystem_as("fat").expect("these images are FAT")
+        partition
+            .filesystem_as("fat")
+            .expect("these images are FAT")
     }
 }
 
@@ -117,7 +121,10 @@ fn synthetic_fat16() -> Vec<u8> {
 fn qcow2_shell(virtual_size: u64, backing: Option<(&str, Option<&str>)>) -> Vec<u8> {
     let l2_entries = CLUSTER / 8;
     let l1_size = virtual_size.div_ceil(CLUSTER * l2_entries) as u32;
-    assert!(l1_size as u64 <= CLUSTER / 8, "test image L1 fits one cluster");
+    assert!(
+        l1_size as u64 <= CLUSTER / 8,
+        "test image L1 fits one cluster"
+    );
 
     let mut image = vec![0u8; 4 * CLUSTER as usize];
     image[..4].copy_from_slice(b"QFI\xfb");
@@ -132,8 +139,7 @@ fn qcow2_shell(virtual_size: u64, backing: Option<(&str, Option<&str>)>) -> Vec<
     image[100..104].copy_from_slice(&112u32.to_be_bytes()); // header_length
 
     // Refcount table entry 0 -> block at cluster 2; counts for 0..=3.
-    image[CLUSTER as usize..CLUSTER as usize + 8]
-        .copy_from_slice(&(2 * CLUSTER).to_be_bytes());
+    image[CLUSTER as usize..CLUSTER as usize + 8].copy_from_slice(&(2 * CLUSTER).to_be_bytes());
     for cluster in 0..4usize {
         let at = 2 * CLUSTER as usize + cluster * 2;
         image[at..at + 2].copy_from_slice(&1u16.to_be_bytes());
@@ -201,7 +207,6 @@ fn run_qemu_img(qemu_img: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-
 /// The ordinal a partitionless image's content is reached through. It
 /// records no partition scheme, so its pool bears exactly one member —
 /// the direct partition at ordinal 0, which is the library's own
@@ -237,8 +242,13 @@ fn reads_compose_through_a_raw_backing_file() {
     );
 
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Read).expect("the chain opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Qcow2 { version: 3 });
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
+    assert_eq!(
+        disk.format().expect("a medium is pooled"),
+        DiskFormat::Qcow2 { version: 3 }
+    );
     assert_eq!(disk.size().expect("a medium is pooled"), base.len() as u64);
 
     // The FAT volume at the bottom of the chain reads as one disk.
@@ -259,7 +269,8 @@ fn reads_compose_through_a_raw_backing_file() {
         "the partition carries the very identity the report issued (P21, U4)"
     );
     assert_eq!(
-        fs(disk, partition).read_file("MARKER.TXT")
+        fs(disk, partition)
+            .read_file("MARKER.TXT")
             .expect("the marker reads through the chain"),
         b"read through the chain"
     );
@@ -271,9 +282,12 @@ fn reads_compose_through_a_raw_backing_file() {
     let untouched_top = std::fs::read(&overlay).expect("top reads");
     let top_header = untouched_top[..CLUSTER as usize].to_vec();
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("write chain opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let partition = only_partition(disk);
-    fs(disk, partition).write_file("MARKER.TXT", b"rolled back")
+    fs(disk, partition)
+        .write_file("MARKER.TXT", b"rolled back")
         .expect("write buffers");
     disk.rollback().expect("a medium is pooled");
     drop(disk_session);
@@ -284,23 +298,34 @@ fn reads_compose_through_a_raw_backing_file() {
     );
 
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("write chain opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let partition = only_partition(disk);
-    fs(disk, partition).write_file("MARKER.TXT", b"changed in the top")
+    fs(disk, partition)
+        .write_file("MARKER.TXT", b"changed in the top")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
 
-    assert_eq!(std::fs::read(dir.join("base.img")).expect("base reads"), base);
+    assert_eq!(
+        std::fs::read(dir.join("base.img")).expect("base reads"),
+        base
+    );
     assert_eq!(
         &std::fs::read(&overlay).expect("top reads")[..CLUSTER as usize],
         top_header.as_slice()
     );
-    let (mut reopened_session, reopened_at) = attach(&overlay, Afford::Read).expect("written chain reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let (mut reopened_session, reopened_at) =
+        attach(&overlay, Afford::Read).expect("written chain reopens");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
     let partition = only_partition(reopened);
     assert_eq!(
-        fs(reopened, partition).read_file("MARKER.TXT").expect("changed file reads"),
+        fs(reopened, partition)
+            .read_file("MARKER.TXT")
+            .expect("changed file reads"),
         b"changed in the top"
     );
 
@@ -321,14 +346,26 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     let overlay_arg = overlay.to_str().expect("utf-8 overlay path");
     run_qemu_img(
         &qemu,
-        &["create", "-f", "qcow2", "-F", "raw", "-b", base_arg, overlay_arg],
+        &[
+            "create",
+            "-f",
+            "qcow2",
+            "-F",
+            "raw",
+            "-b",
+            base_arg,
+            overlay_arg,
+        ],
     );
     let before = run_qemu_img(&qemu, &["info", overlay_arg]);
 
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("QEMU chain opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let partition = only_partition(disk);
-    fs(disk, partition).write_file("MARKER.TXT", b"remanence copy-on-write")
+    fs(disk, partition)
+        .write_file("MARKER.TXT", b"remanence copy-on-write")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -344,9 +381,12 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
     run_qemu_img(&qemu, &["convert", "-O", "raw", overlay_arg, flattened_arg]);
     let (mut qemu_session, qemu_at) =
         attach(&flattened, Afford::Read).expect("QEMU-rendered disk opens");
-    let qemu_view = qemu_session.medium_mut(qemu_at).expect("the medium is pooled");
+    let qemu_view = qemu_session
+        .medium_mut(qemu_at)
+        .expect("the medium is pooled");
     assert_eq!(
-        fs(qemu_view, partition).read_file("MARKER.TXT")
+        fs(qemu_view, partition)
+            .read_file("MARKER.TXT")
             .expect("QEMU-rendered changed file reads"),
         b"remanence copy-on-write"
     );
@@ -373,7 +413,9 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     );
 
     let (mut disk_session, disk_at) = attach(&top, Afford::Read).expect("the chain opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let report = disk.inspect().expect("inspection composes");
     assert_eq!(report.volumes.len(), 1);
     let partition = only_partition(disk);
@@ -383,7 +425,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         "the partition carries the very identity the report issued (P21, U4)"
     );
     assert_eq!(
-        fs(disk, partition).read_file("MARKER.TXT")
+        fs(disk, partition)
+            .read_file("MARKER.TXT")
             .expect("reads through two members"),
         b"read through the chain"
     );
@@ -392,9 +435,12 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let base_before = std::fs::read(dir.join("base.img")).expect("base reads");
     let mid_before = std::fs::read(dir.join("mid.qcow2")).expect("middle reads");
     let (mut disk_session, disk_at) = attach(&top, Afford::Write).expect("two-level write opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let partition = only_partition(disk);
-    fs(disk, partition).write_file("MARKER.TXT", b"changed above two levels")
+    fs(disk, partition)
+        .write_file("MARKER.TXT", b"changed above two levels")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -406,10 +452,14 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
         std::fs::read(dir.join("mid.qcow2")).expect("middle reads"),
         mid_before
     );
-    let (mut reopened_session, reopened_at) = attach(&top, Afford::Read).expect("changed chain reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let (mut reopened_session, reopened_at) =
+        attach(&top, Afford::Read).expect("changed chain reopens");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
     assert_eq!(
-        fs(reopened, partition).read_file("MARKER.TXT")
+        fs(reopened, partition)
+            .read_file("MARKER.TXT")
             .expect("changed marker reads"),
         b"changed above two levels"
     );
@@ -435,11 +485,12 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
     // No format extension anywhere: the qcow2 middle and the raw base
     // are each told apart by magic, exactly as at the top.
     let (mut disk_session, disk_at) = attach(&top, Afford::Read).expect("the chain opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let partition = only_partition(disk);
     assert_eq!(
-        fs(disk, partition).read_file("MARKER.TXT")
-            .expect("reads"),
+        fs(disk, partition).read_file("MARKER.TXT").expect("reads"),
         b"read through the chain"
     );
     drop(disk_session);
@@ -450,7 +501,10 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
 fn a_missing_backing_file_is_refused_by_name() {
     let dir = chain_dir("missing");
     let overlay = dir.join("overlay.qcow2");
-    write(&overlay, &qcow2_shell(64 * CLUSTER, Some(("gone.img", None))));
+    write(
+        &overlay,
+        &qcow2_shell(64 * CLUSTER, Some(("gone.img", None))),
+    );
 
     let error = attach(&overlay, Afford::Read).expect_err("missing member refused");
     assert_eq!(error.category(), ErrorCategory::NotFound);
@@ -467,8 +521,14 @@ fn a_backing_cycle_is_refused_by_name() {
     let dir = chain_dir("cycle");
     let a = dir.join("a.qcow2");
     let b = dir.join("b.qcow2");
-    write(&a, &qcow2_shell(64 * CLUSTER, Some(("b.qcow2", Some("qcow2")))));
-    write(&b, &qcow2_shell(64 * CLUSTER, Some(("a.qcow2", Some("qcow2")))));
+    write(
+        &a,
+        &qcow2_shell(64 * CLUSTER, Some(("b.qcow2", Some("qcow2")))),
+    );
+    write(
+        &b,
+        &qcow2_shell(64 * CLUSTER, Some(("a.qcow2", Some("qcow2")))),
+    );
 
     let error = attach(&a, Afford::Read).expect_err("a cycle is refused");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
@@ -484,7 +544,10 @@ fn a_chain_past_the_claimed_depth_is_refused_by_name() {
     let dir = chain_dir("depth");
     // Seventeen files: member 16 stands alone, every other backs onto
     // the next — one past the sixteen the release claims.
-    write(&dir.join("member16.qcow2"), &qcow2_shell(64 * CLUSTER, None));
+    write(
+        &dir.join("member16.qcow2"),
+        &qcow2_shell(64 * CLUSTER, None),
+    );
     for member in (0..16).rev() {
         let next = format!("member{}.qcow2", member + 1);
         write(
@@ -564,7 +627,10 @@ fn every_chain_member_is_claimed_immutable() {
     );
 
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Read).expect("the chain opens");
-    assert!(disk_session.medium_mut(disk_at).is_some(), "the chain pooled");
+    assert!(
+        disk_session.medium_mut(disk_at).is_some(),
+        "the chain pooled"
+    );
 
     // **The library opened the backing member itself**, so P7's mandatory
     // denial applies to it in full — this is the half of the rule the

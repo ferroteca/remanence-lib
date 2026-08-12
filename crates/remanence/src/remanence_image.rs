@@ -47,8 +47,8 @@ use crate::device::AccessMode;
 use crate::error::{Error, Result};
 use crate::evidence::Provenance;
 use crate::flux_capture::{
-    ByteSink, ByteSource, CHUNK_RECORDS, LEAF_ENTRIES, SectionAddress, SectionCache,
-    SectionWriter, greatest_common_divisor, read_varint, write_varint,
+    ByteSink, ByteSource, CHUNK_RECORDS, LEAF_ENTRIES, SectionAddress, SectionCache, SectionWriter,
+    greatest_common_divisor, read_varint, write_varint,
 };
 
 /// The refusal namespace and format identity of this stratum.
@@ -451,7 +451,10 @@ impl SectionAddress for RemanenceSectionKey {
         let (length, used) = read_varint(source, bytes, cursor)?;
         cursor += used;
         let length = usize::try_from(length).map_err(|_| {
-            Error::invalid_image(source, "index names a namespace longer than this host can address")
+            Error::invalid_image(
+                source,
+                "index names a namespace longer than this host can address",
+            )
         })?;
         let raw = bytes.get(cursor..cursor + length).ok_or_else(|| {
             Error::invalid_image(source, "index ends inside the namespace it names")
@@ -487,7 +490,9 @@ impl SectionAddress for RemanenceSectionKey {
             other => {
                 return Err(Error::invalid_image(
                     source,
-                    format!("index states a section kind {other}, which this version has no reading of"),
+                    format!(
+                        "index states a section kind {other}, which this version has no reading of"
+                    ),
                 ));
             }
         };
@@ -636,7 +641,9 @@ impl RemanenceImage {
     /// The artifact this image was read from, or `None` for one the
     /// library built rather than read.
     pub fn path(&self) -> Option<&Path> {
-        self.artifact.as_ref().map(|artifact| artifact.path.as_path())
+        self.artifact
+            .as_ref()
+            .map(|artifact| artifact.path.as_path())
     }
 
     /// Which mode the deny-write claim on that artifact was obtained
@@ -652,11 +659,7 @@ impl RemanenceImage {
     /// identities and counts, never points — so it is built on demand
     /// rather than held beside the state it restates.
     pub fn inspect(&self) -> RemanenceImageReport {
-        let mut surfaces: Vec<u64> = self
-            .orbits
-            .keys()
-            .map(|key| key.surface)
-            .collect();
+        let mut surfaces: Vec<u64> = self.orbits.keys().map(|key| key.surface).collect();
         surfaces.dedup();
         RemanenceImageReport {
             form_factor: self.form_factor.as_str().to_owned(),
@@ -729,7 +732,12 @@ impl RemanenceImage {
 
     /// Records the artifact this image was read from, and the claim
     /// held on it for the image's whole life.
-    pub(crate) fn attach_artifact(&mut self, path: PathBuf, claimed: std::fs::File, mode: AccessMode) {
+    pub(crate) fn attach_artifact(
+        &mut self,
+        path: PathBuf,
+        claimed: std::fs::File,
+        mode: AccessMode,
+    ) {
         self.artifact = Some(OpenedArtifact {
             path,
             _claimed: claimed,
@@ -897,11 +905,7 @@ pub(crate) fn state_at(points: &[OrbitPoint], angle: u64) -> Option<Magnetizatio
 /// started being a gap. `to` may exceed one revolution, meaning the
 /// stretch wraps past the origin; returned angles are always inside
 /// one.
-pub(crate) fn transitions_across(
-    points: &[OrbitPoint],
-    from: u64,
-    to: u64,
-) -> Option<Vec<u64>> {
+pub(crate) fn transitions_across(points: &[OrbitPoint], from: u64, to: u64) -> Option<Vec<u64>> {
     if points.is_empty() || to <= from {
         return None;
     }
@@ -987,10 +991,7 @@ pub(crate) fn reversed_points(points: &[OrbitPoint]) -> Result<Vec<OrbitPoint>> 
 /// The geometry in force over each span, resolved forward with the
 /// wrap: absence on a point always means unchanged, never unknown.
 fn widths_in_force(points: &[OrbitPoint]) -> Vec<Option<WriteWidths>> {
-    let mut carried = points
-        .iter()
-        .rev()
-        .find_map(|point| point.widths);
+    let mut carried = points.iter().rev().find_map(|point| point.widths);
     points
         .iter()
         .map(|point| {
@@ -1524,7 +1525,10 @@ mod tests {
         let kept = builder
             .add_orbit(OrbitKey::new(0, 57150).unwrap(), &silent)
             .expect("a valid orbit is judged");
-        assert!(!kept, "a wholly-unaligned orbit asserts nothing and is dropped");
+        assert!(
+            !kept,
+            "a wholly-unaligned orbit asserts nothing and is dropped"
+        );
         let (image, _, _) = builder.seal().expect("an empty image seals");
         assert_eq!(image.orbit_count(), 0);
     }
@@ -1603,7 +1607,9 @@ mod tests {
             .unwrap(),
         );
         let second = OrbitKey::new(1, 40000).unwrap();
-        builder.add_orbit(key, &points).expect("the orbit is admitted");
+        builder
+            .add_orbit(key, &points)
+            .expect("the orbit is admitted");
         builder
             .add_orbit(second, &alternating(500, 2000, 5))
             .expect("the second orbit is admitted");
@@ -1630,7 +1636,10 @@ mod tests {
         let served = image.points(&orbit).expect("the chunks decode");
         assert_eq!(served, points);
 
-        let second = image.orbit(&second).expect("the second orbit is resident").clone();
+        let second = image
+            .orbit(&second)
+            .expect("the second orbit is resident")
+            .clone();
         let served = image.points(&second).expect("the chunks decode");
         assert_eq!(served.len(), 5);
     }

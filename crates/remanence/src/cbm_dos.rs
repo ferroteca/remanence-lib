@@ -333,10 +333,7 @@ impl Bam {
 /// The chain is followed, never assumed: each block states where the
 /// next one is, and a slot whose type byte is zero names nothing and is
 /// left out of the listing rather than reported as a file with no name.
-pub(crate) fn directory(
-    blocks: &dyn BlockSource,
-    bam: &Bam,
-) -> Result<Vec<DirectoryEntry>> {
+pub(crate) fn directory(blocks: &dyn BlockSource, bam: &Bam) -> Result<Vec<DirectoryEntry>> {
     let mut entries = Vec::new();
     let mut at = bam.directory_start;
     let mut visited = Vec::new();
@@ -409,10 +406,7 @@ pub(crate) fn read_chain(blocks: &dyn BlockSource, first: (u8, u8)) -> Result<Ch
     let mut visited: Vec<(u8, u8)> = Vec::new();
     let mut at = first;
     if at.0 == 0 {
-        return Ok(Chain {
-            bytes,
-            blocks: 0,
-        });
+        return Ok(Chain { bytes, blocks: 0 });
     }
     while at.0 != 0 {
         if visited.contains(&at) {
@@ -485,7 +479,9 @@ impl std::fmt::Debug for Bam {
 
 impl std::fmt::Debug for CbmDosCatalog<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CbmDosCatalog").field("bam", &self.bam).finish()
+        f.debug_struct("CbmDosCatalog")
+            .field("bam", &self.bam)
+            .finish()
     }
 }
 
@@ -654,7 +650,12 @@ mod tests {
         }
 
         /// One directory block holding `slots`, linked to `next`.
-        fn with_directory(&mut self, sector: u8, next: (u8, u8), slots: &[(u8, &str, (u8, u8), u16)]) {
+        fn with_directory(
+            &mut self,
+            sector: u8,
+            next: (u8, u8),
+            slots: &[(u8, &str, (u8, u8), u16)],
+        ) {
             let mut block = vec![0u8; BLOCK_BYTES];
             block[0] = next.0;
             block[1] = next.1;
@@ -832,7 +833,9 @@ mod tests {
         // rather than shortened to the part that reads.
         disk.0.remove(&(17, 1));
         let catalog = CbmDosCatalog::open(&disk).expect("the BAM still claims the disk");
-        let error = catalog.read_file("LOADER").expect_err("the chain is broken");
+        let error = catalog
+            .read_file("LOADER")
+            .expect_err("the chain is broken");
         assert_eq!(error.category(), ErrorCategory::Unavailable);
         assert!(error.to_string().contains("17 sector 1"), "{error}");
 
@@ -893,6 +896,11 @@ mod tests {
         disk.with_directory(1, (0, 0xff), &[]);
         let catalog = CbmDosCatalog::open(&disk).expect("the BAM claims the disk");
         assert!(catalog.entries("").expect("the directory reads").is_empty());
-        assert!(catalog.stat("ANYTHING").expect("absence is an answer").is_none());
+        assert!(
+            catalog
+                .stat("ANYTHING")
+                .expect("absence is an answer")
+                .is_none()
+        );
     }
 }

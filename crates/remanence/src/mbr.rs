@@ -80,8 +80,7 @@ pub(crate) enum Discovery {
 /// Why nothing claimed a non-zero sector 0. One sentence, stated once, so
 /// the layered report's evidence and identification's refusal say the
 /// same thing about the same disk.
-pub(crate) const UNKNOWN_NONBLANK: &str =
-    "sector 0 carries data but no boot signature: neither a blank disk, a \
+pub(crate) const UNKNOWN_NONBLANK: &str = "sector 0 carries data but no boot signature: neither a blank disk, a \
      supported filesystem boot record, nor a partition table — corruption, \
      or a format outside this release's claim";
 
@@ -151,8 +150,10 @@ pub(crate) fn declared_type_reading(type_byte: u8) -> &'static str {
         0xa6 => "an OpenBSD slice",
         0xa8 => "a macOS UFS volume",
         0xaf => "an HFS or HFS+ volume",
-        0xee => "that the whole disk is GPT rather than MBR, this entry \
-                 being the protective placeholder GPT writes",
+        0xee => {
+            "that the whole disk is GPT rather than MBR, this entry \
+                 being the protective placeholder GPT writes"
+        }
         0xef => "an EFI system partition",
         0xfd => "a Linux RAID autodetect member",
         _ => "no type this release has a reading for",
@@ -405,7 +406,10 @@ mod tests {
     /// and the two questions stay separate.
     #[test]
     fn a_reading_is_not_a_claim_that_the_type_is_read() {
-        assert!(pinned_type_name(0x07).is_none(), "0x07 is outside the claim");
+        assert!(
+            pinned_type_name(0x07).is_none(),
+            "0x07 is outside the claim"
+        );
         assert_eq!(declared_type_reading(0x07), "NTFS or exFAT");
         assert!(pinned_type_name(0x06).is_some(), "0x06 is inside the claim");
         assert_eq!(declared_type_reading(0x06), "FAT16B");

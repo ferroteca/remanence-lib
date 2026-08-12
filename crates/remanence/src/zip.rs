@@ -192,7 +192,10 @@ impl ArchiveCatalog for ZipCatalog {
 
     fn entry_source(&self, index: usize) -> Result<EntrySource> {
         if index >= self.entries.len() {
-            return Err(Error::archive("zip", format!("entry {index} is out of range")));
+            return Err(Error::archive(
+                "zip",
+                format!("entry {index} is out of range"),
+            ));
         }
         let name = &self.entries[index].name;
         let (offset, record) = self.data_span(index)?;

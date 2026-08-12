@@ -95,7 +95,9 @@ impl AssuranceCondition {
     /// seam's set — or from a later revision of this one — is `None`
     /// rather than a nearest match.
     pub fn from_identity(identity: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|condition| condition.as_str() == identity)
+        Self::ALL
+            .into_iter()
+            .find(|condition| condition.as_str() == identity)
     }
 }
 
@@ -251,7 +253,10 @@ pub(crate) fn degraded(shortfall: Shortfall, declaration: &str, claim: Claim) ->
     } = shortfall;
     let mut evidence = vec![
         declaration.to_owned(),
-        format!("the source holds {observed} bytes, {} short", declared - observed),
+        format!(
+            "the source holds {observed} bytes, {} short",
+            declared - observed
+        ),
         format!(
             "bytes 0..{observed} read; byte {observed} is the first the source does \
              not hold"
@@ -324,8 +329,14 @@ mod tests {
         assert_eq!(AssuranceOutcome::Verified.as_str(), "verified");
         assert_eq!(AssuranceOutcome::Degraded.as_str(), "degraded");
         assert_eq!(AssuranceOutcome::Refused.as_str(), "refused");
-        assert_eq!(AssuranceCondition::SourceTruncated.as_str(), "source-truncated");
-        assert_eq!(AssuranceCondition::EvidenceConflict.as_str(), "evidence-conflict");
+        assert_eq!(
+            AssuranceCondition::SourceTruncated.as_str(),
+            "source-truncated"
+        );
+        assert_eq!(
+            AssuranceCondition::EvidenceConflict.as_str(),
+            "evidence-conflict"
+        );
     }
 
     #[test]
@@ -361,7 +372,10 @@ mod tests {
             Claim::CallerOpened,
         );
         assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
-        assert_eq!(assurance.condition, Some(AssuranceCondition::SourceTruncated));
+        assert_eq!(
+            assurance.condition,
+            Some(AssuranceCondition::SourceTruncated)
+        );
         assert_eq!(assurance.access, AccessMode::ReadOnly);
         assert_eq!(assurance.declared_bytes, Some(1_474_560));
         assert_eq!(assurance.observed_bytes, Some(1_000_000));
@@ -373,7 +387,10 @@ mod tests {
             assurance.evidence
         );
         assert!(
-            assurance.evidence.iter().all(|line| !line.contains("addressable")),
+            assurance
+                .evidence
+                .iter()
+                .all(|line| !line.contains("addressable")),
             "leading structures inside the extent raise nothing: {:?}",
             assurance.evidence
         );
@@ -408,12 +425,20 @@ mod tests {
             condition: AssuranceCondition::SourceTruncated,
         };
         assert!(bound.check(999_488, 512).is_ok(), "a read inside answers");
-        let error = bound.check(999_999, 512).expect_err("a crossing read is refused");
+        let error = bound
+            .check(999_999, 512)
+            .expect_err("a crossing read is refused");
         assert_eq!(error.category(), ErrorCategory::Unavailable);
         assert_eq!(error.rule(), Some("source-truncated"));
         let message = error.to_string();
-        assert!(message.contains("999999..1000511"), "names the range: {message}");
-        assert!(message.contains("1474560"), "names the declaration: {message}");
+        assert!(
+            message.contains("999999..1000511"),
+            "names the range: {message}"
+        );
+        assert!(
+            message.contains("1474560"),
+            "names the declaration: {message}"
+        );
     }
 
     #[test]

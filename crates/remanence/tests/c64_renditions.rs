@@ -149,8 +149,7 @@ fn track_one_angles() -> Vec<u64> {
         .enumerate()
         .filter(|(_, recorded)| *recorded)
         .map(|(cell, _)| {
-            (cell as u128 * u128::from(ANGULAR_DIVISIONS) / u128::from(CELLS_PER_REVOLUTION))
-                as u64
+            (cell as u128 * u128::from(ANGULAR_DIVISIONS) / u128::from(CELLS_PER_REVOLUTION)) as u64
         })
         .collect()
 }
@@ -277,23 +276,26 @@ fn the_d64_reads_the_recording_it_was_given() {
     assert_eq!(described.failed_checksums, 0);
     assert_eq!(described.missing.len(), 683 - 21);
     assert!(
-        described
-            .missing
-            .iter()
-            .all(|block| block.track != 1),
+        described.missing.iter().all(|block| block.track != 1),
         "nothing on track one is missing"
     );
 
     // The account states what the destination did not carry, and the
     // error map is that account made flesh.
     assert_eq!(loss(&described.declared_loss, "block-not-read"), Some(662));
-    assert_eq!(loss(&described.declared_loss, "recording-structure"), Some(1));
+    assert_eq!(
+        loss(&described.declared_loss, "recording-structure"),
+        Some(1)
+    );
     assert_eq!(described.artifact_bytes, 683 * 256 + 683);
 
     let destination = scratch("d64-written", "d64");
     let _ = std::fs::remove_file(&destination);
     let written = image.write_d64(&destination).expect("the d64 writes");
-    assert_eq!(written.path.as_deref(), Some(destination.to_string_lossy().as_ref()));
+    assert_eq!(
+        written.path.as_deref(),
+        Some(destination.to_string_lossy().as_ref())
+    );
     assert_eq!(written.blocks_read, described.blocks_read);
     assert_eq!(written.declared_loss, described.declared_loss);
     assert_eq!(written.missing, described.missing);
@@ -360,7 +362,11 @@ fn the_g64_packs_the_orbit_at_its_measured_zone() {
     assert_eq!(&bytes[..8], b"GCR-1541", "the grammar names itself");
     assert_eq!(bytes[9], 84, "eighty-four half-track slots");
     let offset = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-    assert_eq!(offset, 12 + 84 * 8, "slot zero is the first track laid down");
+    assert_eq!(
+        offset,
+        12 + 84 * 8,
+        "slot zero is the first track laid down"
+    );
     assert_eq!(
         u32::from_le_bytes(bytes[12 + 84 * 4..16 + 84 * 4].try_into().unwrap()),
         u32::from(ZONE),
@@ -395,7 +401,12 @@ fn the_g64_packs_the_orbit_at_its_measured_zone() {
 #[test]
 fn the_p64_projects_every_coherent_point_and_reads_back() {
     let (image, source) = track_one_image("p64-source");
-    let points: u64 = image.inspect().orbits.iter().map(|orbit| orbit.points).sum();
+    let points: u64 = image
+        .inspect()
+        .orbits
+        .iter()
+        .map(|orbit| orbit.points)
+        .sum();
 
     let described = image.describe_p64().expect("the p64 is computed");
     assert_eq!(described.half_tracks.len(), 1);
@@ -474,10 +485,7 @@ fn an_occupied_destination_is_refused_by_every_rendition() {
 fn a_disk_the_grid_cannot_place_refuses_by_name() {
     // Half a step in from the first: a radius the 96 tpi grid has no
     // slot for, refused rather than pulled onto a neighbour.
-    let path = placed(
-        "off-grid",
-        &artifact(&payload(57_018, &track_one_angles())),
-    );
+    let path = placed("off-grid", &artifact(&payload(57_018, &track_one_angles())));
     let image = RemanenceImage::open(&path).expect("the off-grid disk opens");
 
     let refusal = image
@@ -487,7 +495,10 @@ fn a_disk_the_grid_cannot_place_refuses_by_name() {
         refusal.to_string().contains("no orbit"),
         "the refusal says what was missing: {refusal}"
     );
-    assert!(image.describe_p64().is_err(), "the p64 has nowhere to put it");
+    assert!(
+        image.describe_p64().is_err(),
+        "the p64 has nowhere to put it"
+    );
 
     // The d64 is addressed by what the recording says of itself rather
     // than by where the orbit sits, so an unplaceable orbit is an empty

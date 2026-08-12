@@ -31,8 +31,8 @@
 use crate::cbm_dos::BlockSource;
 use crate::error::{Error, ErrorCategory, Result, RuleIdentity};
 use crate::filesystem::{SpaceExtent, SpaceNamespace, StorageSpace};
-use crate::media::Medium;
 use crate::mbr::{self, PartitionKind};
+use crate::media::Medium;
 use crate::report::{DiskContent, RegionId, RegionRole, VolumeId};
 
 /// The ordinal the direct partition answers to.
@@ -77,13 +77,16 @@ impl PartitionScheme {
     /// Reads a scheme back from its stable spelling, refusing one this
     /// release does not read naming what it does (P3).
     pub fn from_id(id: &str) -> Result<Self> {
-        Self::ALL.into_iter().find(|scheme| scheme.id() == id).ok_or_else(|| {
-            let claimed: Vec<&str> = Self::ALL.iter().map(|scheme| scheme.id()).collect();
-            Error::unsupported(format!(
-                "'{id}' names no partition scheme this release reads; it reads {}",
-                claimed.join(", ")
-            ))
-        })
+        Self::ALL
+            .into_iter()
+            .find(|scheme| scheme.id() == id)
+            .ok_or_else(|| {
+                let claimed: Vec<&str> = Self::ALL.iter().map(|scheme| scheme.id()).collect();
+                Error::unsupported(format!(
+                    "'{id}' names no partition scheme this release reads; it reads {}",
+                    claimed.join(", ")
+                ))
+            })
     }
 }
 
@@ -134,14 +137,17 @@ impl PartitionType {
     /// Reads a type back from its stable spelling, for the C and Python
     /// surfaces where a declaration arrives as text (P3).
     pub fn from_id(id: &str) -> Result<Self> {
-        Self::ALL.into_iter().find(|declared| declared.id() == id).ok_or_else(|| {
-            let claimed: Vec<&str> = Self::ALL.iter().map(|declared| declared.id()).collect();
-            Error::unsupported(format!(
-                "'{id}' names no partition type this release declares; it \
+        Self::ALL
+            .into_iter()
+            .find(|declared| declared.id() == id)
+            .ok_or_else(|| {
+                let claimed: Vec<&str> = Self::ALL.iter().map(|declared| declared.id()).collect();
+                Error::unsupported(format!(
+                    "'{id}' names no partition type this release declares; it \
                  declares {}",
-                claimed.join(", ")
-            ))
-        })
+                    claimed.join(", ")
+                ))
+            })
     }
 
     /// The type values this reading covers, which is what a declaration
@@ -453,7 +459,8 @@ impl Partition {
                 "partition {} records type 0x{type_byte:02x}, which declares \
                  {}; '{declared}' names {} and is borne by {}",
                 self.ordinal,
-                self.type_reading.unwrap_or("no type this release has a reading for"),
+                self.type_reading
+                    .unwrap_or("no type this release has a reading for"),
                 declared.name(),
                 declared
                     .declared_values()
@@ -502,7 +509,10 @@ impl Partition {
 
     /// The direct partition over content whose native vantage is a
     /// namespace, which has no addressed extent to be a position within.
-    fn direct_over_namespace(namespace: Option<DeclaredNamespace>, provenance: &'static str) -> Self {
+    fn direct_over_namespace(
+        namespace: Option<DeclaredNamespace>,
+        provenance: &'static str,
+    ) -> Self {
         Self {
             ordinal: DIRECT_ORDINAL,
             placement: "direct",
@@ -774,9 +784,7 @@ fn fat_namespace(offset: u64, recognition: crate::fat::FatRecognition) -> SpaceN
         offset,
         kind: recognition.kind.name().to_owned(),
         label: recognition.label,
-        evidence: vec![
-            "a FAT boot record recognized at the partition's first sector".to_owned(),
-        ],
+        evidence: vec!["a FAT boot record recognized at the partition's first sector".to_owned()],
     }
 }
 
@@ -956,11 +964,17 @@ mod tests {
     #[test]
     fn every_claimed_scheme_and_type_round_trips_through_its_spelling() {
         for scheme in PartitionScheme::ALL {
-            assert_eq!(PartitionScheme::from_id(scheme.id()).expect("claimed"), scheme);
+            assert_eq!(
+                PartitionScheme::from_id(scheme.id()).expect("claimed"),
+                scheme
+            );
             assert!(!scheme.name().is_empty());
         }
         for declared in PartitionType::ALL {
-            assert_eq!(PartitionType::from_id(declared.id()).expect("claimed"), declared);
+            assert_eq!(
+                PartitionType::from_id(declared.id()).expect("claimed"),
+                declared
+            );
             assert!(!declared.declared_values().is_empty());
         }
         for rule in PartitionRule::ALL {
@@ -981,7 +995,10 @@ mod tests {
             .expect_err("0x06 is no extended container");
         assert_eq!(error.rule(), Some(PartitionRule::TypeDisagrees.as_str()));
         let message = error.to_string();
-        assert!(message.contains("0x06"), "names what was recorded: {message}");
+        assert!(
+            message.contains("0x06"),
+            "names what was recorded: {message}"
+        );
         assert!(
             message.contains("dos-extended"),
             "names what was declared: {message}"
@@ -998,7 +1015,10 @@ mod tests {
         assert!(direct.is_direct());
         assert_eq!(direct.ordinal(), DIRECT_ORDINAL);
         assert_eq!(direct.type_byte(), None);
-        assert!(direct.provenance().is_some(), "a composition act is provenance");
+        assert!(
+            direct.provenance().is_some(),
+            "a composition act is provenance"
+        );
         assert!(direct.evidence().is_empty(), "and never evidence");
         let error = direct
             .as_type(PartitionType::DosPrimary)
@@ -1010,10 +1030,17 @@ mod tests {
     fn a_structural_region_composes_no_space_and_keeps_its_place() {
         let extended = declared(2, 0x05);
         assert_eq!(extended.role(), RegionRole::Structure);
-        assert!(!extended.is_addressable(), "an extended container is not a volume");
+        assert!(
+            !extended.is_addressable(),
+            "an extended container is not a volume"
+        );
         assert!(!extended.bears_namespace());
         assert_eq!(extended.ordinal(), 2, "nothing renumbers");
-        assert_eq!(extended.start_bytes(), Some(1_048_576), "it is still declared");
+        assert_eq!(
+            extended.start_bytes(),
+            Some(1_048_576),
+            "it is still declared"
+        );
     }
 
     #[test]
@@ -1035,7 +1062,10 @@ mod tests {
     #[test]
     fn a_namespace_this_release_does_not_read_is_refused_by_name() {
         let error = unclaimed_namespace("ext4");
-        assert_eq!(error.rule(), Some(PartitionRule::UnclaimedNamespace.as_str()));
+        assert_eq!(
+            error.rule(),
+            Some(PartitionRule::UnclaimedNamespace.as_str())
+        );
         let message = error.to_string();
         assert!(message.contains("ext4"), "names what was asked: {message}");
         assert!(message.contains("hdos"), "names what is read: {message}");

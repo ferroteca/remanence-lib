@@ -16,9 +16,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{
-    EntryKind, ErrorCategory, Format, MediaId, SpaceRule, Session,
-};
+use remanence::{EntryKind, ErrorCategory, Format, MediaId, Session, SpaceRule};
 
 /// Pools `path` in a fresh session under the declaration these tests
 /// make, and returns both: a medium lives in its session's pool, so
@@ -55,10 +53,8 @@ fn fixture_h8d() -> PathBuf {
 /// The disk holds the P7 deny-write claim for its lifetime, so tests
 /// opening the fixture concurrently take private copies.
 fn private_copy(tag: &str) -> PathBuf {
-    let target = std::env::temp_dir().join(format!(
-        "remanence-hdos-{tag}-{}.h8d",
-        std::process::id()
-    ));
+    let target =
+        std::env::temp_dir().join(format!("remanence-hdos-{tag}-{}.h8d", std::process::id()));
     std::fs::copy(fixture_h8d(), &target).expect("fixture copies");
     target
 }
@@ -67,14 +63,19 @@ fn private_copy(tag: &str) -> PathBuf {
 fn lists_files_from_hdos_fixture_image() {
     let path = private_copy("list");
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let mut filesystem = disk
         .partition(0)
         .expect("the direct partition")
         .filesystem_as("hdos")
         .expect("the declaration is the caller's and the adapter verifies it");
-    assert_eq!(filesystem.kind().expect("the medium bears a namespace"), "hdos");
+    assert_eq!(
+        filesystem.kind().expect("the medium bears a namespace"),
+        "hdos"
+    );
     // The direct partition over an h8d is composed over the whole
     // content, so the addressable vantage opens — and nothing composed a
     // volume over it, so the report issued no identity to answer with.
@@ -113,7 +114,10 @@ fn lists_files_from_hdos_fixture_image() {
     assert_eq!(fact(&files[0], "modified-date"), "09-May-78");
     assert_eq!(fact(&files[0], "flags"), "SLWC");
 
-    assert_eq!(files[1].name, "HELP", "a file with no extension keeps its bare name");
+    assert_eq!(
+        files[1].name, "HELP",
+        "a file with no extension keeps its bare name"
+    );
 
     let last = files.last().expect("at least one file");
     assert_eq!(last.name, "DIRECT.SYS");
@@ -169,7 +173,9 @@ fn reads_a_file_out_through_the_grt_chain() {
     // this release reads the HDOS catalog and does not write it, whatever
     // the caller's open allows.
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let mut filesystem = disk
         .partition(0)
@@ -189,16 +195,26 @@ fn reads_a_file_out_through_the_grt_chain() {
     // BASIC source: the bytes should be dominated by printable ASCII.
     let printable = contents
         .iter()
-        .filter(|&&byte| byte == 0 || byte == b'\r' || byte == b'\n' || (0x20..0x7f).contains(&byte))
+        .filter(|&&byte| {
+            byte == 0 || byte == b'\r' || byte == b'\n' || (0x20..0x7f).contains(&byte)
+        })
         .count();
-    assert!(printable * 10 >= contents.len() * 9, "mostly text/zero bytes");
+    assert!(
+        printable * 10 >= contents.len() * 9,
+        "mostly text/zero bytes"
+    );
 
     // Absence is an answer at `stat` and a refusal at `get_file`: one
     // asks whether something is there, the other asks for the file.
     assert!(
-        filesystem.stat("NOPE.NOP").expect("the catalog answers").is_none()
+        filesystem
+            .stat("NOPE.NOP")
+            .expect("the catalog answers")
+            .is_none()
     );
-    let missing = filesystem.get_file("NOPE.NOP").expect_err("nothing is there");
+    let missing = filesystem
+        .get_file("NOPE.NOP")
+        .expect_err("nothing is there");
     assert_eq!(missing.category(), ErrorCategory::NotFound);
 
     // Read-only, and it says so by name rather than by failing later.
@@ -219,21 +235,24 @@ fn reads_a_file_out_through_the_grt_chain() {
 /// by the adapter the declaration named. Neither is an empty listing.
 #[test]
 fn a_medium_bearing_no_namespace_is_a_named_absence() {
-    let path = std::env::temp_dir().join(format!(
-        "remanence-hdos-absent-{}.h8d",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("remanence-hdos-absent-{}.h8d", std::process::id()));
     std::fs::write(&path, vec![0u8; 102_400]).expect("blank image writes");
 
     let (mut session, attachment) = attach(&path, Afford::Read).expect("disk opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     // This medium records no scheme, so it bears the direct partition —
     // and nothing there declares a namespace, a declared partition type
     // being what would. The plain door answers the honest absence P19
     // requires rather than probing for one.
     let direct = disk.partition(0).expect("the direct partition");
-    assert!(direct.is_direct(), "a medium recording no scheme bears exactly this");
+    assert!(
+        direct.is_direct(),
+        "a medium recording no scheme bears exactly this"
+    );
     assert!(
         !direct.partition().bears_namespace(),
         "no type is declared here, so nothing determines a namespace"

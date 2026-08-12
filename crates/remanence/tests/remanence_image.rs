@@ -178,7 +178,10 @@ fn an_occupied_destination_is_refused_rather_than_overwritten() {
     let source = placed("occupied-source", &artifact(&EXAMPLE_PAYLOAD, VERSION));
     let image = RemanenceImage::open(&source).expect("the worked example opens");
 
-    let occupied = placed("occupied-destination", b"content this library did not write");
+    let occupied = placed(
+        "occupied-destination",
+        b"content this library did not write",
+    );
     let refusal = image
         .write(&occupied)
         .expect_err("an occupied destination is not written through");
@@ -212,7 +215,10 @@ fn the_header_is_gated_before_anything_is_believed() {
         "the refusal names the version: {refusal}"
     );
 
-    let stranger = placed("not-an-artifact", b"this is not a remanence artifact at all");
+    let stranger = placed(
+        "not-an-artifact",
+        b"this is not a remanence artifact at all",
+    );
     assert!(
         RemanenceImage::open(&stranger).is_err(),
         "a file that is not an artifact is refused"

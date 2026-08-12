@@ -25,9 +25,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use remanence::{
-    CaptureSet, P64Image, P64Report, ReconstructionPolicy, RecordingSelection,
-};
+use remanence::{CaptureSet, P64Image, P64Report, ReconstructionPolicy, RecordingSelection};
 
 mod common;
 
@@ -67,10 +65,8 @@ struct Saved {
 fn saved() -> &'static Saved {
     static SAVED: OnceLock<Saved> = OnceLock::new();
     SAVED.get_or_init(|| {
-        let source = std::env::temp_dir().join(format!(
-            "remanence-p64-source-{}.7z",
-            std::process::id()
-        ));
+        let source =
+            std::env::temp_dir().join(format!("remanence-p64-source-{}.7z", std::process::id()));
         std::fs::copy(common::ensure_fixture(ARCHIVE), &source).expect("fixture copies");
         let set = CaptureSet::open(&source).expect("the set opens");
         let image = set
@@ -271,7 +267,11 @@ fn the_reopened_container_says_which_version_and_which_frame_it_is() {
 fn an_existing_destination_is_refused_and_left_exactly_as_it_was() {
     let saved = saved();
 
-    assert!(saved.occupied.contains("already there"), "{}", saved.occupied);
+    assert!(
+        saved.occupied.contains("already there"),
+        "{}",
+        saved.occupied
+    );
     assert_eq!(saved.survivor, b"someone else's file");
 }
 
@@ -282,5 +282,9 @@ fn the_artifact_is_written_and_read_through_a_bounded_working_set() {
     // Something over a megabyte of pulses, and neither writing it nor
     // reading it back held it (P27).
     assert!(saved.artifact_bytes > 100_000, "{}", saved.artifact_bytes);
-    assert!(saved.resident <= 1 << 20, "{} bytes resident", saved.resident);
+    assert!(
+        saved.resident <= 1 << 20,
+        "{} bytes resident",
+        saved.resident
+    );
 }

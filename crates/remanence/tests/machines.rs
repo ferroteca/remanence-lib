@@ -121,7 +121,11 @@ fn the_sessions_device_verbs_land_in_the_anonymous_machine() {
         vec![id],
         "the session's set and the anonymous machine's are one set"
     );
-    assert_eq!(session.machines().len(), 1, "adding a device adds no machine");
+    assert_eq!(
+        session.machines().len(),
+        1,
+        "adding a device adds no machine"
+    );
     assert!(session.anonymous().device(id).is_some());
 
     drop(session);
@@ -387,11 +391,16 @@ fn a_medium_in_a_named_machine_is_read_and_claimed_like_any_other() {
         "releasing the device severed the link and destroyed nothing"
     );
     assert_eq!(
-        session.medium_mut(media).expect("pooled").image_size_bytes(),
+        session
+            .medium_mut(media)
+            .expect("pooled")
+            .image_size_bytes(),
         1024 * 1024
     );
 
-    session.release_media(media).expect("the one destroying verb");
+    session
+        .release_media(media)
+        .expect("the one destroying verb");
     assert!(session.medium(media).is_none());
 
     drop(session);

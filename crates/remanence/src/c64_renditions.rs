@@ -119,14 +119,17 @@ pub(crate) fn clock(angles: &[i64], cell_divisions: f64) -> Bitstream {
 /// The 1541's 4-to-5 group code.
 mod gcr {
     const ENCODE: [u8; 16] = [
-        0b01010, 0b01011, 0b10010, 0b10011, 0b01110, 0b01111, 0b10110, 0b10111, 0b01001,
-        0b11001, 0b11010, 0b11011, 0b01101, 0b11101, 0b11110, 0b10101,
+        0b01010, 0b01011, 0b10010, 0b10011, 0b01110, 0b01111, 0b10110, 0b10111, 0b01001, 0b11001,
+        0b11010, 0b11011, 0b01101, 0b11101, 0b11110, 0b10101,
     ];
 
     /// The nibble a five-bit group encodes, or `None` for a group the
     /// table does not assign.
     pub(crate) fn decode_group(group: u8) -> Option<u8> {
-        ENCODE.iter().position(|&code| code == group & 0x1f).map(|nibble| nibble as u8)
+        ENCODE
+            .iter()
+            .position(|&code| code == group & 0x1f)
+            .map(|nibble| nibble as u8)
     }
 
     pub(crate) fn encode_nibble(nibble: u8) -> u8 {
@@ -451,7 +454,10 @@ pub(crate) fn g64_bytes(tracks: &[G64Track]) -> Result<Vec<u8>> {
         if track.index >= G64_HALF_TRACKS as u64 {
             return Err(Error::invalid_image(
                 REMANENCE,
-                format!("half-track {} sits outside the g64 grammar's 84 slots", track.index),
+                format!(
+                    "half-track {} sits outside the g64 grammar's 84 slots",
+                    track.index
+                ),
             ));
         }
         if !seen.insert(track.index) {
@@ -564,10 +570,7 @@ fn clocked_orbit(image: &RemanenceImage, orbit: &Orbit) -> Result<(Vec<i64>, f64
 
 /// Every orbit the 96 tpi half-track grid can place, in ascending
 /// slot order, with the ones it cannot counted into the account.
-fn on_grid_orbits<'a>(
-    image: &'a RemanenceImage,
-    loss: &mut LossAccount,
-) -> Vec<(&'a Orbit, u64)> {
+fn on_grid_orbits<'a>(image: &'a RemanenceImage, loss: &mut LossAccount) -> Vec<(&'a Orbit, u64)> {
     let mut placed = Vec::new();
     for orbit in image.orbits() {
         match grid_step_of(orbit.key().radius_microns()) {
@@ -851,9 +854,7 @@ impl RemanenceImage {
     /// It is not a general verb and does not cross the surface: the p64
     /// rendition and the presentation ladder are its two callers, and
     /// both want the same one projection.
-    pub(crate) fn served_medium(
-        &self,
-    ) -> Result<(crate::flux_medium::FluxMedium, LossAccount)> {
+    pub(crate) fn served_medium(&self) -> Result<(crate::flux_medium::FluxMedium, LossAccount)> {
         use crate::flux_capture::TimeBase;
         use crate::flux_medium::{
             Derivation, LocationKey, MediumBuilder, OriginRule, OriginStatement, Pulse,
@@ -1075,7 +1076,16 @@ mod tests {
         let id = (0x50u8, 0x43u8);
         sync(&mut stream);
         let header_checksum = sector ^ track ^ id.1 ^ id.0;
-        for byte in [HEADER_MARK, header_checksum, sector, track, id.1, id.0, 0x0f, 0x0f] {
+        for byte in [
+            HEADER_MARK,
+            header_checksum,
+            sector,
+            track,
+            id.1,
+            id.0,
+            0x0f,
+            0x0f,
+        ] {
             write_byte(&mut stream, byte);
         }
         stream.append_zeros(9 * 8);
@@ -1132,7 +1142,11 @@ mod tests {
         assert!(!builder.put(36, 0, &[0xcc; 256]), "off the grid");
         assert_eq!(builder.filled(), 1);
         let bytes = builder.into_bytes();
-        assert_eq!(bytes.len(), 683 * 256 + 683, "incomplete carries the error map");
+        assert_eq!(
+            bytes.len(),
+            683 * 256 + 683,
+            "incomplete carries the error map"
+        );
         assert_eq!(bytes[683 * 256 + cbm_dos::block_index(18, 0).unwrap()], 1);
         assert_eq!(bytes[683 * 256], 2, "t01/s00 was never read");
     }
@@ -1213,7 +1227,10 @@ mod tests {
         assert_eq!(&bytes[..8], b"GCR-1541");
         assert_eq!(bytes[9], 84);
         let track_bytes = usize::from(bytes[10]) | usize::from(bytes[11]) << 8;
-        assert_eq!(track_bytes, 7928, "the conventional width holds small tracks");
+        assert_eq!(
+            track_bytes, 7928,
+            "the conventional width holds small tracks"
+        );
         let offset = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
         assert_eq!(offset, 12 + 84 * 8);
         assert_eq!(

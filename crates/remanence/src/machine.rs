@@ -48,9 +48,9 @@ use std::path::Path;
 use crate::device::AccessIntent;
 use crate::device_family::DeviceFamily;
 use crate::discovery::{Discovery, discover_media_with_cache};
+use crate::disk::MediumState;
 use crate::error::{Error, Result};
 use crate::media::{Format, MediaId, MediaPool, Medium};
-use crate::disk::MediumState;
 use crate::storage_device::{AttachmentId, DeviceView, StorageDevice};
 
 /// An open session: the claim scope, the cache budget, the machines
@@ -542,11 +542,7 @@ impl<'a> MachineView<'a> {
     /// already taken is refused by name rather than displacing what is
     /// there — releasing a device is [`MachineView::release_device`], and
     /// it is a separate act.
-    pub fn add_device_at(
-        &mut self,
-        family: DeviceFamily,
-        index: u32,
-    ) -> Result<DeviceView<'_>> {
+    pub fn add_device_at(&mut self, family: DeviceFamily, index: u32) -> Result<DeviceView<'_>> {
         let attachment = self.place(family, Some(index))?;
         Ok(self.device_mut(attachment).expect("just placed"))
     }

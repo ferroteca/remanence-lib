@@ -201,7 +201,12 @@ impl SectionAddress for BitstreamSectionKey {
         write_varint(out, self.ordinal);
     }
 
-    fn read(source: &str, bytes: &[u8], at: usize, known: &[&'static str]) -> Result<(Self, usize)> {
+    fn read(
+        source: &str,
+        bytes: &[u8],
+        at: usize,
+        known: &[&'static str],
+    ) -> Result<(Self, usize)> {
         let mut cursor = at;
         let (location, used) = read_location_key(source, bytes, cursor, known)?;
         cursor += used;
@@ -374,7 +379,9 @@ impl HardwareBitstream {
     }
 
     pub(crate) fn backing_bytes(&self) -> u64 {
-        self.backing.as_ref().map_or(0, |backing| backing.total_bytes)
+        self.backing
+            .as_ref()
+            .map_or(0, |backing| backing.total_bytes)
     }
 
     pub(crate) fn resident_bytes(&self) -> u64 {
@@ -404,7 +411,12 @@ impl HardwareBitstream {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache
-            .section(backing.bytes.as_ref(), backing.total_bytes, key, &backing.known)
+            .section(
+                backing.bytes.as_ref(),
+                backing.total_bytes,
+                key,
+                &backing.known,
+            )
             .map(<[u8]>::to_vec)
     }
 
@@ -422,8 +434,11 @@ impl HardwareBitstream {
     /// location a chunk at a time, so no location is ever decoded whole
     /// on the way to a byte.
     pub(crate) fn cell_chunk(&self, location: &Location, ordinal: u64) -> Result<Vec<BitCell>> {
-        let key =
-            BitstreamSectionKey::new(location.key.clone(), BitstreamSectionKind::CellChunk, ordinal);
+        let key = BitstreamSectionKey::new(
+            location.key.clone(),
+            BitstreamSectionKind::CellChunk,
+            ordinal,
+        );
         decode_cells(self.profile, &self.section(&key)?)
     }
 
@@ -567,8 +582,10 @@ impl<S: ByteSink> BitstreamBuilder<S> {
             previous = cell.end;
         }
 
-        let cell_chunks: Vec<Vec<u8>> = cells.chunks(self.chunk_records).map(encode_cells).collect();
-        let fact_chunks: Vec<Vec<u8>> = facts.chunks(self.chunk_records).map(encode_facts).collect();
+        let cell_chunks: Vec<Vec<u8>> =
+            cells.chunks(self.chunk_records).map(encode_cells).collect();
+        let fact_chunks: Vec<Vec<u8>> =
+            facts.chunks(self.chunk_records).map(encode_facts).collect();
         let location = Location {
             key: key.clone(),
             zone,
@@ -684,7 +701,9 @@ fn decode_cells(profile: &str, bytes: &[u8]) -> Result<Vec<BitCell>> {
     if version != METADATA_VERSION {
         return Err(Error::invalid_image(
             profile,
-            format!("backing states cell chunk version {version}, which this build has no reading of"),
+            format!(
+                "backing states cell chunk version {version}, which this build has no reading of"
+            ),
         ));
     }
     let (count, used) = read_varint(profile, bytes, at)?;
@@ -769,7 +788,9 @@ fn decode_facts(profile: &str, bytes: &[u8], known: &[&'static str]) -> Result<V
     if version != METADATA_VERSION {
         return Err(Error::invalid_image(
             profile,
-            format!("backing states fact chunk version {version}, which this build has no reading of"),
+            format!(
+                "backing states fact chunk version {version}, which this build has no reading of"
+            ),
         ));
     }
     let (count, used) = read_varint(profile, bytes, at)?;
@@ -800,7 +821,9 @@ fn decode_facts(profile: &str, bytes: &[u8], known: &[&'static str]) -> Result<V
             other => {
                 return Err(Error::invalid_image(
                     profile,
-                    format!("fact chunk states a kind {other}, which this version has no reading of"),
+                    format!(
+                        "fact chunk states a kind {other}, which this version has no reading of"
+                    ),
                 ));
             }
         };
@@ -829,8 +852,10 @@ mod tests {
     const C1541: &str = "c1541";
 
     fn policy() -> Provenance {
-        Provenance::new(C1541).note("clocked at the zone's declared cell, resyncing on \
-                                     every detected transition")
+        Provenance::new(C1541).note(
+            "clocked at the zone's declared cell, resyncing on \
+                                     every detected transition",
+        )
     }
 
     struct Bytes(Vec<u8>);
@@ -1013,6 +1038,9 @@ mod tests {
                 cells: 9
             }
         );
-        assert_eq!(facts[1].provenance().notes, ["longer than the encoding admits"]);
+        assert_eq!(
+            facts[1].provenance().notes,
+            ["longer than the encoding admits"]
+        );
     }
 }

@@ -738,7 +738,10 @@ fn read_observation(
     if transitions.len() < 100 {
         return None;
     }
-    let intervals: Vec<Tick> = transitions.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    let intervals: Vec<Tick> = transitions
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect();
     let cell = derive_cell(&intervals, &profile.encoding)?;
     let encoding = &profile.encoding;
 
@@ -746,7 +749,10 @@ fn read_observation(
         .iter()
         .map(|&interval| classify(interval, cell, encoding))
         .collect();
-    let resolved = multiples.iter().filter(|multiple| multiple.is_some()).count();
+    let resolved = multiples
+        .iter()
+        .filter(|multiple| multiple.is_some())
+        .count();
     let mut population = vec![0u64; encoding.cell_multiples.len()];
     for multiple in multiples.iter().flatten() {
         if let Some(at) = encoding
@@ -947,8 +953,7 @@ fn read_location(
             fingerprint: Vec::new(),
             self_spread: u64::MAX,
             refusal: Some(
-                "no interval population resolves into this family's cell multiples"
-                    .to_owned(),
+                "no interval population resolves into this family's cell multiples".to_owned(),
             ),
         });
     }
@@ -958,7 +963,10 @@ fn read_location(
         .iter()
         .map(|reading| u64::from(reading.landmarks) / per_record)
         .collect();
-    let mut bits: Vec<u64> = readings.iter().filter_map(|reading| reading.record_bits).collect();
+    let mut bits: Vec<u64> = readings
+        .iter()
+        .filter_map(|reading| reading.record_bits)
+        .collect();
     let mut deviations: Vec<u64> = readings
         .iter()
         .map(|reading| reading.record_bits_deviation)
@@ -973,9 +981,8 @@ fn read_location(
     let mut projected: Vec<u64> = readings
         .iter()
         .map(|reading| {
-            let numerator = reading.cell_numerator
-                * u128::from(profile.rotation.cycles_per_rotation)
-                * 1000;
+            let numerator =
+                reading.cell_numerator * u128::from(profile.rotation.cycles_per_rotation) * 1000;
             let denominator = reading.cell_denominator * u128::from(reading.span.max(1));
             u64::try_from(numerator / denominator.max(1)).unwrap_or(u64::MAX)
         })
@@ -1205,11 +1212,7 @@ pub(crate) fn recognize(capture: &FluxCapture) -> Result<Vec<Verdict>> {
                 "no enrolled drive profile claims this capture; {} {} consulted and \
                  none recognized a location it declares",
                 enrolled().len(),
-                if enrolled().len() == 1 {
-                    "was"
-                } else {
-                    "were"
-                }
+                if enrolled().len() == 1 { "was" } else { "were" }
             ),
         ));
     }
@@ -1600,7 +1603,10 @@ mod tests {
             .iter()
             .map(|zone| (zone.first_location, zone.last_location, zone.records))
             .collect();
-        assert_eq!(zones, [(1, 17, 21), (18, 24, 19), (25, 30, 18), (31, 35, 17)]);
+        assert_eq!(
+            zones,
+            [(1, 17, 21), (18, 24, 19), (25, 30, 18), (31, 35, 17)]
+        );
 
         // And each zone's cell follows from its rate and the clock,
         // exactly: 52, 56, 60 and 64 cycles.

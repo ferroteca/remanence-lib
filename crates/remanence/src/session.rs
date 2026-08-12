@@ -202,10 +202,7 @@ fn unknown_filesystem() -> Layer {
 /// neither. There was a `match` on a media-kind string here once, which
 /// is exactly the string-named rule P12 keeps out of orchestration and
 /// the reason P14's catalog is declarative.
-fn physical_media_from_descriptor(
-    descriptor: &ImageFormatDescriptor,
-    current_bytes: u64,
-) -> Layer {
+fn physical_media_from_descriptor(descriptor: &ImageFormatDescriptor, current_bytes: u64) -> Layer {
     let media = descriptor.media;
     let expected_bytes = descriptor.disk.map(|disk| disk.expected_size());
     Layer {
@@ -218,9 +215,9 @@ fn physical_media_from_descriptor(
             current_bytes: Some(current_bytes),
             expected_bytes,
         },
-        layout: LayerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(
-            DiskLayout::from_descriptor(descriptor),
-        )),
+        layout: LayerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(DiskLayout::from_descriptor(
+            descriptor,
+        ))),
     }
 }
 
@@ -297,13 +294,16 @@ pub(crate) fn identify_medium(
             ImageIdentification::Unknown { evidence } => {
                 archive_evidence.extend(evidence);
                 return Identification {
-                    layers: layers_with(layers, vec![
-                        unknown_image(SizeInformation {
-                            current_bytes: Some(current_bytes),
-                            expected_bytes: None,
-                        }),
-                        unknown_filesystem(),
-                    ]),
+                    layers: layers_with(
+                        layers,
+                        vec![
+                            unknown_image(SizeInformation {
+                                current_bytes: Some(current_bytes),
+                                expected_bytes: None,
+                            }),
+                            unknown_filesystem(),
+                        ],
+                    ),
                     modified: modified,
                     evidence: archive_evidence,
                 };
@@ -478,10 +478,7 @@ mod tests {
             }
         );
 
-        let filesystem = identification
-            .layers
-            .last()
-            .expect("filesystem layer");
+        let filesystem = identification.layers.last().expect("filesystem layer");
         assert_eq!(filesystem.kind, LayerKind::Filesystem);
         assert_eq!(filesystem.id, "unknown");
 
@@ -502,10 +499,7 @@ mod tests {
         assert_eq!(image.kind, LayerKind::Image);
         assert_eq!(image.id, "h8d");
 
-        let filesystem = identification
-            .layers
-            .last()
-            .expect("filesystem layer");
+        let filesystem = identification.layers.last().expect("filesystem layer");
         assert_eq!(filesystem.kind, LayerKind::Filesystem);
         assert_eq!(filesystem.id, "hdos");
         assert_eq!(filesystem.name, "Heath Disk Operating System");
@@ -528,13 +522,11 @@ mod tests {
 
         // A one-extent working set (P27's declared bound at its floor):
         // identification still walks every layer correctly.
-        let disk = crate::disk::MediaState::open_with_cache(&path, AccessIntent::Read, 1).expect("disk opens");
+        let disk = crate::disk::MediaState::open_with_cache(&path, AccessIntent::Read, 1)
+            .expect("disk opens");
         let identification = disk.identify();
         assert_eq!(identification.layers[0].id, "h8d");
-        assert_eq!(
-            identification.layers.last().expect("filesystem").id,
-            "hdos"
-        );
+        assert_eq!(identification.layers.last().expect("filesystem").id, "hdos");
         let mut probe = [0u8; 4];
         disk.read_at(128, &mut probe).expect("reads");
         assert_eq!(&probe, b"HDOS");
@@ -551,7 +543,9 @@ mod tests {
         // A four-extent bound under a sequential scan: the predictive
         // reader races ahead while eviction churns behind, and the
         // results must be identical to an unbounded, unthreaded read.
-        let disk = crate::disk::MediaState::open_with_cache(&path, AccessIntent::Read, 4 * 64 * 1024).expect("opens");
+        let disk =
+            crate::disk::MediaState::open_with_cache(&path, AccessIntent::Read, 4 * 64 * 1024)
+                .expect("opens");
         let mut out = vec![0u8; bytes.len()];
         let chunk = 64 * 1024;
         for start in (0..bytes.len()).step_by(chunk) {
@@ -582,10 +576,7 @@ mod tests {
         assert_eq!(image.size.expected_bytes, None);
         assert_eq!(image.layout, LayerLayout::Unknown);
 
-        let filesystem = identification
-            .layers
-            .last()
-            .expect("filesystem layer");
+        let filesystem = identification.layers.last().expect("filesystem layer");
         assert_eq!(filesystem.kind, LayerKind::Filesystem);
         assert_eq!(filesystem.id, "unknown");
         assert_eq!(filesystem.name, "Unknown filesystem");

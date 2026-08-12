@@ -26,8 +26,8 @@ use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 
 use remanence::{
-    AttachmentId, DiskLayout, ErrorCategory, Format, Identification, Layer, LayerKind,
-    LayerLayout, MediaId, PhysicalMediaLayout, SectorLayout, Session,
+    AttachmentId, DiskLayout, ErrorCategory, Format, Identification, Layer, LayerKind, LayerLayout,
+    MediaId, PhysicalMediaLayout, SectorLayout, Session,
 };
 
 /// Stable, machine-readable classification of a library refusal. A fallible
@@ -186,9 +186,11 @@ impl DiskView {
     fn new(layout: &DiskLayout) -> Self {
         let (sector_layout, sectors_per_track, tracks) = match &layout.sectors {
             SectorLayout::Unknown => (RemanenceSectorLayoutKind::Unknown, 0, Vec::new()),
-            SectorLayout::Fixed { sectors_per_track } => {
-                (RemanenceSectorLayoutKind::Fixed, *sectors_per_track, Vec::new())
-            }
+            SectorLayout::Fixed { sectors_per_track } => (
+                RemanenceSectorLayoutKind::Fixed,
+                *sectors_per_track,
+                Vec::new(),
+            ),
             SectorLayout::Variable { tracks } => (
                 RemanenceSectorLayoutKind::Variable,
                 0,
@@ -347,9 +349,6 @@ pub unsafe extern "C" fn remanence_string_free(string: *mut c_char) {
     }
 }
 
-
-
-
 /// This device's attachment identity — `hdd0` and the like. Owned by the
 /// view; do not free.
 #[unsafe(no_mangle)]
@@ -503,7 +502,11 @@ fn families() -> &'static [FamilyView] {
                 provenance: to_cstring(family.provenance()),
                 kind_of: family.kind_of().map(|parent| to_cstring(parent.id())),
                 slot_prefix: family.slot_prefix().map(to_cstring),
-                media: family.accepted_media().into_iter().map(to_cstring).collect(),
+                media: family
+                    .accepted_media()
+                    .into_iter()
+                    .map(to_cstring)
+                    .collect(),
                 flux_path: family.flux_path().map(to_cstring),
             })
             .collect()
@@ -765,8 +768,9 @@ pub unsafe extern "C" fn remanence_discovery_image_format(
 pub unsafe extern "C" fn remanence_discovery_image_format_name(
     discovery: *const RemanenceDiscovery,
 ) -> *const c_char {
-    unsafe { discovery.as_ref() }
-        .map_or(ptr::null(), |discovery| discovery.image_format_name.as_ptr())
+    unsafe { discovery.as_ref() }.map_or(ptr::null(), |discovery| {
+        discovery.image_format_name.as_ptr()
+    })
 }
 
 /// The image container format, as the device reader reports it.
@@ -971,7 +975,9 @@ pub unsafe extern "C" fn remanence_medium_path(medium: *const RemanenceMedium) -
 /// The resolved image path (the entry name for archive inputs), or null
 /// as above.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_medium_image_path(medium: *const RemanenceMedium) -> *const c_char {
+pub unsafe extern "C" fn remanence_medium_image_path(
+    medium: *const RemanenceMedium,
+) -> *const c_char {
     match unsafe { medium.as_ref() } {
         Some(handle) => handle
             .image_path
@@ -1060,7 +1066,9 @@ pub unsafe extern "C" fn remanence_medium_identify(
 
 /// Frees an identification handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_identification_free(identification: *mut RemanenceIdentification) {
+pub unsafe extern "C" fn remanence_identification_free(
+    identification: *mut RemanenceIdentification,
+) {
     if !identification.is_null() {
         drop(unsafe { Box::from_raw(identification) });
     }
@@ -1117,8 +1125,7 @@ pub unsafe extern "C" fn remanence_layer_id(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    unsafe { layer_view(identification, index) }
-        .map_or(ptr::null(), |layer| layer.id.as_ptr())
+    unsafe { layer_view(identification, index) }.map_or(ptr::null(), |layer| layer.id.as_ptr())
 }
 
 /// The layer's human-readable name.
@@ -1127,8 +1134,7 @@ pub unsafe extern "C" fn remanence_layer_name(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    unsafe { layer_view(identification, index) }
-        .map_or(ptr::null(), |layer| layer.name.as_ptr())
+    unsafe { layer_view(identification, index) }.map_or(ptr::null(), |layer| layer.name.as_ptr())
 }
 
 /// Detection confidence, 0-100.
@@ -1307,8 +1313,7 @@ pub unsafe extern "C" fn remanence_layer_disk_media_type(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    unsafe { disk_view(identification, index) }
-        .map_or(ptr::null(), |disk| disk.media_type.as_ptr())
+    unsafe { disk_view(identification, index) }.map_or(ptr::null(), |disk| disk.media_type.as_ptr())
 }
 
 /// Disk layout: sector size in bytes; returns false when unknown.
@@ -1350,8 +1355,9 @@ pub unsafe extern "C" fn remanence_layer_disk_sector_layout_kind(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> RemanenceSectorLayoutKind {
-    unsafe { disk_view(identification, index) }
-        .map_or(RemanenceSectorLayoutKind::Unknown, |disk| disk.sector_layout)
+    unsafe { disk_view(identification, index) }.map_or(RemanenceSectorLayoutKind::Unknown, |disk| {
+        disk.sector_layout
+    })
 }
 
 /// Disk layout: sectors per track for fixed layouts; 0 otherwise.
@@ -1457,8 +1463,8 @@ pub unsafe extern "C" fn remanence_layer_fs_length_bytes(
 // files with a commit point.
 
 use remanence::{
-    AccessIntent, AccessMode, DeviceFamily, DiskContent, DiskFormat, Entry, EntryKind,
-    RegionRole, StorageDevice, VolumeId, VolumeOrigin,
+    AccessIntent, AccessMode, DeviceFamily, DiskContent, DiskFormat, Entry, EntryKind, RegionRole,
+    StorageDevice, VolumeId, VolumeOrigin,
 };
 
 /// The caller's declared intent when opening a disk (P7).
@@ -1585,11 +1591,7 @@ unsafe fn medium_view(session: *mut RemanenceSession, id: MediaId) -> *mut Reman
     });
     view.refresh();
     handle.media.push(view);
-    handle
-        .media
-        .last_mut()
-        .expect("just pushed")
-        .as_mut() as *mut RemanenceMedium
+    handle.media.last_mut().expect("just pushed").as_mut() as *mut RemanenceMedium
 }
 
 /// A borrowed view of one machine in a session.
@@ -1742,8 +1744,7 @@ fn claim_class(claim: remanence::Claim) -> RemanenceClaim {
 pub unsafe extern "C" fn remanence_assurance_claim(
     assurance: *const RemanenceAssurance,
 ) -> RemanenceClaim {
-    unsafe { assurance.as_ref() }
-        .map_or(RemanenceClaim::LibraryOpened, |assurance| assurance.claim)
+    unsafe { assurance.as_ref() }.map_or(RemanenceClaim::LibraryOpened, |assurance| assurance.claim)
 }
 
 /// How many concrete formats a load may declare.
@@ -1940,11 +1941,7 @@ pub unsafe extern "C" fn remanence_session_media_id(
     index: usize,
 ) -> u64 {
     match unsafe { session.as_ref() } {
-        Some(handle) => handle
-            .session
-            .media()
-            .get(index)
-            .map_or(0, |id| id.value()),
+        Some(handle) => handle.session.media().get(index).map_or(0, |id| id.value()),
         None => 0,
     }
 }
@@ -2171,9 +2168,7 @@ pub unsafe extern "C" fn remanence_session_release_device(
 
 /// How many devices the session's anonymous machine holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_device_count(
-    session: *const RemanenceSession,
-) -> usize {
+pub unsafe extern "C" fn remanence_session_device_count(session: *const RemanenceSession) -> usize {
     unsafe { session.as_ref() }.map_or(0, |handle| handle.session.devices().len())
 }
 
@@ -2497,9 +2492,7 @@ pub unsafe extern "C" fn remanence_machine_compose_dos_letters(
 
 /// How many devices this machine holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_device_count(
-    machine: *const RemanenceMachine,
-) -> usize {
+pub unsafe extern "C" fn remanence_machine_device_count(machine: *const RemanenceMachine) -> usize {
     unsafe { machine.as_ref() }
         .and_then(RemanenceMachine::machine)
         .map_or(0, |machine| machine.devices().len())
@@ -2785,7 +2778,9 @@ unsafe fn device_view(
 /// (P28). `remanence_assurance_access_mode` reports the same value beside
 /// the reason for it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_medium_mode(medium: *const RemanenceMedium) -> RemanenceAccessMode {
+pub unsafe extern "C" fn remanence_medium_mode(
+    medium: *const RemanenceMedium,
+) -> RemanenceAccessMode {
     unsafe { medium.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |handle| {
         access_mode(
             handle
@@ -2876,8 +2871,9 @@ pub unsafe extern "C" fn remanence_assurance_free(assurance: *mut RemanenceAssur
 pub unsafe extern "C" fn remanence_assurance_outcome(
     assurance: *const RemanenceAssurance,
 ) -> RemanenceAssuranceOutcome {
-    unsafe { assurance.as_ref() }
-        .map_or(RemanenceAssuranceOutcome::Verified, |assurance| assurance.outcome)
+    unsafe { assurance.as_ref() }.map_or(RemanenceAssuranceOutcome::Verified, |assurance| {
+        assurance.outcome
+    })
 }
 
 /// The stable condition that narrowed this session — `source-truncated`
@@ -2929,8 +2925,8 @@ pub unsafe extern "C" fn remanence_assurance_readable(
     start_out: *mut u64,
     end_out: *mut u64,
 ) -> bool {
-    let Some(range) = (unsafe { assurance.as_ref() })
-        .and_then(|assurance| assurance.readable.get(index))
+    let Some(range) =
+        (unsafe { assurance.as_ref() }).and_then(|assurance| assurance.readable.get(index))
     else {
         return false;
     };
@@ -2960,7 +2956,9 @@ pub unsafe extern "C" fn remanence_assurance_declared_bytes(
 ) -> bool {
     unsafe {
         write_opt_u64(
-            assurance.as_ref().and_then(|assurance| assurance.declared_bytes),
+            assurance
+                .as_ref()
+                .and_then(|assurance| assurance.declared_bytes),
             out,
         )
     }
@@ -2974,7 +2972,9 @@ pub unsafe extern "C" fn remanence_assurance_observed_bytes(
 ) -> bool {
     unsafe {
         write_opt_u64(
-            assurance.as_ref().and_then(|assurance| assurance.observed_bytes),
+            assurance
+                .as_ref()
+                .and_then(|assurance| assurance.observed_bytes),
             out,
         )
     }
@@ -3026,8 +3026,8 @@ pub unsafe extern "C" fn remanence_medium_format(
     medium: *const RemanenceMedium,
     format_out: *mut RemanenceDiskFormat,
 ) -> bool {
-    let Some(format) = (unsafe { medium.as_ref() })
-        .and_then(|handle| handle.medium()?.format().ok())
+    let Some(format) =
+        (unsafe { medium.as_ref() }).and_then(|handle| handle.medium()?.format().ok())
     else {
         return false;
     };
@@ -4905,7 +4905,11 @@ impl RemanenceCaptureSet {
                     .collect(),
             })
             .collect();
-        let evidence = report.evidence.iter().map(|line| to_cstring(line)).collect();
+        let evidence = report
+            .evidence
+            .iter()
+            .map(|line| to_cstring(line))
+            .collect();
         let path = to_cstring(&set.path().display().to_string());
         let subtree = set.subtree().map(to_cstring);
         let format_id = to_cstring(set.format_id());
@@ -5005,7 +5009,15 @@ pub unsafe extern "C" fn remanence_capture_set_open_with_cache(
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceCaptureSet {
-    unsafe { open_capture_set(path, Some(cache_bytes), error_category_out, error_out, error_rule_out) }
+    unsafe {
+        open_capture_set(
+            path,
+            Some(cache_bytes),
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
 }
 
 /// Frees a capture-set handle, releasing its claim on the archive and
@@ -5483,14 +5495,22 @@ pub struct RemanenceRecognition {
 impl RemanenceRecognition {
     fn new(recognition: Recognition) -> Self {
         let pinned = recognition.pinned.as_deref().map(to_cstring);
-        let evidence = recognition.evidence.iter().map(|line| to_cstring(line)).collect();
+        let evidence = recognition
+            .evidence
+            .iter()
+            .map(|line| to_cstring(line))
+            .collect();
         let verdicts = recognition
             .verdicts
             .iter()
             .map(|verdict| VerdictView {
                 profile_id: to_cstring(&verdict.profile_id),
                 profile_name: to_cstring(&verdict.profile_name),
-                evidence: verdict.evidence.iter().map(|line| to_cstring(line)).collect(),
+                evidence: verdict
+                    .evidence
+                    .iter()
+                    .map(|line| to_cstring(line))
+                    .collect(),
                 artifacts: verdict
                     .locations
                     .iter()
@@ -5501,7 +5521,7 @@ impl RemanenceRecognition {
                     .iter()
                     .map(|location| location.refusal.as_deref().map(to_cstring))
                     .collect(),
-                            })
+            })
             .collect();
         Self {
             recognition,
@@ -5685,8 +5705,7 @@ pub unsafe extern "C" fn remanence_recognition_verdict_evidence_count(
     recognition: *const RemanenceRecognition,
     verdict: usize,
 ) -> usize {
-    unsafe { recognition_verdict(recognition, verdict) }
-        .map_or(0, |(_, view)| view.evidence.len())
+    unsafe { recognition_verdict(recognition, verdict) }.map_or(0, |(_, view)| view.evidence.len())
 }
 
 /// One of those lines, or null when out of range.
@@ -5881,7 +5900,11 @@ impl P64View {
                 .iter()
                 .map(|loss| to_cstring(&loss.detail))
                 .collect(),
-            evidence: report.evidence.iter().map(|line| to_cstring(line)).collect(),
+            evidence: report
+                .evidence
+                .iter()
+                .map(|line| to_cstring(line))
+                .collect(),
         }
     }
 }
@@ -5965,7 +5988,15 @@ pub unsafe extern "C" fn remanence_p64_image_open_with_cache(
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
 ) -> *mut RemanenceP64Image {
-    unsafe { open_p64(path, Some(cache_bytes), error_category_out, error_out, error_rule_out) }
+    unsafe {
+        open_p64(
+            path,
+            Some(cache_bytes),
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
 }
 
 /// Frees an image handle, releasing its claim on the file and discarding
@@ -5998,9 +6029,7 @@ pub unsafe extern "C" fn remanence_p64_image_access_mode(
 /// How many bytes of private session storage the decoded medium
 /// occupies, and how much of that is currently resident.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_p64_image_backing_bytes(
-    image: *const RemanenceP64Image,
-) -> u64 {
+pub unsafe extern "C" fn remanence_p64_image_backing_bytes(image: *const RemanenceP64Image) -> u64 {
     unsafe { image.as_ref() }.map_or(0, |image| image.image.backing_bytes())
 }
 
@@ -6038,8 +6067,7 @@ pub unsafe extern "C" fn remanence_p64_format_id(
     image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }
-        .map_or(ptr::null(), |(_, view)| view.format_id.as_ptr())
+    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| view.format_id.as_ptr())
 }
 
 #[unsafe(no_mangle)]
@@ -6083,8 +6111,7 @@ pub unsafe extern "C" fn remanence_p64_profile_id(
     image: *const RemanenceP64Image,
     report: *const RemanenceP64Report,
 ) -> *const c_char {
-    unsafe { p64_reported(image, report) }
-        .map_or(ptr::null(), |(_, view)| view.profile_id.as_ptr())
+    unsafe { p64_reported(image, report) }.map_or(ptr::null(), |(_, view)| view.profile_id.as_ptr())
 }
 
 #[unsafe(no_mangle)]
@@ -6188,10 +6215,7 @@ pub unsafe extern "C" fn remanence_p64_declared_loss_amount(
     index: usize,
 ) -> u64 {
     unsafe { p64_reported(image, report) }.map_or(0, |(report, _)| {
-        report
-            .declared_loss
-            .get(index)
-            .map_or(0, |loss| loss.count)
+        report.declared_loss.get(index).map_or(0, |loss| loss.count)
     })
 }
 
@@ -7681,7 +7705,7 @@ pub unsafe extern "C" fn remanence_medium_inspect(
                 device_image_format: to_cstring(&report.device.image_format),
                 device_length_bytes: report.device.length_bytes,
                 device_media_type: to_cstring(&report.device.media_type),
-            device_authoritative_layer: to_cstring(&report.device.authoritative_layer),
+                device_authoritative_layer: to_cstring(&report.device.authoritative_layer),
                 device_active_layer: to_cstring(&report.device.active_layer),
                 content,
                 content_evidence,
@@ -7853,7 +7877,9 @@ pub unsafe extern "C" fn remanence_report_partition_schema_evidence(
 /// How many regions the schema declares. Every declared region is
 /// reported, refused ones included.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_report_region_count(report: *const RemanenceDiskReport) -> usize {
+pub unsafe extern "C" fn remanence_report_region_count(
+    report: *const RemanenceDiskReport,
+) -> usize {
     unsafe { report.as_ref() }.map_or(0, |report| report.regions.len())
 }
 
@@ -7978,7 +8004,9 @@ pub unsafe extern "C" fn remanence_report_region_issue(
 
 /// How many volumes were composed, whatever was recognized on them.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_report_volume_count(report: *const RemanenceDiskReport) -> usize {
+pub unsafe extern "C" fn remanence_report_volume_count(
+    report: *const RemanenceDiskReport,
+) -> usize {
     unsafe { report.as_ref() }.map_or(0, |report| report.volumes.len())
 }
 
@@ -8035,7 +8063,11 @@ pub unsafe extern "C" fn remanence_report_volume_origin_region_id(
     region_index: usize,
 ) -> u64 {
     unsafe { volume_record_view(report, index) }.map_or(0, |volume| {
-        volume.origin_regions.get(region_index).copied().unwrap_or(0)
+        volume
+            .origin_regions
+            .get(region_index)
+            .copied()
+            .unwrap_or(0)
     })
 }
 
@@ -8244,8 +8276,7 @@ pub unsafe extern "C" fn remanence_report_filesystem_cluster_bytes(
     index: usize,
     value_out: *mut u64,
 ) -> bool {
-    let Some(value) =
-        (unsafe { filesystem_view(report, index) }).and_then(|fs| fs.cluster_bytes)
+    let Some(value) = (unsafe { filesystem_view(report, index) }).and_then(|fs| fs.cluster_bytes)
     else {
         return false;
     };
@@ -8262,8 +8293,7 @@ pub unsafe extern "C" fn remanence_report_filesystem_cluster_count(
     index: usize,
     value_out: *mut u64,
 ) -> bool {
-    let Some(value) =
-        (unsafe { filesystem_view(report, index) }).and_then(|fs| fs.cluster_count)
+    let Some(value) = (unsafe { filesystem_view(report, index) }).and_then(|fs| fs.cluster_count)
     else {
         return false;
     };
@@ -8857,10 +8887,9 @@ pub unsafe extern "C" fn remanence_drive_map_outcome(
     map: *const RemanenceDriveMap,
     index: usize,
 ) -> RemanenceLetterOutcome {
-    unsafe { mapping_view(map, index) }
-        .map_or(RemanenceLetterOutcome::Undetermined, |mapping| {
-            mapping.outcome
-        })
+    unsafe { mapping_view(map, index) }.map_or(RemanenceLetterOutcome::Undetermined, |mapping| {
+        mapping.outcome
+    })
 }
 
 /// The asserted device this letter names — `floppy`, `fixed-disk` or
@@ -9342,9 +9371,7 @@ pub unsafe extern "C" fn remanence_image_write(
 
 /// Frees a write report.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_report_free(
-    report: *mut RemanenceImageWriteReport,
-) {
+pub unsafe extern "C" fn remanence_image_write_report_free(report: *mut RemanenceImageWriteReport) {
     if !report.is_null() {
         drop(unsafe { Box::from_raw(report) });
     }
@@ -10010,7 +10037,11 @@ impl ReconstructionView {
                 .iter()
                 .map(|loss| to_cstring(&loss.detail))
                 .collect(),
-            evidence: report.evidence.iter().map(|line| to_cstring(line)).collect(),
+            evidence: report
+                .evidence
+                .iter()
+                .map(|line| to_cstring(line))
+                .collect(),
         }
     }
 }
@@ -10046,19 +10077,18 @@ pub unsafe extern "C" fn remanence_capture_set_plan_reconstruction(
         RemanenceRecordingSelection::Declared => {
             // An empty declaration is the caller's own, and is carried
             // rather than silently promoted to a measurement.
-            let positions = if policy.declared_positions.is_null()
-                || policy.declared_position_count == 0
-            {
-                Vec::new()
-            } else {
-                unsafe {
-                    std::slice::from_raw_parts(
-                        policy.declared_positions,
-                        policy.declared_position_count,
-                    )
-                }
-                .to_vec()
-            };
+            let positions =
+                if policy.declared_positions.is_null() || policy.declared_position_count == 0 {
+                    Vec::new()
+                } else {
+                    unsafe {
+                        std::slice::from_raw_parts(
+                            policy.declared_positions,
+                            policy.declared_position_count,
+                        )
+                    }
+                    .to_vec()
+                };
             RecordingSelection::Declared(positions)
         }
     };
@@ -10430,10 +10460,8 @@ mod tests {
     /// same condition as its rule (P5).
     #[test]
     fn the_c_surface_reports_a_degraded_medium_and_withholds_its_writes() {
-        let path = std::env::temp_dir().join(format!(
-            "remanence-ffi-degraded-{}.img",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("remanence-ffi-degraded-{}.img", std::process::id()));
         truncated_floppy(&path, 1_000_000);
 
         let session = unsafe { remanence_session_new() };
@@ -10458,7 +10486,10 @@ mod tests {
                 &mut rule,
             )
         };
-        assert!(!medium.is_null(), "a truncated source still loads, degraded");
+        assert!(
+            !medium.is_null(),
+            "a truncated source still loads, degraded"
+        );
 
         let assurance = unsafe { remanence_medium_assurance(medium) };
         assert_eq!(
@@ -10514,9 +10545,7 @@ mod tests {
 
         // Every mutation path carries the condition as its rule.
         assert!(
-            !unsafe {
-                remanence_medium_commit(medium, &mut category, &mut message, &mut rule)
-            },
+            !unsafe { remanence_medium_commit(medium, &mut category, &mut message, &mut rule) },
             "commit is denied"
         );
         assert_eq!(category, RemanenceErrorCategory::ReadOnly);

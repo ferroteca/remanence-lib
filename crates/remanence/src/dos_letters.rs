@@ -271,32 +271,24 @@ impl ResidentCondition {
                 "the machine declared LASTDRIVE={letter}, and no claimed rule \
                  models a ceiling: the letter this rule assigns sits above it"
             ),
-            Self::Subst => {
-                "the machine ran SUBST, which no claimed rule models: any \
+            Self::Subst => "the machine ran SUBST, which no claimed rule models: any \
                  letter it redirected is not the one the rule assigns"
-                    .to_owned()
-            }
-            Self::Join => {
-                "the machine ran JOIN, which no claimed rule models: a joined \
+                .to_owned(),
+            Self::Join => "the machine ran JOIN, which no claimed rule models: a joined \
                  drive is reachable as a directory of another and its own \
                  letter is not what the rule assigns"
-                    .to_owned()
-            }
-            Self::Assign => {
-                "the machine ran ASSIGN, which no claimed rule models: it \
+                .to_owned(),
+            Self::Assign => "the machine ran ASSIGN, which no claimed rule models: it \
                  redirects one letter to another wholesale"
-                    .to_owned()
-            }
+                .to_owned(),
             Self::BlockDeviceDriver => {
                 "the machine loaded a resident block-device driver, which no \
                  claimed rule models: it adds or displaces letters at boot"
                     .to_owned()
             }
-            Self::NetworkRedirector => {
-                "the machine loaded a network redirector, which no claimed \
+            Self::NetworkRedirector => "the machine loaded a network redirector, which no claimed \
                  rule models: it claims letters from a source no image holds"
-                    .to_owned()
-            }
+                .to_owned(),
         }
     }
 
@@ -375,7 +367,9 @@ impl DriveMap {
     /// What this letter names, or `None` where the machine had no drive
     /// at it.
     pub fn letter(&self, letter: char) -> Option<&DriveMapping> {
-        self.mappings.iter().find(|mapping| mapping.letter == letter)
+        self.mappings
+            .iter()
+            .find(|mapping| mapping.letter == letter)
     }
 
     /// How many letters the rules established — the count that excludes
@@ -546,7 +540,11 @@ impl<'a> DosMachine<'a> {
     /// `A:` and `B:`, which every claimed rule agrees on. A machine with
     /// no floppy drive has neither letter at all, and a machine with one
     /// has `B:` as the phantom of `A:`.
-    fn map_floppies(&self, letters: &mut BTreeMap<char, LetterOutcome>, provenance: &mut Vec<String>) {
+    fn map_floppies(
+        &self,
+        letters: &mut BTreeMap<char, LetterOutcome>,
+        provenance: &mut Vec<String>,
+    ) {
         for (slot, report) in &self.floppies {
             let device = MachineDevice::Floppy(*slot);
             let letter = if *slot == 0 { 'A' } else { 'B' };
@@ -774,7 +772,8 @@ fn merge_fixed_claims(
             break;
         };
 
-        let answers: Vec<Option<&Claim>> = claimed.iter().map(|claims| claims.get(position)).collect();
+        let answers: Vec<Option<&Claim>> =
+            claimed.iter().map(|claims| claims.get(position)).collect();
         let first = answers[0];
         if answers.iter().all(|answer| *answer == first) {
             let claim = first.expect("a position inside the widest rule's claims");
@@ -850,24 +849,20 @@ fn lettered_regions<'a>(
     report: &'a DiskReport,
     placement: &'a str,
 ) -> impl Iterator<Item = &'a RegionInfo> {
-    report
-        .regions
-        .iter()
-        .filter(move |region| {
-            region.declared_placement == placement
-                && region.role == RegionRole::Data
-                && DOS_PARTITION_TYPES.contains(&region.declared_type)
-        })
+    report.regions.iter().filter(move |region| {
+        region.declared_placement == placement
+            && region.role == RegionRole::Data
+            && DOS_PARTITION_TYPES.contains(&region.declared_type)
+    })
 }
 
 /// Whether this disk's extended partition is one the claimed variants
 /// follow. An extended partition the library reads and DOS did not is not a chain
 /// DOS lettered.
 fn follows_extended_chain(report: &DiskReport) -> bool {
-    report
-        .regions
-        .iter()
-        .any(|region| region.role == RegionRole::Structure && region.declared_type == DOS_EXTENDED_TYPE)
+    report.regions.iter().any(|region| {
+        region.role == RegionRole::Structure && region.declared_type == DOS_EXTENDED_TYPE
+    })
 }
 
 fn volume_on_region(report: &DiskReport, region: RegionId) -> Option<VolumeId> {
@@ -1045,9 +1040,18 @@ mod tests {
     fn an_unclaimed_variant_is_refused_by_name() {
         let error = DosAssignmentRule::from_name("ms-dos-3.3").expect_err("refused");
         let message = error.to_string();
-        assert!(message.contains("ms-dos-3.3"), "names what was asked: {message}");
-        assert!(message.contains("ms-dos-4"), "names what is claimed: {message}");
-        assert!(message.contains("ms-dos-5"), "names what is claimed: {message}");
+        assert!(
+            message.contains("ms-dos-3.3"),
+            "names what was asked: {message}"
+        );
+        assert!(
+            message.contains("ms-dos-4"),
+            "names what is claimed: {message}"
+        );
+        assert!(
+            message.contains("ms-dos-5"),
+            "names what is claimed: {message}"
+        );
     }
 
     #[test]
@@ -1071,8 +1075,14 @@ mod tests {
             "a letter is normalized as the DOS name seam normalizes a name"
         );
         assert!(ResidentCondition::parse("dblspace").is_err(), "unclaimed");
-        assert!(ResidentCondition::parse("lastdrive=").is_err(), "no ceiling");
-        assert!(ResidentCondition::parse("lastdrive=4").is_err(), "not a letter");
+        assert!(
+            ResidentCondition::parse("lastdrive=").is_err(),
+            "no ceiling"
+        );
+        assert!(
+            ResidentCondition::parse("lastdrive=4").is_err(),
+            "not a letter"
+        );
     }
 
     #[test]

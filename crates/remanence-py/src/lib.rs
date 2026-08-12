@@ -214,10 +214,7 @@ impl Layer {
                     Py::new(
                         py,
                         ArchiveLayout {
-                            path: layout
-                                .path
-                                .as_ref()
-                                .map(|path| path.display().to_string()),
+                            path: layout.path.as_ref().map(|path| path.display().to_string()),
                             entry_name: layout.entry_name.clone(),
                             compressed_size: layout.compressed_size,
                             uncompressed_size: layout.uncompressed_size,
@@ -1193,7 +1190,9 @@ impl Discovery {
     /// `image_format`.
     #[getter]
     fn format(&self) -> PyResult<&'static str> {
-        let format = self.read(remanence::Discovery::format)?.map_err(to_py_err)?;
+        let format = self
+            .read(remanence::Discovery::format)?
+            .map_err(to_py_err)?;
         Ok(match format {
             remanence::DiskFormat::Raw => "raw",
             remanence::DiskFormat::Qcow2 { .. } => "qcow2",
@@ -1462,10 +1461,7 @@ impl Session {
     fn load_discovery(&self, discovery: &Discovery) -> PyResult<Medium> {
         let discovered = discovery.take()?;
         let mut session = self.lock();
-        let id = session
-            .load_discovery(discovered)
-            .map_err(to_py_err)?
-            .id();
+        let id = session.load_discovery(discovered).map_err(to_py_err)?.id();
         drop(session);
         Ok(Medium {
             session: Arc::clone(&self.inner),
@@ -1477,11 +1473,7 @@ impl Session {
     /// loaded.
     #[getter]
     fn media(&self) -> Vec<u64> {
-        self.lock()
-            .media()
-            .iter()
-            .map(|id| id.value())
-            .collect()
+        self.lock().media().iter().map(|id| id.value()).collect()
     }
 
     /// The medium `media_id` names, or **`None`** — absence is an
@@ -2030,7 +2022,10 @@ impl Medium {
     /// `None` as above.
     #[getter]
     fn image_path(&self) -> PyResult<Option<String>> {
-        Ok(self.get()?.image_path().map(|path| path.display().to_string()))
+        Ok(self
+            .get()?
+            .image_path()
+            .map(|path| path.display().to_string()))
     }
 
     /// The resolved image's own size in bytes — the raw plane. Distinct
@@ -2051,7 +2046,9 @@ impl Medium {
         length: usize,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let mut buffer = vec![0u8; length];
-        self.get()?.read_at(offset, &mut buffer).map_err(to_py_err)?;
+        self.get()?
+            .read_at(offset, &mut buffer)
+            .map_err(to_py_err)?;
         Ok(PyBytes::new(py, &buffer))
     }
 
@@ -3519,10 +3516,7 @@ impl CaptureSet {
     /// per transition, and the fat track merged under measured
     /// agreement — and enumerates everything the image cannot carry in
     /// the capture's own terms.
-    fn plan_reconstruction(
-        &self,
-        policy: &ReconstructionPolicy,
-    ) -> PyResult<ReconstructionPlan> {
+    fn plan_reconstruction(&self, policy: &ReconstructionPolicy) -> PyResult<ReconstructionPlan> {
         let plan = self
             .get()?
             .plan_reconstruction(&policy.to_core()?)
@@ -4313,10 +4307,7 @@ impl SectorLocation {
     fn __repr__(&self) -> String {
         format!(
             "SectorLocation(half_track={}/{}, readable={}/{})",
-            self.half_track_numerator,
-            self.half_track_denominator,
-            self.readable,
-            self.headers
+            self.half_track_numerator, self.half_track_denominator, self.readable, self.headers
         )
     }
 }
@@ -4768,10 +4759,7 @@ impl P64Image {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "P64Image(half_tracks={})",
-            self.report.half_tracks.len()
-        )
+        format!("P64Image(half_tracks={})", self.report.half_tracks.len())
     }
 }
 

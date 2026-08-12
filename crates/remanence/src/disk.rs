@@ -30,21 +30,21 @@
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, OpenedImage};
+use crate::archive::ArchiveMedium;
 use crate::assurance::{self, Assurance, ReadBound, Shortfall};
 use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Claim, Device};
+use crate::device_family::DeviceFamily;
 use crate::error::{Error, Result};
-use crate::media::Format;
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::filesystem::Catalog;
 use crate::filesystem_catalog::FilesystemAdapter;
 use crate::journal;
 use crate::mbr::{self, Discovery};
-use crate::partition::{PartitionPool, PartitionScheme};
+use crate::media::Format;
 use crate::media_profile::MediaProfile;
+use crate::partition::{PartitionPool, PartitionScheme};
 use crate::session::{self, Identification, Layer};
-use crate::archive::ArchiveMedium;
-use crate::device_family::DeviceFamily;
 use crate::source::{self, ImageSource, ResolvedImage};
 
 use crate::report::{
@@ -265,7 +265,6 @@ pub(crate) struct MediaState {
     /// verb refuses until a fresh open reconciles the image.
     failed: Option<String>,
 }
-
 
 /// What occupies a device's slot: a medium of one of the two vantages
 /// the model claims.
@@ -597,11 +596,7 @@ impl MediaState {
     /// where the handle has a recoverable name and is absent where it
     /// does not; an interrupted commit is reconciled here as it is on
     /// the path journey, and only where there is a name to find one by.
-    pub(crate) fn load(
-        file: std::fs::File,
-        format: Format,
-        cache_bytes: u64,
-    ) -> Result<Self> {
+    pub(crate) fn load(file: std::fs::File, format: Format, cache_bytes: u64) -> Result<Self> {
         let resolved = source::resolve_handle(file, cache_bytes)?;
         let recovery = resolved
             .source_path
@@ -653,7 +648,11 @@ impl MediaState {
         cache_bytes: u64,
     ) -> Result<Self> {
         let path = resolved.source_path.clone();
-        let named = crate::media::named(path.as_deref().map(|path| path.to_string_lossy()).as_deref());
+        let named = crate::media::named(
+            path.as_deref()
+                .map(|path| path.to_string_lossy())
+                .as_deref(),
+        );
         let mode = resolved.source.mode();
 
         // One claim, two planes: the adapter opens the presented disk over
@@ -978,8 +977,8 @@ impl MediaState {
             .map(|volume| (volume.id, volume.start_bytes))
             .collect();
         for (volume, offset) in volumes {
-            let recognition =
-                FatVolume::open(&mut composed, offset).and_then(|fat| fat.recognized(&mut composed));
+            let recognition = FatVolume::open(&mut composed, offset)
+                .and_then(|fat| fat.recognized(&mut composed));
             report.filesystems.push(match recognition {
                 Ok(facts) => FilesystemInfo {
                     id: FilesystemId::on_volume(volume),
@@ -1047,12 +1046,7 @@ impl MediaState {
     /// or served in the part that happens to be present — including
     /// through the ranged form, where the requested span alone might sit
     /// inside the extent while the file does not.
-    fn require_whole(
-        &mut self,
-        offset: u64,
-        segments: &[&str],
-        path: &str,
-    ) -> Result<()> {
+    fn require_whole(&mut self, offset: u64, segments: &[&str], path: &str) -> Result<()> {
         let Some(bound) = self.bound else {
             return Ok(());
         };
@@ -1187,12 +1181,7 @@ impl MediaState {
     /// Writes a file into the extent starting at `offset`, an
     /// existing one overwritten and an existing directory refused.
     /// Buffered until [`MediaState::commit`].
-    pub(crate) fn write_file(
-        &mut self,
-        offset: u64,
-        path: &str,
-        contents: &[u8],
-    ) -> Result<()> {
+    pub(crate) fn write_file(&mut self, offset: u64, path: &str, contents: &[u8]) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
@@ -1268,9 +1257,7 @@ impl MediaState {
         // The durability boundary (P9): the bytes the apply will
         // overwrite are durable in the recovery journal — streamed
         // there, never held whole — before the first of them changes.
-        if let Err(error) =
-            journal::record(&journal_path, self.virtual_disk.host_mut(), &capture)
-        {
+        if let Err(error) = journal::record(&journal_path, self.virtual_disk.host_mut(), &capture) {
             let _ = journal::retire(&journal_path);
             self.virtual_disk.restore_cache(cache_snapshot);
             return Err(error);
@@ -1301,11 +1288,7 @@ impl MediaState {
                 crash_test_process_at("journal-retired");
             });
         if let Err(error) = applied {
-            match journal::reconcile(
-                &journal_path,
-                self.virtual_disk.host_mut(),
-                &image_path,
-            ) {
+            match journal::reconcile(&journal_path, self.virtual_disk.host_mut(), &image_path) {
                 Ok(()) => {
                     self.virtual_disk.restore_cache(cache_snapshot);
                 }
@@ -1424,8 +1407,7 @@ mod tests {
             Some("REMANENCE".to_owned())
         );
 
-        disk.make_directory(volume, "GUEST")
-            .expect("mkdir");
+        disk.make_directory(volume, "GUEST").expect("mkdir");
         disk.write_file(volume, "GUEST/PAYLOAD.BIN", b"through the mapping")
             .expect("write");
         assert_eq!(
@@ -1434,11 +1416,7 @@ mod tests {
                 .map(|entry| entry.size_bytes),
             Some(b"through the mapping".len() as u64)
         );
-        assert_eq!(
-            disk.stat(volume, "GUEST/ABSENT.BIN")
-                .expect("stat"),
-            None
-        );
+        assert_eq!(disk.stat(volume, "GUEST/ABSENT.BIN").expect("stat"), None);
         disk.commit().expect("commit");
         drop(disk);
 
@@ -1521,13 +1499,7 @@ mod tests {
         let before = std::fs::metadata(&path).expect("metadata").len();
 
         let mut disk = MediaState::open(&path, AccessIntent::Write).expect("disk opens");
-        assert_eq!(
-            disk.format(),
-            DiskFormat::Vdi {
-                major: 1,
-                minor: 1
-            }
-        );
+        assert_eq!(disk.format(), DiskFormat::Vdi { major: 1, minor: 1 });
         assert_eq!(disk.size(), virtual_size);
         assert!(
             disk.image_size_bytes() < virtual_size,
@@ -1612,9 +1584,8 @@ mod tests {
     #[ignore]
     fn crash_commit_child() {
         let path = std::env::var_os(CRASH_IMAGE).expect("the parent supplies an image path");
-        let mut disk =
-            MediaState::open(std::path::PathBuf::from(path), AccessIntent::Write)
-                .expect("child opens");
+        let mut disk = MediaState::open(std::path::PathBuf::from(path), AccessIntent::Write)
+            .expect("child opens");
         let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("child overwrites");
@@ -1851,8 +1822,7 @@ mod tests {
                 .expect("writes a chunk");
         }
         assert_eq!(
-            disk.read_file(volume, "BIG.BIN")
-                .expect("whole read"),
+            disk.read_file(volume, "BIG.BIN").expect("whole read"),
             contents,
             "the streamed write equals a whole-file write"
         );
@@ -1861,19 +1831,13 @@ mod tests {
         let mut ranged = vec![0u8; contents.len()];
         for start in (0..contents.len()).step_by(7_777) {
             let end = (start + 7_777).min(contents.len());
-            disk.read_file_at(
-                volume,
-                "BIG.BIN",
-                start as u64,
-                &mut ranged[start..end],
-            )
-            .expect("reads a range");
+            disk.read_file_at(volume, "BIG.BIN", start as u64, &mut ranged[start..end])
+                .expect("reads a range");
         }
         assert_eq!(ranged, contents);
 
         // Shrink keeps the prefix; growth reads as zeros, never stale bytes.
-        disk.resize_file(volume, "BIG.BIN", 100)
-            .expect("shrinks");
+        disk.resize_file(volume, "BIG.BIN", 100).expect("shrinks");
         disk.resize_file(volume, "BIG.BIN", 20_000)
             .expect("regrows");
         let back = disk.read_file(volume, "BIG.BIN").expect("reads");
@@ -1897,9 +1861,7 @@ mod tests {
         disk.commit().expect("commits");
         drop(disk);
         let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
-        let back = reopened
-            .read_file(volume, "BIG.BIN")
-            .expect("reads");
+        let back = reopened.read_file(volume, "BIG.BIN").expect("reads");
         assert_eq!(back.len(), 20_000);
         assert_eq!(&back[..100], &contents[..100]);
         drop(reopened);
@@ -1924,9 +1886,7 @@ mod tests {
 
         let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
-            reopened
-                .read_file(volume, "OLD.BIN")
-                .expect("reads"),
+            reopened.read_file(volume, "OLD.BIN").expect("reads"),
             new_content()
         );
         drop(reopened);
@@ -1952,9 +1912,7 @@ mod tests {
 
         let mut reopened = MediaState::open(&path, AccessIntent::Read).expect("reopens");
         assert_eq!(
-            reopened
-                .read_file(volume, "NEW.BIN")
-                .expect("reads"),
+            reopened.read_file(volume, "NEW.BIN").expect("reads"),
             new_content()
         );
         drop(reopened);
@@ -1978,9 +1936,7 @@ mod tests {
         assert!(!sidecar.exists(), "the torn sidecar is discarded");
         let volume = only_extent(&mut reopened);
         assert_eq!(
-            reopened
-                .read_file(volume, "OLD.BIN")
-                .expect("reads"),
+            reopened.read_file(volume, "OLD.BIN").expect("reads"),
             old_content()
         );
         drop(reopened);
@@ -2015,9 +1971,7 @@ mod tests {
             MediaState::open(&path, AccessIntent::Write).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
         assert_eq!(
-            reopened
-                .read_file(volume, "OLD.BIN")
-                .expect("reads"),
+            reopened.read_file(volume, "OLD.BIN").expect("reads"),
             old_content(),
             "the image reconciles to wholly the old state"
         );
@@ -2031,9 +1985,7 @@ mod tests {
         drop(reopened);
         let mut committed = MediaState::open(&path, AccessIntent::Read).expect("opens");
         assert_eq!(
-            committed
-                .read_file(volume, "OLD.BIN")
-                .expect("reads"),
+            committed.read_file(volume, "OLD.BIN").expect("reads"),
             new_content()
         );
         drop(committed);
@@ -2073,9 +2025,7 @@ mod tests {
             "the interrupted commit's file never existed"
         );
         assert_eq!(
-            reopened
-                .read_file(volume, "OLD.BIN")
-                .expect("reads"),
+            reopened.read_file(volume, "OLD.BIN").expect("reads"),
             old_content()
         );
         drop(reopened);
@@ -2121,14 +2071,9 @@ mod tests {
             MediaState::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
         let volume = only_extent(&mut reopened);
+        assert_eq!(reopened.stat(volume, "NEW.BIN").expect("stats"), None);
         assert_eq!(
-            reopened.stat(volume, "NEW.BIN").expect("stats"),
-            None
-        );
-        assert_eq!(
-            reopened
-                .read_file(volume, "OLD.BIN")
-                .expect("reads"),
+            reopened.read_file(volume, "OLD.BIN").expect("reads"),
             old_content()
         );
         drop(reopened);
@@ -2182,9 +2127,7 @@ mod tests {
             MediaState::open(&top, AccessIntent::Read).expect("reconciles and composes");
         assert!(!crate::journal::sidecar_path(&base).exists());
         assert_eq!(
-            chained
-                .read_file(volume, "OLD.BIN")
-                .expect("reads"),
+            chained.read_file(volume, "OLD.BIN").expect("reads"),
             old_content()
         );
         drop(chained);

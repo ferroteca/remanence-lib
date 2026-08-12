@@ -235,7 +235,10 @@ fn a_medium_in_the_wrong_device_is_refused_naming_both_sides() {
         .expect_err("a disk image is no archive");
     let message = error.to_string();
     assert!(message.contains("arc0"), "names the device: {message}");
-    assert!(message.contains("archive medium"), "names the family's media: {message}");
+    assert!(
+        message.contains("archive medium"),
+        "names the family's media: {message}"
+    );
 
     // And an archive is not what a hard disk is served.
     let arc = zip_medium(&mut session, &archive);
@@ -275,7 +278,10 @@ fn a_namespace_native_medium_refuses_the_space_verbs_by_name() {
     let message = error.to_string();
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(message.contains("inspect"), "names the verb: {message}");
-    assert!(message.contains("namespace"), "names the vantage: {message}");
+    assert!(
+        message.contains("namespace"),
+        "names the vantage: {message}"
+    );
     assert!(
         message.contains("direct partition"),
         "and names the door the content is reached through: {message}"
@@ -293,7 +299,11 @@ fn a_namespace_native_medium_refuses_the_space_verbs_by_name() {
         "an archive records no partition scheme"
     );
     let partitions = medium.partitions();
-    assert_eq!(partitions.len(), 1, "one direct partition, and nothing beside it");
+    assert_eq!(
+        partitions.len(),
+        1,
+        "one direct partition, and nothing beside it"
+    );
     let direct = &partitions[0];
     assert!(direct.is_direct());
     assert_eq!(direct.ordinal(), 0, "the ordinal no scheme numbers");
@@ -302,9 +312,16 @@ fn a_namespace_native_medium_refuses_the_space_verbs_by_name() {
         None,
         "an archive's names sit over no addressed extent"
     );
-    assert_eq!(direct.length_bytes(), None, "and run for no addressed length");
+    assert_eq!(
+        direct.length_bytes(),
+        None,
+        "and run for no addressed length"
+    );
     assert!(!direct.is_addressable());
-    assert!(direct.provenance().is_some(), "a composition act is provenance");
+    assert!(
+        direct.provenance().is_some(),
+        "a composition act is provenance"
+    );
     assert!(direct.evidence().is_empty(), "and never evidence");
     assert!(
         medium
@@ -367,7 +384,11 @@ fn the_namespace_reports_the_grammars_own_hierarchy() {
 
     let root = namespace.entries("").expect("the root lists");
     let names: Vec<&str> = root.iter().map(|entry| entry.name.as_str()).collect();
-    assert_eq!(names, vec!["readme.txt", "disks"], "in the archive's own order");
+    assert_eq!(
+        names,
+        vec!["readme.txt", "disks"],
+        "in the archive's own order"
+    );
     assert_eq!(root[0].kind, EntryKind::File);
     assert_eq!(root[1].kind, EntryKind::Directory);
     assert!(
@@ -383,7 +404,12 @@ fn the_namespace_reports_the_grammars_own_hierarchy() {
     assert_eq!(names, vec!["boot.h8d", "spare.h8d"]);
 
     // Absence is an answer; a file is not a directory.
-    assert!(namespace.stat("disks/nothing.h8d").expect("asked").is_none());
+    assert!(
+        namespace
+            .stat("disks/nothing.h8d")
+            .expect("asked")
+            .is_none()
+    );
     let error = namespace
         .entries("readme.txt")
         .expect_err("a file holds no names");
@@ -588,7 +614,10 @@ fn a_file_on_a_volume_is_refused_as_an_artifact_by_name() {
         .discover()
         .expect_err("a file on a volume is not minted as an artifact here");
     let message = error.to_string();
-    assert!(message.contains("archive entry"), "names the claim: {message}");
+    assert!(
+        message.contains("archive entry"),
+        "names the claim: {message}"
+    );
     assert!(message.contains("NOTE.TXT"), "names the file: {message}");
 
     drop(session);

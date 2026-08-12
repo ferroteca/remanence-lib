@@ -90,7 +90,10 @@ fn the_convenience_adds_the_declared_drive_and_loads_the_medium() {
         .expect("the format declares the drive it records");
     assert_eq!(device.attachment().to_string(), "heathfloppy0");
     assert_eq!(device.family(), DeviceFamily::HEATHKIT_H17);
-    assert!(device.is_occupied(), "the medium was loaded, not just found");
+    assert!(
+        device.is_occupied(),
+        "the medium was loaded, not just found"
+    );
     assert_eq!(
         device.medium().expect("occupied").image_path(),
         Some(disk.as_path())
@@ -282,7 +285,10 @@ fn discovery_refuses_a_foreign_family_artifact_where_a_load_would() {
     let error =
         discover_media(&path, AccessIntent::Read).expect_err("a flux artifact is no device's");
     let message = error.to_string();
-    assert!(message.contains("flux"), "names the family found: {message}");
+    assert!(
+        message.contains("flux"),
+        "names the family found: {message}"
+    );
     assert!(
         message.contains("own type"),
         "names where it is read instead: {message}"

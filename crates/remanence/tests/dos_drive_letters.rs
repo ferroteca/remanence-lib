@@ -192,21 +192,33 @@ fn inspect(path: &PathBuf, format: Format) -> (Session, DiskReport) {
 }
 
 fn volume_at(map: &remanence::DriveMap, letter: char) -> VolumeId {
-    match &map.letter(letter).unwrap_or_else(|| panic!("{letter}: is mapped")).outcome {
+    match &map
+        .letter(letter)
+        .unwrap_or_else(|| panic!("{letter}: is mapped"))
+        .outcome
+    {
         LetterOutcome::Volume { volume, .. } => *volume,
         other => panic!("{letter}: names a volume, not {}", other.name()),
     }
 }
 
 fn device_at(map: &remanence::DriveMap, letter: char) -> MachineDevice {
-    match &map.letter(letter).unwrap_or_else(|| panic!("{letter}: is mapped")).outcome {
+    match &map
+        .letter(letter)
+        .unwrap_or_else(|| panic!("{letter}: is mapped"))
+        .outcome
+    {
         LetterOutcome::Volume { device, .. } | LetterOutcome::DeclaredDevice { device } => *device,
         other => panic!("{letter}: names a device, not {}", other.name()),
     }
 }
 
 fn reason_at(map: &remanence::DriveMap, letter: char) -> String {
-    match &map.letter(letter).unwrap_or_else(|| panic!("{letter}: is mapped")).outcome {
+    match &map
+        .letter(letter)
+        .unwrap_or_else(|| panic!("{letter}: is mapped"))
+        .outcome
+    {
         LetterOutcome::Undetermined { reason } => reason.clone(),
         other => panic!("{letter}: is undetermined, not {}", other.name()),
     }
@@ -218,14 +230,21 @@ fn reason_at(map: &remanence::DriveMap, letter: char) -> String {
 #[test]
 fn one_floppy_and_one_disk_map_to_a_b_and_c() {
     let floppy_path = write_image("floppy", synthetic_fat12_floppy());
-    let disk_path = write_image("one-primary", synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]));
+    let disk_path = write_image(
+        "one-primary",
+        synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]),
+    );
     let (_floppy_session, floppy) = inspect(&floppy_path, Format::Raw);
     let (_disk_session, disk) = inspect(&disk_path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_floppy(0, &floppy).expect("slot 0 is free");
-    machine.assert_fixed_disk(0, &disk).expect("order 0 is free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    machine
+        .assert_fixed_disk(0, &disk)
+        .expect("order 0 is free");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
     assert_eq!(
         map.mappings.iter().map(|m| m.letter).collect::<Vec<_>>(),
@@ -259,12 +278,19 @@ fn one_floppy_and_one_disk_map_to_a_b_and_c() {
 /// different answer from a letter that exists and could not be settled.
 #[test]
 fn a_diskless_of_floppies_machine_has_no_a_or_b() {
-    let disk_path = write_image("floppyless", synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]));
+    let disk_path = write_image(
+        "floppyless",
+        synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]),
+    );
     let (_session, disk) = inspect(&disk_path, Format::Raw);
 
     let mut machine = DosMachine::new();
-    machine.assert_fixed_disk(0, &disk).expect("order 0 is free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    machine
+        .assert_fixed_disk(0, &disk)
+        .expect("order 0 is free");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
     assert!(map.letter('A').is_none(), "no floppy drive, no A:");
     assert!(map.letter('B').is_none(), "and no phantom of one");
@@ -286,12 +312,30 @@ fn primaries_of_every_disk_precede_the_logical_drives_of_any() {
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &first_report).expect("free");
     machine.assert_fixed_disk(1, &second_report).expect("free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos4)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos4))
+        .expect("composes");
 
-    assert_eq!(device_at(&map, 'C'), MachineDevice::FixedDisk(0), "first primary");
-    assert_eq!(device_at(&map, 'D'), MachineDevice::FixedDisk(1), "second disk's primary");
-    assert_eq!(device_at(&map, 'E'), MachineDevice::FixedDisk(0), "first disk's logical");
-    assert_eq!(device_at(&map, 'F'), MachineDevice::FixedDisk(1), "second disk's logical");
+    assert_eq!(
+        device_at(&map, 'C'),
+        MachineDevice::FixedDisk(0),
+        "first primary"
+    );
+    assert_eq!(
+        device_at(&map, 'D'),
+        MachineDevice::FixedDisk(1),
+        "second disk's primary"
+    );
+    assert_eq!(
+        device_at(&map, 'E'),
+        MachineDevice::FixedDisk(0),
+        "first disk's logical"
+    );
+    assert_eq!(
+        device_at(&map, 'F'),
+        MachineDevice::FixedDisk(1),
+        "second disk's logical"
+    );
     assert_eq!(map.mappings.len(), 4);
 
     // The letters are not the order the report lists the regions in: the
@@ -312,7 +356,9 @@ fn a_type_outside_the_dos_set_takes_no_letter() {
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
     assert_eq!(map.mappings.len(), 1, "only the FAT16B primary is lettered");
     let region = report
@@ -325,7 +371,11 @@ fn a_type_outside_the_dos_set_takes_no_letter() {
         .iter()
         .find(|volume| volume.origin == remanence::VolumeOrigin::Regions(vec![region.id]))
         .expect("it composed");
-    assert_eq!(volume_at(&map, 'C'), volume.id, "C: is the DOS-typed primary");
+    assert_eq!(
+        volume_at(&map, 'C'),
+        volume.id,
+        "C: is the DOS-typed primary"
+    );
 
     std::fs::remove_file(&path).ok();
 }
@@ -341,7 +391,9 @@ fn an_unclaimed_extended_partition_letters_none_of_its_logicals() {
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
     assert_eq!(map.mappings.len(), 1, "the primary alone takes a letter");
     assert!(
@@ -360,16 +412,24 @@ fn an_unclaimed_extended_partition_letters_none_of_its_logicals() {
 #[test]
 fn a_declared_lastdrive_ceiling_unsettles_the_letters_above_it() {
     let fat = synthetic_fat16();
-    let path = write_image("ceiling", synthetic_multi_mbr(&[(0x06, &fat), (0x06, &fat)]));
+    let path = write_image(
+        "ceiling",
+        synthetic_multi_mbr(&[(0x06, &fat), (0x06, &fat)]),
+    );
     let (_session, report) = inspect(&path, Format::Raw);
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
     machine.declare(ResidentCondition::LastDrive('C'));
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
     assert!(
-        matches!(map.letter('C').expect("mapped").outcome, LetterOutcome::Volume { .. }),
+        matches!(
+            map.letter('C').expect("mapped").outcome,
+            LetterOutcome::Volume { .. }
+        ),
         "C: sits at the ceiling and stands"
     );
     assert!(
@@ -391,9 +451,15 @@ fn a_declared_subst_unsettles_every_letter() {
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
     machine.declare(ResidentCondition::Subst);
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
-    assert_eq!(map.established_count(), 0, "nothing is established under SUBST");
+    assert_eq!(
+        map.established_count(),
+        0,
+        "nothing is established under SUBST"
+    );
     assert!(reason_at(&map, 'C').contains("SUBST"));
 
     std::fs::remove_file(&path).ok();
@@ -411,10 +477,18 @@ fn a_cd_rom_letter_follows_only_a_declared_placement() {
     let mut undeclared = DosMachine::new();
     undeclared.assert_fixed_disk(0, &report).expect("free");
     undeclared.assert_cdrom(0, None).expect("free");
-    let map = undeclared.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
-    assert_eq!(map.mappings.len(), 1, "an undeclared CD-ROM takes no letter");
+    let map = undeclared
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
+    assert_eq!(
+        map.mappings.len(),
+        1,
+        "an undeclared CD-ROM takes no letter"
+    );
     assert!(
-        map.provenance.iter().any(|line| line.contains("cd-rom drive 0 takes no letter")),
+        map.provenance
+            .iter()
+            .any(|line| line.contains("cd-rom drive 0 takes no letter")),
         "and the map says why: {:?}",
         map.provenance
     );
@@ -422,7 +496,9 @@ fn a_cd_rom_letter_follows_only_a_declared_placement() {
     let mut declared = DosMachine::new();
     declared.assert_fixed_disk(0, &report).expect("free");
     declared.assert_cdrom(0, Some('e')).expect("free");
-    let map = declared.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = declared
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
     assert_eq!(
         device_at(&map, 'E'),
         MachineDevice::CdRom(0),
@@ -465,11 +541,15 @@ fn contradictory_machine_facts_are_refused_by_name() {
     let error = machine.assert_floppy(0, &floppy).expect_err("stated twice");
     assert!(error.to_string().contains("floppy slot 0"), "{error}");
 
-    let error = machine.assert_floppy(2, &floppy).expect_err("no third slot");
+    let error = machine
+        .assert_floppy(2, &floppy)
+        .expect_err("no third slot");
     assert!(error.to_string().contains("outside the claim"), "{error}");
 
     machine.assert_fixed_disk(0, &report).expect("free");
-    let error = machine.assert_fixed_disk(0, &report).expect_err("stated twice");
+    let error = machine
+        .assert_fixed_disk(0, &report)
+        .expect_err("stated twice");
     assert!(error.to_string().contains("fixed disk 0"), "{error}");
 
     // A machine whose only floppy sits in the second slot is not a
@@ -508,15 +588,15 @@ fn a_stated_variant_letters_the_second_primary_last() {
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
     assert_eq!(map.established_count(), 4, "two primaries and two logicals");
     let primaries: Vec<_> = report
         .regions
         .iter()
-        .filter(|region| {
-            region.declared_placement == "primary" && region.role == RegionRole::Data
-        })
+        .filter(|region| region.declared_placement == "primary" && region.role == RegionRole::Data)
         .collect();
     assert_eq!(primaries.len(), 2, "the rig disk carries two DOS primaries");
     assert_eq!(
@@ -542,7 +622,9 @@ fn a_stated_variant_letters_the_second_primary_last() {
 
     // Under MS-DOS 4 the same disk has three letters and the second
     // primary has none at all.
-    let map = machine.compose(Some(DosAssignmentRule::MsDos4)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos4))
+        .expect("composes");
     assert_eq!(map.mappings.len(), 3, "MS-DOS 4 letters no second primary");
     assert!(map.letter('F').is_none());
 
@@ -573,8 +655,14 @@ fn an_unstated_variant_leaves_the_disputed_letter_undetermined() {
         );
     }
     let reason = reason_at(&map, 'F');
-    assert!(reason.contains("ms-dos-5"), "the reason names each rule: {reason}");
-    assert!(reason.contains("ms-dos-4"), "the reason names each rule: {reason}");
+    assert!(
+        reason.contains("ms-dos-5"),
+        "the reason names each rule: {reason}"
+    );
+    assert!(
+        reason.contains("ms-dos-4"),
+        "the reason names each rule: {reason}"
+    );
     assert!(
         reason.contains("assigns no letter"),
         "and says what the disagreement is: {reason}"
@@ -607,10 +695,14 @@ fn the_identity_the_mapping_issued_names_the_volume_the_file_verb_reaches() {
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
     let lettered = volume_at(&map, 'C');
 
-    let medium = session.medium_mut(attachment).expect("the medium is pooled");
+    let medium = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
     let named: Vec<u32> = medium
         .partitions()
         .iter()
@@ -645,7 +737,9 @@ fn the_map_carries_the_asserted_facts_and_the_rule_it_applied() {
 
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
-    let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let map = machine
+        .compose(Some(DosAssignmentRule::MsDos5))
+        .expect("composes");
 
     assert!(
         map.provenance
@@ -667,7 +761,6 @@ fn the_map_carries_the_asserted_facts_and_the_rule_it_applied() {
 
     std::fs::remove_file(&path).ok();
 }
-
 
 /// P32's other half: with a device tier holding the machine facts, the
 /// composer reads them from a machine's own device set instead of from an
@@ -722,7 +815,10 @@ fn a_machine_letters_its_own_device_set_in_attachment_order() {
 /// receives no DOS letter.
 #[test]
 fn a_family_no_rule_letters_is_passed_over_and_said_so() {
-    let path = write_image("passed-over", synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]));
+    let path = write_image(
+        "passed-over",
+        synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]),
+    );
 
     let mut session = Session::new();
     session

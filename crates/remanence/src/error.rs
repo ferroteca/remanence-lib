@@ -231,9 +231,7 @@ impl fmt::Display for Error {
                 write!(f, "invalid {archive} archive: {reason}")
             }
             Self::Io { reason, .. } => write!(f, "{reason}"),
-            Self::InvalidImage {
-                format, reason, ..
-            } => {
+            Self::InvalidImage { format, reason, .. } => {
                 write!(f, "invalid {format} disk image: {reason}")
             }
         }
@@ -292,7 +290,9 @@ mod tests {
     #[test]
     fn every_variant_can_carry_a_rule_identity() {
         assert_eq!(
-            Error::archive("zip", "malformed").broke_rule("some-rule").rule(),
+            Error::archive("zip", "malformed")
+                .broke_rule("some-rule")
+                .rule(),
             Some("some-rule")
         );
         assert_eq!(

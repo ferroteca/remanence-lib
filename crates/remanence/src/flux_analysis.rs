@@ -346,8 +346,10 @@ pub(crate) mod correspondence {
         if windows == 0 {
             return Vec::new();
         }
-        let mut ranked: Vec<(usize, usize)> =
-            votes.into_iter().map(|(start, count)| (count, start)).collect();
+        let mut ranked: Vec<(usize, usize)> = votes
+            .into_iter()
+            .map(|(start, count)| (count, start))
+            .collect();
         // Most votes first; ties resolve by start so the outcome is a
         // pure function of the input.
         ranked.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
@@ -383,7 +385,10 @@ pub(crate) mod correspondence {
     fn informative(gaps: &[i64], from: usize, tolerance: i64) -> bool {
         let mut symbols: Vec<i64> = Vec::new();
         for &gap in gaps.iter().skip(from).take(WINDOW) {
-            if !symbols.iter().any(|&symbol| (gap - symbol).abs() <= tolerance) {
+            if !symbols
+                .iter()
+                .any(|&symbol| (gap - symbol).abs() <= tolerance)
+            {
                 symbols.push(gap);
             }
         }
@@ -680,7 +685,11 @@ pub(crate) fn cell_of(angles: &[i64], divisions: i64) -> f64 {
     let intervals: Vec<i64> = (0..angles.len())
         .map(|i| {
             let interval = angles[(i + 1) % angles.len()] - angles[i];
-            if interval > 0 { interval } else { interval + divisions }
+            if interval > 0 {
+                interval
+            } else {
+                interval + divisions
+            }
         })
         .collect();
     let lattice = CellLattice::measure(&intervals);
@@ -777,7 +786,11 @@ mod tests {
         // Vary the motif so windows are informative and distinct.
         for round in 0..64i64 {
             for (i, &runs) in motif.iter().enumerate() {
-                pattern.push(if (round + i as i64) % 7 == 0 { runs + 1 } else { runs });
+                pattern.push(if (round + i as i64) % 7 == 0 {
+                    runs + 1
+                } else {
+                    runs
+                });
             }
         }
         pattern
@@ -800,7 +813,11 @@ mod tests {
         let mut round = 0i64;
         'fill: loop {
             for (i, &runs) in motif.iter().enumerate() {
-                let varied = if (round + i as i64) % 7 == 0 { runs + 1 } else { runs };
+                let varied = if (round + i as i64) % 7 == 0 {
+                    runs + 1
+                } else {
+                    runs
+                };
                 if cells + varied + 4 > total_cells {
                     break 'fill;
                 }
@@ -851,11 +868,8 @@ mod tests {
         let rotated: Vec<i64> = (0..gaps_a.len())
             .map(|i| gaps_a[(100 + i) % gaps_a.len()])
             .collect();
-        let candidates = correspondence::candidate_starts(
-            &gaps_a,
-            &rotated,
-            correspondence::tolerance(),
-        );
+        let candidates =
+            correspondence::candidate_starts(&gaps_a, &rotated, correspondence::tolerance());
         assert!(
             candidates.contains(&(rotated.len() - 100)),
             "the true rotation is among the candidates: {candidates:?}"
@@ -876,7 +890,10 @@ mod tests {
         // Before the loss, indices line up; after it, they are offset
         // by one; the lost transition itself is unmatched.
         assert_eq!(matched[10], 10);
-        assert_eq!(matched[40], -1, "the unresolved transition has no counterpart");
+        assert_eq!(
+            matched[40], -1,
+            "the unresolved transition has no counterpart"
+        );
         assert_eq!(matched[41], 40);
         assert_eq!(matched[100], 99);
     }
@@ -907,7 +924,10 @@ mod tests {
         let lattice = CellLattice::measure(&intervals);
         let built = GapFirstAngles::from(&revolutions, divisions, &lattice, clean[0]);
 
-        assert!(built.off_lattice.is_empty(), "nothing was planted off-lattice");
+        assert!(
+            built.off_lattice.is_empty(),
+            "nothing was planted off-lattice"
+        );
         // The implied cell solves the closed loop; over a synthetic
         // orbit that does not close to exactly one revolution it still
         // lands within a fraction of a percent.
@@ -931,7 +951,11 @@ mod tests {
     #[test]
     fn coherence_asks_presence_and_spread() {
         let coherence = Coherence::measured();
-        assert_eq!(coherence.revolutions_required(5), 4, "3/4 of five rounds up");
+        assert_eq!(
+            coherence.revolutions_required(5),
+            4,
+            "3/4 of five rounds up"
+        );
         assert!(coherence.coheres(4, 100, 5));
         assert!(!coherence.coheres(3, 100, 5), "too few sightings");
         assert!(

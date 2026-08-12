@@ -412,15 +412,19 @@ impl LzmaState {
         self.reps = [0; 4];
     }
 
-    fn decode_literal(&mut self, range: &mut RangeDecoder<'_>, window: &mut Window<'_>) -> Result<()> {
+    fn decode_literal(
+        &mut self,
+        range: &mut RangeDecoder<'_>,
+        window: &mut Window<'_>,
+    ) -> Result<()> {
         let previous = if window.reach() == 0 {
             0u32
         } else {
             u32::from(window.byte_back(1)?)
         };
         let position = window.total() - window.dict_start;
-        let literal_state = (((position as u32) & ((1 << self.lp) - 1)) << self.lc)
-            + (previous >> (8 - self.lc));
+        let literal_state =
+            (((position as u32) & ((1 << self.lp) - 1)) << self.lc) + (previous >> (8 - self.lc));
         let base = 0x300 * literal_state as usize;
         let probs = &mut self.literals[base..base + 0x300];
 
@@ -467,8 +471,7 @@ impl LzmaState {
             let offset = (dist - pos_slot) as usize;
             dist += range.decode_bit_tree_reverse(&mut self.pos_decoders, offset, direct_bits);
         } else {
-            dist += range.decode_direct_bits(direct_bits - NUM_ALIGN_BITS as u32)
-                << NUM_ALIGN_BITS;
+            dist += range.decode_direct_bits(direct_bits - NUM_ALIGN_BITS as u32) << NUM_ALIGN_BITS;
             dist += range.decode_bit_tree_reverse(&mut self.align, 0, NUM_ALIGN_BITS as u32);
         }
         dist
@@ -890,8 +893,7 @@ mod tests {
             } else {
                 u32::from(payload[index - 1])
             };
-            let literal_state =
-                ((position & ((1 << lp) - 1)) << lc) + (previous >> (8 - lc));
+            let literal_state = ((position & ((1 << lp) - 1)) << lc) + (previous >> (8 - lc));
             let base = 0x300 * literal_state as usize;
             let probs = &mut literals[base..base + 0x300];
 

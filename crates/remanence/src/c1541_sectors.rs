@@ -313,7 +313,12 @@ impl SectionAddress for PayloadKey {
         write_varint(out, self.ordinal);
     }
 
-    fn read(source: &str, bytes: &[u8], at: usize, known: &[&'static str]) -> Result<(Self, usize)> {
+    fn read(
+        source: &str,
+        bytes: &[u8],
+        at: usize,
+        known: &[&'static str],
+    ) -> Result<(Self, usize)> {
         let mut cursor = at;
         let (location, used) = read_location_key(source, bytes, cursor, known)?;
         cursor += used;
@@ -456,13 +461,17 @@ impl C1541Sectors {
 
     /// One claim's payload, read back through the bounded cache.
     fn payload(&self, at: usize) -> Result<Vec<u8>> {
-        let key = self.payloads.get(at).and_then(Option::as_ref).ok_or_else(|| {
-            Error::invalid_image(
-                PROFILE,
-                "a readable claim holds no payload, which is this layer contradicting \
+        let key = self
+            .payloads
+            .get(at)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                Error::invalid_image(
+                    PROFILE,
+                    "a readable claim holds no payload, which is this layer contradicting \
                  itself rather than a fact about the recording",
-            )
-        })?;
+                )
+            })?;
         let mut cache = self
             .backing
             .cache
@@ -637,10 +646,7 @@ fn pair(grammar: &RecordGrammar, runs: Vec<Run>) -> (Vec<Paired>, u64) {
         match head.and_then(|mark| grammar.block_of(mark)) {
             Some(shape) if shape.mark == grammar.header.mark => {
                 if let Some(header) = pending.take() {
-                    records.push(Paired {
-                        header,
-                        data: None,
-                    });
+                    records.push(Paired { header, data: None });
                 }
                 pending = Some(BlockReading::read(grammar, &grammar.header, &run));
             }
@@ -752,7 +758,11 @@ fn recognize(
         let mut ordinal = 0u64;
         for record in records {
             let header = record.header;
-            let track = header.bytes.get(grammar.track_at as usize).copied().flatten();
+            let track = header
+                .bytes
+                .get(grammar.track_at as usize)
+                .copied()
+                .flatten();
             let sector = header
                 .bytes
                 .get(grammar.sector_at as usize)
@@ -802,8 +812,7 @@ fn recognize(
 
             let data = record.data;
             let readable = rule.is_none();
-            let unresolved =
-                header.unresolved + data.as_ref().map_or(0, |block| block.unresolved);
+            let unresolved = header.unresolved + data.as_ref().map_or(0, |block| block.unresolved);
             if readable {
                 readable_here += 1;
             }
@@ -1069,11 +1078,7 @@ fn account_for(loss: &mut LossAccount, claims: &[SectorClaim]) {
     }
 }
 
-fn describe(
-    grammar: &RecordGrammar,
-    policy: &SectorPolicy,
-    bytestream: &Provenance,
-) -> Provenance {
+fn describe(grammar: &RecordGrammar, policy: &SectorPolicy, bytestream: &Provenance) -> Provenance {
     let mut provenance = Provenance::new(PROFILE)
         .note(format!("{}: {}", grammar.name, grammar.provenance))
         .note(format!(
@@ -1097,22 +1102,26 @@ fn describe(
                 .to_owned(),
         )
         .note(match policy.checksum_failure {
-            ChecksumFailurePolicy::Refuse =>
+            ChecksumFailurePolicy::Refuse => {
                 "a block stating a checksum its own bytes do not compute stops the \
                  recognition"
-                    .to_owned(),
-            ChecksumFailurePolicy::DeclareLoss =>
+                    .to_owned()
+            }
+            ChecksumFailurePolicy::DeclareLoss => {
                 "a block stating a checksum its own bytes do not compute is kept as a \
                  claim, stated unreadable, and counted"
-                    .to_owned(),
+                    .to_owned()
+            }
         })
         .note(match policy.unpaired_record {
-            UnpairedRecordPolicy::Refuse =>
-                "a header block no data block follows stops the recognition".to_owned(),
-            UnpairedRecordPolicy::DeclareLoss =>
+            UnpairedRecordPolicy::Refuse => {
+                "a header block no data block follows stops the recognition".to_owned()
+            }
+            UnpairedRecordPolicy::DeclareLoss => {
                 "a header block no data block follows is kept as a claim, stated as \
                  holding no data, and counted"
-                    .to_owned(),
+                    .to_owned()
+            }
         })
         .note(
             "this is where the bytestream's silence ends: the layer below assigns no \
@@ -1420,7 +1429,10 @@ mod tests {
         assert_eq!(error.rule(), Some(SectorRule::NoSuchAddress.as_str()));
         // The refusal says what the family declares there rather than
         // only that the answer is no.
-        assert!(error.to_string().contains("19 sectors on track 18"), "{error}");
+        assert!(
+            error.to_string().contains("19 sectors on track 18"),
+            "{error}"
+        );
 
         // A track outside the density map is refused the same way, and
         // says why there is no such track.
@@ -1524,7 +1536,9 @@ mod tests {
         let evidence = &sectors.inspect().evidence;
 
         assert!(
-            evidence.iter().any(|line| line.contains("CBM DOS sector record")),
+            evidence
+                .iter()
+                .any(|line| line.contains("CBM DOS sector record")),
             "{evidence:?}"
         );
         assert!(

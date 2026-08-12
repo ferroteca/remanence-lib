@@ -209,27 +209,27 @@ pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
 pub use fat::FatKind;
 pub use filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
-pub use machine::{Machine, MachineView, Session};
-pub use partition::{Partition, PartitionRule, PartitionScheme, PartitionType, PartitionView};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,
 };
-pub use report::{
-    DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
-    LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,
-    VolumeLabel, VolumeOrigin,
-};
+pub use machine::{Machine, MachineView, Session};
+pub use media::{Format, MediaId, Medium};
 pub use p64::{P64HalfTrack, P64Image, P64Report};
+pub use partition::{Partition, PartitionRule, PartitionScheme, PartitionType, PartitionView};
 pub use remanence_format::RemanenceWriteReport;
 pub use remanence_image::{RemanenceHole, RemanenceImage, RemanenceImageReport, RemanenceOrbit};
 pub use remanence_reconstruction::{
     ReconstructedOrbit, ReconstructionPlan, ReconstructionPolicy, ReconstructionReport,
     RecordingSelection,
 };
-pub use media::{Format, MediaId, Medium};
-pub use storage_device::{AttachmentId, DeviceView, StorageDevice};
+pub use report::{
+    DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
+    LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,
+    VolumeLabel, VolumeOrigin,
+};
 pub use session::{
     ArchiveLayout, DiskLayout, FilesystemLayout, Identification, ImageLayout, Layer, LayerKind,
     LayerLayout, PhysicalMediaLayout, SectorLayout, SizeInformation, TrackSectorLayout,
 };
+pub use storage_device::{AttachmentId, DeviceView, StorageDevice};

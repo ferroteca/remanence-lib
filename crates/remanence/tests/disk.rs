@@ -41,11 +41,15 @@ fn fs(medium: &mut Medium, ordinal: u32) -> StorageSpace<'_> {
         .partition(ordinal)
         .expect("the pool bears this partition");
     if partition.partition().bears_namespace() {
-        partition.filesystem().expect("the declared type determines one")
+        partition
+            .filesystem()
+            .expect("the declared type determines one")
     } else {
         // A medium recording no scheme declares no type, so the reading
         // is the caller's and the check is the library's.
-        partition.filesystem_as("fat").expect("these images are FAT")
+        partition
+            .filesystem_as("fat")
+            .expect("these images are FAT")
     }
 }
 
@@ -246,7 +250,6 @@ fn synthetic_extended_disk(volume: &[u8], corrupt_second_ebr: bool) -> Vec<u8> {
     disk
 }
 
-
 /// The label a recognized filesystem answered with, or `None` where the
 /// volume has none.
 fn label_of(filesystem: &remanence::FilesystemInfo) -> Option<&str> {
@@ -264,7 +267,9 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     assert_eq!(
         disk.mode(),
         AccessMode::ReadWrite,
@@ -292,7 +297,8 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     // Write a directory and a file; read them back through the overlay.
     fs(disk, 0).make_directory("SUB").expect("mkdir");
     let payload: Vec<u8> = (0..2000u32).flat_map(|n| n.to_le_bytes()).collect();
-    fs(disk, 0).write_file("SUB/HELLO.BIN", &payload)
+    fs(disk, 0)
+        .write_file("SUB/HELLO.BIN", &payload)
         .expect("write");
     assert!(disk.is_modified());
 
@@ -302,30 +308,33 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert_eq!(entries[0].kind, EntryKind::File);
     assert_eq!(entries[0].size_bytes, payload.len() as u64);
     assert_eq!(
-        fs(disk, 0).read_file("SUB/HELLO.BIN")
-            .expect("read"),
+        fs(disk, 0).read_file("SUB/HELLO.BIN").expect("read"),
         payload
     );
     assert_eq!(
-        fs(disk, 0).read_file("SUB")
+        fs(disk, 0)
+            .read_file("SUB")
             .expect_err("directory is not a file")
             .category(),
         ErrorCategory::IsDirectory
     );
     assert_eq!(
-        fs(disk, 0).entries("SUB/HELLO.BIN")
+        fs(disk, 0)
+            .entries("SUB/HELLO.BIN")
             .expect_err("file is not a directory")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        fs(disk, 0).read_file("SUB/MISSING.BIN")
+        fs(disk, 0)
+            .read_file("SUB/MISSING.BIN")
             .expect_err("missing file is refused")
             .category(),
         ErrorCategory::NotFound
     );
     assert_eq!(
-        fs(disk, 0).write_file("TOO-BIG.BIN", &vec![0u8; 5_000_000],)
+        fs(disk, 0)
+            .write_file("TOO-BIG.BIN", &vec![0u8; 5_000_000],)
             .expect_err("allocation exhaustion is refused")
             .category(),
         ErrorCategory::NoSpace
@@ -338,16 +347,20 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
 
     // Write again and commit this time; overwriting replaces the
     // contents rather than refusing (U3).
-    fs(disk, 0).write_file("KEPT.TXT", b"the first draft, rather longer")
+    fs(disk, 0)
+        .write_file("KEPT.TXT", b"the first draft, rather longer")
         .expect("write");
-    fs(disk, 0).write_file("KEPT.TXT", b"kept bytes")
+    fs(disk, 0)
+        .write_file("KEPT.TXT", b"kept bytes")
         .expect("overwrite");
     disk.commit().expect("commit");
     assert!(!disk.is_modified());
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
 
     assert_eq!(
         reopened.mode(),
@@ -355,8 +368,7 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
         "the mode echoes the intent"
     );
     assert_eq!(
-        fs(reopened, 0).read_file("KEPT.TXT")
-            .expect("read"),
+        fs(reopened, 0).read_file("KEPT.TXT").expect("read"),
         b"kept bytes"
     );
     drop(reopened_session);
@@ -370,7 +382,9 @@ fn fat16_behind_an_mbr_partition() {
     std::fs::write(&path, synthetic_mbr_disk(&synthetic_fat16())).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.content, DiskContent::Schema);
     assert_eq!(report.regions.len(), 1);
@@ -383,7 +397,10 @@ fn fat16_behind_an_mbr_partition() {
     assert_eq!(region.start_bytes, 2048 * 512);
     assert_eq!(region.issue, None);
     assert_eq!(report.volumes.len(), 1);
-    assert_eq!(report.volumes[0].origin, VolumeOrigin::Regions(vec![region.id]));
+    assert_eq!(
+        report.volumes[0].origin,
+        VolumeOrigin::Regions(vec![region.id])
+    );
     assert_eq!(
         report
             .filesystem_on(report.volumes[0].id)
@@ -393,13 +410,16 @@ fn fat16_behind_an_mbr_partition() {
 
     // Entry 1 of the declared table, which is the scheme's own number for
     // it and the only way this partition is named.
-    fs(disk, 1).write_file("ROOT.TXT", b"in the partition")
+    fs(disk, 1)
+        .write_file("ROOT.TXT", b"in the partition")
         .expect("write");
     disk.commit().expect("commit");
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
 
     assert_eq!(
         fs(reopened, 1).read_file("ROOT.TXT").expect("read"),
@@ -416,19 +436,24 @@ fn stat_answers_presence_and_absence_distinctly() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     fs(disk, 0).make_directory("SUB").expect("mkdir");
-    fs(disk, 0).write_file("SUB/FILE.BIN", b"1234567890")
+    fs(disk, 0)
+        .write_file("SUB/FILE.BIN", b"1234567890")
         .expect("write");
 
-    let file = fs(disk, 0).stat("sub/file.bin")
+    let file = fs(disk, 0)
+        .stat("sub/file.bin")
         .expect("stat succeeds")
         .expect("the file exists");
     assert_eq!(file.name, "FILE.BIN");
     assert_eq!(file.kind, EntryKind::File);
     assert_eq!(file.size_bytes, 10);
 
-    let directory = fs(disk, 0).stat("SUB")
+    let directory = fs(disk, 0)
+        .stat("SUB")
         .expect("stat succeeds")
         .expect("the directory exists");
     assert_eq!(directory.kind, EntryKind::Directory);
@@ -436,17 +461,16 @@ fn stat_answers_presence_and_absence_distinctly() {
     // Absence is an answer, not a failure: a missing leaf, a missing
     // parent, and a parent that is a file all answer None.
     assert_eq!(
-        fs(disk, 0).stat("SUB/MISSING.BIN")
-            .expect("an answer"),
+        fs(disk, 0).stat("SUB/MISSING.BIN").expect("an answer"),
         None
     );
     assert_eq!(
-        fs(disk, 0).stat("NOWHERE/FILE.BIN")
-            .expect("an answer"),
+        fs(disk, 0).stat("NOWHERE/FILE.BIN").expect("an answer"),
         None
     );
     assert_eq!(
-        fs(disk, 0).stat("SUB/FILE.BIN/DEEPER.BIN")
+        fs(disk, 0)
+            .stat("SUB/FILE.BIN/DEEPER.BIN")
             .expect("an answer"),
         None
     );
@@ -476,31 +500,35 @@ fn overwrite_releases_and_reclaims_clusters() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     // 7000 of the volume's 7903 data clusters: two of these can never
     // coexist, so each rewrite below only fits by releasing the last.
     let big = vec![0xabu8; 7000 * 512];
-    fs(disk, 0).write_file("BIG.BIN", &big)
+    fs(disk, 0)
+        .write_file("BIG.BIN", &big)
         .expect("first write");
 
     let replacement = vec![0xcdu8; 7000 * 512];
-    fs(disk, 0).write_file("BIG.BIN", &replacement)
+    fs(disk, 0)
+        .write_file("BIG.BIN", &replacement)
         .expect("overwriting releases the old clusters first");
-    assert_eq!(
-        fs(disk, 0).read_file("BIG.BIN").expect("read"),
-        replacement
-    );
+    assert_eq!(fs(disk, 0).read_file("BIG.BIN").expect("read"), replacement);
 
     // Shrinking releases clusters for other files to claim.
-    fs(disk, 0).write_file("BIG.BIN", b"now tiny")
+    fs(disk, 0)
+        .write_file("BIG.BIN", b"now tiny")
         .expect("shrinking overwrite");
-    fs(disk, 0).write_file("OTHER.BIN", &big)
+    fs(disk, 0)
+        .write_file("OTHER.BIN", &big)
         .expect("the released clusters are claimable again");
 
     // Overwriting a directory is refused by name.
     fs(disk, 0).make_directory("DIR").expect("mkdir");
     assert_eq!(
-        fs(disk, 0).write_file("DIR", b"not a file")
+        fs(disk, 0)
+            .write_file("DIR", b"not a file")
             .expect_err("a directory is not overwritable")
             .category(),
         ErrorCategory::IsDirectory
@@ -510,16 +538,15 @@ fn overwrite_releases_and_reclaims_clusters() {
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
 
     assert_eq!(
         fs(reopened, 0).read_file("BIG.BIN").expect("read"),
         b"now tiny"
     );
-    assert_eq!(
-        fs(reopened, 0).read_file("OTHER.BIN").expect("read"),
-        big
-    );
+    assert_eq!(fs(reopened, 0).read_file("OTHER.BIN").expect("read"), big);
     drop(reopened_session);
 
     // Both FAT copies were kept in step through release and reclaim.
@@ -538,13 +565,17 @@ fn make_directory_creates_parents_and_is_idempotent() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     // Missing parents are created in one call.
-    fs(disk, 0).make_directory("A/B/C")
+    fs(disk, 0)
+        .make_directory("A/B/C")
         .expect("missing parents are created");
     assert_eq!(
-        fs(disk, 0).stat("A/B/C")
+        fs(disk, 0)
+            .stat("A/B/C")
             .expect("stat")
             .expect("exists")
             .kind,
@@ -553,28 +584,33 @@ fn make_directory_creates_parents_and_is_idempotent() {
 
     // Already existing — wholly, partly, or the root itself — succeeds
     // unchanged, and the chain extends from wherever it stops.
-    fs(disk, 0).make_directory("A/B/C")
-        .expect("idempotent");
-    fs(disk, 0).make_directory("A/B")
+    fs(disk, 0).make_directory("A/B/C").expect("idempotent");
+    fs(disk, 0)
+        .make_directory("A/B")
         .expect("an existing prefix succeeds");
-    fs(disk, 0).make_directory("")
+    fs(disk, 0)
+        .make_directory("")
         .expect("the root already exists");
-    fs(disk, 0).make_directory("A/B/C/D")
+    fs(disk, 0)
+        .make_directory("A/B/C/D")
         .expect("extends the existing chain");
 
     // The created directories hold files like any other.
-    fs(disk, 0).write_file("A/B/C/D/DEEP.TXT", b"nested payload")
+    fs(disk, 0)
+        .write_file("A/B/C/D/DEEP.TXT", b"nested payload")
         .expect("write");
 
     // A file in the way is refused by name, at the leaf or mid-path.
     assert_eq!(
-        fs(disk, 0).make_directory("A/B/C/D/DEEP.TXT")
+        fs(disk, 0)
+            .make_directory("A/B/C/D/DEEP.TXT")
             .expect_err("a file at the leaf is refused")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        fs(disk, 0).make_directory("A/B/C/D/DEEP.TXT/E")
+        fs(disk, 0)
+            .make_directory("A/B/C/D/DEEP.TXT/E")
             .expect_err("a file mid-path is refused")
             .category(),
         ErrorCategory::NotDirectory
@@ -584,11 +620,12 @@ fn make_directory_creates_parents_and_is_idempotent() {
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
 
     assert_eq!(
-        fs(reopened, 0).read_file("A/B/C/D/DEEP.TXT")
-            .expect("read"),
+        fs(reopened, 0).read_file("A/B/C/D/DEEP.TXT").expect("read"),
         b"nested payload"
     );
     drop(reopened_session);
@@ -602,7 +639,9 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     fs(disk, 0).make_directory("SUB").expect("mkdir");
 
     // One 512-byte cluster holds 16 records; "." and ".." take two, so
@@ -610,20 +649,24 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     // the grown cluster must never collide with a file's data clusters.
     let names: Vec<String> = (0..20).map(|n| format!("FILE{n:02}.BIN")).collect();
     for (n, name) in names.iter().enumerate() {
-        fs(disk, 0).write_file(&format!("SUB/{name}"), &vec![n as u8; 700])
+        fs(disk, 0)
+            .write_file(&format!("SUB/{name}"), &vec![n as u8; 700])
             .expect("write");
     }
     disk.commit().expect("commit");
     drop(disk_session);
 
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
 
     let entries = fs(reopened, 0).entries("SUB").expect("list");
     assert_eq!(entries.len(), 20);
     for (n, name) in names.iter().enumerate() {
         assert_eq!(
-            fs(reopened, 0).read_file(&format!("SUB/{name}"))
+            fs(reopened, 0)
+                .read_file(&format!("SUB/{name}"))
                 .expect("read"),
             vec![n as u8; 700],
             "{name} reads back intact"
@@ -640,7 +683,9 @@ fn a_blank_disk_is_an_answer_with_zero_volumes() {
     std::fs::write(&path, vec![0u8; 8000 * 512]).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let report = disk.inspect().expect("blank is an answer, not an error");
     assert_eq!(report.content, DiskContent::Blank);
     assert!(report.regions.is_empty());
@@ -654,7 +699,10 @@ fn a_blank_disk_is_an_answer_with_zero_volumes() {
     let direct = disk
         .partition(0)
         .expect("every medium bears a partition to be reached through");
-    assert!(direct.is_direct(), "nothing recorded a scheme to declare one");
+    assert!(
+        direct.is_direct(),
+        "nothing recorded a scheme to declare one"
+    );
     assert_eq!(
         direct.type_byte(),
         None,
@@ -717,7 +765,9 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
     std::fs::write(&path, synthetic_extended_disk(&fat, false)).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let report = disk.inspect().expect("inspection reads");
 
     assert_eq!(report.regions.len(), 4);
@@ -729,10 +779,8 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
     assert_eq!(
         placements,
         [
-            "primary",
-            "primary", // the extended partition
-            "logical",
-            "logical",
+            "primary", "primary", // the extended partition
+            "logical", "logical",
         ]
     );
     // Placement and role are different axes: the extended partition occupies a
@@ -776,7 +824,9 @@ fn a_broken_chain_keeps_what_it_found() {
     std::fs::write(&path, synthetic_extended_disk(&fat, true)).expect("image writes");
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let report = disk
         .inspect()
         .expect("a broken link does not fail the disk");
@@ -822,7 +872,9 @@ fn cylinders_are_reported_only_where_the_derivation_is_exact() {
     let path = temp_path("cylinders-exact");
     std::fs::write(&path, synthetic_fat12_floppy()).expect("image writes");
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.volumes.len(), 1);
     let filesystem = report
@@ -840,7 +892,9 @@ fn cylinders_are_reported_only_where_the_derivation_is_exact() {
     image[24..28].fill(0); // sectors/track and heads unstated
     std::fs::write(&path, image).expect("image writes");
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let report = disk.inspect().expect("inspection reads");
     let filesystem = report
         .filesystem_on(report.volumes[0].id)
@@ -863,7 +917,9 @@ fn p7_the_callers_own_open_is_the_claim_and_is_honoured_exactly() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut writer_session, writer_at) = attach(&path, Afford::Write).expect("writable handle");
-    let writer = writer_session.medium_mut(writer_at).expect("the medium is pooled");
+    let writer = writer_session
+        .medium_mut(writer_at)
+        .expect("the medium is pooled");
     assert_eq!(writer.mode(), AccessMode::ReadWrite);
     assert_eq!(writer.assurance().claim, remanence::Claim::CallerOpened);
 
@@ -892,13 +948,19 @@ fn p7_the_callers_own_open_is_the_claim_and_is_honoured_exactly() {
     std::fs::set_permissions(&path, permissions.clone()).expect("set readonly");
 
     assert!(
-        std::fs::File::options().read(true).write(true).open(&path).is_err(),
+        std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .is_err(),
         "the caller cannot open a read-only file for writing, which is the \
          whole of what the library then has"
     );
     let (mut readonly_session, readonly_at) =
         attach(&path, Afford::Read).expect("a read handle opens");
-    let readonly = readonly_session.medium_mut(readonly_at).expect("the medium is pooled");
+    let readonly = readonly_session
+        .medium_mut(readonly_at)
+        .expect("the medium is pooled");
     assert_eq!(readonly.mode(), AccessMode::ReadOnly);
     assert!(readonly.inspect().is_ok(), "analysis proceeds");
     let refused = fs(readonly, 0)
@@ -957,12 +1019,17 @@ fn image_at(tag: &str, bytes: &[u8]) -> PathBuf {
 fn a_partitionless_volume_inspects_as_one_whole_device_volume() {
     let path = image_at("inspect-bare", &synthetic_fat16());
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 
     assert_eq!(report.content, DiskContent::DirectVolume);
-    assert!(report.partition_schema.is_none(), "no schema was recognized");
+    assert!(
+        report.partition_schema.is_none(),
+        "no schema was recognized"
+    );
     assert!(report.regions.is_empty(), "nothing declared a region");
     assert_eq!(report.volumes.len(), 1);
     assert_eq!(report.volumes[0].origin, VolumeOrigin::WholeDevice);
@@ -982,7 +1049,9 @@ fn a_partitionless_volume_inspects_as_one_whole_device_volume() {
 fn a_blank_disk_states_that_it_is_blank() {
     let path = image_at("inspect-blank", &vec![0u8; 4096]);
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1003,17 +1072,28 @@ fn unclaimed_nonblank_content_is_a_reported_outcome() {
     bytes[..4].copy_from_slice(b"\xde\xad\xbe\xef");
     let path = image_at("inspect-unknown", &bytes);
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
-    let report = disk.inspect().expect("inspection succeeds on unknown content");
+    let report = disk
+        .inspect()
+        .expect("inspection succeeds on unknown content");
     let DiskContent::UnknownNonblank { evidence } = &report.content else {
-        panic!("expected the unknown-nonblank outcome, got {:?}", report.content);
+        panic!(
+            "expected the unknown-nonblank outcome, got {:?}",
+            report.content
+        );
     };
     assert!(
         !evidence.is_empty(),
         "the outcome carries why nothing claimed it"
     );
-    assert_ne!(report.content, DiskContent::Blank, "never confused with blank");
+    assert_ne!(
+        report.content,
+        DiskContent::Blank,
+        "never confused with blank"
+    );
     assert!(report.volumes.is_empty());
     assert!(report.filesystems.is_empty());
 
@@ -1024,7 +1104,9 @@ fn unclaimed_nonblank_content_is_a_reported_outcome() {
 fn a_partitioned_disk_reports_schema_regions_and_composed_volumes() {
     let path = image_at("inspect-mbr", &synthetic_mbr_disk(&synthetic_fat16()));
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1056,7 +1138,10 @@ fn a_partitioned_disk_reports_schema_regions_and_composed_volumes() {
         report.filesystem_on(volume).and_then(|fs| fs.kind.clone()),
         Some("FAT16".to_owned())
     );
-    assert_eq!(report.region(region.id).map(|found| found.id), Some(region.id));
+    assert_eq!(
+        report.region(region.id).map(|found| found.id),
+        Some(region.id)
+    );
 
     std::fs::remove_file(&path).ok();
 }
@@ -1070,7 +1155,9 @@ fn an_unread_region_is_explained_kept_and_composes_nothing() {
     let disk_bytes = synthetic_multi_mbr(&[(0x06, &volume), (0x07, &volume), (0x06, &volume)]);
     let path = image_at("inspect-unread", &disk_bytes);
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1111,12 +1198,16 @@ fn identities_survive_a_separate_open_of_an_unchanged_layout() {
 
     let first = {
         let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-        let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+        let disk = disk_session
+            .medium_mut(disk_at)
+            .expect("the medium is pooled");
         disk.inspect().expect("inspection reads")
     };
     let second = {
         let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image reopens");
-        let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+        let disk = disk_session
+            .medium_mut(disk_at)
+            .expect("the medium is pooled");
         disk.inspect().expect("inspection reads")
     };
 
@@ -1144,7 +1235,9 @@ fn a_volume_whose_filesystem_is_unrecognized_stays_a_volume() {
         &synthetic_multi_mbr(&[(0x06, &good), (0x06, &rubbish)]),
     );
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1181,7 +1274,9 @@ fn a_structural_region_is_reported_and_is_not_a_volume() {
         &synthetic_extended_disk(&synthetic_fat16(), false),
     );
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 
@@ -1251,7 +1346,9 @@ fn set_boot_record(image: &mut [u8], signature: u8, text: &str) {
 fn label_answer(tag: &str, image: &[u8]) -> remanence::VolumeLabel {
     let path = image_at(tag, image);
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
     let report = disk.inspect().expect("inspection reads");
     let answer = report
         .filesystem_on(report.volumes[0].id)
@@ -1380,12 +1477,17 @@ fn an_empty_partition_table_inspects_as_a_schema_with_no_volumes() {
     bytes[511] = 0xaa;
     let path = image_at("inspect-empty-table", &bytes);
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("image opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 
     assert_eq!(report.content, DiskContent::Schema);
-    assert!(report.partition_schema.is_some(), "the schema was recognized");
+    assert!(
+        report.partition_schema.is_some(),
+        "the schema was recognized"
+    );
     assert!(report.regions.is_empty(), "it declares no region");
     assert_eq!(report.composed_volume_count(), 0);
     assert_ne!(report.content, DiskContent::Blank, "distinct from blank");
@@ -1417,7 +1519,8 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
     let disk = session.medium_mut(at).expect("the medium is pooled");
 
     fs(disk, 0).make_directory("out").expect("mkdir");
-    fs(disk, 0).write_file("out/x.txt", b"payload")
+    fs(disk, 0)
+        .write_file("out/x.txt", b"payload")
         .expect("write");
 
     let entries = fs(disk, 0).entries("OUT").expect("list");
@@ -1440,7 +1543,8 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
         );
     }
     assert_eq!(
-        fs(disk, 0).stat("out/x.txt")
+        fs(disk, 0)
+            .stat("out/x.txt")
             .expect("stat reads")
             .expect("the file is there")
             .name,
@@ -1449,7 +1553,8 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
 
     // Case is not a second file: writing the same name in another case
     // overwrites the one record rather than adding a second.
-    fs(disk, 0).write_file("OUT/X.TXT", b"replaced")
+    fs(disk, 0)
+        .write_file("OUT/X.TXT", b"replaced")
         .expect("overwrite");
     assert_eq!(fs(disk, 0).entries("out").expect("list").len(), 1);
 
@@ -1484,11 +1589,13 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
         ("lpt1", DosNameRule::ReservedDeviceName),
     ];
     for (name, expected) in cases {
-        let error = fs(disk, 0).write_file(name, b"contents")
+        let error = fs(disk, 0)
+            .write_file(name, b"contents")
             .expect_err("a name outside the namespace is refused");
         assert_eq!(refused_rule(error), expected, "writing '{name}'");
 
-        let error = fs(disk, 0).make_directory(name)
+        let error = fs(disk, 0)
+            .make_directory(name)
             .expect_err("a directory name takes the same rules");
         assert_eq!(refused_rule(error), expected, "creating '{name}'");
     }
@@ -1501,11 +1608,13 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
 
     // The rule sits beside the category rather than replacing it, and a
     // refusal belonging to no rule set carries none at all.
-    let error = fs(disk, 0).write_file("con", b"contents")
+    let error = fs(disk, 0)
+        .write_file("con", b"contents")
         .expect_err("reserved");
     assert_eq!(error.category(), ErrorCategory::Io);
     assert_eq!(
-        fs(disk, 0).read_file("MISSING.TXT")
+        fs(disk, 0)
+            .read_file("MISSING.TXT")
             .expect_err("absent")
             .rule(),
         None
@@ -1530,7 +1639,9 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
 fn the_direct_partition_stands_where_a_medium_records_no_scheme() {
     let path = image_at("pool-direct", &synthetic_fat16());
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     assert_eq!(
         disk.partition_scheme(),
@@ -1539,7 +1650,11 @@ fn the_direct_partition_stands_where_a_medium_records_no_scheme() {
          rather than naming a scheme it was populated under"
     );
     let pool = disk.partitions();
-    assert_eq!(pool.len(), 1, "the direct partition is the whole of the pool");
+    assert_eq!(
+        pool.len(),
+        1,
+        "the direct partition is the whole of the pool"
+    );
     let direct = &pool[0];
     assert_eq!(
         direct.ordinal(),
@@ -1552,20 +1667,30 @@ fn the_direct_partition_stands_where_a_medium_records_no_scheme() {
         "it is the one member of the pool the library composes rather than reads"
     );
     assert_eq!(
-        direct.placement(), "direct",
+        direct.placement(),
+        "direct",
         "placement is the scheme's own vocabulary, and no scheme placed this"
     );
     assert_eq!(
-        direct.role(), RegionRole::Data,
+        direct.role(),
+        RegionRole::Data,
         "the whole content is data; there is no structure to be one of"
     );
-    assert!(!direct.active(), "nothing flagged it, and nothing is derived");
-    assert!(!direct.is_claimed(), "there is no declared type to have read");
+    assert!(
+        !direct.active(),
+        "nothing flagged it, and nothing is derived"
+    );
+    assert!(
+        !direct.is_claimed(),
+        "there is no declared type to have read"
+    );
 
     // A composition act is provenance, never evidence: the library says
     // what it composed, and never offers that as something it read.
     assert!(
-        direct.provenance().is_some_and(|account| !account.is_empty()),
+        direct
+            .provenance()
+            .is_some_and(|account| !account.is_empty()),
         "the direct partition accounts for itself"
     );
     assert!(
@@ -1673,9 +1798,14 @@ fn the_direct_partition_stands_where_a_medium_records_no_scheme() {
 #[test]
 fn an_mbr_table_populates_the_pool_under_its_own_numbers() {
     let fat = synthetic_fat16();
-    let path = image_at("pool-mbr", &synthetic_multi_mbr(&[(0x06, &fat), (0x06, &fat)]));
+    let path = image_at(
+        "pool-mbr",
+        &synthetic_multi_mbr(&[(0x06, &fat), (0x06, &fat)]),
+    );
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     assert_eq!(
         disk.partition_scheme(),
@@ -1695,11 +1825,13 @@ fn an_mbr_table_populates_the_pool_under_its_own_numbers() {
          was nothing for the library to compose"
     );
     assert!(
-        pool.iter().all(|partition| !partition.evidence().is_empty()),
+        pool.iter()
+            .all(|partition| !partition.evidence().is_empty()),
         "and every declared partition says what was read to declare it (P4)"
     );
     assert!(
-        pool.iter().all(|partition| partition.provenance().is_none()),
+        pool.iter()
+            .all(|partition| partition.provenance().is_none()),
         "none of them is a composition act, so none accounts for one"
     );
 
@@ -1739,7 +1871,10 @@ fn an_mbr_table_populates_the_pool_under_its_own_numbers() {
         first.is_addressable(),
         "a claimed data partition composes an extent to address"
     );
-    assert!(first.bears_namespace(), "a DOS data partition determines FAT");
+    assert!(
+        first.bears_namespace(),
+        "a DOS data partition determines FAT"
+    );
     assert!(first.issue().is_none(), "nothing about it was refused");
 
     // The caller's own reading, checked against the recorded byte: 0x06
@@ -1758,7 +1893,10 @@ fn an_mbr_table_populates_the_pool_under_its_own_numbers() {
         "and the same recorded value, without a second lookup"
     );
     assert_eq!(view.type_reading(), Some("FAT16B"), "and the same reading");
-    assert!(!view.is_direct(), "the table declared it; the library did not");
+    assert!(
+        !view.is_direct(),
+        "the table declared it; the library did not"
+    );
     view.as_type(PartitionType::DosPrimary)
         .expect("0x06 is one of the values that reading covers");
     let refusal = view
@@ -1832,7 +1970,9 @@ fn the_boot_flag_is_read_as_the_table_records_it() {
         &synthetic_flagged_mbr(&[(0x06, false, &fat), (0x06, true, &fat)]),
     );
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let pool = disk.partitions();
     assert_eq!(pool.len(), 2, "the table declares two entries");
@@ -1850,9 +1990,7 @@ fn the_boot_flag_is_read_as_the_table_records_it() {
         "the flag is a fact about the entry and changes nothing else about it"
     );
     assert!(
-        disk.partition(2)
-            .expect("the table bears entry 2")
-            .active(),
+        disk.partition(2).expect("the table bears entry 2").active(),
         "the view answers the same fact the record does"
     );
 
@@ -1871,7 +2009,9 @@ fn a_type_outside_the_claim_keeps_its_place_and_opens_neither_door() {
         &synthetic_multi_mbr(&[(0x06, &fat), (0x07, &fat), (0x06, &fat)]),
     );
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let pool = disk.partitions();
     let ordinals: Vec<u32> = pool.iter().map(|partition| partition.ordinal()).collect();
@@ -1940,13 +2080,12 @@ fn a_structural_partition_is_declared_with_its_extent_and_opens_neither_door() {
         &synthetic_extended_disk(&synthetic_fat16(), false),
     );
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let pool = disk.partitions();
-    let placements: Vec<&str> = pool
-        .iter()
-        .map(|partition| partition.placement())
-        .collect();
+    let placements: Vec<&str> = pool.iter().map(|partition| partition.placement()).collect();
     assert_eq!(
         placements,
         ["primary", "primary", "logical", "logical"],
@@ -1977,7 +2116,11 @@ fn a_structural_partition_is_declared_with_its_extent_and_opens_neither_door() {
         extended.start_bytes().is_some() && extended.length_bytes().is_some(),
         "it is still declared, and its extent is still what the table said"
     );
-    assert_eq!(extended.ordinal(), 2, "and it still numbers what follows it");
+    assert_eq!(
+        extended.ordinal(),
+        2,
+        "and it still numbers what follows it"
+    );
 
     assert!(
         disk.partition(2)
@@ -2014,7 +2157,9 @@ fn a_structural_partition_is_declared_with_its_extent_and_opens_neither_door() {
 fn both_vantage_doors_hand_out_one_node() {
     let path = image_at("pool-one-node", &synthetic_mbr_disk(&synthetic_fat16()));
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let mut through_volume = disk
         .partition(1)
@@ -2060,11 +2205,7 @@ fn both_vantage_doors_hand_out_one_node() {
         start,
         "one partition, one extent, one start"
     );
-    assert_eq!(
-        through_filesystem.length_bytes(),
-        length,
-        "and one length"
-    );
+    assert_eq!(through_filesystem.length_bytes(), length, "and one length");
     assert_eq!(
         through_filesystem.volume_id(),
         identity,
@@ -2106,7 +2247,9 @@ fn both_vantage_doors_hand_out_one_node() {
 fn a_declared_namespace_outside_the_claim_is_refused_by_name() {
     let path = image_at("pool-unclaimed-namespace", &synthetic_fat16());
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let refusal = disk
         .partition(0)
@@ -2161,7 +2304,9 @@ fn an_ordinal_the_pool_never_issued_is_answered_with_absence() {
     let fat = synthetic_fat16();
     let path = image_at("pool-absent-ordinal", &synthetic_mbr_disk(&fat));
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     assert!(disk.partition(1).is_some(), "the table declares entry 1");
     assert!(
@@ -2180,7 +2325,9 @@ fn an_ordinal_the_pool_never_issued_is_answered_with_absence() {
     // partition, and nothing at the numbers a scheme would have used.
     let path = image_at("pool-absent-declared", &fat);
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
     assert!(
         disk.partition(0).is_some(),
         "the direct partition is what its content is reached through"
@@ -2209,7 +2356,9 @@ fn a_partition_bearing_no_readable_namespace_is_a_named_absence() {
         &synthetic_multi_mbr(&[(0x06, &good), (0x06, &rubbish)]),
     );
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
     let bare = report.volumes[1].id;
@@ -2282,7 +2431,9 @@ fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
     let path = temp_path("file-view");
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
     let (mut session, attachment) = attach(&path, Afford::Write).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let payload: Vec<u8> = (0..4000u32).map(|n| (n % 251) as u8).collect();
     fs(disk, 0)
@@ -2290,7 +2441,9 @@ fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
         .expect("write buffers");
 
     let mut filesystem = fs(disk, 0);
-    let mut file = filesystem.get_file("payload.bin").expect("matched case-insensitively");
+    let mut file = filesystem
+        .get_file("payload.bin")
+        .expect("matched case-insensitively");
     assert_eq!(file.name(), "PAYLOAD.BIN", "the name comes back as stored");
     assert_eq!(file.size_bytes(), payload.len() as u64);
     assert_eq!(file.bytes().expect("whole value"), payload);
@@ -2299,7 +2452,8 @@ fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
     file.read_at(1000, &mut window).expect("bounded form");
     assert_eq!(window[..], payload[1000..1064]);
 
-    file.write_at(0, b"edited").expect("the ranged write buffers");
+    file.write_at(0, b"edited")
+        .expect("the ranged write buffers");
     assert_eq!(
         &filesystem.read_file("PAYLOAD.BIN").expect("read")[..6],
         b"edited"
@@ -2341,7 +2495,9 @@ fn a_space_addresses_its_extent_and_names_its_files() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
 
     let (mut session, attachment) = attach(&path, Afford::Write).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    let disk = session
+        .medium_mut(attachment)
+        .expect("the medium is pooled");
 
     let mut space = fs(disk, 0);
 

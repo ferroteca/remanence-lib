@@ -403,7 +403,11 @@ mod tests {
 
         // Every physical family's vantage is a space, and the split that
         // matters is space-native against namespace-native.
-        for physical in [&FLEXIBLE_5_25_SOFT, &FLEXIBLE_5_25_HARD_10, &LOGICAL_BLOCK_512] {
+        for physical in [
+            &FLEXIBLE_5_25_SOFT,
+            &FLEXIBLE_5_25_HARD_10,
+            &LOGICAL_BLOCK_512,
+        ] {
             assert_ne!(physical.family(), MediaFamily::Virtual, "{}", physical.id);
         }
     }
@@ -476,7 +480,9 @@ mod tests {
         // holes. Everything else is the same manufactured article, and
         // stating it twice differently would be two answers about one
         // disk.
-        let soft = FLEXIBLE_5_25_SOFT.flexible_magnetic().expect("flexible facts");
+        let soft = FLEXIBLE_5_25_SOFT
+            .flexible_magnetic()
+            .expect("flexible facts");
         assert_eq!(hard.form_factor, soft.form_factor);
         assert_eq!(hard.coercivity_oersteds, soft.coercivity_oersteds);
         assert_eq!(hard.tracks_per_inch, soft.tracks_per_inch);

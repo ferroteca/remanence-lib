@@ -400,14 +400,21 @@ pub(crate) enum MediumFactKind {
     Unformatted,
     /// Where the track's write splice sits, as an angle — recorded when
     /// the reduction located one, and absent when it did not.
-    Seam { angle: Cycle },
+    Seam {
+        angle: Cycle,
+    },
     /// This location's content matched an adjacent one. Carried as a
     /// stated fact rather than resolved: the evidence a capture supplies
     /// cannot disambiguate a real duplicate from a stepper that did not
     /// move, and guessing would put an unevidenced claim in the medium.
-    Duplicate { of: LocationKey },
+    Duplicate {
+        of: LocationKey,
+    },
     /// Any other fact, under the namespace that owns its meaning.
-    SourceFact { namespace: String, code: u32 },
+    SourceFact {
+        namespace: String,
+        code: u32,
+    },
 }
 
 /// One fact about a location, with how it came to be known.
@@ -826,11 +833,8 @@ impl FluxMedium {
     pub(crate) fn pulses(&self, location: &Location) -> Result<Vec<Pulse>> {
         let mut pulses = Vec::with_capacity(location.pulses as usize);
         for ordinal in 0..location.pulse_chunks {
-            let key = MediumSectionKey::new(
-                location.key.clone(),
-                MediumSectionKind::PulseChunk,
-                ordinal,
-            );
+            let key =
+                MediumSectionKey::new(location.key.clone(), MediumSectionKind::PulseChunk, ordinal);
             pulses.extend(decode_pulses(self.profile, &self.section(&key)?)?);
         }
         Ok(pulses)
@@ -864,11 +868,8 @@ impl FluxMedium {
         }
         let mut pulses = Vec::new();
         for ordinal in 0..location.pulse_chunks {
-            let key = MediumSectionKey::new(
-                location.key.clone(),
-                MediumSectionKind::PulseChunk,
-                ordinal,
-            );
+            let key =
+                MediumSectionKey::new(location.key.clone(), MediumSectionKind::PulseChunk, ordinal);
             let chunk = decode_pulses(self.profile, &self.section(&key)?)?;
             let opens_past_the_span = chunk.first().is_some_and(|pulse| pulse.position >= to);
             pulses.extend(
@@ -1032,7 +1033,8 @@ impl<S: ByteSink> MediumBuilder<S> {
             .chunks(self.chunk_records)
             .map(encode_pulses)
             .collect();
-        let fact_chunks: Vec<Vec<u8>> = facts.chunks(self.chunk_records).map(encode_facts).collect();
+        let fact_chunks: Vec<Vec<u8>> =
+            facts.chunks(self.chunk_records).map(encode_facts).collect();
         let location = Location {
             key: key.clone(),
             pulses: pulses.len() as u64,
@@ -1125,7 +1127,9 @@ fn decode_pulses(profile: &str, bytes: &[u8]) -> Result<Vec<Pulse>> {
     if version != METADATA_VERSION {
         return Err(Error::invalid_image(
             profile,
-            format!("backing states pulse chunk version {version}, which this build has no reading of"),
+            format!(
+                "backing states pulse chunk version {version}, which this build has no reading of"
+            ),
         ));
     }
     let (count, used) = read_varint(profile, bytes, at)?;
@@ -1145,7 +1149,10 @@ fn decode_pulses(profile: &str, bytes: &[u8]) -> Result<Vec<Pulse>> {
         let (state, used) = read_varint(profile, bytes, at)?;
         at += used;
         let state = u32::try_from(state).map_err(|_| {
-            Error::invalid_image(profile, "pulse chunk states a strength wider than its vocabulary")
+            Error::invalid_image(
+                profile,
+                "pulse chunk states a strength wider than its vocabulary",
+            )
         })?;
         let (seed, used) = read_varint(profile, bytes, at)?;
         at += used;
@@ -1206,7 +1213,9 @@ fn decode_facts(profile: &str, bytes: &[u8], known: &[&'static str]) -> Result<V
     if version != METADATA_VERSION {
         return Err(Error::invalid_image(
             profile,
-            format!("backing states fact chunk version {version}, which this build has no reading of"),
+            format!(
+                "backing states fact chunk version {version}, which this build has no reading of"
+            ),
         ));
     }
     let (count, used) = read_varint(profile, bytes, at)?;
@@ -1234,21 +1243,29 @@ fn decode_facts(profile: &str, bytes: &[u8], known: &[&'static str]) -> Result<V
                 let (code, used) = read_varint(profile, bytes, at)?;
                 at += used;
                 let code = u32::try_from(code).map_err(|_| {
-                    Error::invalid_image(profile, "fact chunk states a code wider than the format holds")
+                    Error::invalid_image(
+                        profile,
+                        "fact chunk states a code wider than the format holds",
+                    )
                 })?;
                 MediumFactKind::SourceFact { namespace, code }
             }
             other => {
                 return Err(Error::invalid_image(
                     profile,
-                    format!("fact chunk states a kind {other}, which this version has no reading of"),
+                    format!(
+                        "fact chunk states a kind {other}, which this version has no reading of"
+                    ),
                 ));
             }
         };
         let (length, used) = read_varint(profile, bytes, at)?;
         at += used;
         let length = usize::try_from(length).map_err(|_| {
-            Error::invalid_image(profile, "fact chunk states a payload longer than this host can address")
+            Error::invalid_image(
+                profile,
+                "fact chunk states a payload longer than this host can address",
+            )
         })?;
         let payload = bytes
             .get(at..at + length)
@@ -1439,10 +1456,7 @@ mod tests {
         let (medium, _, _) = mastered();
 
         assert_eq!(medium.derivation(), Derivation::SelectedAndProjected);
-        assert_eq!(
-            medium.derivation().as_str(),
-            "selected-and-projected"
-        );
+        assert_eq!(medium.derivation().as_str(), "selected-and-projected");
         assert_eq!(
             medium.provenance().notes,
             ["selected the second observation of each location"]
@@ -1462,7 +1476,10 @@ mod tests {
             C1541,
             TimeBase::new(C1541, 16_000_000, 1).expect("stated"),
             2_668_520,
-            OriginStatement::new(OriginRule::Declared, Provenance::new(C1541).note("declared")),
+            OriginStatement::new(
+                OriginRule::Declared,
+                Provenance::new(C1541).note("declared"),
+            ),
         )
         .expect("the frame states a circle");
         let (numerator, denominator) = odd.rotation_period();
@@ -1523,9 +1540,15 @@ mod tests {
 
     #[test]
     fn a_pulse_outside_the_circle_is_refused_rather_than_wrapped() {
-        let mut builder =
-            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
-                .expect("the policy is stated");
+        let mut builder = MediumBuilder::new(
+            C1541,
+            media(),
+            frame(),
+            Derivation::Synthetic,
+            policy(),
+            Vec::new(),
+        )
+        .expect("the policy is stated");
         let error = builder
             .add_location(
                 LocationKey::new(C1541, 0, 0),
@@ -1543,9 +1566,15 @@ mod tests {
 
     #[test]
     fn pulses_that_do_not_advance_are_refused_rather_than_sorted() {
-        let mut builder =
-            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
-                .expect("the policy is stated");
+        let mut builder = MediumBuilder::new(
+            C1541,
+            media(),
+            frame(),
+            Derivation::Synthetic,
+            policy(),
+            Vec::new(),
+        )
+        .expect("the policy is stated");
         let error = builder
             .add_location(
                 LocationKey::new(C1541, 0, 0),
@@ -1566,9 +1595,15 @@ mod tests {
         // The frame, the addressing and the strength vocabulary are one
         // profile's declarations, so a location from another would be
         // an angle measured on a circle that is not its own.
-        let mut builder =
-            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
-                .expect("the policy is stated");
+        let mut builder = MediumBuilder::new(
+            C1541,
+            media(),
+            frame(),
+            Derivation::Synthetic,
+            policy(),
+            Vec::new(),
+        )
+        .expect("the policy is stated");
         let error = builder
             .add_location(
                 LocationKey::new("apple2", 0, 0),
@@ -1643,10 +1678,7 @@ mod tests {
 
         let facts = medium.facts(location).expect("the facts read back");
         assert_eq!(facts.len(), 2);
-        assert_eq!(
-            facts[0].kind(),
-            &MediumFactKind::Seam { angle: 1_600_000 }
-        );
+        assert_eq!(facts[0].kind(), &MediumFactKind::Seam { angle: 1_600_000 });
         assert_eq!(
             facts[0].provenance().notes,
             ["write splice located half a turn in"]
@@ -1665,9 +1697,15 @@ mod tests {
 
     #[test]
     fn a_seam_outside_the_circle_is_refused_like_a_pulse() {
-        let mut builder =
-            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
-                .expect("the policy is stated");
+        let mut builder = MediumBuilder::new(
+            C1541,
+            media(),
+            frame(),
+            Derivation::Synthetic,
+            policy(),
+            Vec::new(),
+        )
+        .expect("the policy is stated");
         let error = builder
             .add_location(
                 LocationKey::new(C1541, 0, 0),
@@ -1699,7 +1737,10 @@ mod tests {
         // The blank location has no pulse chunk at all, so the index
         // answers about it without a section existing to touch.
         assert!(!medium.holds_section(&chunk(&second)));
-        assert_eq!(medium.locate(&chunk(&second)).expect("the index answers"), None);
+        assert_eq!(
+            medium.locate(&chunk(&second)).expect("the index answers"),
+            None
+        );
     }
 
     #[test]
@@ -1708,15 +1749,20 @@ mod tests {
         // so asking for the opening arc walks the chunk it covers and
         // the one that ends it, and never reaches the third.
         let first = LocationKey::new(C1541, 0, 0);
-        let mut builder =
-            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
-                .expect("the policy is stated")
-                .with_chunk_records(2);
+        let mut builder = MediumBuilder::new(
+            C1541,
+            media(),
+            frame(),
+            Derivation::Synthetic,
+            policy(),
+            Vec::new(),
+        )
+        .expect("the policy is stated")
+        .with_chunk_records(2);
         builder
             .add_location(
                 first.clone(),
-                &[0, 10, 20, 30, 40, 50]
-                    .map(|position| Pulse::new(position, Strength::certain(3))),
+                &[0, 10, 20, 30, 40, 50].map(|position| Pulse::new(position, Strength::certain(3))),
                 &[],
                 Provenance::new(C1541).note("synthesized"),
             )
@@ -1725,12 +1771,13 @@ mod tests {
         medium.attach_backing(Box::new(Bytes(bytes)), total, 1 << 20);
 
         let location = medium.location(&first).expect("added");
-        let arc = medium.pulses_within(location, 0, 15).expect("the arc reads");
+        let arc = medium
+            .pulses_within(location, 0, 15)
+            .expect("the arc reads");
         assert_eq!(arc.iter().map(Pulse::position).collect::<Vec<_>>(), [0, 10]);
 
-        let chunk = |ordinal| {
-            MediumSectionKey::new(first.clone(), MediumSectionKind::PulseChunk, ordinal)
-        };
+        let chunk =
+            |ordinal| MediumSectionKey::new(first.clone(), MediumSectionKind::PulseChunk, ordinal);
         assert!(medium.holds_section(&chunk(0)));
         // The second chunk is what ended the walk, and the third was
         // never touched: the rest of the location stays undecoded.
@@ -1763,10 +1810,16 @@ mod tests {
     #[test]
     fn a_declared_bound_evicts_and_re_reads_rather_than_refusing() {
         let first = LocationKey::new(C1541, 0, 0);
-        let mut builder =
-            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
-                .expect("the policy is stated")
-                .with_chunk_records(1);
+        let mut builder = MediumBuilder::new(
+            C1541,
+            media(),
+            frame(),
+            Derivation::Synthetic,
+            policy(),
+            Vec::new(),
+        )
+        .expect("the policy is stated")
+        .with_chunk_records(1);
         builder
             .add_location(
                 first.clone(),
@@ -1795,9 +1848,15 @@ mod tests {
 
     #[test]
     fn locations_arriving_out_of_addressing_order_are_refused() {
-        let mut builder =
-            MediumBuilder::new(C1541, media(), frame(), Derivation::Synthetic, policy(), Vec::new())
-                .expect("the policy is stated");
+        let mut builder = MediumBuilder::new(
+            C1541,
+            media(),
+            frame(),
+            Derivation::Synthetic,
+            policy(),
+            Vec::new(),
+        )
+        .expect("the policy is stated");
         builder
             .add_location(
                 LocationKey::new(C1541, 1, 0),

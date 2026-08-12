@@ -30,7 +30,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::archive::{ClaimedArchive, EntrySource, normalize_entry_name, open_archive, split_archive_path};
+use crate::archive::{
+    ClaimedArchive, EntrySource, normalize_entry_name, open_archive, split_archive_path,
+};
 use crate::device::{AccessMode, read_exact_at};
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::{Issue, Provenance};
@@ -335,9 +337,9 @@ fn decode_stream(name: &str, bytes: &[u8]) -> Result<StreamFacts> {
         let head = bytes[at];
         let (value, width) = match head {
             0x00..=0x07 => {
-                let low = *bytes.get(at + 1).ok_or_else(|| {
-                    refuse(format!("'{name}' ends inside a two-byte flux value"))
-                })?;
+                let low = *bytes
+                    .get(at + 1)
+                    .ok_or_else(|| refuse(format!("'{name}' ends inside a two-byte flux value")))?;
                 (Some((u64::from(head) << 8) | u64::from(low)), 2usize)
             }
             0x08 => (None, 1),
@@ -609,9 +611,11 @@ fn check_sample_clock(name: &str, declared: &str) -> Result<()> {
         )));
     }
     let scale = 10u64.pow(fraction.len() as u32);
-    let stated: u64 = format!("{whole}{fraction}")
-        .parse()
-        .map_err(|_| refuse(format!("'{name}' declares a sample clock past what a rate can count")))?;
+    let stated: u64 = format!("{whole}{fraction}").parse().map_err(|_| {
+        refuse(format!(
+            "'{name}' declares a sample clock past what a rate can count"
+        ))
+    })?;
     // |stated/scale - claimed| < one unit in the stream's last place,
     // by exact cross-multiplication: the decimal is a truncation, so it
     // is never a whole unit away from the rate it was truncated from.
@@ -775,11 +779,8 @@ impl CaptureSet {
         let subtree = entry_path.as_deref().map(normalize_entry_name);
         let claimed = open_archive(&archive_path)?;
 
-        let members = admit_capture_set(
-            claimed.catalog.entries(),
-            subtree.as_deref(),
-            &archive_path,
-        )?;
+        let members =
+            admit_capture_set(claimed.catalog.entries(), subtree.as_deref(), &archive_path)?;
         let mut evidence = vec![format!(
             "'{}' holds {} KryoFlux stream members{}, covering step positions 0 to \
              {} by {} heads",
@@ -1125,7 +1126,9 @@ mod tests {
             .expect_err("an incomplete set is refused");
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         assert!(
-            error.to_string().contains("step position 1 head 1 is absent"),
+            error
+                .to_string()
+                .contains("step position 1 head 1 is absent"),
             "{error}"
         );
     }
@@ -1161,7 +1164,9 @@ mod tests {
         let error = admit_capture_set(&entries, None, Path::new("c.7z"))
             .expect_err("an unrelated member is refused");
         assert!(
-            error.to_string().contains("is not a KryoFlux stream member"),
+            error
+                .to_string()
+                .contains("is not a KryoFlux stream member"),
             "{error}"
         );
     }
@@ -1192,8 +1197,14 @@ mod tests {
         assert!(facts.issues.is_empty(), "{:?}", facts.issues);
         // The device information is retained in the source's own
         // spelling, unparsed and uninterpreted.
-        assert_eq!(facts.metadata[0], ("sck".to_owned(), "24027428.5714285".to_owned()));
-        assert_eq!(facts.declared_sample_clock.as_deref(), Some("24027428.5714285"));
+        assert_eq!(
+            facts.metadata[0],
+            ("sck".to_owned(), "24027428.5714285".to_owned())
+        );
+        assert_eq!(
+            facts.declared_sample_clock.as_deref(),
+            Some("24027428.5714285")
+        );
     }
 
     #[test]
@@ -1268,10 +1279,7 @@ mod tests {
     fn an_index_past_the_flux_the_member_holds_is_refused() {
         let bytes = stream(&[0x14, 0x28], &[(0, 0), (900, 0)]);
         let error = decode_stream("cap00.0.raw", &bytes).expect_err("the position is outside");
-        assert!(
-            error.to_string().contains("lies past"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("lies past"), "{error}");
     }
 
     #[test]
@@ -1279,8 +1287,10 @@ mod tests {
         // The stream's decimal is a truncation of a rate with no exact
         // decimal, so it agrees to within its own last place and no
         // closer.
-        check_sample_clock("cap00.0.raw", "24027428.5714285").expect("truncated, as the tool writes it");
-        check_sample_clock("cap00.0.raw", "24027428.5714286").expect("rounded, which is no further out");
+        check_sample_clock("cap00.0.raw", "24027428.5714285")
+            .expect("truncated, as the tool writes it");
+        check_sample_clock("cap00.0.raw", "24027428.5714286")
+            .expect("rounded, which is no further out");
         // A hertz out where the stream stated seven decimals is ten
         // million units of its own precision, not a rounding.
         check_sample_clock("cap00.0.raw", "24027429.5714285")

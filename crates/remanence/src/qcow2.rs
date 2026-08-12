@@ -220,9 +220,8 @@ fn backing_format_extension(
         if kind == BACKING_FORMAT_EXTENSION {
             let mut name = vec![0u8; length as usize];
             device.read_at(at + 8, &mut name)?;
-            let name = String::from_utf8(name).map_err(|_| {
-                invalid("backing file format name is not valid UTF-8")
-            })?;
+            let name = String::from_utf8(name)
+                .map_err(|_| invalid("backing file format name is not valid UTF-8"))?;
             return Ok(Some(name));
         }
         at += 8 + length.div_ceil(8) * 8; // Entries pad to 8 bytes.
@@ -283,17 +282,19 @@ impl<D: Device> Qcow2<D> {
 
     /// Builds the driver over an already-parsed header and, for a chain
     /// member, the backing image its unallocated clusters fall through to.
-    fn assemble(
-        mut device: D,
-        header: Qcow2Header,
-        backing: Option<Backing<D>>,
-    ) -> Result<Self> {
+    fn assemble(mut device: D, header: Qcow2Header, backing: Option<Backing<D>>) -> Result<Self> {
         let l1_bytes = header.l1_size as usize * 8;
         let mut raw = vec![0u8; l1_bytes];
         device.read_at(header.l1_table_offset, &mut raw)?;
         let l1 = raw.chunks_exact(8).map(|chunk| be64(chunk, 0)).collect();
 
-        Ok(Self { device, header, l1, writable_checked: false, backing })
+        Ok(Self {
+            device,
+            header,
+            l1,
+            writable_checked: false,
+            backing,
+        })
     }
 
     pub fn header(&self) -> &Qcow2Header {
@@ -390,9 +391,7 @@ impl<D: Device> Qcow2<D> {
             if (cluster.len() as u64) < within + buf.len() as u64 {
                 return Err(invalid("compressed cluster shorter than expected"));
             }
-            buf.copy_from_slice(
-                &cluster[within as usize..within as usize + buf.len()],
-            );
+            buf.copy_from_slice(&cluster[within as usize..within as usize + buf.len()]);
             return Ok(());
         }
 
@@ -437,8 +436,7 @@ impl<D: Device> Qcow2<D> {
     }
 
     fn refcount_table_entry(&mut self, table_index: u64) -> Result<u64> {
-        let table_len =
-            self.header.refcount_table_clusters as u64 * self.cluster_size() / 8;
+        let table_len = self.header.refcount_table_clusters as u64 * self.cluster_size() / 8;
         if table_index >= table_len {
             return Err(unsupported(
                 "refcount table cannot cover the image; growing it is beyond \
@@ -446,8 +444,10 @@ impl<D: Device> Qcow2<D> {
             ));
         }
         let mut raw = [0u8; 8];
-        self.device
-            .read_at(self.header.refcount_table_offset + table_index * 8, &mut raw)?;
+        self.device.read_at(
+            self.header.refcount_table_offset + table_index * 8,
+            &mut raw,
+        )?;
         Ok(u64::from_be_bytes(raw))
     }
 
@@ -470,10 +470,8 @@ impl<D: Device> Qcow2<D> {
             // write its own count when it does.
             if own_index / self.refcount_block_entries() == table_index {
                 let own_block_index = own_index % self.refcount_block_entries();
-                self.device.write_at(
-                    block_offset + own_block_index * 2,
-                    &1u16.to_be_bytes(),
-                )?;
+                self.device
+                    .write_at(block_offset + own_block_index * 2, &1u16.to_be_bytes())?;
             } else {
                 self.set_refcount(own_index, 1)?;
             }
@@ -525,9 +523,8 @@ impl<D: Device> Qcow2<D> {
         debug_assert!(within + data.len() as u64 <= cluster_size);
 
         let entry = self.l2_entry(guest_offset)?;
-        let is_standard = entry & OFLAG_COMPRESSED == 0
-            && entry & L2_OFFSET_MASK != 0
-            && entry & OFLAG_ZERO == 0;
+        let is_standard =
+            entry & OFLAG_COMPRESSED == 0 && entry & L2_OFFSET_MASK != 0 && entry & OFLAG_ZERO == 0;
 
         if is_standard {
             if entry & OFLAG_COPIED == 0 {
@@ -574,16 +571,12 @@ impl<D: Device> Qcow2<D> {
 /// from the image that names it. A missing member, a cycle, a chain
 /// past [`MAX_CHAIN_LENGTH`] files, and a backing format beyond raw and
 /// qcow2 are refused by name (P3).
-pub(crate) fn open_chain(
-    device: MediumDevice,
-    path: Option<&Path>,
-) -> Result<Qcow2<MediumDevice>> {
+pub(crate) fn open_chain(device: MediumDevice, path: Option<&Path>) -> Result<Qcow2<MediumDevice>> {
     let Some(path) = path else {
         return open_unnamed(device);
     };
-    let canonical_top = std::fs::canonicalize(path).map_err(|error| {
-        Error::io(format!("cannot resolve '{}': {error}", path.display()))
-    })?;
+    let canonical_top = std::fs::canonicalize(path)
+        .map_err(|error| Error::io(format!("cannot resolve '{}': {error}", path.display())))?;
     open_member(device, path, &mut vec![canonical_top])
 }
 
@@ -732,7 +725,10 @@ mod tests {
     fn empty_qcow2(virtual_size: u64) -> VecDevice {
         let l2_entries = CLUSTER / 8;
         let l1_size = virtual_size.div_ceil(CLUSTER * l2_entries) as u32;
-        assert!(l1_size as u64 <= CLUSTER / 8, "test image L1 fits one cluster");
+        assert!(
+            l1_size as u64 <= CLUSTER / 8,
+            "test image L1 fits one cluster"
+        );
 
         let mut image = vec![0u8; 4 * CLUSTER as usize];
         image[..4].copy_from_slice(&QCOW2_MAGIC);
@@ -747,8 +743,7 @@ mod tests {
         image[100..104].copy_from_slice(&112u32.to_be_bytes()); // header_length
 
         // Refcount table entry 0 -> block at cluster 2; counts for 0..=3.
-        image[CLUSTER as usize..CLUSTER as usize + 8]
-            .copy_from_slice(&(2 * CLUSTER).to_be_bytes());
+        image[CLUSTER as usize..CLUSTER as usize + 8].copy_from_slice(&(2 * CLUSTER).to_be_bytes());
         for cluster in 0..4usize {
             let at = 2 * CLUSTER as usize + cluster * 2;
             image[at..at + 2].copy_from_slice(&1u16.to_be_bytes());
@@ -774,12 +769,16 @@ mod tests {
             .collect();
         qcow2.write_at(7 * CLUSTER - 50, &payload).expect("writes");
         let mut back = vec![0u8; payload.len()];
-        qcow2.read_at(7 * CLUSTER - 50, &mut back).expect("reads back");
+        qcow2
+            .read_at(7 * CLUSTER - 50, &mut back)
+            .expect("reads back");
         assert_eq!(back, payload);
 
         // Neighboring bytes stay zero.
         let mut edge = [0xffu8; 8];
-        qcow2.read_at(7 * CLUSTER - 58, &mut edge).expect("reads edge");
+        qcow2
+            .read_at(7 * CLUSTER - 58, &mut edge)
+            .expect("reads edge");
         assert!(edge.iter().all(|&byte| byte == 0));
     }
 
@@ -804,7 +803,9 @@ mod tests {
         let x = 62 - (CLUSTER_BITS - 8);
         let sectors = (stream.len() as u64).div_ceil(512);
         let entry = OFLAG_COMPRESSED | ((sectors - 1) << x) | (5 * CLUSTER);
-        device.write_at(4 * CLUSTER + 9 * 8, &entry.to_be_bytes()).unwrap();
+        device
+            .write_at(4 * CLUSTER + 9 * 8, &entry.to_be_bytes())
+            .unwrap();
 
         (device, content)
     }
@@ -814,7 +815,9 @@ mod tests {
         let (device, content) = compressed_qcow2();
         let mut qcow2 = Qcow2::open(device).expect("opens");
         let mut back = vec![0u8; CLUSTER as usize];
-        qcow2.read_at(9 * CLUSTER, &mut back).expect("reads compressed");
+        qcow2
+            .read_at(9 * CLUSTER, &mut back)
+            .expect("reads compressed");
         assert_eq!(back, content);
     }
 
@@ -854,13 +857,12 @@ mod tests {
         base.write_at(3 * CLUSTER, &deep).expect("base writes");
         base.write_at(5 * CLUSTER, &shadowed).expect("base writes");
 
-        let mid = with_backing(
-            empty_qcow2(virtual_size),
-            Backing::Qcow2(Box::new(base)),
-        );
+        let mid = with_backing(empty_qcow2(virtual_size), Backing::Qcow2(Box::new(base)));
 
         let mut top_builder = Qcow2::open(empty_qcow2(virtual_size)).expect("top opens");
-        top_builder.write_at(5 * CLUSTER, &top_own).expect("top writes");
+        top_builder
+            .write_at(5 * CLUSTER, &top_own)
+            .expect("top writes");
         let mut top = with_backing(top_builder.into_device(), Backing::Qcow2(Box::new(mid)));
 
         // Unallocated falls through two members; allocated shadows; a
@@ -876,7 +878,8 @@ mod tests {
         // One read spanning a fall-through cluster and a zero one
         // composes byte-exactly across the boundary.
         let mut span = vec![0xffu8; CLUSTER as usize];
-        top.read_at(3 * CLUSTER + CLUSTER / 2, &mut span).expect("reads");
+        top.read_at(3 * CLUSTER + CLUSTER / 2, &mut span)
+            .expect("reads");
         assert_eq!(span[..CLUSTER as usize / 2], deep[CLUSTER as usize / 2..]);
         assert!(span[CLUSTER as usize / 2..].iter().all(|&byte| byte == 0));
     }
@@ -934,14 +937,14 @@ mod tests {
     fn compressed_clusters_decompress_wherever_they_sit() {
         let (device, content) = compressed_qcow2();
         let base = Qcow2::open(device).expect("base opens");
-        let mut top = with_backing(
-            empty_qcow2(64 * CLUSTER),
-            Backing::Qcow2(Box::new(base)),
-        );
+        let mut top = with_backing(empty_qcow2(64 * CLUSTER), Backing::Qcow2(Box::new(base)));
 
         let mut back = vec![0u8; CLUSTER as usize];
         top.read_at(9 * CLUSTER, &mut back).expect("reads through");
-        assert_eq!(back, content, "the backing's compressed cluster decompresses");
+        assert_eq!(
+            back, content,
+            "the backing's compressed cluster decompresses"
+        );
     }
 
     #[test]
@@ -954,7 +957,8 @@ mod tests {
         top.write_at(0, &[1, 2, 3]).expect("chain write allocates");
 
         let mut composed = vec![0u8; CLUSTER as usize];
-        top.read_at(0, &mut composed).expect("written cluster reads");
+        top.read_at(0, &mut composed)
+            .expect("written cluster reads");
         assert_eq!(&composed[..3], &[1, 2, 3]);
         assert_eq!(&composed[3..], &backing_bytes[3..]);
 

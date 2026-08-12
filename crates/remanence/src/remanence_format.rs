@@ -38,7 +38,7 @@ use crate::error::{Error, Result};
 use crate::evidence::{DeclaredLoss, Provenance};
 use crate::flux_capture::{ByteSink, CHUNK_RECORDS, SessionBacking, read_varint, write_varint};
 use crate::remanence_image::{
-    Hole, MediaFormFactor, Magnetization, MemorySource, OrbitKey, OrbitPoint, REMANENCE,
+    Hole, Magnetization, MediaFormFactor, MemorySource, OrbitKey, OrbitPoint, REMANENCE,
     RemanenceImage, RemanenceImageBuilder, TurnFraction, WriteWidths,
 };
 
@@ -76,7 +76,9 @@ fn form_factor_of(code: u8) -> Result<MediaFormFactor> {
         2 => Ok(MediaFormFactor::Inch35),
         other => Err(Error::invalid_image(
             REMANENCE,
-            format!("artifact states a form factor code {other}, which this version has no reading of"),
+            format!(
+                "artifact states a form factor code {other}, which this version has no reading of"
+            ),
         )),
     }
 }
@@ -130,7 +132,10 @@ pub(crate) fn decode<S: ByteSink>(
     if bytes.len() < HEADER_BYTES {
         return Err(Error::invalid_image(
             REMANENCE,
-            format!("too short to be a remanence artifact: {} bytes", bytes.len()),
+            format!(
+                "too short to be a remanence artifact: {} bytes",
+                bytes.len()
+            ),
         ));
     }
     if !has_signature(bytes) {
@@ -176,9 +181,10 @@ fn decode_payload<S: ByteSink>(
 ) -> Result<(RemanenceImage, S, u64)> {
     let mut at = 0;
 
-    let form_factor = form_factor_of(*payload.first().ok_or_else(|| {
-        Error::invalid_image(REMANENCE, "payload ends before the form factor")
-    })?)?;
+    let form_factor =
+        form_factor_of(*payload.first().ok_or_else(|| {
+            Error::invalid_image(REMANENCE, "payload ends before the form factor")
+        })?)?;
     at += 1;
 
     let (hole_count, used) = read_varint(REMANENCE, payload, at)?;
@@ -249,9 +255,8 @@ fn read_fraction(payload: &[u8], at: usize) -> Result<(TurnFraction, usize)> {
     cursor += used;
     let (denominator, used) = read_varint(REMANENCE, payload, cursor)?;
     cursor += used;
-    let numerator = u64::try_from(numerator).map_err(|_| {
-        Error::invalid_image(REMANENCE, "a hole's angle cannot be negative")
-    })?;
+    let numerator = u64::try_from(numerator)
+        .map_err(|_| Error::invalid_image(REMANENCE, "a hole's angle cannot be negative"))?;
     Ok((TurnFraction::new(numerator, denominator)?, cursor - at))
 }
 
@@ -304,7 +309,11 @@ fn read_orbit(
             None
         };
         points.push(OrbitPoint::stating(angle, sense, widths)?);
-        last_sense = if sense.is_coherent() { Some(sense) } else { None };
+        last_sense = if sense.is_coherent() {
+            Some(sense)
+        } else {
+            None
+        };
     }
     Ok((key, points, cursor - at))
 }
@@ -324,10 +333,7 @@ pub(crate) fn to_bytes(image: &RemanenceImage) -> Result<Vec<u8>> {
 
     // Grouped by surface, each block naming its surface rather than
     // being found by position; within a surface, outermost first.
-    let mut surfaces: Vec<u64> = image
-        .orbits()
-        .map(|orbit| orbit.key().surface())
-        .collect();
+    let mut surfaces: Vec<u64> = image.orbits().map(|orbit| orbit.key().surface()).collect();
     surfaces.dedup();
     write_varint(&mut payload, surfaces.len() as u64);
     for surface in surfaces {
@@ -345,10 +351,13 @@ pub(crate) fn to_bytes(image: &RemanenceImage) -> Result<Vec<u8>> {
             let mut last_sense: Option<Magnetization> = None;
             for point in &points {
                 let derivable = point.magnetization().is_coherent()
-                    && last_sense.and_then(|sense| sense.opposite())
-                        == Some(point.magnetization());
+                    && last_sense.and_then(|sense| sense.opposite()) == Some(point.magnetization());
                 let tag = if derivable { 0 } else { STATES_MAGNETIZATION }
-                    | if point.states_widths() { STATES_WIDTHS } else { 0 };
+                    | if point.states_widths() {
+                        STATES_WIDTHS
+                    } else {
+                        0
+                    };
                 write_varint(
                     &mut payload,
                     ((point.angle() - previous_angle) << TAG_BITS) | tag,
@@ -439,12 +448,10 @@ impl RemanenceImage {
                 )
             })?;
         let mut bytes = vec![0u8; held];
-        device::read_exact_at(&claimed, 0, &mut bytes).map_err(|error| {
-            Error::io(format!("cannot read '{}': {error}", path.display()))
-        })?;
+        device::read_exact_at(&claimed, 0, &mut bytes)
+            .map_err(|error| Error::io(format!("cannot read '{}': {error}", path.display())))?;
 
-        let (mut image, backing, total) =
-            decode(&bytes, SessionBacking::create()?, CHUNK_RECORDS)?;
+        let (mut image, backing, total) = decode(&bytes, SessionBacking::create()?, CHUNK_RECORDS)?;
         image.attach_backing(backing.into_source(), total, cache_bytes);
         image.attach_artifact(path.to_path_buf(), claimed, AccessMode::ReadOnly);
         Ok(image)
@@ -482,9 +489,7 @@ fn write_new_artifact(image: &RemanenceImage, path: &Path) -> Result<RemanenceWr
     // The bytes are on the medium before the name exists, so what the
     // destination names is either the whole artifact or nothing.
     let built = device::write_all_at(&file, 0, &artifact)
-        .map_err(|error| {
-            Error::io(format!("cannot write '{}': {error}", staging.display()))
-        })
+        .map_err(|error| Error::io(format!("cannot write '{}': {error}", staging.display())))
         .and_then(|()| {
             file.sync_all().map_err(|error| {
                 Error::io(format!(
@@ -570,11 +575,17 @@ mod tests {
         assert_eq!(image.holes().len(), 1);
         let hole = image.holes()[0];
         assert_eq!(
-            (hole.center_angle().numerator(), hole.center_angle().denominator()),
+            (
+                hole.center_angle().numerator(),
+                hole.center_angle().denominator()
+            ),
             (3, 8)
         );
         assert_eq!(
-            (hole.angular_extent().numerator(), hole.angular_extent().denominator()),
+            (
+                hole.angular_extent().numerator(),
+                hole.angular_extent().denominator()
+            ),
             (1, 50)
         );
         assert_eq!(image.orbit_count(), 1);
@@ -688,5 +699,4 @@ mod tests {
         let orbit = decoded.orbits().next().expect("one orbit").clone();
         assert_eq!(decoded.points(&orbit).expect("points decode"), points);
     }
-
 }

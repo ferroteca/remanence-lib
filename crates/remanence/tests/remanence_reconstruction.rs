@@ -289,10 +289,7 @@ fn declared_recordings_are_honoured_rather_than_measured() {
         "what the caller declared is what the reduction used"
     );
     assert!(
-        report
-            .evidence
-            .iter()
-            .any(|line| line.contains("declared")),
+        report.evidence.iter().any(|line| line.contains("declared")),
         "the reduction says the selection was the caller's: {:?}",
         report.evidence
     );

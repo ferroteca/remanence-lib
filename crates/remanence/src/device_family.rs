@@ -248,7 +248,10 @@ impl DeviceFamily {
             .find(|entry| entry.slot_prefix == Some(prefix))
             .map(Self)
             .ok_or_else(|| {
-                let claimed: Vec<&str> = ENROLLED.iter().filter_map(|entry| entry.slot_prefix).collect();
+                let claimed: Vec<&str> = ENROLLED
+                    .iter()
+                    .filter_map(|entry| entry.slot_prefix)
+                    .collect();
                 Error::unsupported(format!(
                     "no storage-device family takes the slot prefix '{prefix}'; \
                      this release claims {}",
@@ -467,7 +470,12 @@ mod tests {
             DeviceFamily::CBM_FLOPPY_DRIVE,
         ] {
             assert!(!interior.is_concrete(), "{} instantiates", interior.id());
-            assert_eq!(interior.slot_prefix(), None, "{} names a slot", interior.id());
+            assert_eq!(
+                interior.slot_prefix(),
+                None,
+                "{} names a slot",
+                interior.id()
+            );
             assert!(
                 interior.accepted_media().is_empty(),
                 "{} declares media a device could be checked against",
@@ -476,7 +484,9 @@ mod tests {
         }
 
         for concrete in DeviceFamily::concrete() {
-            let prefix = concrete.slot_prefix().expect("a concrete entry names a slot");
+            let prefix = concrete
+                .slot_prefix()
+                .expect("a concrete entry names a slot");
             assert!(
                 !prefix.chars().any(|c| c.is_ascii_digit()),
                 "{prefix} carries a digit, and an attachment identity parses as \

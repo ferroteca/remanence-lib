@@ -22,9 +22,7 @@ use common::open_read;
 /// Pools `path` under its declared grammar and answers with the session
 /// and the archive's identity: a medium lives in its session's pool, so
 /// tests keep the session alive for as long as they use the medium.
-fn archive_session(
-    path: impl AsRef<std::path::Path>,
-) -> remanence::Result<(Session, MediaId)> {
+fn archive_session(path: impl AsRef<std::path::Path>) -> remanence::Result<(Session, MediaId)> {
     let mut session = Session::new();
     let id = session.load_media(open_read(path), Format::Zip)?.id();
     Ok((session, id))
@@ -150,7 +148,8 @@ fn assert_streamed_session(path: &std::path::Path, expected: &[u8]) {
     disk.read_at(0, &mut front).expect("front reads");
     assert_eq!(&front[..], &expected[..64]);
     let mut tail = [0u8; 64];
-    disk.read_at(expected.len() as u64 - 64, &mut tail).expect("tail reads");
+    disk.read_at(expected.len() as u64 - 64, &mut tail)
+        .expect("tail reads");
     assert_eq!(&tail[..], &expected[expected.len() - 64..]);
 
     // The layers report the archive wrapper and the h8d-sized image.
@@ -237,7 +236,10 @@ fn a_lying_uncompressed_size_is_refused_by_name() {
     let path = temp_zip("lying", &zip);
 
     let error = load_entry(&path, "disk.h8d").expect_err("the size lie is refused");
-    assert!(error.to_string().contains("expected"), "names the mismatch: {error}");
+    assert!(
+        error.to_string().contains("expected"),
+        "names the mismatch: {error}"
+    );
     std::fs::remove_file(&path).ok();
 }
 
@@ -324,10 +326,8 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
     // `HDOS_BOUND` in the filesystem seam — the adapter's own claim
     // about how much of an extent it is willing to hold.
     const READER_BOUND: usize = 8 * 1024 * 1024;
-    let path = std::env::temp_dir().join(format!(
-        "remanence-hdos-bound-{}.img",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("remanence-hdos-bound-{}.img", std::process::id()));
     std::fs::write(&path, vec![0u8; IMAGE_BYTES]).expect("oversized image writes");
 
     let mut session = Session::new();

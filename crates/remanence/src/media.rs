@@ -34,8 +34,8 @@ use std::path::Path;
 use crate::archive::ArchiveMedium;
 use crate::assurance::Assurance;
 use crate::device::AccessMode;
-use crate::disk::{DiskFormat, MediumState};
 use crate::discovery::Discovery;
+use crate::disk::{DiskFormat, MediumState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
 use crate::filesystem::Catalog;
@@ -124,14 +124,17 @@ impl Format {
     /// this release does not claim is refused naming what is claimed
     /// (P3).
     pub fn from_id(id: &str) -> Result<Self> {
-        Self::ALL.into_iter().find(|format| format.id() == id).ok_or_else(|| {
-            let claimed: Vec<&str> = Self::ALL.iter().map(|format| format.id()).collect();
-            Error::unsupported(format!(
-                "'{id}' names no format this release loads; the declarations \
+        Self::ALL
+            .into_iter()
+            .find(|format| format.id() == id)
+            .ok_or_else(|| {
+                let claimed: Vec<&str> = Self::ALL.iter().map(|format| format.id()).collect();
+                Error::unsupported(format!(
+                    "'{id}' names no format this release loads; the declarations \
                  it claims are {}",
-                claimed.join(", ")
-            ))
-        })
+                    claimed.join(", ")
+                ))
+            })
     }
 
     /// The archive grammar this format is, where it is one.
@@ -435,7 +438,9 @@ impl Medium {
     /// Writes within a space's extent, buffered until commit like every
     /// other write (P2).
     pub(crate) fn write_space_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        self.state.space_mut("write_at")?.write_space_at(offset, data)
+        self.state
+            .space_mut("write_at")?
+            .write_space_at(offset, data)
     }
 
     /// The namespace an archive medium bears, where this is one.
@@ -596,7 +601,10 @@ impl MediaPool {
     /// teardown runs, which takes no state with it.
     pub(crate) fn sever_machine(&mut self, machine: Option<&str>) {
         for medium in &mut self.media {
-            if medium.link().is_some_and(|link| link.machine.as_deref() == machine) {
+            if medium
+                .link()
+                .is_some_and(|link| link.machine.as_deref() == machine)
+            {
                 medium.set_link(None);
             }
         }
@@ -621,7 +629,10 @@ mod tests {
         // than one catalog entry is refused naming what is claimed.
         let error = Format::from_id("archive").expect_err("refused");
         let message = error.to_string();
-        assert!(message.contains("archive"), "names what was asked: {message}");
+        assert!(
+            message.contains("archive"),
+            "names what was asked: {message}"
+        );
         assert!(message.contains("zip"), "names what is claimed: {message}");
     }
 

@@ -10,7 +10,6 @@
 
 use std::path::Path;
 
-use crate::source::{ImageSource, SourceDevice};
 use crate::device::{Device, MediumDevice};
 use crate::device_family::DeviceFamily;
 use crate::disk::DiskFormat;
@@ -21,10 +20,11 @@ use crate::mbr;
 use crate::media::Format;
 use crate::media_profile::{FLEXIBLE_5_25_HARD_10, LOGICAL_BLOCK_512, MediaProfile};
 use crate::qcow2::{QCOW2_MAGIC, Qcow2, SUPPORTED_VERSION_CEILING};
+use crate::source::{ImageSource, SourceDevice};
 use crate::vdi::{
     SIGNATURE_AT as VDI_SIGNATURE_AT, SUPPORTED_MAJOR as VDI_SUPPORTED_MAJOR,
-    SUPPORTED_MINOR_CEILING as VDI_SUPPORTED_MINOR_CEILING, VDI_SIGNATURE, VERSION_AT as VDI_VERSION_AT,
-    Vdi,
+    SUPPORTED_MINOR_CEILING as VDI_SUPPORTED_MINOR_CEILING, VDI_SIGNATURE,
+    VERSION_AT as VDI_VERSION_AT, Vdi,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -990,7 +990,11 @@ mod tests {
             }
         }
 
-        fn open_disk(&self, file: MediumDevice, _path: Option<&Path>) -> Result<Box<dyn OpenedImage>> {
+        fn open_disk(
+            &self,
+            file: MediumDevice,
+            _path: Option<&Path>,
+        ) -> Result<Box<dyn OpenedImage>> {
             Ok(Box::new(RawImage(file)))
         }
     }

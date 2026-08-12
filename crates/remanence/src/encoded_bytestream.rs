@@ -160,7 +160,12 @@ impl SectionAddress for BytestreamSectionKey {
         write_varint(out, self.ordinal);
     }
 
-    fn read(source: &str, bytes: &[u8], at: usize, known: &[&'static str]) -> Result<(Self, usize)> {
+    fn read(
+        source: &str,
+        bytes: &[u8],
+        at: usize,
+        known: &[&'static str],
+    ) -> Result<(Self, usize)> {
         let mut cursor = at;
         let (location, used) = read_location_key(source, bytes, cursor, known)?;
         cursor += used;
@@ -309,7 +314,9 @@ impl EncodedBytestream {
     }
 
     pub(crate) fn backing_bytes(&self) -> u64 {
-        self.backing.as_ref().map_or(0, |backing| backing.total_bytes)
+        self.backing
+            .as_ref()
+            .map_or(0, |backing| backing.total_bytes)
     }
 
     pub(crate) fn resident_bytes(&self) -> u64 {
@@ -339,7 +346,12 @@ impl EncodedBytestream {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache
-            .section(backing.bytes.as_ref(), backing.total_bytes, key, &backing.known)
+            .section(
+                backing.bytes.as_ref(),
+                backing.total_bytes,
+                key,
+                &backing.known,
+            )
             .map(<[u8]>::to_vec)
     }
 
@@ -450,13 +462,23 @@ impl<S: ByteSink> BytestreamBuilder<S> {
             ));
         }
 
-        let byte_chunks: Vec<Vec<u8>> = records.chunks(self.chunk_records).map(encode_bytes).collect();
-        let fact_chunks: Vec<Vec<u8>> = facts.chunks(self.chunk_records).map(encode_facts).collect();
+        let byte_chunks: Vec<Vec<u8>> = records
+            .chunks(self.chunk_records)
+            .map(encode_bytes)
+            .collect();
+        let fact_chunks: Vec<Vec<u8>> =
+            facts.chunks(self.chunk_records).map(encode_facts).collect();
         let location = Location {
             key: key.clone(),
             bytes: records.len() as u64,
-            resolved: records.iter().filter(|record| record.value().is_some()).count() as u64,
-            unresolved: records.iter().filter(|record| record.value().is_none()).count() as u64,
+            resolved: records
+                .iter()
+                .filter(|record| record.value().is_some())
+                .count() as u64,
+            unresolved: records
+                .iter()
+                .filter(|record| record.value().is_none())
+                .count() as u64,
             alignments: facts
                 .iter()
                 .filter(|fact| matches!(fact.kind, BytestreamFactKind::Alignment { .. }))
@@ -561,7 +583,9 @@ fn decode_bytes(profile: &str, bytes: &[u8]) -> Result<Vec<ByteRecord>> {
     if version != METADATA_VERSION {
         return Err(Error::invalid_image(
             profile,
-            format!("backing states byte chunk version {version}, which this build has no reading of"),
+            format!(
+                "backing states byte chunk version {version}, which this build has no reading of"
+            ),
         ));
     }
     let (count, used) = read_varint(profile, bytes, at)?;
@@ -632,14 +656,20 @@ fn encode_facts(facts: &[BytestreamFact]) -> Vec<u8> {
     out
 }
 
-fn decode_facts(profile: &str, bytes: &[u8], known: &[&'static str]) -> Result<Vec<BytestreamFact>> {
+fn decode_facts(
+    profile: &str,
+    bytes: &[u8],
+    known: &[&'static str],
+) -> Result<Vec<BytestreamFact>> {
     let mut at = 0;
     let (version, used) = read_varint(profile, bytes, at)?;
     at += used;
     if version != METADATA_VERSION {
         return Err(Error::invalid_image(
             profile,
-            format!("backing states fact chunk version {version}, which this build has no reading of"),
+            format!(
+                "backing states fact chunk version {version}, which this build has no reading of"
+            ),
         ));
     }
     let (count, used) = read_varint(profile, bytes, at)?;
@@ -661,7 +691,9 @@ fn decode_facts(profile: &str, bytes: &[u8], known: &[&'static str]) -> Result<V
             other => {
                 return Err(Error::invalid_image(
                     profile,
-                    format!("fact chunk states a kind {other}, which this version has no reading of"),
+                    format!(
+                        "fact chunk states a kind {other}, which this version has no reading of"
+                    ),
                 ));
             }
         };
@@ -715,7 +747,12 @@ mod tests {
                 &[
                     ByteRecord::new(10, ByteOutcome::Resolved(0x08)),
                     ByteRecord::new(20, ByteOutcome::Resolved(0xff)),
-                    ByteRecord::new(30, ByteOutcome::Unresolved { bits: 0b11111_00000 }),
+                    ByteRecord::new(
+                        30,
+                        ByteOutcome::Unresolved {
+                            bits: 0b11111_00000,
+                        },
+                    ),
                     ByteRecord::new(40, ByteOutcome::Resolved(0x00)),
                     ByteRecord::new(50, ByteOutcome::Resolved(0x5a)),
                 ],
@@ -728,7 +765,10 @@ mod tests {
                         Provenance::new(C1541).note("a run of the declared landmark"),
                     ),
                     BytestreamFact::new(
-                        BytestreamFactKind::Unframed { at_bit: 60, bits: 6 },
+                        BytestreamFactKind::Unframed {
+                            at_bit: 60,
+                            bits: 6,
+                        },
                         Provenance::new(C1541).note("left over where the next landmark arrived"),
                     ),
                 ],
@@ -793,7 +833,10 @@ mod tests {
         );
         assert_eq!(
             facts[1].kind(),
-            &BytestreamFactKind::Unframed { at_bit: 60, bits: 6 }
+            &BytestreamFactKind::Unframed {
+                at_bit: 60,
+                bits: 6
+            }
         );
         assert_eq!(location.alignments(), 1);
         assert_eq!(location.unframed_bits(), 6);

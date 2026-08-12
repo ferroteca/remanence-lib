@@ -24,10 +24,7 @@ fn archive_session(path: impl AsRef<Path>) -> remanence::Result<(Session, MediaI
 
 /// The nested journey: one member named through the archive's namespace,
 /// pooled as a medium of its own.
-fn load_member(
-    path: impl AsRef<Path>,
-    member: &str,
-) -> remanence::Result<(Session, MediaId)> {
+fn load_member(path: impl AsRef<Path>, member: &str) -> remanence::Result<(Session, MediaId)> {
     let (mut session, archive) = archive_session(path)?;
     let discovery = session
         .medium_mut(archive)
@@ -70,15 +67,10 @@ const STREAM_PREFIX: [u8; 16] = [
 /// The disk holds the P7 deny-write claim for its lifetime, so tests
 /// opening a fixture concurrently take private copies.
 fn private_copy(tag: &str) -> PathBuf {
-    let target = std::env::temp_dir().join(format!(
-        "remanence-7z-{tag}-{}.7z",
-        std::process::id()
-    ));
+    let target = std::env::temp_dir().join(format!("remanence-7z-{tag}-{}.7z", std::process::id()));
     std::fs::copy(common::ensure_fixture(ARCHIVE), &target).expect("fixture copies");
     target
 }
-
-
 
 #[test]
 fn the_namespace_lists_every_member_in_archive_order() {
@@ -117,7 +109,10 @@ fn the_namespace_lists_every_member_in_archive_order() {
     // of it together before the next position.
     for (index, entry) in entries.iter().enumerate() {
         let (step, head) = (index / 2, index % 2);
-        assert_eq!(entry.name, format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){step:02}.{head}.raw"));
+        assert_eq!(
+            entry.name,
+            format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){step:02}.{head}.raw")
+        );
     }
 
     drop(namespace);
@@ -131,7 +126,9 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
     // The second member: reached by decoding past the first, which is
     // what a solid folder costs, and no further.
     let (mut disk_session, disk_at) = load_member(&path, SECOND_MEMBER).expect("the member opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     assert_eq!(disk.image_size_bytes(), SECOND_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
@@ -140,8 +137,7 @@ fn a_member_of_the_solid_folder_streams_through_a_session() {
 
     // A bounded read across the tail, without the member resident whole.
     let mut tail = [0u8; 32];
-    disk
-        .read_at(SECOND_MEMBER_BYTES - 32, &mut tail)
+    disk.read_at(SECOND_MEMBER_BYTES - 32, &mut tail)
         .expect("the tail reads");
 
     let identification = disk.identify();
@@ -164,7 +160,9 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     let path = private_copy("long");
     let (mut disk_session, disk_at) =
         load_member(&path, LAST_MEMBER).expect("the last member opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     assert_eq!(disk.image_size_bytes(), LAST_MEMBER_BYTES);
 
     let mut front = [0u8; 16];
@@ -172,12 +170,14 @@ fn a_folder_longer_than_its_dictionary_streams_through_the_window() {
     assert_eq!(front, STREAM_PREFIX);
 
     let mut tail = [0u8; 16];
-    disk
-        .read_at(LAST_MEMBER_BYTES - 16, &mut tail)
+    disk.read_at(LAST_MEMBER_BYTES - 16, &mut tail)
         .expect("the tail reads");
     assert_eq!(
         tail,
-        [0x00, 0xf4, 0x20, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d]
+        [
+            0x00, 0xf4, 0x20, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x0d, 0x0d, 0x0d, 0x0d,
+            0x0d, 0x0d
+        ]
     );
 
     drop(disk_session);

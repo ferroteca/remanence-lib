@@ -82,9 +82,7 @@ fn the_whole_set_is_recognized_as_one_capture() {
         assert_eq!(member.head, Some(head));
         assert_eq!(
             member.entry_name,
-            format!(
-                "Bill Budge Pinball Construction Set[Commodore 64](1of2){step:02}.{head}.raw"
-            )
+            format!("Bill Budge Pinball Construction Set[Commodore 64](1of2){step:02}.{head}.raw")
         );
         assert!(member.issues.is_empty(), "{:?}", member.issues);
     }
@@ -245,10 +243,7 @@ fn a_path_naming_no_catalog_is_refused_rather_than_read_as_one_member() {
     let error = CaptureSet::open("nowhere/capture00.0.raw")
         .expect_err("a stream file is not a capture set");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
-    assert!(
-        error.to_string().contains("names no archive"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("names no archive"), "{error}");
 }
 
 /// A minimal KryoFlux stream: the device information, `cells` of
@@ -400,7 +395,11 @@ fn a_transfer_the_tool_did_not_call_clean_is_reported_not_repaired() {
     let member = &set.inspect().members[0];
     assert_eq!(member.runs[0].transfer_result, Some(2));
     assert_eq!(member.issues[0].code, "kryoflux-transfer-result");
-    assert!(member.issues[0].detail.contains("transfer result 2"), "{:?}", member.issues);
+    assert!(
+        member.issues[0].detail.contains("transfer result 2"),
+        "{:?}",
+        member.issues
+    );
 
     drop(set);
     std::fs::remove_file(&path).ok();
@@ -415,7 +414,10 @@ fn a_set_missing_one_head_of_one_position_is_refused_with_the_evidence() {
     let error = CaptureSet::open(&path).expect_err("a set with a hole in it is not one capture");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     let message = error.to_string();
-    assert!(message.contains("step position 1 head 1 is absent"), "{message}");
+    assert!(
+        message.contains("step position 1 head 1 is absent"),
+        "{message}"
+    );
     assert!(message.contains("3 members"), "{message}");
 
     std::fs::remove_file(&path).ok();
@@ -436,7 +438,9 @@ fn an_archive_holding_no_stream_members_is_refused_by_name() {
     let error = CaptureSet::open(&path).expect_err("a disk image is not a capture set");
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
     assert!(
-        error.to_string().contains("is not a KryoFlux stream member"),
+        error
+            .to_string()
+            .contains("is not a KryoFlux stream member"),
         "{error}"
     );
 

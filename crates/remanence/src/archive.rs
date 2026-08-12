@@ -166,10 +166,7 @@ impl<'a> ArchiveCatalogRegistry<'a> {
                 continue;
             }
             archive_path.push(component.as_os_str());
-            if self
-                .adapter_for(Path::new(component.as_os_str()))
-                .is_some()
-            {
+            if self.adapter_for(Path::new(component.as_os_str())).is_some() {
                 found = true;
             }
         }
@@ -203,9 +200,7 @@ impl<'a> ArchiveCatalogRegistry<'a> {
         let mode = handle::afforded_access(&file);
         let len = file
             .metadata()
-            .map_err(|error| {
-                Error::io(format!("cannot read the size of {named}: {error}"))
-            })?
+            .map_err(|error| Error::io(format!("cannot read the size of {named}: {error}")))?
             .len();
         let file = Arc::new(file);
         let catalog: Arc<dyn ArchiveCatalog> = Arc::from(adapter.open(Arc::clone(&file), len)?);
@@ -298,7 +293,6 @@ pub(crate) fn normalize_entry_name(path: &Path) -> String {
     result
 }
 
-
 /// The archive medium: the artifact claimed, the catalog its grammar
 /// reads, and the evidence plane beside them.
 ///
@@ -373,12 +367,7 @@ impl ArchiveMedium {
 
     /// The medium both journeys build: the claimed catalog, the evidence
     /// plane beside it, and the assurance the index established.
-    fn over(
-        path: Option<String>,
-        claimed: ClaimedArchive,
-        claim: Claim,
-        cache_bytes: u64,
-    ) -> Self {
+    fn over(path: Option<String>, claimed: ClaimedArchive, claim: Claim, cache_bytes: u64) -> Self {
         let len = claimed.catalog.archive_size();
         let source =
             ImageSource::over_claim(Arc::clone(&claimed.file), claimed.mode, len, cache_bytes);
@@ -386,10 +375,7 @@ impl ArchiveMedium {
             outcome: AssuranceOutcome::Verified,
             condition: None,
             evidence: vec![
-                format!(
-                    "read the {} index whole",
-                    claimed.catalog.descriptor().name
-                ),
+                format!("read the {} index whole", claimed.catalog.descriptor().name),
                 format!(
                     "the archive declares {} entries",
                     claimed.catalog.entries().len()
@@ -823,8 +809,8 @@ mod tests {
 
     #[test]
     fn the_built_in_grammars_claim_their_extensions() {
-        let (archive, entry) = split_archive_path(Path::new("captures.7z/track00.raw"))
-            .expect("7z splits the path");
+        let (archive, entry) =
+            split_archive_path(Path::new("captures.7z/track00.raw")).expect("7z splits the path");
         assert_eq!(archive, Path::new("captures.7z"));
         assert_eq!(entry.as_deref(), Some(Path::new("track00.raw")));
 
@@ -846,7 +832,10 @@ mod tests {
             "{error}"
         );
         assert!(!is_archive(Path::new("nowhere.rar")));
-        assert!(is_archive(Path::new("disks.zip")), "an enrolled grammar claims its own");
+        assert!(
+            is_archive(Path::new("disks.zip")),
+            "an enrolled grammar claims its own"
+        );
     }
 
     #[test]
@@ -860,7 +849,10 @@ mod tests {
         )
         .expect_err("a write intent is refused");
         assert_eq!(error.category(), ErrorCategory::ReadOnly);
-        assert!(error.to_string().contains("reads and does not write"), "{error}");
+        assert!(
+            error.to_string().contains("reads and does not write"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -225,7 +225,10 @@ fn every_location_is_clocked_at_the_cell_its_declared_zone_states() {
             "{location:?} against a nominal {nominal}"
         );
         assert!(location.longest_zero_run >= 1, "{location:?}");
-        assert_eq!(location.recorded_bits + location.resolved_bits, location.cells);
+        assert_eq!(
+            location.recorded_bits + location.resolved_bits,
+            location.cells
+        );
         // The medium's pulses all carry the strength its policy declared,
         // so nothing here was resolved by a rule instead of read.
         assert_eq!(location.resolved_bits, 0, "{location:?}");
@@ -298,7 +301,11 @@ fn the_bitstream_states_what_it_does_not_carry_of_the_medium() {
     // The channel that produced it and the policy that produced the
     // medium are both stated, in that order.
     assert!(report.evidence.len() >= 5, "{:?}", report.evidence);
-    assert!(report.evidence[0].contains("Commodore 1541"), "{:?}", report.evidence);
+    assert!(
+        report.evidence[0].contains("Commodore 1541"),
+        "{:?}",
+        report.evidence
+    );
     assert!(
         report
             .evidence
@@ -308,11 +315,10 @@ fn the_bitstream_states_what_it_does_not_carry_of_the_medium() {
         report.evidence
     );
     assert!(
-        report
-            .evidence
-            .iter()
-            .any(|line| line.contains("restarts at every detected transition")
-                && line.contains("1/2 of a cell")),
+        report.evidence.iter().any(
+            |line| line.contains("restarts at every detected transition")
+                && line.contains("1/2 of a cell")
+        ),
         "{:?}",
         report.evidence
     );
@@ -523,7 +529,10 @@ fn every_claim_carries_its_evidence_and_an_unreadable_one_names_its_rule() {
             SectorRule::from_identity(rule).is_some(),
             "{rule} is not in the set"
         );
-        assert!(claim.refusal.as_ref().is_some_and(|why| why.len() > 20), "{claim:?}");
+        assert!(
+            claim.refusal.as_ref().is_some_and(|why| why.len() > 20),
+            "{claim:?}"
+        );
     }
     assert!(
         unreadable > 0,
@@ -604,7 +613,9 @@ fn a_sector_reads_by_the_address_the_recording_states_for_it() {
 
     // A track the family's own density map does not reach is refused as
     // that rather than as a missing block.
-    let error = sectors.read_sector(36, 0).expect_err("there is no track 36");
+    let error = sectors
+        .read_sector(36, 0)
+        .expect_err("there is no track 36");
     assert_eq!(error.rule(), Some(SectorRule::NoSuchAddress.as_str()));
     assert!(error.to_string().contains("no track 36"), "{error}");
 }
@@ -669,7 +680,10 @@ fn the_recording_composes_the_direct_partition_and_its_namespace_is_declared() {
         .partition()
         .filesystem_as("fat")
         .expect_err("a record layer bears no boot record to recognize FAT on");
-    assert_eq!(error.rule(), Some(PartitionRule::UnclaimedNamespace.as_str()));
+    assert_eq!(
+        error.rule(),
+        Some(PartitionRule::UnclaimedNamespace.as_str())
+    );
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(error.to_string().contains("cbmdos"), "{error}");
 
@@ -679,9 +693,18 @@ fn the_recording_composes_the_direct_partition_and_its_namespace_is_declared() {
         .partition()
         .filesystem_as("ext4")
         .expect_err("this release reads no ext4");
-    assert_eq!(error.rule(), Some(PartitionRule::UnclaimedNamespace.as_str()));
-    assert!(error.to_string().contains("ext4"), "names what was asked: {error}");
-    assert!(error.to_string().contains("cbmdos"), "names what is read: {error}");
+    assert_eq!(
+        error.rule(),
+        Some(PartitionRule::UnclaimedNamespace.as_str())
+    );
+    assert!(
+        error.to_string().contains("ext4"),
+        "names what was asked: {error}"
+    );
+    assert!(
+        error.to_string().contains("cbmdos"),
+        "names what is read: {error}"
+    );
 }
 
 /// One entry's declared fact, by the key CBM DOS spells it with.
@@ -729,7 +752,10 @@ fn the_disk_bears_cbm_dos_and_the_bam_header_is_its_label() {
             .and_then(|reading| reading.stored.clone())
             .unwrap_or_else(|| panic!("{source} is not among {:?}", label.readings))
     };
-    assert!(reading("bam-disk-name").contains("LOAD\"EA\",8,1"), "{label:?}");
+    assert!(
+        reading("bam-disk-name").contains("LOAD\"EA\",8,1"),
+        "{label:?}"
+    );
     assert_eq!(
         reading("bam-disk-name-petscii"),
         "0d 93 4c 4f 41 44 22 45 41 22 2c 38 2c 31 0d 0d"
@@ -771,8 +797,14 @@ fn the_directory_lists_in_its_own_order_with_the_facts_cbm_dos_records() {
     assert_eq!(names[15], "DEMO4.PB");
     // The chain crosses two directory blocks, and each entry says which
     // slot of which block it was read from.
-    assert_eq!(fact(&entries[0], "directory-slot").as_deref(), Some("18/1#0"));
-    assert_eq!(fact(&entries[8], "directory-slot").as_deref(), Some("18/4#0"));
+    assert_eq!(
+        fact(&entries[0], "directory-slot").as_deref(),
+        Some("18/1#0")
+    );
+    assert_eq!(
+        fact(&entries[8], "directory-slot").as_deref(),
+        Some("18/4#0")
+    );
 
     for entry in &entries {
         assert_eq!(entry.kind, remanence::EntryKind::File);
@@ -782,7 +814,9 @@ fn the_directory_lists_in_its_own_order_with_the_facts_cbm_dos_records() {
         assert_eq!(fact(entry, "locked").as_deref(), Some("false"));
         // Sixteen bytes as recorded, padding included, beside the name.
         assert_eq!(
-            fact(entry, "name-petscii").expect("recorded beside read").len(),
+            fact(entry, "name-petscii")
+                .expect("recorded beside read")
+                .len(),
             16 * 3 - 1
         );
     }
@@ -790,7 +824,11 @@ fn the_directory_lists_in_its_own_order_with_the_facts_cbm_dos_records() {
     // The second file's name carries a byte PETSCII gives no reading —
     // the recorded bytes have it and the reading marks it, rather than
     // either of them being quietly dropped.
-    assert!(entries[1].name.contains('\u{fffd}'), "{:?}", entries[1].name);
+    assert!(
+        entries[1].name.contains('\u{fffd}'),
+        "{:?}",
+        entries[1].name
+    );
     assert_eq!(
         fact(&entries[1], "name-petscii").as_deref(),
         Some("45 41 22 9d a0 a0 a0 a0 a0 a0 a0 a0 a0 a0 a0 a0")
@@ -798,7 +836,12 @@ fn the_directory_lists_in_its_own_order_with_the_facts_cbm_dos_records() {
 
     // Absence is an answer, and it is not the same as a failure to read
     // the directory (U3).
-    assert!(space.stat("NOTHING").expect("the directory reads").is_none());
+    assert!(
+        space
+            .stat("NOTHING")
+            .expect("the directory reads")
+            .is_none()
+    );
     assert_eq!(
         space
             .stat("demo1.pb")
@@ -884,10 +927,7 @@ fn a_file_whose_chain_reaches_an_unrecovered_block_is_qualified_rather_than_hidd
     assert_eq!(error.rule(), Some(SectorRule::NoSuchAddress.as_str()));
 
     // Its neighbours are untouched by it.
-    assert_eq!(
-        space.read_file("EA").expect("this one reads").len(),
-        102
-    );
+    assert_eq!(space.read_file("EA").expect("this one reads").len(), 102);
 }
 
 #[test]
@@ -963,7 +1003,10 @@ fn the_grammar_and_the_whole_ladder_beneath_it_are_stated() {
         .as_ref()
         .expect("a real recording holds a block that fails its own checksum");
     assert_eq!(*category, ErrorCategory::InvalidImage);
-    assert_eq!(rule.as_deref(), Some(SectorRule::BlockFailedChecksum.as_str()));
+    assert_eq!(
+        rule.as_deref(),
+        Some(SectorRule::BlockFailedChecksum.as_str())
+    );
     assert!(message.contains("half-track"), "{message}");
     assert!(message.contains("the policy refuses"), "{message}");
 }

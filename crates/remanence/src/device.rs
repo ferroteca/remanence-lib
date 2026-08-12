@@ -399,10 +399,7 @@ impl Capture {
 
     /// Streams every captured extent in offset order through a bounded
     /// buffer.
-    pub fn for_each_dirty(
-        &self,
-        f: &mut dyn FnMut(u64, &[u8]) -> Result<()>,
-    ) -> Result<()> {
+    pub fn for_each_dirty(&self, f: &mut dyn FnMut(u64, &[u8]) -> Result<()>) -> Result<()> {
         self.cache.for_each_dirty(f)
     }
 }
@@ -413,9 +410,7 @@ impl MediumDevice {
         let file = open_declared(path, intent)?;
         let len = file
             .metadata()
-            .map_err(|error| {
-                Error::io(format!("failed to stat '{}': {error}", path.display()))
-            })?
+            .map_err(|error| Error::io(format!("failed to stat '{}': {error}", path.display())))?
             .len();
         let claim = Arc::new(file);
         Ok(Self {
@@ -499,8 +494,14 @@ impl MediumDevice {
     /// step after an undo journal's records are written back.
     pub fn truncate_and_sync(&mut self, len: u64) -> Result<()> {
         debug_assert!(self.capture.is_none(), "cannot truncate during a capture");
-        debug_assert!(self.mode == AccessMode::ReadWrite, "truncation needs write access");
-        debug_assert!(self.is_whole_file(), "only a whole-file medium is truncated");
+        debug_assert!(
+            self.mode == AccessMode::ReadWrite,
+            "truncation needs write access"
+        );
+        debug_assert!(
+            self.is_whole_file(),
+            "only a whole-file medium is truncated"
+        );
         self.backing
             .set_len(len)
             .map_err(|error| self.io_error("truncate", error))?;
@@ -543,9 +544,8 @@ impl Device for RawFile<'_> {
             ((self.real - offset) as usize).min(buf.len())
         };
         if take > 0 {
-            read_exact_at(self.file, self.base + offset, &mut buf[..take]).map_err(|error| {
-                Error::io(format!("read from '{}' failed: {error}", self.path))
-            })?;
+            read_exact_at(self.file, self.base + offset, &mut buf[..take])
+                .map_err(|error| Error::io(format!("read from '{}' failed: {error}", self.path)))?;
         }
         buf[take..].fill(0);
         Ok(())
@@ -685,7 +685,9 @@ impl ByteSource for SliceByteSource<'_> {
 
 impl Device for MediumDevice {
     fn len(&self) -> u64 {
-        self.capture.as_ref().map_or(self.len, |capture| capture.len)
+        self.capture
+            .as_ref()
+            .map_or(self.len, |capture| capture.len)
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
@@ -740,7 +742,9 @@ impl Device for MediumDevice {
             // Nothing has reached the file; there is nothing to flush.
             return Ok(());
         }
-        self.backing.sync_data().map_err(|error| self.io_error("flush", error))
+        self.backing
+            .sync_data()
+            .map_err(|error| self.io_error("flush", error))
     }
 }
 
@@ -792,15 +796,15 @@ mod tests {
 
     #[test]
     fn a_capture_buffers_host_writes_until_applied() {
-        let path = std::env::temp_dir().join(format!(
-            "remanence-capture-{}.img",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("remanence-capture-{}.img", std::process::id()));
         std::fs::write(&path, vec![0xAAu8; 8192]).expect("image writes");
 
         let mut device = MediumDevice::open(&path, AccessIntent::Write).expect("opens");
         device.begin_capture(crate::cache::DEFAULT_CACHE_BYTES);
-        device.write_at(4090, &[1, 2, 3, 4, 5, 6, 7, 8]).expect("buffers");
+        device
+            .write_at(4090, &[1, 2, 3, 4, 5, 6, 7, 8])
+            .expect("buffers");
         device.write_at(8192, &[9; 100]).expect("buffers growth");
         assert_eq!(device.len(), 8292, "the capture reports the grown length");
 
@@ -817,7 +821,11 @@ mod tests {
         let capture = device.take_capture();
         assert_eq!(capture.len(), 8292);
         assert!(!capture.is_clean());
-        assert_eq!(device.len(), 8192, "discarding the capture restores the length");
+        assert_eq!(
+            device.len(),
+            8192,
+            "discarding the capture restores the length"
+        );
 
         device.apply(&capture).expect("applies");
         drop(device);

@@ -244,10 +244,7 @@ mod tests {
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "remanence-handle-{tag}-{}.bin",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("remanence-handle-{tag}-{}.bin", std::process::id()))
     }
 
     #[test]

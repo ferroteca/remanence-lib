@@ -96,14 +96,22 @@ impl Offloader {
             while let Ok(job) = job_receiver.recv() {
                 let ok = write_all_at(&job.file, job.slot * EXTENT, &job.data).is_ok();
                 if done_sender
-                    .send(OffloadDone { offset: job.offset, version: job.version, ok })
+                    .send(OffloadDone {
+                        offset: job.offset,
+                        version: job.version,
+                        ok,
+                    })
                     .is_err()
                 {
                     return;
                 }
             }
         });
-        Self { jobs, done: Mutex::new(done), handle: Some(handle) }
+        Self {
+            jobs,
+            done: Mutex::new(done),
+            handle: Some(handle),
+        }
     }
 }
 
@@ -160,7 +168,11 @@ pub(crate) fn session_storage_file() -> Result<File> {
 impl Spill {
     fn create() -> Result<Self> {
         let file = Arc::new(session_storage_file()?);
-        Ok(Self { file, slots: BTreeMap::new(), next_slot: 0 })
+        Ok(Self {
+            file,
+            slots: BTreeMap::new(),
+            next_slot: 0,
+        })
     }
 
     fn slot_for(&mut self, extent_offset: u64) -> u64 {
@@ -178,7 +190,10 @@ impl Spill {
     }
 
     fn read(&self, extent_offset: u64, data: &mut [u8]) -> Result<()> {
-        let slot = *self.slots.get(&extent_offset).expect("a spilled extent has a slot");
+        let slot = *self
+            .slots
+            .get(&extent_offset)
+            .expect("a spilled extent has a slot");
         read_exact_at(&self.file, slot * EXTENT, data)
             .map_err(|error| Error::io(format!("session spill read failed: {error}")))
     }
@@ -279,7 +294,10 @@ impl SessionCache {
     /// Whether uncommitted changes exist, resident or spilled.
     pub fn modified(&self) -> bool {
         self.resident.values().any(|extent| extent.dirty)
-            || self.spill.as_ref().is_some_and(|spill| !spill.slots.is_empty())
+            || self
+                .spill
+                .as_ref()
+                .is_some_and(|spill| !spill.slots.is_empty())
     }
 
     fn tick(&mut self) -> u64 {
@@ -390,7 +408,13 @@ impl SessionCache {
             let offloader = self.offloader.as_ref().expect("just spawned");
             if offloader
                 .jobs
-                .send(OffloadJob { file, slot, offset, version, data })
+                .send(OffloadJob {
+                    file,
+                    slot,
+                    offset,
+                    version,
+                    data,
+                })
                 .is_err()
             {
                 // A dead worker degrades to synchronous spilling.
@@ -430,7 +454,10 @@ impl SessionCache {
             self.join_one();
             return Ok(());
         };
-        let extent = self.resident.remove(&offset).expect("the victim is resident");
+        let extent = self
+            .resident
+            .remove(&offset)
+            .expect("the victim is resident");
         if self.prespilled.get(&offset) == Some(&extent.version) {
             // The worker already wrote exactly this data to its slot.
             self.prespilled.remove(&offset);
@@ -475,11 +502,7 @@ impl SessionCache {
     /// storage when it was altered and evicted (it stays altered), else
     /// seeded from the base — clamped at the base's length, zero past it,
     /// so a partial write keeps its surrounding bytes.
-    fn ensure_resident(
-        &mut self,
-        base: &mut dyn Device,
-        extent_offset: u64,
-    ) -> Result<()> {
+    fn ensure_resident(&mut self, base: &mut dyn Device, extent_offset: u64) -> Result<()> {
         if self.resident.contains_key(&extent_offset) {
             return Ok(());
         }
@@ -500,8 +523,15 @@ impl SessionCache {
             }
         };
         let used = self.tick();
-        self.resident
-            .insert(extent_offset, Extent { data, dirty, used, version: used });
+        self.resident.insert(
+            extent_offset,
+            Extent {
+                data,
+                dirty,
+                used,
+                version: used,
+            },
+        );
         Ok(())
     }
 
@@ -518,7 +548,10 @@ impl SessionCache {
     pub fn insert_prefetched(&mut self, extent_offset: u64, data: Vec<u8>) {
         debug_assert_eq!(data.len(), EXTENT as usize);
         if self.resident.contains_key(&extent_offset)
-            || self.spill.as_ref().is_some_and(|spill| spill.holds(extent_offset))
+            || self
+                .spill
+                .as_ref()
+                .is_some_and(|spill| spill.holds(extent_offset))
         {
             return;
         }
@@ -535,20 +568,22 @@ impl SessionCache {
             self.resident.remove(&victim);
         }
         let used = self.tick();
-        self.resident
-            .insert(extent_offset, Extent { data, dirty: false, used, version: used });
+        self.resident.insert(
+            extent_offset,
+            Extent {
+                data,
+                dirty: false,
+                used,
+                version: used,
+            },
+        );
     }
 
     /// Reads `buf` through the cache: resident extents serve without
     /// disk I/O, missing ones load from spill storage or the base. The
     /// read is bounded by the base device exactly as an uncached read
     /// would be.
-    pub fn read_at(
-        &mut self,
-        base: &mut dyn Device,
-        offset: u64,
-        buf: &mut [u8],
-    ) -> Result<()> {
+    pub fn read_at(&mut self, base: &mut dyn Device, offset: u64, buf: &mut [u8]) -> Result<()> {
         self.drain_offloads();
         if offset + buf.len() as u64 > base.len() {
             return Err(Error::io(format!(
@@ -575,12 +610,7 @@ impl SessionCache {
 
     /// Buffers a write in the cache; nothing reaches `base` until the
     /// commit writes altered extents through (P2).
-    pub fn write_at(
-        &mut self,
-        base: &mut dyn Device,
-        offset: u64,
-        data: &[u8],
-    ) -> Result<()> {
+    pub fn write_at(&mut self, base: &mut dyn Device, offset: u64, data: &[u8]) -> Result<()> {
         self.drain_offloads();
         let end = offset + data.len() as u64;
         let mut extent_offset = offset / EXTENT * EXTENT;
@@ -605,10 +635,7 @@ impl SessionCache {
     /// extents from memory, spilled ones through one bounded buffer.
     /// The commit pipeline streams from this; nothing materializes the
     /// altered set whole.
-    pub fn for_each_dirty(
-        &self,
-        f: &mut dyn FnMut(u64, &[u8]) -> Result<()>,
-    ) -> Result<()> {
+    pub fn for_each_dirty(&self, f: &mut dyn FnMut(u64, &[u8]) -> Result<()>) -> Result<()> {
         debug_assert!(
             self.in_flight.is_empty(),
             "join offloads before consuming the altered set"
@@ -762,7 +789,9 @@ mod tests {
         assert_eq!(base.reads, 1, "the miss loads its whole extent");
 
         let mut second = [0u8; 512];
-        cache.read_at(&mut base, 40_000, &mut second).expect("reads");
+        cache
+            .read_at(&mut base, 40_000, &mut second)
+            .expect("reads");
         assert_eq!(
             base.reads, 1,
             "a later read inside the loaded extent costs no base I/O"
@@ -777,9 +806,14 @@ mod tests {
 
         let mut buf = [0u8; 16];
         cache.read_at(&mut base, 0, &mut buf).expect("reads A");
-        cache.read_at(&mut base, E as u64, &mut buf).expect("reads B evicting A");
+        cache
+            .read_at(&mut base, E as u64, &mut buf)
+            .expect("reads B evicting A");
         cache.read_at(&mut base, 0, &mut buf).expect("re-reads A");
-        assert_eq!(base.reads, 3, "the evicted clean extent re-reads from the base");
+        assert_eq!(
+            base.reads, 3,
+            "the evicted clean extent re-reads from the base"
+        );
         assert_eq!(&buf[..], &base.bytes[..16]);
     }
 
@@ -796,14 +830,24 @@ mod tests {
             .read_at(&mut base, 2 * E as u64, &mut buf)
             .expect("reads another extent, evicting the altered one");
         assert_eq!(base.writes, 0, "nothing reaches the base before commit");
-        assert!(cache.modified(), "spilled alterations still count as modified");
+        assert!(
+            cache.modified(),
+            "spilled alterations still count as modified"
+        );
 
         let mut back = [0u8; 7];
-        cache.read_at(&mut base, 10, &mut back).expect("reads the altered bytes back");
-        assert_eq!(&back, b"altered", "the spilled extent returns the altered data");
+        cache
+            .read_at(&mut base, 10, &mut back)
+            .expect("reads the altered bytes back");
+        assert_eq!(
+            &back, b"altered",
+            "the spilled extent returns the altered data"
+        );
         // The surrounding bytes of the seeded extent survived the trip.
         let mut around = [0u8; 4];
-        cache.read_at(&mut base, 6, &mut around).expect("reads around");
+        cache
+            .read_at(&mut base, 6, &mut around)
+            .expect("reads around");
         assert_eq!(&around[..], &base.bytes[6..10]);
     }
 
@@ -819,16 +863,25 @@ mod tests {
 
         cache.write_through(&mut base).expect("writes through");
         assert_eq!(&base.bytes[5..10], b"first", "the spilled extent landed");
-        assert_eq!(&base.bytes[2 * E + 9..2 * E + 15], b"second", "the resident one landed");
+        assert_eq!(
+            &base.bytes[2 * E + 9..2 * E + 15],
+            b"second",
+            "the resident one landed"
+        );
 
         cache.mark_committed();
         assert!(!cache.modified(), "a committed cache reports no changes");
         // The committed extent stays resident and keeps serving.
         let reads_before = base.reads;
         let mut buf = [0u8; 6];
-        cache.read_at(&mut base, 2 * E as u64 + 9, &mut buf).expect("reads");
+        cache
+            .read_at(&mut base, 2 * E as u64 + 9, &mut buf)
+            .expect("reads");
         assert_eq!(&buf, b"second");
-        assert_eq!(base.reads, reads_before, "committed extents keep serving from cache");
+        assert_eq!(
+            base.reads, reads_before,
+            "committed extents keep serving from cache"
+        );
     }
 
     #[test]
@@ -865,13 +918,19 @@ mod tests {
                 .expect("writes under offload");
             expected[offset..offset + 16].copy_from_slice(&payload);
         }
-        assert!(cache.modified(), "spilled and in-flight state counts as modified");
+        assert!(
+            cache.modified(),
+            "spilled and in-flight state counts as modified"
+        );
 
         cache.join_offloads();
         cache.write_through(&mut base).expect("writes through");
         cache.mark_committed();
         assert!(!cache.modified());
-        assert_eq!(base.bytes, expected, "every altered extent landed, none torn");
+        assert_eq!(
+            base.bytes, expected,
+            "every altered extent landed, none torn"
+        );
     }
 
     #[test]
@@ -917,7 +976,9 @@ mod tests {
             .write_at(&mut base, (len - 8) as u64, b"tailtail")
             .expect("writes at the tail");
         let mut back = [0u8; 8];
-        cache.read_at(&mut base, (len - 8) as u64, &mut back).expect("reads");
+        cache
+            .read_at(&mut base, (len - 8) as u64, &mut back)
+            .expect("reads");
         assert_eq!(&back, b"tailtail");
 
         cache.write_through(&mut base).expect("writes through");

@@ -84,11 +84,11 @@ impl AttachmentId {
     /// deliberately — a slot reads like device enumeration, and a family
     /// reads like the machine fact it asserts.
     pub fn parse(text: &str) -> Result<Self> {
-        let split = text
-            .find(|c: char| c.is_ascii_digit())
-            .ok_or_else(|| Error::unsupported(format!(
+        let split = text.find(|c: char| c.is_ascii_digit()).ok_or_else(|| {
+            Error::unsupported(format!(
                 "'{text}' is not an attachment identity; one reads like 'hdd0'"
-            )))?;
+            ))
+        })?;
         let (prefix, index) = text.split_at(split);
         let family = DeviceFamily::by_slot_prefix(prefix)?;
         let index = index.parse::<u32>().map_err(|_| {

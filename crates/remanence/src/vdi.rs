@@ -160,8 +160,22 @@ impl std::fmt::Display for VdiUuid {
             formatter,
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-\
              {:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            byte[3], byte[2], byte[1], byte[0], byte[5], byte[4], byte[7], byte[6], byte[8],
-            byte[9], byte[10], byte[11], byte[12], byte[13], byte[14], byte[15]
+            byte[3],
+            byte[2],
+            byte[1],
+            byte[0],
+            byte[5],
+            byte[4],
+            byte[7],
+            byte[6],
+            byte[8],
+            byte[9],
+            byte[10],
+            byte[11],
+            byte[12],
+            byte[13],
+            byte[14],
+            byte[15]
         )
     }
 }
@@ -437,11 +451,7 @@ impl<D: Device> Vdi<D> {
 
     /// Builds the driver over an already-parsed header and, for a chain
     /// member, the parent its unallocated blocks fall through to.
-    pub(crate) fn assemble(
-        device: D,
-        header: VdiHeader,
-        parent: Option<Box<Vdi<D>>>,
-    ) -> Self {
+    pub(crate) fn assemble(device: D, header: VdiHeader, parent: Option<Box<Vdi<D>>>) -> Self {
         Self {
             device,
             header,
@@ -489,8 +499,7 @@ impl<D: Device> Vdi<D> {
     /// every other host write.
     fn blocks_allocated(&mut self) -> Result<u32> {
         let mut raw = [0u8; 4];
-        self.device
-            .read_at(BLOCKS_ALLOCATED_AT as u64, &mut raw)?;
+        self.device.read_at(BLOCKS_ALLOCATED_AT as u64, &mut raw)?;
         Ok(u32::from_le_bytes(raw))
     }
 
@@ -600,12 +609,7 @@ impl<D: Device> Vdi<D> {
     /// presents from `guest_offset`, a bounded chunk at a time (P27).
     /// This is the whole of copy-on-write: the parent is read, never
     /// written, and the bytes land in this image's own fresh block.
-    fn copy_from_parent(
-        &mut self,
-        offset: u64,
-        guest_offset: u64,
-        length: u64,
-    ) -> Result<()> {
+    fn copy_from_parent(&mut self, offset: u64, guest_offset: u64, length: u64) -> Result<()> {
         if length == 0 {
             return Ok(());
         }
@@ -685,10 +689,7 @@ impl<D: Device> Device for Vdi<D> {
 /// access read-only. A missing parent, a cycle, a chain past
 /// [`MAX_CHAIN_LENGTH`] files, and a parent whose own version or image
 /// type falls outside the claim are refused by name (P3).
-pub(crate) fn open_chain(
-    device: MediumDevice,
-    path: Option<&Path>,
-) -> Result<Vdi<MediumDevice>> {
+pub(crate) fn open_chain(device: MediumDevice, path: Option<&Path>) -> Result<Vdi<MediumDevice>> {
     let Some(path) = path else {
         return open_unnamed(device);
     };
@@ -1031,17 +1032,11 @@ mod tests {
             device.write_at(at, &block.to_le_bytes()).unwrap();
         }
         device
-            .write_at(
-                data_offset + block_count as u64 * BLOCK - 1,
-                &[0],
-            )
+            .write_at(data_offset + block_count as u64 * BLOCK - 1, &[0])
             .unwrap();
         device.write_at(data_offset, content).unwrap();
         device
-            .write_at(
-                BLOCKS_ALLOCATED_AT as u64,
-                &block_count.to_le_bytes(),
-            )
+            .write_at(BLOCKS_ALLOCATED_AT as u64, &block_count.to_le_bytes())
             .unwrap();
         device
     }
@@ -1059,7 +1054,9 @@ mod tests {
         assert_eq!(vdi.blocks_allocated().expect("count"), 0);
 
         // A write spanning two blocks survives the round trip.
-        let payload: Vec<u8> = (0..2 * BLOCK as u32 + 99).map(|n| (n % 251) as u8).collect();
+        let payload: Vec<u8> = (0..2 * BLOCK as u32 + 99)
+            .map(|n| (n % 251) as u8)
+            .collect();
         vdi.write_at(7 * BLOCK - 50, &payload).expect("writes");
         let mut back = vec![0u8; payload.len()];
         vdi.read_at(7 * BLOCK - 50, &mut back).expect("reads back");
@@ -1155,13 +1152,11 @@ mod tests {
 
     #[test]
     fn unclaimed_image_types_are_refused_by_name() {
-        let error =
-            Vdi::open(vdi_shell(BLOCK, 3)).expect_err("an unclaimed type is refused");
+        let error = Vdi::open(vdi_shell(BLOCK, 3)).expect_err("an unclaimed type is refused");
         assert_eq!(error.category(), crate::ErrorCategory::Unsupported);
         assert!(error.to_string().contains("undo"), "{error}");
 
-        let error =
-            Vdi::open(vdi_shell(BLOCK, 9)).expect_err("an undefined type is refused");
+        let error = Vdi::open(vdi_shell(BLOCK, 9)).expect_err("an undefined type is refused");
         assert_eq!(error.category(), crate::ErrorCategory::InvalidImage);
         assert!(error.to_string().contains('9'), "{error}");
     }
@@ -1232,7 +1227,8 @@ mod tests {
         let base_before = base.device.0.clone();
 
         let mut top = over(empty_differencing(disk_size, base_identity), base);
-        top.write_at(2 * BLOCK + 100, b"changed here").expect("writes");
+        top.write_at(2 * BLOCK + 100, b"changed here")
+            .expect("writes");
 
         // The allocated block carries the parent's bytes everywhere the
         // write did not reach, and the write where it did.
@@ -1264,7 +1260,8 @@ mod tests {
         let mut top = over(empty_differencing(2 * BLOCK, base_identity), base);
 
         let mut buf = vec![0xffu8; 32];
-        top.read_at(BLOCK + 16, &mut buf).expect("reads past the parent");
+        top.read_at(BLOCK + 16, &mut buf)
+            .expect("reads past the parent");
         assert!(buf.iter().all(|&byte| byte == 0));
     }
 
@@ -1300,7 +1297,10 @@ mod tests {
             .write_at(BLOCK_COUNT_AT as u64, &2u32.to_le_bytes())
             .unwrap();
         let error = Vdi::open(device).expect_err("a short block map is refused");
-        assert!(error.to_string().contains("short of the declared"), "{error}");
+        assert!(
+            error.to_string().contains("short of the declared"),
+            "{error}"
+        );
 
         // A fixed image whose blocks are not all in the file.
         let mut device = fixed_with(4 * BLOCK, b"truncated");
@@ -1321,6 +1321,7 @@ mod tests {
     #[test]
     fn a_zero_length_read_touches_nothing() {
         let mut vdi = Vdi::open(empty_dynamic(BLOCK)).expect("opens");
-        vdi.read_at(BLOCK, &mut []).expect("an empty read is at rest");
+        vdi.read_at(BLOCK, &mut [])
+            .expect("an empty read is at rest");
     }
 }

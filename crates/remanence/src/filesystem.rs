@@ -74,12 +74,12 @@
 use std::fs::File as SpoolFile;
 use std::sync::Arc;
 
+use crate::discovery::Discovery;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::{DeclaredFact, Issue, Provenance};
 use crate::fat::{FatEntry, FatEntryKind};
-use crate::discovery::Discovery;
-use crate::report::{VolumeId, VolumeLabel};
 use crate::media::Medium;
+use crate::report::{VolumeId, VolumeLabel};
 
 /// Which rule of the storage-space seam's enumerated set a refusal broke
 /// (P10).
@@ -585,7 +585,8 @@ impl<'a> StorageSpace<'a> {
     /// wandering into whatever follows.
     pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
         let extent = self.addressable(offset, buf.len() as u64)?;
-        self.medium()?.read_space_at(extent.start_bytes + offset, buf)
+        self.medium()?
+            .read_space_at(extent.start_bytes + offset, buf)
     }
 
     /// Writes `data` at `offset` within this space, buffered until
@@ -1619,7 +1620,12 @@ mod tests {
     struct SyntheticProvider {
         floor: Floor,
         /// `(kind, size, hook, entries)` by ref value.
-        items: Vec<(ItemKind, Option<SizeClaim>, Vec<FloorExtent>, Vec<NameEntry>)>,
+        items: Vec<(
+            ItemKind,
+            Option<SizeClaim>,
+            Vec<FloorExtent>,
+            Vec<NameEntry>,
+        )>,
         roots: Vec<ItemRef>,
         claims: Vec<(FloorExtent, CoverageClass)>,
     }

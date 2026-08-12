@@ -250,9 +250,7 @@ pub(crate) enum VolumeDeclaration {
 /// call one (the same signature and BPB plausibility `mbr` tests), and it
 /// states a contradiction rather than resolving one.
 pub(crate) fn declared_volume(sector: &[u8]) -> VolumeDeclaration {
-    if sector.len() < 512
-        || sector[510..512] != [0x55, 0xaa]
-        || !crate::mbr::looks_like_bpb(sector)
+    if sector.len() < 512 || sector[510..512] != [0x55, 0xaa] || !crate::mbr::looks_like_bpb(sector)
     {
         return VolumeDeclaration::Absent;
     }
@@ -571,9 +569,8 @@ impl FatVolume {
     pub(crate) fn label(&self, device: &mut dyn Device) -> Result<VolumeLabel> {
         let root = self.root_directory_label(device)?;
         let boot = self.bpb.boot_label.clone();
-        let named = |stored: &str| {
-            (!stored.is_empty() && stored != UNLABELED).then(|| stored.to_owned())
-        };
+        let named =
+            |stored: &str| (!stored.is_empty() && stored != UNLABELED).then(|| stored.to_owned());
         let (name, answered_by) = match (&root, &boot) {
             (Some(stored), _) => (named(stored), Some(ROOT_DIRECTORY_ENTRY.to_owned())),
             (None, Some(stored)) => (named(stored), Some(BOOT_RECORD_FIELD.to_owned())),
@@ -847,12 +844,7 @@ impl FatVolume {
     /// zeros, and a shrunk chain's surplus clusters are released with
     /// every FAT copy kept in step. P6: everything validated before the
     /// first mutation.
-    pub fn resize_file(
-        &self,
-        device: &mut dyn Device,
-        segments: &[&str],
-        size: u64,
-    ) -> Result<()> {
+    pub fn resize_file(&self, device: &mut dyn Device, segments: &[&str], size: u64) -> Result<()> {
         let (parent, leaf) = self.walk_to_parent(device, segments)?;
         let raw_name = dos_name::store(leaf)?;
         let existing = self
@@ -915,7 +907,10 @@ impl FatVolume {
             }
         }
         for (i, &cluster) in chain.iter().enumerate() {
-            let next = chain.get(i + 1).copied().unwrap_or_else(|| self.end_marker());
+            let next = chain
+                .get(i + 1)
+                .copied()
+                .unwrap_or_else(|| self.end_marker());
             self.set_fat_entry(device, cluster, next)?;
         }
         let first = chain.first().copied().unwrap_or(0);
@@ -989,7 +984,11 @@ impl FatVolume {
 
     /// Finds a free directory record slot without mutating; `None` means
     /// the directory is full and must grow to take another record.
-    fn find_free_record(&self, device: &mut dyn Device, parent_cluster: u64) -> Result<Option<u64>> {
+    fn find_free_record(
+        &self,
+        device: &mut dyn Device,
+        parent_cluster: u64,
+    ) -> Result<Option<u64>> {
         for (record_offset, record) in self.read_records(device, parent_cluster)? {
             if record[0] == FREE || record[0] == DELETED {
                 return Ok(Some(record_offset));
@@ -1076,8 +1075,7 @@ impl FatVolume {
         }
         let cluster_bytes = self.bpb.cluster_bytes() as usize;
         let needed = contents.len().div_ceil(cluster_bytes) as u64;
-        let available =
-            self.free_cluster_count(device, needed + growth)? + old_chain.len() as u64;
+        let available = self.free_cluster_count(device, needed + growth)? + old_chain.len() as u64;
         if available < needed + growth {
             return Err(no_space(format!(
                 "volume full: {} clusters needed, {available} available",

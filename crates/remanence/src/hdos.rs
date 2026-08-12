@@ -72,7 +72,11 @@ impl HdosFile {
             return "No-Date".to_owned();
         }
 
-        format!("{day:02}-{}-{:02}", MONTHS[usize::from(month) - 1], year % 100)
+        format!(
+            "{day:02}-{}-{:02}",
+            MONTHS[usize::from(month) - 1],
+            year % 100
+        )
     }
 }
 
@@ -89,7 +93,10 @@ struct Label {
 
 fn parse_label(image: &[u8]) -> Result<Label> {
     if image.len() < (LABEL_SECTOR + 1) * SECTOR_SIZE {
-        return Err(Error::invalid_image("hdos", "image too small for HDOS label sector"));
+        return Err(Error::invalid_image(
+            "hdos",
+            "image too small for HDOS label sector",
+        ));
     }
 
     let label = &image[LABEL_SECTOR * SECTOR_SIZE..(LABEL_SECTOR + 1) * SECTOR_SIZE];
@@ -131,10 +138,16 @@ fn parse_label(image: &[u8]) -> Result<Label> {
         ));
     }
     if image.len() < usize::from(info.volume_sectors) * SECTOR_SIZE {
-        return Err(Error::invalid_image("hdos", "image shorter than HDOS volume size"));
+        return Err(Error::invalid_image(
+            "hdos",
+            "image shorter than HDOS volume size",
+        ));
     }
     if info.dir_sector >= info.volume_sectors || info.grt_sector >= info.volume_sectors {
-        return Err(Error::invalid_image("hdos", "directory or GRT sector out of range"));
+        return Err(Error::invalid_image(
+            "hdos",
+            "directory or GRT sector out of range",
+        ));
     }
 
     Ok(info)
@@ -142,7 +155,10 @@ fn parse_label(image: &[u8]) -> Result<Label> {
 
 fn sector_bytes(image: &[u8], sector: u16, volume_sectors: u16) -> Result<&[u8]> {
     if sector >= volume_sectors {
-        return Err(Error::invalid_image("hdos", "sector reference out of range"));
+        return Err(Error::invalid_image(
+            "hdos",
+            "sector reference out of range",
+        ));
     }
     let offset = usize::from(sector) * SECTOR_SIZE;
     Ok(&image[offset..offset + SECTOR_SIZE])

@@ -50,18 +50,16 @@ pub(crate) trait FilesystemAdapter: Sync {
     /// the default is the honest one: an adapter that only probes says
     /// so here rather than being absent from the catalog.
     fn open(&self, _volume: &mut dyn Device) -> Result<Box<dyn Catalog>> {
-        Err(
-            Error::categorized_image(
-                ErrorCategory::Unsupported,
-                self.id(),
-                format!(
-                    "this release recognizes {} and does not read its \
+        Err(Error::categorized_image(
+            ErrorCategory::Unsupported,
+            self.id(),
+            format!(
+                "this release recognizes {} and does not read its \
                      namespace",
-                    self.name()
-                ),
-            )
-            .broke_rule(SpaceRule::RecognizedNotRead.as_str()),
+                self.name()
+            ),
         )
+        .broke_rule(SpaceRule::RecognizedNotRead.as_str()))
     }
 }
 

@@ -43,16 +43,20 @@ struct Probed {
 fn probed() -> &'static Probed {
     static PROBED: OnceLock<Probed> = OnceLock::new();
     PROBED.get_or_init(|| {
-        let path = std::env::temp_dir()
-            .join(format!("remanence-profile-{}.7z", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("remanence-profile-{}.7z", std::process::id()));
         std::fs::copy(common::ensure_fixture(ARCHIVE), &path).expect("fixture copies");
         let set = CaptureSet::open(&path).expect("the set opens");
         let error = set
             .recognize_as("apple2")
             .expect_err("a profile this build does not enroll is refused by name");
         let probed = Probed {
-            ranked: set.recognize().expect("a drive profile claims this capture"),
-            pinned: set.recognize_as("c1541").expect("the pinned profile answers"),
+            ranked: set
+                .recognize()
+                .expect("a drive profile claims this capture"),
+            pinned: set
+                .recognize_as("c1541")
+                .expect("the pinned profile answers"),
             unknown_profile: (error.category(), error.to_string()),
         };
         drop(set);

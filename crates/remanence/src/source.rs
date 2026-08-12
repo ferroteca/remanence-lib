@@ -157,7 +157,13 @@ pub(crate) struct ImageSource {
 }
 
 impl ImageSource {
-    fn new(claim: Arc<File>, mode: AccessMode, backing: Backing, len: u64, cache_bytes: u64) -> Self {
+    fn new(
+        claim: Arc<File>,
+        mode: AccessMode,
+        backing: Backing,
+        len: u64,
+        cache_bytes: u64,
+    ) -> Self {
         let cache = Arc::new(Mutex::new(SessionCache::with_bytes(cache_bytes)));
         let (file, base) = match &backing {
             Backing::Claim { offset } => (Arc::clone(&claim), *offset),
@@ -255,7 +261,6 @@ impl ImageSource {
             path,
         )
     }
-
 }
 
 /// A read-only [`Device`] over an [`ImageSource`], for drivers that walk

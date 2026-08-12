@@ -29,9 +29,13 @@ fn fs(medium: &mut Medium, ordinal: u32) -> remanence::StorageSpace<'_> {
         .partition(ordinal)
         .expect("the pool bears this partition");
     if partition.partition().bears_namespace() {
-        partition.filesystem().expect("the declared type determines one")
+        partition
+            .filesystem()
+            .expect("the declared type determines one")
     } else {
-        partition.filesystem_as("fat").expect("these images are FAT")
+        partition
+            .filesystem_as("fat")
+            .expect("these images are FAT")
     }
 }
 
@@ -124,9 +128,11 @@ fn build_floppy(path: &Path) {
         .load_media(open_write(path), Format::Raw)
         .expect("the whole image loads");
     let partition = only_partition_of(medium);
-    fs(medium, partition).write_file(NEAR, &near_content())
+    fs(medium, partition)
+        .write_file(NEAR, &near_content())
         .expect("writes the near file");
-    fs(medium, partition).write_file(FAR, &far_content())
+    fs(medium, partition)
+        .write_file(FAR, &far_content())
         .expect("writes the far file");
     medium.commit().expect("commits");
 }
@@ -338,7 +344,8 @@ fn wholly_present_directory_and_file_data_still_read() {
     let medium = session.medium_mut(attachment).expect("medium");
     let partition = only_partition_of(medium);
 
-    let names: Vec<String> = fs(medium, partition).entries("")
+    let names: Vec<String> = fs(medium, partition)
+        .entries("")
         .expect("the root directory is wholly present, so it lists")
         .into_iter()
         .map(|entry| entry.name)
@@ -349,7 +356,8 @@ fn wholly_present_directory_and_file_data_still_read() {
     );
 
     assert_eq!(
-        fs(medium, partition).stat(FAR)
+        fs(medium, partition)
+            .stat(FAR)
             .expect("stat reads the record")
             .map(|entry| entry.size_bytes),
         Some(far_content().len() as u64),
@@ -357,7 +365,9 @@ fn wholly_present_directory_and_file_data_still_read() {
     );
 
     assert_eq!(
-        fs(medium, partition).read_file(NEAR).expect("the near file reads"),
+        fs(medium, partition)
+            .read_file(NEAR)
+            .expect("the near file reads"),
         near_content()
     );
 
@@ -371,7 +381,8 @@ fn a_crossing_file_is_refused_whole_rather_than_clipped() {
     let medium = session.medium_mut(attachment).expect("medium");
     let partition = only_partition_of(medium);
 
-    let refusal = fs(medium, partition).read_file(FAR)
+    let refusal = fs(medium, partition)
+        .read_file(FAR)
         .expect_err("a chain leaving the readable extent is refused");
     assert_eq!(refusal.category(), ErrorCategory::Unavailable);
     assert_eq!(
@@ -487,7 +498,10 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
         .expect("the pool bears the direct partition")
         .volume()
         .expect("which composes the whole content as one extent");
-    assert!(space.is_addressable(), "the direct partition composed an extent");
+    assert!(
+        space.is_addressable(),
+        "the direct partition composed an extent"
+    );
     assert!(!space.has_namespace(), "and nothing declares one over it");
     let refusal = space.kind().expect_err("no namespace is addressable");
     assert_eq!(

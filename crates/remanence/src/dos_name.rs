@@ -231,7 +231,9 @@ pub(crate) fn read(field: &[u8]) -> String {
         base[0] = DELETED;
     }
     let base = String::from_utf8_lossy(&base).trim_end().to_string();
-    let extension = String::from_utf8_lossy(&field[8..11]).trim_end().to_string();
+    let extension = String::from_utf8_lossy(&field[8..11])
+        .trim_end()
+        .to_string();
     if extension.is_empty() {
         base
     } else {
@@ -335,7 +337,10 @@ mod tests {
         assert_eq!(DosNameRule::BaseTooLong.as_str(), "base-too-long");
         assert_eq!(DosNameRule::ExtensionTooLong.as_str(), "extension-too-long");
         assert_eq!(DosNameRule::Separator.as_str(), "separator");
-        assert_eq!(DosNameRule::ExcludedCharacter.as_str(), "excluded-character");
+        assert_eq!(
+            DosNameRule::ExcludedCharacter.as_str(),
+            "excluded-character"
+        );
         assert_eq!(
             DosNameRule::ReservedDeviceName.as_str(),
             "reserved-device-name"

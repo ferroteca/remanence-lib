@@ -22,9 +22,13 @@ fn fs(medium: &mut remanence::Medium, ordinal: u32) -> remanence::StorageSpace<'
         .partition(ordinal)
         .expect("the pool bears this partition");
     if partition.partition().bears_namespace() {
-        partition.filesystem().expect("the declared type determines one")
+        partition
+            .filesystem()
+            .expect("the declared type determines one")
     } else {
-        partition.filesystem_as("fat").expect("these images are FAT")
+        partition
+            .filesystem_as("fat")
+            .expect("these images are FAT")
     }
 }
 
@@ -84,8 +88,13 @@ fn private_artifact(tag: &str) -> PathBuf {
 fn inspection_reports_primaries_extended_and_logicals() {
     let path = private_artifact("regions");
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("rig artifact opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    assert!(matches!(disk.format().expect("a medium is pooled"), DiskFormat::Qcow2 { .. }));
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
+    assert!(matches!(
+        disk.format().expect("a medium is pooled"),
+        DiskFormat::Qcow2 { .. }
+    ));
 
     let report = disk.inspect().expect("inspection reads");
     assert_ne!(report.content, remanence::DiskContent::Blank);
@@ -122,7 +131,10 @@ fn inspection_reports_primaries_extended_and_logicals() {
                 && region.role == RegionRole::Structure),
         "the extended partition is a primary slot with a structural role"
     );
-    assert!(report.composed_volume_count() >= 4, "every data region composed");
+    assert!(
+        report.composed_volume_count() >= 4,
+        "every data region composed"
+    );
 
     // The report above is a reading of the pool beneath it, so the pool
     // is asserted in its own right (P16). This medium's content is laid
@@ -142,8 +154,7 @@ fn inspection_reports_primaries_extended_and_logicals() {
     assert!(
         partitions
             .iter()
-            .all(|partition| partition.provenance().is_none()
-                && !partition.evidence().is_empty()),
+            .all(|partition| partition.provenance().is_none() && !partition.evidence().is_empty()),
         "and every one of them is evidence — what the adapter read to \
          declare it — rather than an act the library states (P4)"
     );
@@ -170,9 +181,7 @@ fn inspection_reports_primaries_extended_and_logicals() {
             .regions
             .iter()
             .find(|region| region.declared_number == partition.ordinal())
-            .unwrap_or_else(|| {
-                panic!("partition {} has its own region row", partition.ordinal())
-            });
+            .unwrap_or_else(|| panic!("partition {} has its own region row", partition.ordinal()));
         assert_eq!(
             region.declared_placement,
             partition.placement(),
@@ -187,7 +196,9 @@ fn inspection_reports_primaries_extended_and_logicals() {
         );
         assert_eq!(
             region.declared_type,
-            partition.type_byte().expect("a declared entry records its type"),
+            partition
+                .type_byte()
+                .expect("a declared entry records its type"),
             "partition {} records the same type value in both",
             partition.ordinal()
         );
@@ -226,7 +237,12 @@ fn inspection_reports_primaries_extended_and_logicals() {
     let labels: Vec<_> = report
         .filesystems
         .iter()
-        .filter_map(|filesystem| filesystem.label.as_ref().and_then(|label| label.name.clone()))
+        .filter_map(|filesystem| {
+            filesystem
+                .label
+                .as_ref()
+                .and_then(|label| label.name.clone())
+        })
         .collect();
     for expected in ["RMNPRI1", "RMNPRI2", "RMNLOG1", "RMNLOG2"] {
         assert!(
@@ -243,7 +259,9 @@ fn inspection_reports_primaries_extended_and_logicals() {
 fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("rig artifact opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     // The pool is what is walked, not a list of identities taken off a
     // report: **the content of a medium is reached through the partition
@@ -276,18 +294,20 @@ fn marker_files_read_out_of_every_volume() {
 fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let path = private_artifact("roundtrip");
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("rig artifact opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let partition = addressable_partitions(disk)
         .first()
         .copied()
         .expect("the rig disk's first data partition composes a volume");
-    fs(disk, partition).write_file("RMNDIR/RTRIP.BIN",
-        b"buffered write on a real image",
-    )
-    .expect("write buffers");
+    fs(disk, partition)
+        .write_file("RMNDIR/RTRIP.BIN", b"buffered write on a real image")
+        .expect("write buffers");
     assert_eq!(
-        fs(disk, partition).read_file("RMNDIR/RTRIP.BIN")
+        fs(disk, partition)
+            .read_file("RMNDIR/RTRIP.BIN")
             .expect("reads back"),
         b"buffered write on a real image"
     );
@@ -307,7 +327,9 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
 fn inspection_reports_the_qcow2_device_schema_and_volumes() {
     let path = private_artifact("inspect");
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("rig artifact opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
 
     let report = disk.inspect().expect("inspection reads");
 

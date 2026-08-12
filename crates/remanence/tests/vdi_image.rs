@@ -24,9 +24,13 @@ fn fs(medium: &mut remanence::Medium, ordinal: u32) -> remanence::StorageSpace<'
         .partition(ordinal)
         .expect("the pool bears this partition");
     if partition.partition().bears_namespace() {
-        partition.filesystem().expect("the declared type determines one")
+        partition
+            .filesystem()
+            .expect("the declared type determines one")
     } else {
-        partition.filesystem_as("fat").expect("these images are FAT")
+        partition
+            .filesystem_as("fat")
+            .expect("these images are FAT")
     }
 }
 
@@ -62,7 +66,10 @@ fn temp_path(tag: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("remanence-vdi-{tag}-{}-{nonce}.vdi", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "remanence-vdi-{tag}-{}-{nonce}.vdi",
+        std::process::id()
+    ))
 }
 
 /// The ordinal these images' content is reached through. A synthetic
@@ -268,7 +275,11 @@ fn differencing_vdi(disk_size: u64, create: &[u8; 16], parent: &[u8; 16]) -> Vec
 /// not one derived from its identity — commits `BASE.BIN` into its
 /// volume, and answers with the path and the virtual size a differencing
 /// image over it must present.
-fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]) -> (PathBuf, u64) {
+fn committed_base(
+    directory: &std::path::Path,
+    create: &[u8; 16],
+    content: &[u8],
+) -> (PathBuf, u64) {
     let volume_bytes = synthetic_fat16();
     let path = directory.join("base.vdi");
     std::fs::write(&path, base_vdi(&volume_bytes, create)).expect("base writes");
@@ -276,7 +287,9 @@ fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]
     let (mut session, at) = attach(&path, Afford::Write).expect("base opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
     let partition = only_partition(disk);
-    fs(disk, partition).write_file("BASE.BIN", content).expect("write");
+    fs(disk, partition)
+        .write_file("BASE.BIN", content)
+        .expect("write");
     disk.commit().expect("commit");
     drop(session);
     (path, volume_bytes.len() as u64)
@@ -304,10 +317,7 @@ fn a_vdi_identifies_layer_by_layer_with_its_evidence() {
     // to state beside it.
     assert_eq!(media.id, "logical-block-512");
 
-    let filesystem = identification
-        .layers
-        .last()
-        .expect("filesystem layer");
+    let filesystem = identification.layers.last().expect("filesystem layer");
     assert_eq!(filesystem.kind, LayerKind::Filesystem);
     assert_eq!(filesystem.id, "fat16");
 
@@ -337,14 +347,18 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
 
     let (mut session, at) = attach(&path, Afford::Write).expect("image opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
-    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(
+        disk.format().expect("a medium is pooled"),
+        DiskFormat::Vdi { major: 1, minor: 1 }
+    );
     assert_eq!(disk.size().expect("a medium is pooled"), virtual_size);
     assert_eq!(disk.mode(), AccessMode::ReadWrite);
 
     let partition = only_partition(disk);
     let contents: Vec<u8> = (0..40_000u32).map(|n| (n % 251) as u8).collect();
     fs(disk, partition).make_directory("GUEST").expect("mkdir");
-    fs(disk, partition).write_file("GUEST/PAYLOAD.BIN", &contents)
+    fs(disk, partition)
+        .write_file("GUEST/PAYLOAD.BIN", &contents)
         .expect("write");
     assert!(disk.is_modified());
     assert_eq!(
@@ -360,11 +374,13 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
     );
     drop(session);
 
-    let (mut reopened_session, reopened_at) =
-        attach(&path, Afford::Read).expect("image reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("image reopens");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
     assert_eq!(
-        fs(reopened, partition).read_file("GUEST/PAYLOAD.BIN")
+        fs(reopened, partition)
+            .read_file("GUEST/PAYLOAD.BIN")
             .expect("read"),
         contents
     );
@@ -378,8 +394,14 @@ fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
     let path = write_image("fixed", &fixed_vdi(&volume_bytes));
     let (mut session, at) = attach(&path, Afford::Write).expect("image opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
-    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Vdi { major: 1, minor: 1 });
-    assert_eq!(disk.size().expect("a medium is pooled"), volume_bytes.len() as u64);
+    assert_eq!(
+        disk.format().expect("a medium is pooled"),
+        DiskFormat::Vdi { major: 1, minor: 1 }
+    );
+    assert_eq!(
+        disk.size().expect("a medium is pooled"),
+        volume_bytes.len() as u64
+    );
 
     let partition = only_partition(disk);
     let volume = disk.partitions()[0]
@@ -396,16 +418,20 @@ fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
          filesystem under (P21, U4)"
     );
 
-    fs(disk, partition).write_file("FIXED.BIN", b"written in place")
+    fs(disk, partition)
+        .write_file("FIXED.BIN", b"written in place")
         .expect("write");
     disk.commit().expect("commit");
     drop(session);
 
-    let (mut reopened_session, reopened_at) =
-        attach(&path, Afford::Read).expect("image reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("image reopens");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
     assert_eq!(
-        fs(reopened, partition).read_file("FIXED.BIN").expect("read"),
+        fs(reopened, partition)
+            .read_file("FIXED.BIN")
+            .expect("read"),
         b"written in place"
     );
     drop(reopened_session);
@@ -420,7 +446,12 @@ fn reading_a_dynamic_vdi_allocates_nothing() {
     let (mut session, at) = attach(&path, Afford::Read).expect("image opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
     let partition = only_partition(disk);
-    assert!(fs(disk, partition).entries("").expect("listing reads").is_empty());
+    assert!(
+        fs(disk, partition)
+            .entries("")
+            .expect("listing reads")
+            .is_empty()
+    );
 
     // A read that crosses the unallocated blocks: it answers with zeroes
     // and touches nothing (P2).
@@ -494,7 +525,10 @@ fn a_differencing_chain_composes_as_one_disk() {
 
     let (mut session, at) = attach(&top, Afford::Write).expect("the chain opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
-    assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Vdi { major: 1, minor: 1 });
+    assert_eq!(
+        disk.format().expect("a medium is pooled"),
+        DiskFormat::Vdi { major: 1, minor: 1 }
+    );
     assert_eq!(disk.size().expect("a medium is pooled"), virtual_size);
 
     // Identification is deliberately untouched: the top image identifies
@@ -513,12 +547,16 @@ fn a_differencing_chain_composes_as_one_disk() {
     // and its files are all the parent's, read through (U6).
     let partition = only_partition(disk);
     assert_eq!(
-        fs(disk, partition).read_file("BASE.BIN").expect("read through"),
+        fs(disk, partition)
+            .read_file("BASE.BIN")
+            .expect("read through"),
         base_content
     );
 
     let added: Vec<u8> = (0..70_000u32).map(|n| (n % 241) as u8).collect();
-    fs(disk, partition).write_file("TOP.BIN", &added).expect("write");
+    fs(disk, partition)
+        .write_file("TOP.BIN", &added)
+        .expect("write");
     disk.commit().expect("commit");
     drop(session);
 
@@ -530,7 +568,9 @@ fn a_differencing_chain_composes_as_one_disk() {
 
     let (mut reopened_session, reopened_at) =
         attach(&top, Afford::Read).expect("the chain reopens");
-    let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
+    let reopened = reopened_session
+        .medium_mut(reopened_at)
+        .expect("the medium is pooled");
     let partition = only_partition(reopened);
     assert_eq!(
         fs(reopened, partition).read_file("TOP.BIN").expect("read"),
@@ -556,8 +596,7 @@ fn a_parent_named_for_the_identity_is_never_a_substitute_for_it() {
     // rather than passed over in favour of a search.
     let volume_bytes = synthetic_fat16();
     let impostor = directory.join(format!("{{{}}}.vdi", identity_text(&wanted)));
-    std::fs::write(&impostor, base_vdi(&volume_bytes, &identity(0xc2)))
-        .expect("impostor writes");
+    std::fs::write(&impostor, base_vdi(&volume_bytes, &identity(0xc2))).expect("impostor writes");
 
     let top = directory.join("top.vdi");
     std::fs::write(

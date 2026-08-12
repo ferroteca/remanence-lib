@@ -75,7 +75,10 @@ struct SealedWriter {
 
 impl SealedWriter {
     fn create(sidecar: &Path) -> std::io::Result<Self> {
-        Ok(Self { file: File::create(sidecar)?, hash: FNV_SEED })
+        Ok(Self {
+            file: File::create(sidecar)?,
+            hash: FNV_SEED,
+        })
     }
 
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
@@ -100,11 +103,7 @@ impl SealedWriter {
 /// past the image's present end needs no bytes — truncation restores
 /// it). Original bytes stream from the image into the sidecar through a
 /// bounded buffer; nothing holds the write set in memory.
-pub(crate) fn record(
-    sidecar: &Path,
-    device: &mut MediumDevice,
-    capture: &Capture,
-) -> Result<()> {
+pub(crate) fn record(sidecar: &Path, device: &mut MediumDevice, capture: &Capture) -> Result<()> {
     let original_len = device.len();
     let record_error = |error: std::io::Error| {
         Error::io(format!(
@@ -138,7 +137,9 @@ pub(crate) fn record(
         original.resize(take, 0);
         device.read_at(offset, &mut original)?;
         writer.write(&offset.to_le_bytes()).map_err(record_error)?;
-        writer.write(&(take as u64).to_le_bytes()).map_err(record_error)?;
+        writer
+            .write(&(take as u64).to_le_bytes())
+            .map_err(record_error)?;
         writer.write(&original).map_err(record_error)?;
         Ok(())
     })?;
@@ -178,8 +179,7 @@ fn verify_sealed(file: &File, len: u64, sidecar: &Path) -> Result<Option<ArmedHe
         at += take as u64;
     }
     let mut seal = [0u8; SEAL_LEN];
-    read_exact_at(file, body_len, &mut seal)
-        .map_err(|error| sidecar_read_error(sidecar, error))?;
+    read_exact_at(file, body_len, &mut seal).map_err(|error| sidecar_read_error(sidecar, error))?;
     if hash != u64::from_le_bytes(seal) || header[..8] != MAGIC {
         return Ok(None);
     }
@@ -191,7 +191,12 @@ fn verify_sealed(file: &File, len: u64, sidecar: &Path) -> Result<Option<ArmedHe
     if new_len < original_len {
         return Err(contradiction(sidecar, "the image shrank"));
     }
-    Ok(Some(ArmedHeader { original_len, new_len, count: le64(&header, 24), body_len }))
+    Ok(Some(ArmedHeader {
+        original_len,
+        new_len,
+        count: le64(&header, 24),
+        body_len,
+    }))
 }
 
 /// Walks an armed journal's records through a bounded buffer:
@@ -279,11 +284,7 @@ fn sync_parent(_path: &Path) {}
 /// `device` already holds: an armed journal rolls the image back to
 /// wholly the old state; a torn one proves the image was never touched.
 /// Either way the sidecar is gone when this returns.
-pub(crate) fn reconcile(
-    sidecar: &Path,
-    device: &mut MediumDevice,
-    image: &Path,
-) -> Result<()> {
+pub(crate) fn reconcile(sidecar: &Path, device: &mut MediumDevice, image: &Path) -> Result<()> {
     let file = match File::open(sidecar) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -380,11 +381,7 @@ mod tests {
     }
 
     fn sample() -> Vec<u8> {
-        serialize(
-            100,
-            4096,
-            &[(0, vec![1, 2, 3, 4]), (96, vec![9, 9, 9, 9])],
-        )
+        serialize(100, 4096, &[(0, vec![1, 2, 3, 4]), (96, vec![9, 9, 9, 9])])
     }
 
     /// Runs the streaming verifier and record walk over raw bytes:
@@ -411,7 +408,10 @@ mod tests {
 
     #[test]
     fn a_sealed_journal_verifies_and_walks() {
-        assert!(classify(&sample()).expect("classifies"), "sealed means armed");
+        assert!(
+            classify(&sample()).expect("classifies"),
+            "sealed means armed"
+        );
     }
 
     #[test]
@@ -438,10 +438,7 @@ mod tests {
     fn a_sealed_contradiction_is_refused_not_guessed_at() {
         // A structurally impossible journal wearing a valid seal: one
         // record promised, none present.
-        let bytes = serialize(100, 4096, &[])
-            .split_at(HEADER_LEN)
-            .0
-            .to_vec();
+        let bytes = serialize(100, 4096, &[]).split_at(HEADER_LEN).0.to_vec();
         let mut body = bytes;
         body[24..32].copy_from_slice(&1u64.to_le_bytes());
         let seal = fnv1a_extend(FNV_SEED, &body);

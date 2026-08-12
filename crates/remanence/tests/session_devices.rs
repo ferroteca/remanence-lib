@@ -404,7 +404,10 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
         .expect_err("a block image is not what a 1541 is served");
 
     let message = error.to_string();
-    assert!(message.contains("cbmfloppy0"), "names the device: {message}");
+    assert!(
+        message.contains("cbmfloppy0"),
+        "names the device: {message}"
+    );
     assert!(
         message.contains("Commodore 1541"),
         "names the family: {message}"
@@ -417,7 +420,10 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
         message.contains("5.25-inch"),
         "names what the family is served: {message}"
     );
-    assert!(!drive.is_occupied(), "a refused insert leaves the slot empty");
+    assert!(
+        !drive.is_occupied(),
+        "a refused insert leaves the slot empty"
+    );
 
     // Both sides survive the refusal: the slot is the caller's
     // configuration and the medium is the session's state.
@@ -549,7 +555,10 @@ fn a_declaration_the_evidence_cannot_bear_is_refused_by_name() {
         .expect_err("a megabyte of zeroes is no H17 disk");
     let message = error.to_string();
     assert_eq!(error.category(), ErrorCategory::InvalidImage);
-    assert!(message.contains("h8d"), "names what was declared: {message}");
+    assert!(
+        message.contains("h8d"),
+        "names what was declared: {message}"
+    );
 
     assert!(
         session.media().is_empty(),
@@ -583,7 +592,10 @@ fn a_flux_family_artifact_is_refused_whatever_was_declared() {
         .expect_err("a flux artifact is no block medium");
 
     let message = error.to_string();
-    assert!(message.contains("flux"), "names the family found: {message}");
+    assert!(
+        message.contains("flux"),
+        "names the family found: {message}"
+    );
     assert!(
         message.contains("own type"),
         "names where it is read instead: {message}"

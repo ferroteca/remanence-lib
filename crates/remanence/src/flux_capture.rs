@@ -760,7 +760,10 @@ fn decode_markers(source: &str, bytes: &[u8], known: &[&'static str]) -> Result<
 pub(crate) fn read_text(source: &str, bytes: &[u8], at: usize) -> Result<(String, usize)> {
     let (length, used) = read_varint(source, bytes, at)?;
     let length = usize::try_from(length).map_err(|_| {
-        Error::invalid_image(source, "record states text longer than this host can address")
+        Error::invalid_image(
+            source,
+            "record states text longer than this host can address",
+        )
     })?;
     let raw = bytes
         .get(at + used..at + used + length)
@@ -865,12 +868,7 @@ pub(crate) struct SectionKey {
 }
 
 impl SectionKey {
-    pub(crate) fn new(
-        track: TrackKey,
-        scope: ScopeId,
-        kind: SectionKind,
-        ordinal: u64,
-    ) -> Self {
+    pub(crate) fn new(track: TrackKey, scope: ScopeId, kind: SectionKind, ordinal: u64) -> Self {
         Self {
             track,
             scope,
@@ -1033,11 +1031,14 @@ fn read_section_key(
     let (length, used) = read_varint(source, bytes, cursor)?;
     cursor += used;
     let length = usize::try_from(length).map_err(|_| {
-        Error::invalid_image(source, "index names a namespace longer than this host can address")
+        Error::invalid_image(
+            source,
+            "index names a namespace longer than this host can address",
+        )
     })?;
-    let raw = bytes.get(cursor..cursor + length).ok_or_else(|| {
-        Error::invalid_image(source, "index ends inside the namespace it names")
-    })?;
+    let raw = bytes
+        .get(cursor..cursor + length)
+        .ok_or_else(|| Error::invalid_image(source, "index ends inside the namespace it names"))?;
     cursor += length;
     let spelling = std::str::from_utf8(raw)
         .map_err(|_| Error::invalid_image(source, "index names a namespace that is not text"))?;
@@ -1096,7 +1097,9 @@ fn read_section_key(
         other => {
             return Err(Error::invalid_image(
                 source,
-                format!("index states a section scope {other}, which this version has no reading of"),
+                format!(
+                    "index states a section scope {other}, which this version has no reading of"
+                ),
             ));
         }
     };
@@ -1112,7 +1115,9 @@ fn read_section_key(
         other => {
             return Err(Error::invalid_image(
                 source,
-                format!("index states a section kind {other}, which this version has no reading of"),
+                format!(
+                    "index states a section kind {other}, which this version has no reading of"
+                ),
             ));
         }
     };
@@ -1971,11 +1976,7 @@ impl TrackKey {
         Self::at(namespace, SourcePosition::whole(position), Some(head))
     }
 
-    pub(crate) fn at(
-        namespace: &'static str,
-        position: SourcePosition,
-        head: Option<u64>,
-    ) -> Self {
+    pub(crate) fn at(namespace: &'static str, position: SourcePosition, head: Option<u64>) -> Self {
         Self {
             namespace,
             position,
@@ -2285,7 +2286,12 @@ impl FluxCapture {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache
-            .section(backing.bytes.as_ref(), backing.total_bytes, key, &backing.known)
+            .section(
+                backing.bytes.as_ref(),
+                backing.total_bytes,
+                key,
+                &backing.known,
+            )
             .map(<[u8]>::to_vec)
     }
 
@@ -2496,7 +2502,9 @@ impl<S: ByteSink> CaptureBuilder<S> {
                     None => run.transitions().len() as u64,
                 },
                 after_last_index: match indices.last() {
-                    Some(last) => run.transitions().len() as u64 - count_below(run.transitions(), *last),
+                    Some(last) => {
+                        run.transitions().len() as u64 - count_below(run.transitions(), *last)
+                    }
                     None => 0,
                 },
                 transition_chunks: transitions.len() as u64,
@@ -2596,7 +2604,9 @@ impl FluxCapture {
 
     /// The backing's total length in bytes.
     pub(crate) fn backing_bytes(&self) -> u64 {
-        self.backing.as_ref().map_or(0, |backing| backing.total_bytes)
+        self.backing
+            .as_ref()
+            .map_or(0, |backing| backing.total_bytes)
     }
 
     /// How much of the backing is currently resident.
@@ -2710,7 +2720,9 @@ fn decode_run_metadata(
     if version != METADATA_VERSION {
         return Err(Error::invalid_image(
             source,
-            format!("backing states run metadata version {version}, which this build has no reading of"),
+            format!(
+                "backing states run metadata version {version}, which this build has no reading of"
+            ),
         ));
     }
     let entry = CaptureRunEntry {
@@ -2728,7 +2740,10 @@ fn decode_run_metadata(
         provenance: Provenance::new("flux-capture"),
     };
     let (provenance, _) = decode_provenance(source, bytes, at, known)?;
-    Ok(CaptureRunEntry { provenance, ..entry })
+    Ok(CaptureRunEntry {
+        provenance,
+        ..entry
+    })
 }
 
 fn encode_observation_metadata(entry: &ObservationEntry) -> Vec<u8> {
@@ -2825,7 +2840,13 @@ mod tests {
         transitions: Vec<Tick>,
         markers: Vec<Marker>,
     ) -> Result<CaptureRun> {
-        CaptureRun::new(source, ordinal, Provenance::new(source), transitions, markers)
+        CaptureRun::new(
+            source,
+            ordinal,
+            Provenance::new(source),
+            transitions,
+            markers,
+        )
     }
 
     fn kryoflux_timebase() -> TimeBase {
@@ -3379,7 +3400,11 @@ mod tests {
 
         assert_eq!(decode_transitions(&first).unwrap(), ticks);
         assert_eq!(first, second);
-        assert_eq!(source.reads().len(), after_first, "the second request re-read");
+        assert_eq!(
+            source.reads().len(),
+            after_first,
+            "the second request re-read"
+        );
     }
 
     #[test]
@@ -3602,7 +3627,8 @@ mod tests {
         ];
 
         let encoded = encode_markers(&markers);
-        let decoded = decode_markers("kryoflux", &encoded, KNOWN).expect("what was encoded decodes");
+        let decoded =
+            decode_markers("kryoflux", &encoded, KNOWN).expect("what was encoded decodes");
 
         assert_eq!(decoded, markers);
     }
@@ -3672,7 +3698,9 @@ mod tests {
         write_varint(&mut unknown, 10);
         write_varint(&mut unknown, 99);
         assert_eq!(
-            decode_markers("kryoflux", &unknown, KNOWN).unwrap_err().category(),
+            decode_markers("kryoflux", &unknown, KNOWN)
+                .unwrap_err()
+                .category(),
             ErrorCategory::InvalidImage
         );
     }
@@ -3704,7 +3732,9 @@ mod tests {
         let (second, _, second_payload) = transition_section(&track, 1);
         let (first, _, first_payload) = transition_section(&track, 0);
 
-        writer.append(second, second_payload).expect("the first append is in order");
+        writer
+            .append(second, second_payload)
+            .expect("the first append is in order");
         let error = writer.append(first, first_payload).unwrap_err();
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
@@ -3751,10 +3781,16 @@ mod tests {
         capture.insert_track(Track::new(second.clone()));
 
         let one = capture
-            .admit_observation(&first, &observed("kryoflux", 800, vec![10], Vec::new()).unwrap())
+            .admit_observation(
+                &first,
+                &observed("kryoflux", 800, vec![10], Vec::new()).unwrap(),
+            )
             .expect("the location was declared");
         let other = capture
-            .admit_observation(&second, &observed("kryoflux", 800, vec![10], Vec::new()).unwrap())
+            .admit_observation(
+                &second,
+                &observed("kryoflux", 800, vec![10], Vec::new()).unwrap(),
+            )
             .expect("the location was declared");
 
         assert_ne!(one, other);
@@ -3793,8 +3829,10 @@ mod tests {
             capture.insert_track(Track::new(TrackKey::at("c1541", position, None)));
         }
 
-        let order: Vec<SourcePosition> =
-            capture.tracks().map(|track| track.key().position()).collect();
+        let order: Vec<SourcePosition> = capture
+            .tracks()
+            .map(|track| track.key().position())
+            .collect();
 
         assert_eq!(
             order,
@@ -3879,8 +3917,7 @@ mod tests {
     fn a_run_without_two_indices_supplies_no_circular_observation() {
         // Still inspectable capture evidence — it simply cannot state a
         // circumference, and none is invented for it.
-        let run =
-            captured("kryoflux", 0, vec![50, 150], vec![index_at(100)]).unwrap();
+        let run = captured("kryoflux", 0, vec![50, 150], vec![index_at(100)]).unwrap();
 
         assert_eq!(run.transitions(), [50, 150]);
         assert!(run.observations("kryoflux").unwrap().is_empty());
@@ -3888,8 +3925,7 @@ mod tests {
 
     #[test]
     fn a_run_records_its_transitions_in_recorded_time_order() {
-        let error =
-            captured("kryoflux", 0, vec![150, 50], Vec::new()).unwrap_err();
+        let error = captured("kryoflux", 0, vec![150, 50], Vec::new()).unwrap_err();
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
     }
@@ -3931,8 +3967,7 @@ mod tests {
     fn a_marker_may_share_a_position_with_a_transition() {
         // Marker channels are parallel timed evidence, so an index
         // pulse coinciding with a reversal is ordinary, not a clash.
-        let observation =
-            observed("kryoflux", 800, vec![10, 400], vec![index_at(400)]).unwrap();
+        let observation = observed("kryoflux", 800, vec![10, 400], vec![index_at(400)]).unwrap();
 
         assert_eq!(observation.transitions(), [10, 400]);
         assert_eq!(observation.markers().len(), 1);
@@ -3957,8 +3992,7 @@ mod tests {
 
     #[test]
     fn a_marker_outside_the_span_is_refused() {
-        let error =
-            observed("a2r", 800, vec![10], vec![index_at(800)]).unwrap_err();
+        let error = observed("a2r", 800, vec![10], vec![index_at(800)]).unwrap_err();
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         assert!(error.to_string().contains("marker"), "{error}");
@@ -4032,8 +4066,14 @@ mod tests {
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         let message = error.to_string();
-        assert!(message.contains("20"), "should name the offending tick: {message}");
-        assert!(message.contains("30"), "should name what it followed: {message}");
+        assert!(
+            message.contains("20"),
+            "should name the offending tick: {message}"
+        );
+        assert!(
+            message.contains("30"),
+            "should name what it followed: {message}"
+        );
     }
 
     #[test]
@@ -4051,7 +4091,10 @@ mod tests {
 
         assert_eq!(error.category(), ErrorCategory::InvalidImage);
         let message = error.to_string();
-        assert!(message.contains("800"), "should name the offending tick: {message}");
+        assert!(
+            message.contains("800"),
+            "should name the offending tick: {message}"
+        );
         assert!(message.contains("span"), "should name the span: {message}");
     }
 
@@ -4128,7 +4171,11 @@ mod tests {
             markers.iter().map(Marker::position).collect::<Vec<_>>(),
             [100, 900, 1300]
         );
-        assert!(markers.iter().all(|marker| marker.kind() == &MarkerKind::Index));
+        assert!(
+            markers
+                .iter()
+                .all(|marker| marker.kind() == &MarkerKind::Index)
+        );
     }
 
     #[test]
@@ -4181,7 +4228,8 @@ mod tests {
     fn a_declared_bound_evicts_and_re_reads_rather_than_refusing() {
         // The bound narrows the working set; it never refuses service.
         let front = TrackKey::new("kryoflux", 0, 0);
-        let mut builder = CaptureBuilder::new(kryoflux_timebase(), Vec::new()).with_chunk_records(1);
+        let mut builder =
+            CaptureBuilder::new(kryoflux_timebase(), Vec::new()).with_chunk_records(1);
         let source = builder.envelope_mut().declare_source(SourceDescriptor::new(
             "kryoflux",
             "capture00.0.raw",
@@ -4195,7 +4243,12 @@ mod tests {
         )
         .unwrap();
         builder
-            .add_location(front.clone(), source, std::slice::from_ref(&run), Vec::new())
+            .add_location(
+                front.clone(),
+                source,
+                std::slice::from_ref(&run),
+                Vec::new(),
+            )
             .expect("one location");
         let (mut capture, bytes, total) = builder.seal().expect("the backing seals");
         // One byte of working set: every chunk still loads, none stays.
@@ -4206,7 +4259,11 @@ mod tests {
             capture.run_transitions(&front, entry).expect("reads"),
             [50, 150, 400, 950, 1400]
         );
-        assert!(capture.resident_bytes() <= 8, "{}", capture.resident_bytes());
+        assert!(
+            capture.resident_bytes() <= 8,
+            "{}",
+            capture.resident_bytes()
+        );
     }
 
     #[test]

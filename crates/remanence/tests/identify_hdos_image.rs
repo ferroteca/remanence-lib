@@ -16,9 +16,7 @@ use common::open_read;
 /// Pools `path` in a fresh session under the h8d declaration and returns
 /// both: a medium lives in its session's pool, so tests keep the session
 /// alive for as long as they use the medium.
-fn attach(
-    path: impl AsRef<std::path::Path>,
-) -> remanence::Result<(Session, MediaId)> {
+fn attach(path: impl AsRef<std::path::Path>) -> remanence::Result<(Session, MediaId)> {
     let mut session = Session::new();
     let id = session.load_media(open_read(path), Format::H8d)?.id();
     Ok((session, id))
@@ -75,7 +73,10 @@ fn assert_hdos_identification(identification: &Identification) {
     assert_eq!(image.name, "Heathkit H8 H17 disk image");
     assert_eq!(image.size.current_bytes, Some(102_400));
     assert_eq!(image.size.expected_bytes, Some(102_400));
-    assert!(matches!(image.layout, LayerLayout::Image(ImageLayout { .. })));
+    assert!(matches!(
+        image.layout,
+        LayerLayout::Image(ImageLayout { .. })
+    ));
 
     let media = &identification.layers[count - 2];
     assert_eq!(media.kind, LayerKind::PhysicalMedia);
@@ -84,13 +85,17 @@ fn assert_hdos_identification(identification: &Identification) {
     // on. The ten records to a track below are the recording, and they
     // follow the medium's ten sector holes without being them.
     assert_eq!(media.id, "flexible-5.25-hard-10");
-    let LayerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout
-    else {
+    let LayerLayout::PhysicalMedia(PhysicalMediaLayout::Disk(disk)) = &media.layout else {
         panic!("expected disk layout, found {:?}", media.layout);
     };
     assert_eq!(disk.cylinders, Some(40));
     assert_eq!(disk.sides, Some(1));
-    assert_eq!(disk.sectors, SectorLayout::Fixed { sectors_per_track: 10 });
+    assert_eq!(
+        disk.sectors,
+        SectorLayout::Fixed {
+            sectors_per_track: 10
+        }
+    );
     assert_eq!(disk.media_type, "flexible-5.25-hard-10");
 
     let filesystem = identification.layers.last().expect("filesystem layer");
@@ -114,7 +119,9 @@ fn identifies_hdos_fixture_image() {
     let image_path = fixture_path(IMAGE_NAME);
 
     let (mut disk_session, disk_at) = attach(&image_path).expect("disk opens");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let identification = disk.identify();
 
     assert_eq!(identification.layers.len(), 3);
@@ -125,9 +132,10 @@ fn identifies_hdos_fixture_image() {
 fn identifies_the_image_inside_the_zip_fixture() {
     let zip_path = private_copy(ZIP_NAME, "single");
 
-    let (mut disk_session, disk_at) =
-        attach_entry(&zip_path, IMAGE_NAME).expect("the entry loads");
-    let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
+    let (mut disk_session, disk_at) = attach_entry(&zip_path, IMAGE_NAME).expect("the entry loads");
+    let disk = disk_session
+        .medium_mut(disk_at)
+        .expect("the medium is pooled");
     let identification = disk.identify();
 
     let archive = &identification.layers[0];
@@ -136,8 +144,14 @@ fn identifies_the_image_inside_the_zip_fixture() {
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(layout.uncompressed_size, Some(102_400));
     assert_eq!(identification.layers.len(), 4);
-    assert_eq!(disk.path().expect("a medium is pooled"), zip_path.display().to_string());
-    assert_eq!(disk.image_path().expect("a medium is pooled"), PathBuf::from(IMAGE_NAME));
+    assert_eq!(
+        disk.path().expect("a medium is pooled"),
+        zip_path.display().to_string()
+    );
+    assert_eq!(
+        disk.image_path().expect("a medium is pooled"),
+        PathBuf::from(IMAGE_NAME)
+    );
     assert_hdos_identification(&identification);
 
     drop(disk_session);

@@ -1308,9 +1308,10 @@ pub(crate) fn write_new_artifact(medium: &FluxMedium, path: &Path) -> Result<P64
 /// Where the artifact is built: beside its destination, so moving it
 /// into place is a rename within one filesystem rather than a copy.
 fn staging_path(destination: &Path) -> PathBuf {
-    let name = destination
-        .file_name()
-        .map_or_else(|| "artifact".to_owned(), |name| name.to_string_lossy().into_owned());
+    let name = destination.file_name().map_or_else(
+        || "artifact".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
@@ -1401,9 +1402,8 @@ mod tests {
     use crate::flux_medium::MediumFact;
 
     fn medium_of(pulses: &[(Cycle, u32)]) -> FluxMedium {
-        let frame = container_frame(Provenance::new(P64).note("declared for the test")).expect(
-            "the container and the profile declare the same frame",
-        );
+        let frame = container_frame(Provenance::new(P64).note("declared for the test"))
+            .expect("the container and the profile declare the same frame");
         let mut builder = MediumBuilder::new(
             C1541.id,
             C1541.media,
@@ -1482,8 +1482,8 @@ mod tests {
         let mut models = Models::new();
 
         let coded = encode_pulses(&mut models, &pulses);
-        let decoded = decode_pulses(&mut models, &coded, pulses.len() as u64)
-            .expect("the stream decodes");
+        let decoded =
+            decode_pulses(&mut models, &coded, pulses.len() as u64).expect("the stream decodes");
 
         assert_eq!(decoded, pulses);
         // And it is worth something: six pulses in well under six times
@@ -1684,7 +1684,9 @@ mod tests {
                 .declared_loss
                 .iter()
                 .find(|loss| loss.code == code)
-                .unwrap_or_else(|| panic!("{code} is not accounted for: {:?}", report.declared_loss))
+                .unwrap_or_else(|| {
+                    panic!("{code} is not accounted for: {:?}", report.declared_loss)
+                })
         };
         // The reduction's policy, each half-track's own provenance, the
         // seam the medium located, the rule that placed the circle's
@@ -1698,7 +1700,10 @@ mod tests {
         // inferred from it.
         assert!(report.evidence.len() >= 5, "{:?}", report.evidence);
         assert!(
-            report.evidence.iter().any(|line| line.contains("index byte")),
+            report
+                .evidence
+                .iter()
+                .any(|line| line.contains("index byte")),
             "{:?}",
             report.evidence
         );
