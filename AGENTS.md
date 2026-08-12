@@ -102,8 +102,25 @@ ABI, or Python module.
   the argument-free `bitstream`/`bytestream` pair a flux medium answers,
   commit and rollback), a medium being created by a declared reading
   **or by its author** (`authored_as` saying which) and destroyed only
-  by `release_media`; `disk.rs` is the private `MediaState` a medium
-  homes.
+  by `release_media`; `disk/` is the private state a medium homes, in
+  five files. `disk/mod.rs` holds `DiskFormat` and `MediumState`, the
+  enum over the four families and the dispatch every verb above enters
+  through — **families own their representation** (P14) at the state
+  tier, so asking an archive to inspect partitions is a category error
+  answered by name rather than a hole to fall into.
+  `disk/state.rs` is `MediaState` itself: the two planes one P7 claim
+  serves (F43) — the raw bytes and the disk a format adapter presents
+  above them — with `Composed` and `Window` as those planes' `Device`
+  faces and `assess` the narrow P28 gate that settles which of the two
+  an open gets. `disk/recognition.rs` is what a load recognized before
+  it becomes state, which is what a discovery holds and a load consumes
+  (see `discovery.rs` below). `disk/files.rs` is the namespace verbs
+  and the two guards every write passes first, and `disk/commit.rs` the
+  durable commit (P9) with the crash harness that proves it. Because
+  one type's verbs live in four files, `MediaState`'s fields and a
+  handful of its methods are `pub(super)` — visible inside `disk/` and
+  nowhere else. `disk/fixtures.rs` is `#[cfg(test)]` only: the image
+  builders the commit and end-to-end tests share.
 
   The three fact classes meet here. **Discovery reads**: `discovery.rs`
   is the first-class `discover_media`, on no handle at all — the claim,
@@ -417,8 +434,9 @@ ABI, or Python module.
   synthetic FAT/MBR/qcow2/VDI images built in-test, including the
   truncated floppy the degraded reading is stated over, plus the
   fixture-driven HDOS tests. A test that names its own path in a string
-  (the commit crash harness in `model/disk.rs` re-invokes the test
-  binary by name) must be updated when its module moves.
+  (the commit crash harness in `model/disk/fixtures.rs` re-invokes the
+  test binary by name, and that name carries the module path) must be
+  updated when its module moves.
 - `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`
   regenerates `include/remanence.h` with cbindgen on every build; the
