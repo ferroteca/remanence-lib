@@ -58,6 +58,142 @@ removes it is the record either way.
 
 ## Decisions
 
+### D32 — Rulings made delivering the partition pool and the vantage doors
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-10. **Supports** S1, S2, S3; the pledged media-first design; the
+P19 amendment; in-force P3, P4, P10, P16, P17, P18, P21, P27; U4.
+
+Rulings made in F56's course. The delivery itself is recorded by the
+commit; these are the calls made along the way, and the first is the one
+a later reader most needs.
+
+**The pool populates under the medium's kind, because the device spec it
+is owed does not exist yet.** F56 says the pool populates "under the
+device spec, kind-determined for every type — the hard-drive class by its
+spec's scheme, checked at load". Device specs are F57's, and F56 needs
+nothing from F57 — so what names the scheme today is the only kind a
+medium carries today: its media type. A space-native medium is laid out
+under MBR and the table is checked at the load; a namespace-native one
+bears the direct partition with no extent. **What was removed is the
+probe, not the check**: the delivered partition catalog ranked layout
+adapters against a device and fell through to a bare volume, which is a
+reading being picked, and one specified scheme checked against the
+content is not. When F57 lands, the scheme moves from the media type to
+the device spec and nothing above it moves.
+
+**Where the specified scheme does not check out, the answer is the
+direct partition rather than a refusal.** "Checked at load" reads as a
+refusal, and a refusal is wrong here for a reason F57 will remove: with
+no device spec there is nothing distinguishing a partitioned hard disk
+from a floppy image, so refusing a medium whose sector 0 is a boot record
+would refuse every partitionless disk this release reads. The scheme
+adapter's three no-scheme answers — a filesystem boot record, a blank
+disk, content nothing claims — are what they always were, and each of
+them now composes the direct partition instead of nothing.
+
+**The pledged tree's one `Partition` is two Rust types, and Rust is the
+reason.** The design draws the facts and both doors on one node, and
+`partitions()` handing out several door-bearing nodes at once cannot be
+written: a door composes a space over the medium, so each node would hold
+a mutable borrow of the same medium. So the pool answers with
+**`Partition`**, a borrow-free record carrying every fact the scheme
+declared, and `partition(n)` answers with **`PartitionView`**, the borrow
+that holds a partition and its medium at once. That is the split
+`Machine`/`MachineView` and `StorageDevice`/`DeviceView` already are, one
+tier down, rather than a new shape.
+
+**Opening a door spends the view, which is the identity rule carried by
+the type.** F56 says both doors hand out *the one* `StorageSpace` the
+partition composes. Handing out `&mut` to a space the view held would
+have said it too, and it would have made the view a second place a
+composed space lives. Consuming instead makes the rule unforgeable: the
+node comes back once, through whichever door was asked, carrying whatever
+vantages the partition has — so which door was opened changes nothing
+about what comes back, which is the identity rule stated exactly.
+`Partition::is_addressable` and `bears_namespace` are the non-consuming
+predicates for a caller who wants to ask before spending it.
+
+**The direct partition is ordinal 0 and a scheme's own numbering starts
+at 1.** MBR numbers its entries from one, so zero is the library's to
+spend, and spending it there means the two never collide and the walk is
+uniform. A medium recording a scheme bears no direct partition, and a
+medium recording none bears exactly it.
+
+**The direct partition never appears in the inspection report, and the
+evidence answer is unchanged.** The pledged ledger says the evidence
+answer (`partition_scheme: None`) stands while the navigation answer
+gains the declared synthetic member, and the code says it the same way: a
+composition act is provenance, so `DiskReport` derives its regions from
+the scheme's entries alone and a medium recording no scheme still reports
+none. `DiskReport` is now computed from the pool rather than being what
+navigation goes through, which is the whole of its demotion — every fact
+it reports is the fact it reported before.
+
+**U4's identity clause survives the move of the file verbs, and was not
+amended.** The in-force entry says an identity "names exactly the same
+region, volume, or filesystem in every file verb that it named in this
+report". The file verbs are now reached by the scheme's own ordinal, and
+the identity travels with them: `StorageSpace::volume_id` answers the
+same value the report issued for that partition's composition, and
+`Partition::volume_id` answers it beside the ordinal. The identity is
+still opaque, still the library's, still stable across opens, and still
+never built by a caller from a number or a position — so the claim holds
+in substance, and the ordinal is the schema adapter's own fact rather
+than a second identity (P16 puts it there, and U4 already declares it
+load-bearing where it says a refused entry keeps its place).
+
+**A namespace declaration is a stable spelling, not a Rust enum.** The
+partition *type* is enumerated because a scheme's type values are what a
+declaration is checked against, and `PartitionType` is that set. The
+namespace declaration is not the same kind of thing: it names the adapter
+that will read it, and adapters are already named by stable spellings
+everywhere they are reached — `"hdos"`, `"cpm"`, `CBM_DOS`, the FAT
+kinds. So `filesystem_as` takes the spelling and refuses one outside the
+claim by name (P3), which is what `Format::from_id` and
+`media_profile::by_id` already do at their own boundaries. The claim is
+four: `"fat"`, `"hdos"`, `"cpm"`, `"cbmdos"` — and `"cpm"` still refuses
+at the open, recognition and reading being separate claims.
+
+**`as_type` answers `Result<()>`, because the check is the whole of it.**
+The verb exists so a caller can state their reading and be refused by
+name where the recorded byte does not bear it; it settles nothing about
+what the partition then hands out, since the namespace vantage opens
+under the type the *scheme* declared. A verb whose value is its refusal
+is unusual and is what this one is.
+
+**The resolver's medium-namespace bound dissolves into the adapter's
+own.** The 8 MiB bound existed because a resolver *searched* a medium's
+own content for a namespace and a search needs one (P27). Nothing
+searches now: a declaration names its adapter, and the adapter says how
+much it will take whole — which is where the number came from in the
+first place, and it stays there. `filesystem_catalog::recognize`,
+`CatalogRecognition` and `SpaceRule::SeveralCandidates` go with the
+search, having nothing left to tie or to break a tie between; the
+catalog's probes stay where they were always used, identifying an
+artifact's layers.
+
+**Corrected in passing:** root ARCHITECTURE.md's S1 inventory still named
+`Archive` and `ArchiveEntry`, which left all three surfaces when the
+archive became a medium. The line was being edited for the partition
+vocabulary anyway.
+
+**Weighed and declined:** verifying every declared namespace at the load
+so the doors could be lookups over verified readings as well as declared
+ones (it makes a load read a boot record per partition, and it puts the
+recognizing seam's refusal somewhere a caller cannot reach it — the
+delivered shape has the door answer from the declaration and the space
+carry the verified state, which is D25's ruling that a refused
+recognition answers with its own refusal, kept); making the direct
+partition addressable only where a volume composed (it would have made
+the one member that is *defined* as the whole content refuse to address
+the whole content on a blank disk); giving `partitions()` door-bearing
+nodes by putting the medium behind a shared cell (interior mutability to
+buy one call site is a shape this crate has nowhere else); enumerating
+the namespace declaration as a Rust type beside `PartitionType` (above);
+and amending U4 (above — its claim holds, and an amendment written to
+excuse a change that did not break the claim is worse than no amendment).
+
 ### D31 — The declared format set enumerates what a medium *is*, so `p64` waits for the flux fold-in
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

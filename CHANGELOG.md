@@ -18,6 +18,213 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **The partition pool: every medium bears a partition, and its content
+  is reached through one.** `Medium::partition(ordinal)` is the borrow
+  that holds a partition and its medium at once, `Medium::partitions()`
+  hands over the whole pool as values, and `Medium::partition_scheme()`
+  names the scheme it was populated under (P16, P19). The ordinals are
+  the scheme's own — MBR entry 1 is `1` — so a partition carrying a
+  refusal keeps its number and nothing behind it renumbers (U4). **The
+  pool is established when the medium is loaded** — by `load_media`,
+  `load_discovery` and `add_device_for`, under the medium's own kind
+  rather than by probing for a layout — and is evidence from then on,
+  immutable for the session's life. Nothing re-reads a table behind a
+  caller's back, and nothing adds a partition to a medium that was
+  loaded without one: the create and release slots a partition editor
+  would need are deliberately unfilled.
+
+  **A `Partition` is a value, not a handle.** It holds nothing and
+  outlives nothing, and it carries what the scheme declared beside what
+  the library composed over it: the type value exactly as recorded and,
+  next to it, a reading of what that value *declares* — the reading
+  describes the declaration and never the content, so a partition
+  recording `0x07` is explained as NTFS or exFAT without thereby being
+  asserted to hold either — the boot flag as `active()`, the placement
+  in the scheme's own vocabulary (`"primary"` for one of MBR's four
+  slots, `"logical"` for an entry on the extended chain), the role,
+  which is a different axis from placement and does not follow from it,
+  the extent as `start_bytes` and `length_bytes`, whether this release
+  reads the declared type at all, whether each vantage opens, the
+  structured `issue()` that keeps an unreadable partition in the pool
+  rather than dropping it out of the account, and the `evidence()` the
+  scheme's adapter read to declare it (P4).
+
+  **Ordinal 0 is the direct partition**, which the library composes
+  rather than reads. A scheme numbers its own entries from one, so zero
+  is the library's to spend, and it is spent where a medium records no
+  scheme at all — a filesystem boot record where a table would be, a
+  blank disk, and content nothing claims being three different answers
+  about the same absence. It declares no type, so a reading made of it
+  is refused by name rather than checked against nothing, and its
+  account is `provenance()` and not `evidence()`: a composition act is
+  stated as one, synthetic and said to be, never offered as something
+  the medium said. Over a medium whose native vantage is a namespace it
+  is **extent-less**, holding no start and no length, because nothing
+  composed a position for it to be within.
+
+  **`PartitionView` carries the two vantage doors, and both hand out the
+  same node** (D26). `volume()` answers where the partition composes an
+  addressable extent and `filesystem()` where its declared type
+  determines a namespace; the `StorageSpace` either door hands over
+  carries whichever vantages that partition has, so which door was
+  opened changes nothing about what comes back and the choice is only
+  which question is being asked. Both are `Option` because both are
+  lookups — the extent and the declared namespace were settled when the
+  pool was established — and opening one spends the view, which is that
+  identity rule carried by the type.
+
+  **`as_type` is the caller's reading and the library's check** (P3). A
+  declaration names one entry of the new `PartitionType` set — a DOS
+  data partition (`0x01`, `0x04`, `0x06`, `0x0e`) or a DOS extended
+  partition (`0x05`, `0x0f`) — and the byte the scheme recorded is
+  weighed against the values that reading covers, a disagreement being
+  refused naming both sides. Where no partition type determines a
+  namespace, `filesystem_as` is the same discipline one vantage further
+  in: it claims exactly `"fat"`, `"hdos"`, `"cpm"` and `"cbmdos"`,
+  refuses any other spelling naming what it does read, and **runs P18's
+  recognizer to verify the declaration rather than to pick one** — the
+  adapter the declaration names is the adapter that reads it, and
+  content that cannot bear the declaration is refused by that adapter,
+  by name. `"cpm"` still refuses at the open as recognized-and-not-read,
+  recognition and reading being separate claims.
+
+  Everything behind a door is specified and nothing is probed for, and
+  three enumerated sets carry the specification across the surfaces:
+  `PartitionScheme` (`mbr`), `PartitionType` (`dos-primary`,
+  `dos-extended`, each answering the type values its reading covers),
+  and `PartitionRule`, the seam's own refusal set (P10) —
+  `partition-type-disagrees`, `no-declared-type`, `unclaimed-namespace`
+  and `partition-no-extent`.
+
+  In C: `remanence_medium_partition_scheme`,
+  `remanence_medium_partition_count` and
+  `remanence_medium_partition_ordinal` over the pool;
+  `remanence_medium_partition`, answering a handle the caller ends with
+  `remanence_partition_free`; the `remanence_partition_*` readers over
+  the record, its evidence and the direct partition's provenance
+  included; `remanence_partition_as_type`; `remanence_partition_volume`,
+  `remanence_partition_filesystem` and
+  `remanence_partition_filesystem_as`, each answering the same
+  `RemanenceSpace` the positioned-read and `remanence_filesystem_*`
+  verbs already take, and null where the vantage does not open; and the
+  catalogs `remanence_partition_scheme_count`/`_id`/`_name` and
+  `remanence_partition_type_count`/`_id`/`_name`. In Python: a
+  `Partition` class carrying the record and the three doors,
+  `Medium.partition(ordinal)`, `Medium.partitions`,
+  `Medium.partition_scheme`, and the `partition_schemes()` and
+  `partition_types()` catalog functions.
+
+### Removed
+
+- **The medium's resolver and selector retire: `Medium::filesystem()`
+  and `Medium::volume(id)`.** One resolved to a namespace wherever
+  exactly one candidate stood beneath the medium; the other selected
+  among the volumes an inspection had already issued identities for.
+  Neither is renamed and neither is bridged, because what replaces them
+  is a different shape rather than a different spelling: **uniformity of
+  the walk replaces resolve-without-selecting.** Resolving bought the
+  simple medium one step at the price of two shapes for one library — a
+  path where the layers were named and a path where they were skipped —
+  so a caller who wrote against the short path rewrote it on meeting a
+  disk that turned out to be partitioned. Now the partition is named in
+  both, and the step it costs the simple medium is the step every other
+  caller was already taking.
+
+  **`SpaceRule::SeveralCandidates` goes with them**, and `SpaceRule::ALL`
+  is five long. Its whole subject was a resolution that found more than
+  one candidate and would not choose between them; nothing resolves
+  among candidates any more, so the rule had nothing left to refuse. The
+  identity `"several-candidates"` reaches no surface: it cannot come
+  back through C's `error_rule_out` or through a Python exception's
+  `rule`.
+
+  In C: `remanence_medium_filesystem` and `remanence_medium_volume` are
+  gone. In Python: `Medium.filesystem()` and `Medium.volume()` are gone.
+  Nothing is bridged and nothing is aliased — each journey they served
+  is written through the pool instead: ordinal 0 with a declared reading
+  where a medium records no scheme, and the scheme's own ordinal where
+  one does.
+
+### Changed
+
+- **In-force P19 is amended: the walk is uniform.** "When every
+  applicable seam has one supported result, composition is transparent:
+  a simple legacy floppy image resolves to its filesystem without asking
+  the caller to select the intervening layers." becomes *every medium
+  bears a partition its content is reached through, so one path serves
+  whatever a medium turns out to be: a medium recording no partition
+  scheme bears the library's own composition of the whole content,
+  declared as such, and a caller who knows nothing about partitions
+  still takes the step every other caller takes.*
+
+  Transparency and uniformity answer the same complaint and a surface
+  can hold only one of them. Transparency paid in shapes: the number of
+  steps varied with what the medium turned out to be, which is exactly
+  the fact a caller opening an unknown artifact does not yet have.
+  Uniformity pays one step and charges it to everyone equally — the
+  floppy image's caller names ordinal 0 and, where no type determines a
+  namespace, declares one, which is a line of code for the account of
+  what is being read through. A medium recording no scheme costs its
+  caller nothing the partitioned medium's caller does not also pay, and
+  nothing is guessed to keep a path short.
+
+- **`DiskReport` demotes to a view derived from the partition pool.**
+  Every fact it reports is unchanged — the regions in the scheme's own
+  order with their type values, readings, placements, roles, extents and
+  refusals; the volumes with the identities they issue and the regions
+  they stand on; the filesystems recognized on them; and the content
+  answer for a medium that records no schema — but it now reads those
+  facts off the pool the load established rather than parsing a table of
+  its own. One medium cannot carry two accounts that disagree when it
+  carries one account.
+
+  **The direct partition never appears as a region.** A composition act
+  is provenance and never evidence, so a medium recording no scheme
+  still reports zero regions, exactly as before, and the evidence answer
+  is untouched: `partition_scheme` is still `None` there (U4). A report
+  listing the library's own composition among the regions would be the
+  library quoting itself back as something the disk said. In C every
+  `remanence_report_*` accessor answers as it did, and in Python so does
+  every attribute of `DiskReport`.
+
+- **The CBM DOS door is rehomed onto the partition.**
+  `C1541Sectors::filesystem()` becomes `C1541Sectors::partition()`, and
+  the namespace is declared through it —
+  `sectors.partition().filesystem_as("cbmdos")`. The door moves and
+  nothing beneath it is rewritten: the same adapter reads the same BAM
+  header, the same directory chain and the same entries, and carries the
+  same label and the same evidence out through `StorageSpace`. What
+  changes is where the door hangs. A recording records no partition
+  scheme, so it bears the direct partition like every other medium, and
+  that partition is the one composition a layer no medium composed can
+  bear — extent-less, because the recording addresses its own blocks and
+  nothing composed a position for them to sit within. The sector layer
+  still carries no file verbs of its own: it may be asked what it
+  composes, and may not be told to act as a namespace it is not (P19).
+
+  In C: `remanence_c1541_sectors_filesystem` becomes
+  `remanence_c1541_sectors_partition`, whose partition takes
+  `remanence_partition_filesystem_as` with `"cbmdos"`. In Python:
+  `C1541Sectors.filesystem()` becomes `C1541Sectors.partition()`,
+  answering a `Partition` whose `filesystem_as("cbmdos")` answers the
+  `StorageSpace`.
+
+- **`StorageSpace::volume_id()` answers `None` where the report composed
+  no volume.** It is still the identity the inspection report issued,
+  opaque and stable across opens of an unchanged layout (P21, U4), and
+  it is now an honest absence where there was none to issue — a
+  recording's record layer, an archive's content and a blank disk's
+  direct partition among them — rather than an identity manufactured so
+  the field could be filled. **The file verbs key on the partition's own
+  extent** rather than on a volume identity: a space reads and writes
+  through what composed it, not through a name looked up afterwards,
+  which is why an addressable space may still carry no volume identity
+  at all. In C, `remanence_volume_id` answers 0 there, with
+  `remanence_volume_is_addressable` as the separate vantage question; in
+  Python, `StorageSpace.volume_id` is `None` there.
+
 ### Changed
 
 - **Lookups answer with absence, and the lifecycle is create, lookup,
@@ -171,7 +378,8 @@ rather than bridged. Read every entry below in that light.
 ### Added
 
 - **The CBM DOS filesystem, above the sector layer.**
-  `C1541Sectors::filesystem()` answers the disk's own directory as the
+  `C1541Sectors::partition()`, and `filesystem_as("cbmdos")` through it,
+  answers the disk's own directory as the
   **same `StorageSpace` a disk image resolves to** — the file verbs live
   on the namespace and on nothing else, so this is a second door onto
   the one node rather than a second node with the same verbs. The sector
@@ -213,11 +421,12 @@ rather than bridged. Read every entry below in that light.
   that way carries the namespace vantage alone — `read_at` refuses as
   `not-addressable`, because nothing composed an extent for it to be a
   position within. In C:
-  `remanence_c1541_sectors_filesystem`, answering the same
+  `remanence_c1541_sectors_partition`, whose partition answers the same
   `RemanenceSpace` every `remanence_filesystem_*` verb already takes,
   plus `remanence_filesystem_label`, its readings, and
-  `remanence_filesystem_evidence`. In Python: `C1541Sectors.filesystem()`
-  answering a `StorageSpace`, with `label()` and `evidence()` on it.
+  `remanence_filesystem_evidence`. In Python: `C1541Sectors.partition()`
+  answering a `Partition` whose `filesystem_as("cbmdos")` answers a
+  `StorageSpace`, with `label()` and `evidence()` on it.
 
   One consequence for Rust callers: a `StorageSpace` now holds its
   borrow of whatever it reads through until it is dropped, which is what

@@ -12,19 +12,33 @@
 
 use std::path::PathBuf;
 
-use remanence::{DiskFormat, Format, MediaId, Medium, RegionRole, Session};
+use remanence::{DiskFormat, Format, MediaId, Medium, PartitionScheme, RegionRole, Session};
 
-/// The space on one volume of `medium`, selected by the identity the
-/// inspection report issued. One node, both vantages: `medium.volume(id)`
-/// answers with the addressable extent and the namespace together, and
-/// the file verbs live on it and nowhere else (P19).
-fn fs(
-    medium: &mut remanence::Medium,
-    volume: remanence::VolumeId,
-) -> remanence::StorageSpace<'_> {
+/// The space one partition of `medium` composes, reached through the
+/// door that opens on it. One node, both vantages (D26), and the file
+/// verbs live on it and nowhere else (P19).
+fn fs(medium: &mut remanence::Medium, ordinal: u32) -> remanence::StorageSpace<'_> {
+    let partition = medium
+        .partition(ordinal)
+        .expect("the pool bears this partition");
+    if partition.partition().bears_namespace() {
+        partition.filesystem().expect("the declared type determines one")
+    } else {
+        partition.filesystem_as("fat").expect("these images are FAT")
+    }
+}
+
+/// Every ordinal on this disk whose partition composes an addressable
+/// extent — the data partitions this release reads, in the table's own
+/// order. A structural region and a type outside the claim keep their
+/// place in the pool and compose nothing (U4).
+fn addressable_partitions(medium: &Medium) -> Vec<u32> {
     medium
-        .volume(volume)
-        .expect("the report issued this volume")
+        .partitions()
+        .iter()
+        .filter(|partition| partition.is_addressable())
+        .map(|partition| partition.ordinal())
+        .collect()
 }
 
 /// Pools `path` in a fresh session under the declaration these tests
@@ -110,6 +124,105 @@ fn inspection_reports_primaries_extended_and_logicals() {
     );
     assert!(report.composed_volume_count() >= 4, "every data region composed");
 
+    // The report above is a reading of the pool beneath it, so the pool
+    // is asserted in its own right (P16). This medium's content is laid
+    // out under the table it records, and the scheme answers by name.
+    assert_eq!(
+        disk.partition_scheme(),
+        Some(PartitionScheme::Mbr),
+        "the rig disk records the scheme its content is laid out under"
+    );
+    let partitions = disk.partitions();
+    assert!(
+        partitions.iter().all(|partition| !partition.is_direct()),
+        "a medium that records a scheme bears the scheme's own entries and \
+         nothing of the library's: the direct partition stands only where \
+         no scheme was recorded"
+    );
+    assert!(
+        partitions
+            .iter()
+            .all(|partition| partition.provenance().is_none()
+                && !partition.evidence().is_empty()),
+        "and every one of them is evidence — what the adapter read to \
+         declare it — rather than an act the library states (P4)"
+    );
+    assert_eq!(
+        partitions
+            .iter()
+            .map(|partition| partition.ordinal())
+            .collect::<Vec<u32>>(),
+        (1..=partitions.len() as u32).collect::<Vec<u32>>(),
+        "the ordinals are the table's own, numbered from one and running \
+         contiguously across the primary slots and the extended chain (U4)"
+    );
+
+    // Placement and role travel with the partition, and the report's rows
+    // are those same facts read out one seam up rather than a second
+    // reading of the table.
+    assert_eq!(
+        report.regions.len(),
+        partitions.len(),
+        "one row per declared partition, and no row derived from nothing"
+    );
+    for partition in &partitions {
+        let region = report
+            .regions
+            .iter()
+            .find(|region| region.declared_number == partition.ordinal())
+            .unwrap_or_else(|| {
+                panic!("partition {} has its own region row", partition.ordinal())
+            });
+        assert_eq!(
+            region.declared_placement,
+            partition.placement(),
+            "partition {} is placed the same way in both",
+            partition.ordinal()
+        );
+        assert_eq!(
+            region.role,
+            partition.role(),
+            "partition {} carries the same role in both",
+            partition.ordinal()
+        );
+        assert_eq!(
+            region.declared_type,
+            partition.type_byte().expect("a declared entry records its type"),
+            "partition {} records the same type value in both",
+            partition.ordinal()
+        );
+    }
+
+    // Exactly the data partitions this release reads compose an extent:
+    // the extended container is structure and composes none, and the
+    // addressable set is what the report composed volumes for.
+    let addressable = addressable_partitions(disk);
+    assert_eq!(
+        addressable,
+        partitions
+            .iter()
+            .filter(|partition| partition.role() == RegionRole::Data
+                && partition.is_claimed()
+                && partition.issue().is_none())
+            .map(|partition| partition.ordinal())
+            .collect::<Vec<u32>>(),
+        "a structural region and an unread type keep their place and \
+         compose nothing"
+    );
+    assert_eq!(
+        addressable.len(),
+        report.composed_volume_count(),
+        "and the report composed one volume for each of them"
+    );
+    assert!(
+        partitions
+            .iter()
+            .filter(|partition| partition.is_addressable())
+            .all(|partition| partition.bears_namespace()),
+        "each of them declares a DOS data partition, which determines FAT, \
+         so the plain namespace door opens on every one (P19)"
+    );
+
     let labels: Vec<_> = report
         .filesystems
         .iter()
@@ -131,19 +244,27 @@ fn marker_files_read_out_of_every_volume() {
     let path = private_artifact("markers");
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("rig artifact opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volumes: Vec<_> = disk
-        .inspect()
-        .expect("inspection reads")
-        .volumes
-        .iter()
-        .map(|volume| volume.id)
-        .collect();
-    for volume in volumes {
-        let marker = fs(disk, volume).read_file("RMNMARK.TXT")
-            .unwrap_or_else(|error| panic!("marker in volume {volume:?}: {error}"));
+
+    // The pool is what is walked, not a list of identities taken off a
+    // report: **the content of a medium is reached through the partition
+    // that composes it** (P17), and the namespace door opens on each of
+    // them because the type each declares determines FAT (P19).
+    let ordinals = addressable_partitions(disk);
+    assert!(
+        ordinals.len() >= 4,
+        "two primaries and two logicals compose a volume each: {ordinals:?}"
+    );
+    for ordinal in ordinals {
+        let marker = disk
+            .partition(ordinal)
+            .expect("the pool bears this partition")
+            .filesystem()
+            .expect("its declared type determines a namespace")
+            .read_file("RMNMARK.TXT")
+            .unwrap_or_else(|error| panic!("marker in partition {ordinal}: {error}"));
         assert!(
             marker.starts_with(b"remanence marker:"),
-            "volume {volume:?} carries its marker"
+            "partition {ordinal} carries its marker"
         );
     }
 
@@ -157,19 +278,22 @@ fn write_roundtrip_and_rollback_on_the_installer_built_image() {
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("rig artifact opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
 
-    let volume_id = disk.inspect().expect("inspection reads").volumes[0].id;
-    fs(disk, volume_id).write_file("RMNDIR/RTRIP.BIN",
+    let partition = addressable_partitions(disk)
+        .first()
+        .copied()
+        .expect("the rig disk's first data partition composes a volume");
+    fs(disk, partition).write_file("RMNDIR/RTRIP.BIN",
         b"buffered write on a real image",
     )
     .expect("write buffers");
     assert_eq!(
-        fs(disk, volume_id).read_file("RMNDIR/RTRIP.BIN")
+        fs(disk, partition).read_file("RMNDIR/RTRIP.BIN")
             .expect("reads back"),
         b"buffered write on a real image"
     );
     disk.rollback().expect("a medium is pooled");
     assert!(
-        fs(disk, volume_id).read_file("RMNDIR/RTRIP.BIN").is_err(),
+        fs(disk, partition).read_file("RMNDIR/RTRIP.BIN").is_err(),
         "rollback leaves the image untouched"
     );
 

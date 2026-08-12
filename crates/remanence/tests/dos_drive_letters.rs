@@ -586,8 +586,17 @@ fn an_unstated_variant_leaves_the_disputed_letter_undetermined() {
 /// The letter is what a consumer shows a user; the identity is what it
 /// passes back into a file verb. This is the whole point of the mapping,
 /// so it is exercised end to end on a real image.
+///
+/// **The identity the mapping issued still names exactly the volume the
+/// file verb reaches.** The file verbs live on the partition door now
+/// (P19), so the round trip runs letter → the identity the map issued →
+/// the one partition of the pool whose composed volume carries that
+/// identity → its namespace → the file. That the two ends still meet is
+/// U4's identity claim surviving the move: an identity names the same
+/// volume wherever it is met, and the door it is met through does not
+/// change which volume that is (P21).
 #[test]
-fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
+fn the_identity_the_mapping_issued_names_the_volume_the_file_verb_reaches() {
     let path = rig_artifact("file-verb");
     let (mut session, attachment) = attach(&path, Format::Qcow2);
     let report = session
@@ -599,12 +608,26 @@ fn a_letters_identity_addresses_the_volume_in_a_file_verb() {
     let mut machine = DosMachine::new();
     machine.assert_fixed_disk(0, &report).expect("free");
     let map = machine.compose(Some(DosAssignmentRule::MsDos5)).expect("composes");
+    let lettered = volume_at(&map, 'C');
 
-    let marker = session
-        .medium_mut(attachment)
-        .expect("the medium is pooled")
-        .volume(volume_at(&map, 'C'))
-        .expect("the letter's identity names a volume the report issued")
+    let medium = session.medium_mut(attachment).expect("the medium is pooled");
+    let named: Vec<u32> = medium
+        .partitions()
+        .iter()
+        .filter(|partition| partition.volume_id() == Some(lettered))
+        .map(|partition| partition.ordinal())
+        .collect();
+    assert_eq!(
+        named.len(),
+        1,
+        "the identity C: carries names exactly one partition's volume: {named:?}"
+    );
+
+    let marker = medium
+        .partition(named[0])
+        .expect("the pool bears the partition that identity named")
+        .filesystem()
+        .expect("a DOS data partition determines FAT")
         .read_file("RMNMARK.TXT")
         .expect("C: reads through the identity the map returned");
     assert!(marker.starts_with(b"remanence marker:"));

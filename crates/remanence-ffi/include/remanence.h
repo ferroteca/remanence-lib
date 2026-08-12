@@ -107,6 +107,13 @@ typedef enum {
   REMANENCE_ASSURANCE_OUTCOME_REFUSED = 2,
 } RemanenceAssuranceOutcome;
 
+// How a schema declares a region: data, which composition may consume, or
+// structure, which it may not.
+typedef enum {
+  REMANENCE_REGION_ROLE_DATA,
+  REMANENCE_REGION_ROLE_STRUCTURE,
+} RemanenceRegionRole;
+
 // What a FAT directory entry is.
 typedef enum {
   REMANENCE_ENTRY_KIND_FILE,
@@ -181,13 +188,6 @@ typedef enum {
   // Not blank, and no adapter claims it. An outcome, not a refusal.
   REMANENCE_DISK_CONTENT_UNKNOWN_NONBLANK,
 } RemanenceDiskContent;
-
-// How a schema declares a region: data, which composition may consume, or
-// structure, which it may not.
-typedef enum {
-  REMANENCE_REGION_ROLE_DATA,
-  REMANENCE_REGION_ROLE_STRUCTURE,
-} RemanenceRegionRole;
 
 // Where a volume's storage came from.
 typedef enum {
@@ -319,6 +319,22 @@ typedef struct RemanenceP64Image RemanenceP64Image;
 // What a container carried, or will carry, of one remanence image.
 typedef struct RemanenceP64Report RemanenceP64Report;
 
+// One partition of a medium's evidence pool: what the scheme declared
+// about it, what the library composed over it, and the doors onto that
+// composition. Free with `remanence_partition_free`.
+//
+// **It is a snapshot, not a borrow.** The record is a value on the Rust
+// side and it is one here too: the facts below are copied when the pool
+// answers, and every string reached through them is borrowed from this
+// handle and dies with it. The doors name their provider — session and
+// medium, or the record layer — the way `RemanenceDevice` does, and
+// re-resolve through it rather than holding state that may leave.
+//
+// The Rust view is spent by opening a door; this handle is not, so a
+// caller may open both off one partition. That changes nothing about
+// what comes back: both doors compose the same node.
+typedef struct RemanencePartition RemanencePartition;
+
 // A recognition result, ranked highest confidence first.
 typedef struct RemanenceRecognition RemanenceRecognition;
 
@@ -329,8 +345,8 @@ typedef struct RemanenceReconstructionPlan RemanenceReconstructionPlan;
 // within it (P32).
 typedef struct RemanenceSession RemanenceSession;
 
-// One volume of a device's medium, selected by the identity the
-// inspection report issued. Free with `remanence_space_free`.
+// One space of a medium's content, composed over the partition that
+// bears it. Free with `remanence_space_free`.
 typedef struct RemanenceSpace RemanenceSpace;
 
 // One zone as a profile declares it, and what the capture recovered of
@@ -1294,7 +1310,7 @@ RemanenceAccessMode remanence_medium_mode(const RemanenceMedium *medium);
 //
 // It is available before anything is read, so a caller meets a deficiency
 // by being told rather than by an operation failing halfway. Null only
-// when the device holding this medium was released.
+// once the medium itself has been released.
 RemanenceAssurance *remanence_medium_assurance(const RemanenceMedium *medium);
 
 // Frees an assurance record and everything borrowed from it.
@@ -1366,39 +1382,233 @@ uint64_t remanence_medium_size(const RemanenceMedium *medium);
 // Whether uncommitted changes exist.
 bool remanence_medium_is_modified(const RemanenceMedium *medium);
 
-// The space this device resolves to, or null with the refusal set.
+// How many partition schemes this release reads (P16).
+size_t remanence_partition_scheme_count(void);
+
+// One read scheme's stable spelling (`mbr`), by index, or null out of
+// range. The set is enumerated, so a caller can hold every spelling it
+// may meet without waiting to meet one. Owned by the library; do not
+// free.
+const char *remanence_partition_scheme_id(size_t index);
+
+// That scheme's name, fit to show a user, or null out of range.
+const char *remanence_partition_scheme_name(size_t index);
+
+// How many readings of a partition's type value a declaration may name
+// (P3).
+size_t remanence_partition_type_count(void);
+
+// One declarable reading's stable spelling (`dos-primary`), by index —
+// the value passed to `remanence_partition_as_type` — or null out of
+// range. Owned by the library; do not free.
+const char *remanence_partition_type_id(size_t index);
+
+// What that reading names, in a sentence fit to show a user beside the
+// value a partition records, or null out of range.
+const char *remanence_partition_type_name(size_t index);
+
+// The stable spelling of the scheme this medium's content is laid out
+// under, or **null where it records none** — the direct partition stands
+// there, and that is an answer rather than a refusal. Owned by the
+// library; do not free.
+const char *remanence_medium_partition_scheme(const RemanenceMedium *medium);
+
+// How many partitions this medium's pool holds. A medium recording no
+// scheme answers 1 — the direct partition, which is what its content is
+// reached through.
+size_t remanence_medium_partition_count(const RemanenceMedium *medium);
+
+// The scheme's own ordinal of the partition at `index` in the pool's own
+// order. False past the end.
 //
-// The walk device to volume to namespace is transparent where every
-// seam has exactly one supported answer, and refuses naming the
-// candidates where one does not. A volume bearing no filesystem is a
-// named absence, not an empty listing. Free with
-// `remanence_space_free`.
-RemanenceSpace *remanence_medium_filesystem(RemanenceMedium *medium,
-                                            RemanenceErrorCategory *error_category_out,
-                                            char **error_out,
-                                            char **error_rule_out);
+// The two numbers differ on purpose: a partition carrying an issue keeps
+// its ordinal, so the partitions behind it never renumber (U4), and the
+// ordinal — never the index — is what `remanence_medium_partition`
+// takes.
+bool remanence_medium_partition_ordinal(const RemanenceMedium *medium,
+                                        size_t index,
+                                        uint32_t *value_out);
 
-// One space of this device's medium, by the identity the inspection
-// report issued for its volume — the selector where several namespaces
-// exist, and the way to reach a volume bearing none. Free with
-// `remanence_space_free`.
-RemanenceSpace *remanence_medium_volume(RemanenceMedium *medium,
-                                        uint64_t volume_id,
-                                        RemanenceErrorCategory *error_category_out,
-                                        char **error_out,
-                                        char **error_rule_out);
+// The partition the scheme's own ordinal names — MBR entry 1 is `1`, and
+// the direct partition is `0` — or **null where the pool holds none**.
+//
+// It takes no error outs because absence is an answer here, exactly as
+// it is for `remanence_session_medium`: the pool was established when
+// the medium was loaded, so a number it does not hold is a fact about
+// the medium rather than a failure to look. Free with
+// `remanence_partition_free`.
+RemanencePartition *remanence_medium_partition(RemanenceMedium *medium, uint32_t ordinal);
 
-// Frees a space handle. The device and its medium are untouched.
+// Frees a partition handle. The medium and its pool are untouched, and
+// so is every space already composed through it.
+void remanence_partition_free(RemanencePartition *partition);
+
+// The scheme's own ordinal for this partition, or 0 for a null handle —
+// which is also the direct partition's own number, so
+// `remanence_partition_is_direct` is the question to ask about it.
+uint32_t remanence_partition_ordinal(const RemanencePartition *partition);
+
+// Whether this is the direct partition — the library's own composition
+// of the whole content, which stands where the medium records no scheme.
+bool remanence_partition_is_direct(const RemanencePartition *partition);
+
+// Whether the scheme flags this partition active, as it records it. The
+// direct partition is flagged by nothing and answers false.
+bool remanence_partition_active(const RemanencePartition *partition);
+
+// The type value exactly as the scheme records it. False for the direct
+// partition, which records none.
+bool remanence_partition_type_byte(const RemanencePartition *partition, uint8_t *out);
+
+// What that value *declares*, in a sentence fit to quote in a refusal a
+// user reads, or null for the direct partition.
+//
+// It is present whether or not this release reads the type, because the
+// partition a caller most needs explained is the one the library
+// declines to read — and it describes the declaration, never the
+// content: an unread `0x07` partition is not thereby asserted to hold
+// NTFS.
+const char *remanence_partition_type_reading(const RemanencePartition *partition);
+
+// Whether this release reads the declared type.
+bool remanence_partition_is_claimed(const RemanencePartition *partition);
+
+// How the scheme places this partition, in the scheme's own vocabulary:
+// for MBR, `"primary"` for one of the four slots and `"logical"` for an
+// entry on the extended chain. The direct partition answers `"direct"`.
+//
+// This is a different axis from `remanence_partition_role` and neither
+// implies the other.
+const char *remanence_partition_placement(const RemanencePartition *partition);
+
+// Whether the scheme declares this partition as data or as structure.
+RemanenceRegionRole remanence_partition_role(const RemanencePartition *partition);
+
+// Where this partition starts in the presented content. False where it
+// has no addressed extent at all — the direct partition over a medium
+// whose native vantage is a namespace.
+bool remanence_partition_start_bytes(const RemanencePartition *partition, uint64_t *out);
+
+// How far this partition runs, under the same rule.
+bool remanence_partition_length_bytes(const RemanencePartition *partition, uint64_t *out);
+
+// Whether the addressable vantage opens — whether
+// `remanence_partition_volume` answers with a space rather than null.
+bool remanence_partition_is_addressable(const RemanencePartition *partition);
+
+// Whether the namespace vantage opens — whether
+// `remanence_partition_filesystem` answers with a space rather than
+// null. Where it does not, the namespace is declared with
+// `remanence_partition_filesystem_as`.
+bool remanence_partition_bears_namespace(const RemanencePartition *partition);
+
+// The identity the inspection report issued for the volume composed over
+// this partition. False where it composed none, which an addressable
+// partition may still be.
+bool remanence_partition_volume_id(const RemanencePartition *partition, uint64_t *out);
+
+// The category of the refusal that keeps this partition in the pool when
+// its type is outside the claim or its chain could not be followed.
+// False where the partition reads cleanly.
+bool remanence_partition_issue_category(const RemanencePartition *partition,
+                                        RemanenceErrorCategory *category_out);
+
+// That refusal, or null where the partition reads cleanly. A partition
+// carrying one is still a partition and still keeps its place.
+const char *remanence_partition_issue(const RemanencePartition *partition);
+
+// How many observations the scheme's adapter read to declare this
+// partition (P4). The direct partition read nothing and answers 0.
+size_t remanence_partition_evidence_count(const RemanencePartition *partition);
+
+// One of them, or null past the end. Borrowed from the handle.
+const char *remanence_partition_evidence(const RemanencePartition *partition, size_t index);
+
+// The direct partition's account of itself: what the library composed
+// and why. Present for the direct partition and null for every partition
+// a scheme declared, which is the whole of the distinction — a
+// composition act is provenance, never evidence.
+const char *remanence_partition_provenance(const RemanencePartition *partition);
+
+// The caller's own reading of the type, checked against the value the
+// scheme recorded (P3).
+//
+// The declaration is the caller's and the check is the library's: a
+// reading the recorded byte does not bear is refused naming both sides,
+// and the direct partition — which records no type — refuses by name
+// rather than accepting a reading of nothing. `type_id` is one of the
+// spellings `remanence_partition_type_id` enumerates; any other is
+// refused naming what this release declares.
+bool remanence_partition_as_type(const RemanencePartition *partition,
+                                 const char *type_id,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
+
+// The addressable vantage: the space this partition composes, read and
+// written **by position within the partition's own extent** — the
+// vantage that reaches a boot record, allocation metadata, or the
+// extents a filesystem calls free.
+//
+// **Null means two different things and the caller can tell them
+// apart.** Null with the error outs untouched is the vantage being
+// absent — a structural region, a type this release will not read, or a
+// partition over content whose native vantage is a namespace — which
+// `remanence_partition_is_addressable` states in advance. Null with the
+// outs set is a composition that was attempted and refused. Free with
+// `remanence_space_free`.
+RemanenceSpace *remanence_partition_volume(const RemanencePartition *partition,
+                                           RemanenceErrorCategory *error_category_out,
+                                           char **error_out,
+                                           char **error_rule_out);
+
+// The namespace vantage: the same node, reached by the names it holds,
+// and where every `remanence_filesystem_*` verb lives.
+//
+// Null with the error outs untouched is nothing determining a namespace
+// over this partition — the honest absence, which
+// `remanence_partition_bears_namespace` states in advance and
+// `remanence_partition_filesystem_as` is where a caller who knows says
+// so. Null with the outs set is a refusal. Free with
+// `remanence_space_free`.
+RemanenceSpace *remanence_partition_filesystem(const RemanencePartition *partition,
+                                               RemanenceErrorCategory *error_category_out,
+                                               char **error_out,
+                                               char **error_rule_out);
+
+// The declared reading, where no partition type determines one: `"fat"`,
+// `"hdos"`, `"cpm"` or `"cbmdos"`.
+//
+// **The reading is the caller's and the check is the library's.** The
+// adapter the declaration names is the one that reads it, and it reads
+// the evidence to verify the declaration rather than to pick one — a
+// declaration the content cannot bear is refused by that adapter, by
+// name, and a spelling this release does not read is refused naming what
+// it does (P3). Recognizing a format and reading it are separate claims,
+// so `"cpm"` still refuses at the open.
+//
+// This door always attempted a composition, so null here always carries
+// the refusal. Free with `remanence_space_free`.
+RemanenceSpace *remanence_partition_filesystem_as(const RemanencePartition *partition,
+                                                  const char *id,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
+
+// Frees a space handle. The partition and its medium are untouched.
 void remanence_space_free(RemanenceSpace *space);
 
 // Whether this space has the addressable vantage — an extent to read and
-// write by position. False where the medium bears its namespace directly
-// and composed no volume.
+// write by position. False where the partition composes none: an
+// archive's direct partition, a recording's, or a region a scheme
+// declares as structure.
 bool remanence_volume_is_addressable(const RemanenceSpace *space);
 
 // This space's opaque volume identity, as the inspection report issued
-// it, or 0 where it has no addressable vantage —
-// `remanence_volume_is_addressable` distinguishes the two.
+// it, or 0 where the report composed no volume for the partition — which
+// an addressable space may still be, a blank disk's direct partition
+// being the delivered case. `remanence_volume_is_addressable` is the
+// vantage question; this is the identity.
 uint64_t remanence_volume_id(const RemanenceSpace *space);
 
 // Where this space starts in the presented disk, or 0 where it has no
@@ -1439,16 +1649,19 @@ bool remanence_filesystem_has_namespace(const RemanenceSpace *space);
 const char *remanence_filesystem_kind(const RemanenceSpace *space);
 
 // The label the recognizing filesystem read, or null where this space
-// bears none. Free with `remanence_string_free`. Sets the error on a
-// failure to read the namespace, which a caller tells from an honest
-// absence by whether `error_out` was written.
+// bears none — a namespace whose format has no such field, or one that
+// bears no namespace at all. Free with `remanence_string_free`.
+//
+// Sets the error on a failure to read the namespace, which a caller
+// tells from an honest absence by whether `error_out` was written.
 char *remanence_filesystem_label(const RemanenceSpace *filesystem,
                                  RemanenceErrorCategory *error_category_out,
                                  char **error_out,
                                  char **error_rule_out);
 
-// How many readings the label answer holds — the sources the
-// recognizing filesystem consulted, in its own policy's order (P4).
+// How many readings the label answer holds, and each one's source and
+// stored value: the sources the recognizing filesystem consulted, in
+// the order its own policy consults them (P4).
 size_t remanence_filesystem_label_reading_count(const RemanenceSpace *filesystem);
 
 // Writes reading `index`'s source and stored value, each freed with
@@ -2185,21 +2398,30 @@ bool remanence_c1541_sectors_read(const RemanenceC1541Sectors *sectors,
                                   char **error_out,
                                   char **error_rule_out);
 
-// The filesystem this recording bears, or null with the refusal set.
+// The **direct partition** over this recording — the library's own
+// composition of the whole content, which is what a namespace above is
+// reached through (P19). Null only for a null sector layer.
 //
-// **The sector layer carries no file verbs of its own**: it may be
-// asked what it resolves to — this — and the verbs live on the space
-// handed back, which is the same `RemanenceSpace` a device resolves to
-// and takes every `remanence_filesystem_*` verb. The protected and the
-// blank are refusals naming the seam that ran out of answers.
+// A recording records no partition scheme, so there is one member and it
+// is synthetic: its account is provenance and never evidence, and it
+// composes no addressed extent, because a recording's blocks are
+// addressed by the recording rather than by position. The addressable
+// vantage is therefore absent and the namespace vantage is *declared* —
+// `remanence_partition_filesystem_as` with `"cbmdos"` — because nothing
+// here determines a reading and this layer will not pick one.
 //
-// The space **borrows** the sector layer: keep it alive for as long as
-// the space and anything reached through it, and free the space with
-// `remanence_space_free` before freeing the sectors.
-RemanenceSpace *remanence_c1541_sectors_filesystem(const RemanenceC1541Sectors *sectors,
-                                                   RemanenceErrorCategory *error_category_out,
-                                                   char **error_out,
-                                                   char **error_rule_out);
+// **The sector layer carries no file verbs of its own**: it may be asked
+// what it composes — this — and may not be told to act as a namespace it
+// is not. The declaration's refusal is the seam that ran out of answers
+// stating it, and everything beneath stays readable either way: a disk
+// with no filesystem is still a recording, still a sector layer, and
+// still every claim this layer made about it.
+//
+// The partition **borrows** the sector layer, and so does every space
+// composed through it: keep the sectors alive for as long as any of
+// them, and free them last — the partition with
+// `remanence_partition_free` and the space with `remanence_space_free`.
+RemanencePartition *remanence_c1541_sectors_partition(const RemanenceC1541Sectors *sectors);
 
 // How many bytes of payload one sector carries.
 uint32_t remanence_c1541_sectors_payload_bytes(const RemanenceC1541Sectors *sectors);
@@ -2265,9 +2487,9 @@ size_t remanence_c1541_sectors_evidence_count(const RemanenceC1541Sectors *secto
 
 const char *remanence_c1541_sectors_evidence(const RemanenceC1541Sectors *sectors, size_t index);
 
-// Inspects the medium in an occupied device and returns its layered
-// report. Null on failure,
-// with the category and message written to the out-parameters.
+// Inspects the medium and returns its layered report, derived from the
+// pool the load established. Null on failure, with the category and
+// message written to the out-parameters.
 RemanenceDiskReport *remanence_medium_inspect(RemanenceMedium *medium,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,

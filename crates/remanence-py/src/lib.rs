@@ -3,19 +3,28 @@
 
 //! Python bindings for the Remanence disk image analysis library.
 //!
-//! The module mirrors the Rust crate's public surface: a `Session` holds
-//! `Machine`s, a machine holds `StorageDevice`s, and a device is the one
-//! handle for a slot and the medium in it. Attaching a disk image
-//! (optionally an entry inside a `.zip` or `.7z` archive) takes one P7
-//! claim serving both of the medium's planes — `StorageDevice.identify()`
-//! reports the layers of the artifact's nesting over the image's own
-//! bytes, while `StorageDevice.inspect()` works over the disk a format
-//! adapter presents above them. **File access lives on one node**:
-//! `StorageDevice.filesystem()` resolves device to volume to filesystem
-//! where every seam has one supported answer, `StorageDevice.volume(id)`
-//! selects where several exist, and the verbs live on the `Filesystem`
-//! that resolver hands back. `Archive` lists what a supported archive
-//! holds.
+//! The module mirrors the Rust crate's public surface: a `Session` owns
+//! two pools — `Machine`s, which are configuration, and media, which are
+//! state — and the **medium is the content handle**.
+//! `Session.load_media(source, format)` takes the caller's own open file
+//! and one declared format, checked by that format's own adapter, and
+//! answers with a `Medium` linked to nothing;
+//! `StorageDevice.insert(media_id)` seats it in a drive and
+//! `StorageDevice.eject()` severs, taking nothing away.
+//!
+//! Every content verb answers on the medium: `Medium.identify()` reports
+//! the layers of the artifact's nesting over the image's own bytes, while
+//! `Medium.inspect()` works over the disk a format adapter presents above
+//! them. **A medium's content is reached through a partition** (P19):
+//! `Medium.partitions()` is the pool the load established and
+//! `Medium.partition(ordinal)` takes the scheme's own ordinal — MBR entry
+//! 1 is `1`, and `0` is the direct partition a medium recording no scheme
+//! bears. The two vantage doors sit on that record: `Partition.volume()`
+//! asks by position, `Partition.filesystem()` asks by name, and
+//! `Partition.filesystem_as(id)` is the caller's own reading where
+//! nothing determines one. **Both doors hand out the same
+//! `StorageSpace`**, so which one was opened changes nothing about what
+//! comes back, and the file verbs live on that node and nowhere else.
 //! Failures raise `RemanenceError`, which carries a stable `category`
 //! saying how to behave and, where the refusal came from an enumerated rule
 //! set such as the DOS 8.3 namespace's, a stable `rule` naming which rule
@@ -580,6 +589,29 @@ fn device_families() -> Vec<DeviceFamily> {
         .collect()
 }
 
+/// Every partition-layout scheme this release reads, by its stable
+/// spelling and the name fit to show a user — so a caller can hold every
+/// identity it may meet without waiting to meet one (P3).
+#[pyfunction]
+fn partition_schemes() -> Vec<(String, String)> {
+    remanence::PartitionScheme::ALL
+        .iter()
+        .map(|scheme| (scheme.id().to_owned(), scheme.name().to_owned()))
+        .collect()
+}
+
+/// Every partition type a declaration may name, by its stable spelling
+/// and the name fit to show a user — so a caller can hold every identity
+/// it may meet without waiting to meet one (P3). It is what
+/// `Partition.as_type` weighs the recorded byte against.
+#[pyfunction]
+fn partition_types() -> Vec<(String, String)> {
+    remanence::PartitionType::ALL
+        .iter()
+        .map(|declared| (declared.id().to_owned(), declared.name().to_owned()))
+        .collect()
+}
+
 /// Every DOS drive-letter assignment rule this release claims.
 #[pyfunction]
 fn dos_assignment_rules() -> Vec<DosAssignmentRule> {
@@ -596,8 +628,10 @@ fn dos_assignment_rules() -> Vec<DosAssignmentRule> {
 ///
 /// `outcome` is `"volume"`, `"declared-device"`, `"phantom"` or
 /// `"undetermined"`. A `"volume"` names it by the opaque identity its own
-/// inspection report issued — the value passed back into a file verb — and
-/// an `"undetermined"` letter says in `reason` why the claimed rules could
+/// inspection report issued — the same identity `Partition.volume_id` and
+/// `StorageSpace.volume_id` answer with, so a letter and the partition
+/// beneath it are matched by identity rather than by position — and an
+/// `"undetermined"` letter says in `reason` why the claimed rules could
 /// not settle it.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
@@ -1067,7 +1101,7 @@ fn discover_media(path: PathBuf, writable: bool, cache_bytes: Option<u64>) -> Py
 ///
 /// It is a handle rather than a record because it holds two things a
 /// record could not: the claim on the artifact, and the work the
-/// recognition already did. `StorageDevice.load_discovery` **consumes**
+/// recognition already did. `Session.load_discovery` **consumes**
 /// it — the state moves into the device, so nothing runs twice and the
 /// claim never lapses between the question and the load — and every
 /// attribute below raises by name once it has been.
@@ -1154,7 +1188,7 @@ impl Discovery {
     }
 
     /// `"raw"`, `"qcow2"` or `"vdi"` — the image container format, as
-    /// `StorageDevice.format` reports it. A medium that is no disk
+    /// `Medium.format` reports it. A medium that is no disk
     /// image — an archive — refuses by name; its grammar is
     /// `image_format`.
     #[getter]
@@ -1202,7 +1236,8 @@ impl Discovery {
     /// where it declares none.
     ///
     /// `None` is ordinary: a raw image says nothing about its machine,
-    /// and the caller then states the drive itself in the two acts.
+    /// and the caller then states the drive itself, adding the device
+    /// and inserting the medium.
     #[getter]
     fn default_device(&self) -> PyResult<Option<String>> {
         self.read(|discovery| {
@@ -1241,7 +1276,7 @@ impl Discovery {
     }
 
     /// Identifies the artifact's nesting layers and probable
-    /// filesystem — the same reading `StorageDevice.identify` gives once
+    /// filesystem — the same reading `Medium.identify` gives once
     /// a medium is loaded.
     fn identify(&self, py: Python<'_>) -> PyResult<Identification> {
         let identification = self.read(remanence::Discovery::identify)?;
@@ -1347,7 +1382,7 @@ impl Session {
     /// Adds a device of `family` (a family's stable spelling, such as
     /// `"hard-disk"`) to the session's anonymous machine, taking the
     /// lowest free slot of that family, and returns it — empty, until
-    /// `StorageDevice.load_media` puts a medium in it.
+    /// `StorageDevice.insert` puts a medium in it.
     ///
     /// `slot` chooses the slot, never the name; a slot already taken is
     /// refused rather than displaced. A family this release does not
@@ -1646,7 +1681,8 @@ impl Machine {
     /// slot already there.
     ///
     /// **A format that declares no default raises by name**, toward the
-    /// two explicit acts (`add_device` then `StorageDevice.load_media`),
+    /// explicit acts (`Session.load_media` then `add_device` and
+    /// `StorageDevice.insert`),
     /// naming the families the medium could go in. A refused call leaves
     /// no device behind.
     #[pyo3(signature = (path, *, writable, cache_bytes = None))]
@@ -2107,62 +2143,66 @@ impl Medium {
         Ok(disk_report(report))
     }
 
-    /// The filesystem this medium resolves to.
+    /// The scheme this medium's content is laid out under — `"mbr"` — or
+    /// `None` where it records none and the direct partition stands.
     ///
-    /// The walk medium to volume to filesystem is transparent where every
-    /// seam has exactly one supported answer, and raises naming the
-    /// candidates where one does not. A volume bearing no filesystem is a
-    /// named absence, not an empty listing. **The medium carries no file
-    /// verbs of its own** — it may be asked what it resolves to, and may
-    /// not be told to act as something it isn't.
-    fn filesystem(&self) -> PyResult<StorageSpace> {
-        let (kind, volume, start_bytes, length_bytes) = {
-            let mut medium = self.get()?;
-            let space = medium.filesystem().map_err(to_py_err)?;
-            (
-                space.kind().map_err(to_py_err)?.to_owned(),
-                space.volume_id(),
-                space.start_bytes().unwrap_or(0),
-                space.length_bytes().unwrap_or(0),
-            )
-        };
-        Ok(StorageSpace {
-            session: Some(Arc::clone(&self.session)),
-            media: Some(self.id),
-            sectors: None,
-            volume: volume.map(remanence::VolumeId::value),
-            start_bytes,
-            length_bytes,
-            kind: Some(kind),
-        })
+    /// It is the evidence answer, and the direct partition leaves it
+    /// unchanged: a medium that recorded no table still says so here.
+    #[getter]
+    fn partition_scheme(&self) -> PyResult<Option<String>> {
+        Ok(self
+            .get()?
+            .partition_scheme()
+            .map(|scheme| scheme.id().to_owned()))
     }
 
-    /// One volume of this medium, by the identity the inspection report
-    /// issued for it — the selector where several namespaces exist.
-    fn volume(&self, volume_id: u64) -> PyResult<StorageSpace> {
-        let (start_bytes, length_bytes, kind) = {
-            let mut medium = self.get()?;
-            let space = medium
-                .volume(remanence::VolumeId::from_value(volume_id))
-                .map_err(to_py_err)?;
-            // A volume bearing no namespace is an ordinary volume, so the
-            // absence travels on the space rather than failing here.
-            let kind = space.kind().ok().map(str::to_owned);
-            (
-                space.start_bytes().unwrap_or(0),
-                space.length_bytes().unwrap_or(0),
-                kind,
-            )
-        };
-        Ok(StorageSpace {
-            session: Some(Arc::clone(&self.session)),
-            media: Some(self.id),
-            sectors: None,
-            volume: Some(volume_id),
-            start_bytes,
-            length_bytes,
-            kind,
-        })
+    /// Every partition in the pool, in the scheme's own order.
+    ///
+    /// The pool was established when the medium was loaded and is
+    /// evidence from then on — nothing here re-reads a table, and nothing
+    /// is discovered on demand. A medium recording no scheme answers with
+    /// exactly one: the direct partition, the library's own composition of
+    /// the whole content, which says so in its `provenance`.
+    fn partitions(&self) -> PyResult<Vec<Partition>> {
+        Ok(self
+            .get()?
+            .partitions()
+            .iter()
+            .map(|partition| {
+                partition_record(
+                    partition,
+                    Some(Arc::clone(&self.session)),
+                    Some(self.id),
+                    None,
+                )
+            })
+            .collect())
+    }
+
+    /// The partition the scheme's own ordinal names, or `None` — absence
+    /// being an answer, with nothing manufactured to report it.
+    ///
+    /// The ordinals are the scheme's own: MBR entry 1 is `1`, and the
+    /// direct partition is `0`. **The content of a medium is reached
+    /// through here** — the vantage doors on the answer hand out the one
+    /// `StorageSpace` that partition composes, and the file verbs live on
+    /// that node and nowhere else (P19). **The medium carries no file
+    /// verbs of its own**: it may be asked what it holds, and may not be
+    /// told to act as something it isn't.
+    fn partition(&self, ordinal: u32) -> PyResult<Option<Partition>> {
+        Ok(self
+            .get()?
+            .partitions()
+            .iter()
+            .find(|partition| partition.ordinal() == ordinal)
+            .map(|partition| {
+                partition_record(
+                    partition,
+                    Some(Arc::clone(&self.session)),
+                    Some(self.id),
+                    None,
+                )
+            }))
     }
 
     /// The commit point: everything buffered reaches the image, flushed.
@@ -2181,6 +2221,281 @@ impl Medium {
     /// Discards everything buffered; the image is untouched.
     fn rollback(&self) -> PyResult<()> {
         self.get()?.rollback().map_err(to_py_err)
+    }
+}
+
+/// One partition of a medium's evidence pool (P16, P19).
+///
+/// It carries what the scheme declared — the ordinal it was declared at,
+/// its raw type value beside a reading of what that value declares, the
+/// boot flag, its placement and its role (U4) — and what the library
+/// composed over it. The pool was established when the medium was loaded,
+/// so nothing here was probed for on demand, and a partition carrying an
+/// `issue` keeps its number rather than being dropped, so the partitions
+/// behind it never renumber.
+///
+/// The **direct partition** is the one member the library composes rather
+/// than reads. It stands at ordinal `0` where the medium records no
+/// scheme, it declares no type, and its account is `provenance` rather
+/// than `evidence` — a composition act stated as one, never offered as
+/// something the medium said.
+///
+/// **The doors are here rather than on a handle of their own.** `volume()`
+/// asks by position, `filesystem()` asks by name, and both hand out the
+/// same `StorageSpace`, so which one was opened changes nothing about what
+/// comes back (D26). Each re-resolves through whatever provides the
+/// partition, so a released medium refuses by name rather than reaching
+/// state that is gone.
+#[pyclass(frozen, module = "remanence")]
+pub struct Partition {
+    /// The scheme's own ordinal — MBR entry 1 is `1` — or `0` for the
+    /// direct partition, which no scheme numbered.
+    #[pyo3(get)]
+    pub ordinal: u32,
+    /// Whether this is the direct partition, the library's own
+    /// composition of the whole content.
+    #[pyo3(get)]
+    pub is_direct: bool,
+    /// Whether the scheme flags this partition active, as it records it.
+    /// The direct partition is flagged by nothing and answers `False`.
+    #[pyo3(get)]
+    pub active: bool,
+    /// The type value exactly as the scheme records it, or `None` for the
+    /// direct partition, which records none.
+    #[pyo3(get)]
+    pub type_byte: Option<u8>,
+    /// What that value *declares*, in a sentence fit to quote in a refusal
+    /// a user reads — present whether or not this release reads the type,
+    /// because the partition a caller most needs explained is the one the
+    /// library declines to read. It describes the declaration, never the
+    /// content.
+    #[pyo3(get)]
+    pub type_reading: Option<String>,
+    /// Whether this release reads the declared type.
+    #[pyo3(get)]
+    pub is_claimed: bool,
+    /// How the scheme places this partition, in its own vocabulary:
+    /// `"primary"` for one of MBR's four slots, `"logical"` for an entry
+    /// on the extended chain, `"direct"` for the direct partition. A
+    /// different axis from `role`, and neither implies the other.
+    #[pyo3(get)]
+    pub placement: String,
+    /// `"data"` or `"structure"`.
+    #[pyo3(get)]
+    pub role: String,
+    /// Where this partition starts in the presented content, or `None`
+    /// where it has no addressed extent at all — the direct partition over
+    /// content whose native vantage is a namespace.
+    #[pyo3(get)]
+    pub start_bytes: Option<u64>,
+    /// How far it runs, under the same rule.
+    #[pyo3(get)]
+    pub length_bytes: Option<u64>,
+    /// Whether the addressable vantage opens — whether `volume()` answers.
+    #[pyo3(get)]
+    pub is_addressable: bool,
+    /// Whether the namespace vantage opens — whether `filesystem()`
+    /// answers. Where it does not, the namespace is declared with
+    /// `filesystem_as`.
+    #[pyo3(get)]
+    pub bears_namespace: bool,
+    /// The identity the inspection report issued for the volume composed
+    /// over this partition, or `None` where it composed none. Opaque and
+    /// stable across opens of an unchanged layout (P21, U4).
+    #[pyo3(get)]
+    pub volume_id: Option<u64>,
+    /// The category of the refusal that keeps this partition in the pool
+    /// when its type is outside the claim or its chain could not be
+    /// followed, where one does.
+    #[pyo3(get)]
+    pub issue_category: Option<String>,
+    /// That refusal in words. A partition carrying one is still a
+    /// partition, and still keeps its place.
+    #[pyo3(get)]
+    pub issue: Option<String>,
+    /// What the scheme's adapter read to declare this partition (P4).
+    /// Empty for the direct partition, which read nothing and states so
+    /// through `provenance` instead.
+    #[pyo3(get)]
+    pub evidence: Vec<String>,
+    /// The direct partition's account of itself: what the library composed
+    /// and why. Present for the direct partition and `None` for every
+    /// partition a scheme declared, which is the whole of the distinction.
+    #[pyo3(get)]
+    pub provenance: Option<String>,
+    /// What this record re-resolves through — the session and medium whose
+    /// pool holds it, or the recording's own record layer that composed
+    /// it. Not part of the Python surface.
+    session: Option<Arc<Mutex<remanence::Session>>>,
+    media: Option<remanence::MediaId>,
+    sectors: Option<Arc<remanence::C1541Sectors>>,
+}
+
+/// One partition of a pool, in the module's own record, keyed to whatever
+/// provides it so its doors re-resolve rather than hold state.
+fn partition_record(
+    partition: &remanence::Partition,
+    session: Option<Arc<Mutex<remanence::Session>>>,
+    media: Option<remanence::MediaId>,
+    sectors: Option<Arc<remanence::C1541Sectors>>,
+) -> Partition {
+    Partition {
+        ordinal: partition.ordinal(),
+        is_direct: partition.is_direct(),
+        active: partition.active(),
+        type_byte: partition.type_byte(),
+        type_reading: partition.type_reading().map(str::to_owned),
+        is_claimed: partition.is_claimed(),
+        placement: partition.placement().to_owned(),
+        role: partition.role().name().to_owned(),
+        start_bytes: partition.start_bytes(),
+        length_bytes: partition.length_bytes(),
+        is_addressable: partition.is_addressable(),
+        bears_namespace: partition.bears_namespace(),
+        volume_id: partition.volume_id().map(remanence::VolumeId::value),
+        issue_category: partition
+            .issue()
+            .map(|issue| issue.category().as_str().to_owned()),
+        issue: partition.issue().map(|issue| issue.to_string()),
+        evidence: partition.evidence().to_vec(),
+        provenance: partition.provenance().map(str::to_owned),
+        session,
+        media,
+        sectors,
+    }
+}
+
+impl Partition {
+    /// Resolves this partition afresh and runs `action` over the borrow
+    /// that holds it and its provider at once.
+    ///
+    /// The record holds no borrow and no copy of the pool: the ordinal is
+    /// the whole of the key, and a medium that has left answers by name
+    /// rather than through state that is gone.
+    fn with_view<T>(
+        &self,
+        action: impl FnOnce(remanence::PartitionView<'_>) -> PyResult<T>,
+    ) -> PyResult<T> {
+        // The direct partition over a recording's own record layer
+        // re-resolves from that layer, exactly as a pooled one re-resolves
+        // from its medium (P13).
+        if let Some(sectors) = &self.sectors {
+            return action(sectors.partition());
+        }
+        let (Some(session), Some(media)) = (&self.session, self.media) else {
+            return Err(categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                "this partition names no medium to be resolved through",
+            ));
+        };
+        let mut guard = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(medium) = guard.medium_mut(media) else {
+            return Err(categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                "the medium whose pool holds this partition was released",
+            ));
+        };
+        let Some(view) = medium.partition(self.ordinal) else {
+            return Err(categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                format!(
+                    "the medium whose pool held partition {} no longer holds it",
+                    self.ordinal
+                ),
+            ));
+        };
+        action(view)
+    }
+
+    /// The one node a door hands out, in the module's own record.
+    ///
+    /// The space is keyed to this partition and to the declaration it was
+    /// opened under, never to state read out of it, so every verb on it
+    /// re-resolves exactly the way this did.
+    fn compose(
+        &self,
+        space: &remanence::StorageSpace<'_>,
+        declared: Option<String>,
+    ) -> StorageSpace {
+        StorageSpace {
+            session: self.session.clone(),
+            media: self.media,
+            sectors: self.sectors.clone(),
+            ordinal: self.sectors.is_none().then_some(self.ordinal),
+            declared,
+            volume_id: space.volume_id().map(remanence::VolumeId::value),
+            start_bytes: space.start_bytes(),
+            length_bytes: space.length_bytes(),
+            // A space bearing no namespace is an ordinary volume, so the
+            // absence travels on the space rather than failing here.
+            kind: space.kind().ok().map(str::to_owned),
+        }
+    }
+}
+
+#[pymethods]
+impl Partition {
+    /// The caller's own reading of the type, checked against the value the
+    /// scheme recorded: `"dos-primary"` or `"dos-extended"`.
+    ///
+    /// The declaration is the caller's and the check is the library's. A
+    /// reading the recorded byte does not bear raises naming both sides;
+    /// the direct partition — which records no type — raises by name
+    /// rather than accepting a reading of nothing; and a spelling this
+    /// release does not declare raises naming what it does (P3).
+    fn as_type(&self, type_id: &str) -> PyResult<()> {
+        let declared = remanence::PartitionType::from_id(type_id).map_err(to_py_err)?;
+        self.with_view(|view| view.as_type(declared).map_err(to_py_err))
+    }
+
+    /// The addressable vantage: the space this partition composes, read
+    /// and written **by position within the partition's own extent**.
+    ///
+    /// `None` where the partition composes no extent — a structural
+    /// region, a type this release will not read, and the direct partition
+    /// over content whose native vantage is a namespace. The answer is a
+    /// lookup: the extent was settled when the pool was established, and
+    /// nothing is probed for here.
+    fn volume(&self) -> PyResult<Option<StorageSpace>> {
+        self.with_view(|view| Ok(view.volume().map(|space| self.compose(&space, None))))
+    }
+
+    /// The namespace vantage: the same space, reached by the names it
+    /// holds.
+    ///
+    /// `None` where nothing determines a namespace over this partition —
+    /// where the declared type determines none, or where no type is
+    /// declared at all. That is the honest absence P19 requires rather
+    /// than a failure to read one, and `filesystem_as` is where a caller
+    /// who knows says so.
+    fn filesystem(&self) -> PyResult<Option<StorageSpace>> {
+        self.with_view(|view| Ok(view.filesystem().map(|space| self.compose(&space, None))))
+    }
+
+    /// The declared reading, where no partition type determines one:
+    /// `"fat"`, `"hdos"`, `"cpm"` or `"cbmdos"`.
+    ///
+    /// **The reading is the caller's and the check is the library's.** The
+    /// adapter the declaration names is the one that reads it, and it
+    /// reads the evidence to verify the declaration rather than to pick
+    /// one — a declaration the content cannot bear raises from that
+    /// adapter, by name, with `rule` naming which rule stood in the way. A
+    /// spelling this release does not read raises naming what it does
+    /// (P3).
+    fn filesystem_as(&self, id: &str) -> PyResult<StorageSpace> {
+        self.with_view(|view| {
+            let space = view.filesystem_as(id).map_err(to_py_err)?;
+            Ok(self.compose(&space, Some(id.to_owned())))
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Partition(ordinal={}, placement={:?}, role={:?})",
+            self.ordinal, self.placement, self.role
+        )
     }
 }
 
@@ -2357,29 +2672,41 @@ fn duplicate_descriptor(raw: i32) -> PyResult<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_fd(copy) })
 }
 
-/// Resolves the named filesystem and runs `action` over it.
+/// Re-opens the space one partition composes and runs `action` over it.
 ///
 /// Every verb below passes through here, so the refusals a caller meets
-/// are the library's own — the resolver's where the walk had no single
-/// answer, the namespace's where it did — and a medium that has left
-/// answers by name rather than through state that is gone.
+/// are the library's own — the partition seam's where the pool holds no
+/// such ordinal, the namespace's where a declaration could not be borne —
+/// and a medium that has left answers by name rather than through state
+/// that is gone. The key is the ordinal and the declaration made under it
+/// and nothing else: the pool was established at the load and is the same
+/// pool on every call, so re-resolving reaches the same partition it
+/// reached before.
 fn with_filesystem<T>(
     session: Option<&Arc<Mutex<remanence::Session>>>,
     media: Option<remanence::MediaId>,
-    volume: Option<u64>,
     sectors: Option<&Arc<remanence::C1541Sectors>>,
+    ordinal: Option<u32>,
+    declared: Option<&str>,
     action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
 ) -> PyResult<T> {
-    // A namespace presented over a sector layer re-resolves from that
-    // layer, exactly as a medium-backed one re-resolves from its medium.
+    // A space composed over a recording's own record layer re-resolves
+    // from that layer, exactly as a medium-backed one re-resolves from its
+    // medium (P13).
     if let Some(sectors) = sectors {
-        let mut space = sectors.filesystem().map_err(to_py_err)?;
+        let mut space = open_vantage(sectors.partition(), declared)?;
         return action(&mut space).map_err(to_py_err);
     }
     let (Some(session), Some(media)) = (session, media) else {
         return Err(categorized_py_err(
             remanence::ErrorCategory::NotFound,
-            "this namespace names no medium to be resolved through",
+            "this space names no medium to be resolved through",
+        ));
+    };
+    let Some(ordinal) = ordinal else {
+        return Err(categorized_py_err(
+            remanence::ErrorCategory::NotFound,
+            "this space names no partition to be reached through",
         ));
     };
     let mut guard = session
@@ -2388,40 +2715,89 @@ fn with_filesystem<T>(
     let Some(medium) = guard.medium_mut(media) else {
         return Err(categorized_py_err(
             remanence::ErrorCategory::NotFound,
-            "the medium this namespace reads was released",
+            "the medium this space reads was released",
         ));
     };
-    let mut space = match volume {
-        Some(id) => medium
-            .volume(remanence::VolumeId::from_value(id))
-            .map_err(to_py_err)?,
-        None => medium.filesystem().map_err(to_py_err)?,
+    let Some(view) = medium.partition(ordinal) else {
+        return Err(categorized_py_err(
+            remanence::ErrorCategory::NotFound,
+            format!("the medium this space reads holds no partition {ordinal}"),
+        ));
     };
+    let mut space = open_vantage(view, declared)?;
     action(&mut space).map_err(to_py_err)
 }
 
-/// The namespace node: the one type that carries file verbs.
+/// The vantage a space was opened by, opened the same way again.
+///
+/// A declaration is honoured first, because it is the caller's own reading
+/// and nothing may stand in for it; then the namespace vantage where the
+/// partition bears one, and the addressable vantage where it does not.
+/// Both doors hand out the same node (D26), so this order settles which
+/// question was asked rather than what comes back.
+fn open_vantage<'a>(
+    view: remanence::PartitionView<'a>,
+    declared: Option<&str>,
+) -> PyResult<remanence::StorageSpace<'a>> {
+    if let Some(id) = declared {
+        return view.filesystem_as(id).map_err(to_py_err);
+    }
+    if view.partition().bears_namespace() {
+        return Ok(view
+            .filesystem()
+            .expect("a partition bearing a namespace opens that door"));
+    }
+    if view.partition().is_addressable() {
+        return Ok(view
+            .volume()
+            .expect("a partition composing an extent opens that door"));
+    }
+    Err(categorized_py_err(
+        remanence::ErrorCategory::Unsupported,
+        "this partition composes no addressed extent and nothing declares \
+         a namespace over it, so there is no vantage left to reach it by",
+    ))
+}
+
+/// The volume/filesystem node: **one object carrying two vantages**.
+///
+/// *Volume* is the addressable vantage — reads and writes by position
+/// within the extent this space names. *Filesystem* is the namespace
+/// vantage — the file verbs, which live here and nowhere else. They are
+/// two words for one node, and an object has what it has: a FAT volume
+/// both, unformatted space the addressable one alone, an archive's
+/// namespace the namespace one alone (D26). Which of a partition's doors
+/// handed it over changes nothing about which it has.
 ///
 /// It is a view over its provider's state, never an instance: every verb
 /// reads or writes the state beneath it, mutations project into the
 /// active layer, and nothing here holds a listing that could go stale.
 #[pyclass(module = "remanence")]
 pub struct StorageSpace {
-    /// The session the medium bearing this namespace lives in, or
-    /// `None` where no medium composed it.
+    /// The session the medium bearing this space lives in, or `None`
+    /// where no medium composed it.
     session: Option<Arc<Mutex<remanence::Session>>>,
-    /// The medium this namespace was resolved through, or `None` where
-    /// no medium composed it at all.
+    /// The medium whose pool holds the partition that composed it, or
+    /// `None` where no medium composed it at all.
     media: Option<remanence::MediaId>,
-    /// The sector layer it is presented over, where the flux family
-    /// composed it: that family is reached through its own types rather
-    /// than through a device, and the node still carries the file verbs.
+    /// The recording's own record layer it is presented over, where that
+    /// family composed it: that family is reached through its own types
+    /// rather than through a device, and the node still carries the file
+    /// verbs.
     sectors: Option<Arc<remanence::C1541Sectors>>,
-    /// The volume that composed it, where it has the addressable
-    /// vantage. `None` where the medium bears its namespace directly.
-    volume: Option<u64>,
-    start_bytes: u64,
-    length_bytes: u64,
+    /// The scheme's own ordinal of the partition that composed it — half
+    /// the key it re-resolves by, and `None` where no medium composed it.
+    ordinal: Option<u32>,
+    /// The namespace declaration it was opened under, where a caller made
+    /// one — the other half. It is re-declared on every re-resolution, so
+    /// a space opened by a reading keeps being read that way.
+    declared: Option<String>,
+    /// The identity the inspection report issued for the volume composed
+    /// over this space's partition, where it composed one. Reported, never
+    /// resolved through.
+    volume_id: Option<u64>,
+    start_bytes: Option<u64>,
+    length_bytes: Option<u64>,
     /// The namespace kind, where it has the namespace vantage.
     kind: Option<String>,
 }
@@ -2432,28 +2808,33 @@ impl StorageSpace {
     /// read and write by position.
     #[getter]
     fn is_addressable(&self) -> bool {
-        self.volume.is_some()
+        self.start_bytes.is_some()
     }
 
-    /// The identity of the volume that composed this space, or `None`
-    /// where the medium bears its namespace directly.
+    /// The identity the inspection report issued for the volume composed
+    /// over this space's partition, or `None` where it composed none — a
+    /// space with no addressed extent at all, and a partition the report
+    /// states as declared without composing a volume from it.
+    ///
+    /// It is the same identity in the report and here, so an identity
+    /// names the same volume wherever it is met (P21, U4).
     #[getter]
     fn volume_id(&self) -> Option<u64> {
-        self.volume
+        self.volume_id
     }
 
     /// Where this space starts in the presented disk, or `None` where it
     /// has no addressable vantage.
     #[getter]
     fn start_bytes(&self) -> Option<u64> {
-        self.volume.map(|_| self.start_bytes)
+        self.start_bytes
     }
 
     /// How far this space runs, or `None` where it has no addressable
     /// vantage.
     #[getter]
     fn length_bytes(&self) -> Option<u64> {
-        self.volume.map(|_| self.length_bytes)
+        self.length_bytes
     }
 
     /// Reads `length` bytes at `offset` **within this space**, not within
@@ -2465,8 +2846,9 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |space| space.read_at(offset, &mut buf),
         )?;
         Ok(PyBytes::new(py, &buf).unbind())
@@ -2478,8 +2860,9 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |space| space.write_at(offset, data),
         )
     }
@@ -2510,8 +2893,9 @@ impl StorageSpace {
         Ok(with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.label(),
         )?
         .as_ref()
@@ -2525,8 +2909,9 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.evidence(),
         )
     }
@@ -2537,8 +2922,9 @@ impl StorageSpace {
         let entries = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.entries(path),
         )?;
         Ok(entries.iter().map(Entry::new).collect())
@@ -2552,8 +2938,9 @@ impl StorageSpace {
         let entry = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.stat(path),
         )?;
         Ok(entry.as_ref().map(Entry::new))
@@ -2568,15 +2955,17 @@ impl StorageSpace {
         let entry = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| Ok(filesystem.get_file(path)?.entry().clone()),
         )?;
         Ok(File {
             session: self.session.clone(),
             media: self.media,
             sectors: self.sectors.clone(),
-            volume: self.volume,
+            ordinal: self.ordinal,
+            declared: self.declared.clone(),
             path: path.to_owned(),
             entry: Entry::new(&entry),
         })
@@ -2588,8 +2977,9 @@ impl StorageSpace {
         let bytes = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.read_file(path),
         )?;
         Ok(PyBytes::new(py, &bytes))
@@ -2598,13 +2988,14 @@ impl StorageSpace {
     /// Writes a file. An existing file is overwritten — shorter or
     /// longer, its old clusters released and reclaimed — while an
     /// existing directory is refused. Buffered until
-    /// `StorageDevice.commit()`.
+    /// `Medium.commit()`.
     fn write_file(&self, path: &str, contents: &[u8]) -> PyResult<()> {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.write_file(path, contents),
         )
     }
@@ -2616,8 +3007,9 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.resize_file(path, size),
         )
     }
@@ -2629,16 +3021,17 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.make_directory(path),
         )
     }
 
     fn __repr__(&self) -> String {
-        match self.volume {
-            Some(volume) => format!("Filesystem(kind={:?}, volume_id={volume})", self.kind),
-            None => format!("Filesystem(kind={:?}, volume_id=None)", self.kind),
+        match self.volume_id {
+            Some(volume) => format!("StorageSpace(kind={:?}, volume_id={volume})", self.kind),
+            None => format!("StorageSpace(kind={:?}, volume_id=None)", self.kind),
         }
     }
 }
@@ -2652,10 +3045,14 @@ impl StorageSpace {
 pub struct File {
     session: Option<Arc<Mutex<remanence::Session>>>,
     media: Option<remanence::MediaId>,
-    /// As on `StorageSpace`: the sector layer a flux-family namespace is
-    /// presented over, where no device composed it.
+    /// As on `StorageSpace`: the recording's own record layer a namespace
+    /// is presented over, where no device composed it.
     sectors: Option<Arc<remanence::C1541Sectors>>,
-    volume: Option<u64>,
+    /// The partition the space holding this file was reached through, and
+    /// the declaration it was opened under — the same key that space
+    /// re-resolves by, so a file reaches its bytes the way its space does.
+    ordinal: Option<u32>,
+    declared: Option<String>,
     path: String,
     entry: Entry,
 }
@@ -2703,8 +3100,9 @@ impl File {
         let discovery = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.discover(),
         )?;
         Ok(Discovery::over(discovery))
@@ -2716,8 +3114,9 @@ impl File {
         let bytes = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.bytes(),
         )?;
         Ok(PyBytes::new(py, &bytes))
@@ -2736,8 +3135,9 @@ impl File {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.read_at(offset, &mut buffer),
         )?;
         Ok(PyBytes::new(py, &buffer))
@@ -2745,15 +3145,16 @@ impl File {
 
     /// Writes `data` at `offset` in place — the streamed form,
     /// `os.pwrite`-shaped. The span must lie within the file's current
-    /// size; `Filesystem.resize_file` is what changes it. Buffered until
+    /// size; `StorageSpace.resize_file` is what changes it. Buffered until
     /// commit.
     fn write_at(&self, offset: u64, data: &[u8]) -> PyResult<()> {
         let path = self.path.clone();
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.volume,
             self.sectors.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.write_at(offset, data),
         )
     }
@@ -4107,28 +4508,28 @@ impl C1541Sectors {
         Ok(PyBytes::new(py, &payload))
     }
 
-    /// The filesystem this recording bears, where it bears one.
+    /// The **direct partition** over this recording — the library's own
+    /// composition of the whole content, which is what a namespace above
+    /// is reached through (P19).
     ///
-    /// **The sector layer carries no file verbs of its own** — it may be
-    /// asked what it resolves to, and may not be told to act as a
-    /// namespace it is not. The answer is the same `StorageSpace` a
-    /// device resolves to, and the protected and the blank raise naming
-    /// the seam that ran out of answers.
-    fn filesystem(&self) -> PyResult<StorageSpace> {
-        let kind = self
-            .inner
-            .filesystem()
-            .and_then(|space| space.kind().map(str::to_owned))
-            .map_err(to_py_err)?;
-        Ok(StorageSpace {
-            session: None,
-            media: None,
-            sectors: Some(Arc::clone(&self.inner)),
-            volume: None,
-            start_bytes: 0,
-            length_bytes: 0,
-            kind: Some(kind),
-        })
+    /// A recording records no partition scheme, so there is one member and
+    /// it is synthetic: its account is `provenance` and never evidence,
+    /// and it composes no addressed extent, because a recording's blocks
+    /// are addressed by the recording rather than by position. The
+    /// addressable vantage is therefore absent and the namespace vantage
+    /// is *declared* — `filesystem_as("cbmdos")` — because nothing here
+    /// determines a reading and this layer will not pick one.
+    ///
+    /// **The sector layer carries no file verbs of its own**: it may be
+    /// asked what it composes — this — and may not be told to act as a
+    /// namespace it is not. The declaration's refusal is the seam that ran
+    /// out of answers stating it: a disk whose directory track does not
+    /// read says so with the sector layer's own rule identity, and one
+    /// that reads but claims no CBM DOS says *that*. Everything beneath
+    /// stays readable either way.
+    fn partition(&self) -> Partition {
+        let view = self.inner.partition();
+        partition_record(view.partition(), None, None, Some(Arc::clone(&self.inner)))
     }
 
     /// How many records the recognition read.
@@ -5209,6 +5610,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Machine>()?;
     m.add_class::<StorageDevice>()?;
     m.add_class::<Medium>()?;
+    m.add_class::<Partition>()?;
     m.add_class::<DeviceFamily>()?;
     m.add_class::<Assurance>()?;
     m.add_class::<DiskReport>()?;
@@ -5232,5 +5634,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(discover_media, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
     m.add_function(wrap_pyfunction!(formats, m)?)?;
+    m.add_function(wrap_pyfunction!(partition_schemes, m)?)?;
+    m.add_function(wrap_pyfunction!(partition_types, m)?)?;
     Ok(())
 }

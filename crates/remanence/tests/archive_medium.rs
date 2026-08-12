@@ -3,15 +3,17 @@
 
 //! The archive as a medium (P14): it is loaded by a declared reading
 //! like every other medium, may be inserted into a device of its own
-//! family, and its content is walked through the namespace it resolves
-//! to.
+//! family, and its content is walked through the namespace door of the
+//! direct partition it bears.
 //!
 //! What these tests hold to is the *uniformity*. There is no archive
 //! journey beside the storage model any more: the same declared load,
-//! the same pool, the same one node carrying file verbs, and the vantage
-//! the medium actually has deciding what it answers. A namespace-native
-//! medium refuses the space verbs by name rather than inventing a
-//! phantom volume to satisfy them.
+//! the same partition pool, the same one node carrying file verbs, and
+//! the vantage the medium actually has deciding what it answers. An
+//! archive's grammar determines its namespace, so the plain door opens;
+//! nothing composed an extent for it to be a position within, so the
+//! addressable door answers nothing and the space verbs refuse by name
+//! rather than inventing a phantom volume to satisfy them (D26).
 //!
 //! These tests build their zip by hand, so they run without fixtures.
 
@@ -256,10 +258,13 @@ fn a_medium_in_the_wrong_device_is_refused_naming_both_sides() {
 
 #[test]
 fn a_namespace_native_medium_refuses_the_space_verbs_by_name() {
-    // The vantage decides what a medium answers. An archive has no
-    // partition, no volume and no sector, so the verbs that address a
-    // space say so rather than inventing a phantom volume to satisfy
-    // them (D26).
+    // The vantage decides what a medium answers. An archive *does* bear
+    // a partition — the direct one, the library's own composition of its
+    // whole content — but it records no scheme, composes no volume and
+    // has no sector to address, so the verbs that address a space refuse
+    // by name and point at the door the content is actually reached
+    // through, rather than inventing a phantom volume to satisfy them
+    // (D26).
     let bytes = payload();
     let path = write_zip("vantage", &[("disk.h8d", &bytes)]);
     let mut session = Session::new();
@@ -271,6 +276,44 @@ fn a_namespace_native_medium_refuses_the_space_verbs_by_name() {
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(message.contains("inspect"), "names the verb: {message}");
     assert!(message.contains("namespace"), "names the vantage: {message}");
+    assert!(
+        message.contains("direct partition"),
+        "and names the door the content is reached through: {message}"
+    );
+
+    // Which is exactly what the pool holds. The direct partition is a
+    // composition act — stated as provenance, never offered as something
+    // the artifact said — and over a namespace-native medium it is
+    // extent-less: there is no position for it to be a position within,
+    // so the addressable door answers nothing rather than minting a
+    // volume over the whole file (D26).
+    assert_eq!(
+        medium.partition_scheme(),
+        None,
+        "an archive records no partition scheme"
+    );
+    let partitions = medium.partitions();
+    assert_eq!(partitions.len(), 1, "one direct partition, and nothing beside it");
+    let direct = &partitions[0];
+    assert!(direct.is_direct());
+    assert_eq!(direct.ordinal(), 0, "the ordinal no scheme numbers");
+    assert_eq!(
+        direct.start_bytes(),
+        None,
+        "an archive's names sit over no addressed extent"
+    );
+    assert_eq!(direct.length_bytes(), None, "and run for no addressed length");
+    assert!(!direct.is_addressable());
+    assert!(direct.provenance().is_some(), "a composition act is provenance");
+    assert!(direct.evidence().is_empty(), "and never evidence");
+    assert!(
+        medium
+            .partition(0)
+            .expect("an archive bears its direct partition")
+            .volume()
+            .is_none(),
+        "and no phantom volume is invented to satisfy the space verbs"
+    );
 
     for refusal in [
         medium.size().err(),
@@ -317,8 +360,10 @@ fn the_namespace_reports_the_grammars_own_hierarchy() {
     let mut namespace = session
         .medium_mut(arc)
         .expect("the medium is pooled")
+        .partition(0)
+        .expect("an archive bears its direct partition")
         .filesystem()
-        .expect("an archive is its namespace");
+        .expect("an archive's content is its namespace");
 
     let root = namespace.entries("").expect("the root lists");
     let names: Vec<&str> = root.iter().map(|entry| entry.name.as_str()).collect();
@@ -377,8 +422,10 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
     let discovery = session
         .medium_mut(arc)
         .expect("the medium is pooled")
+        .partition(0)
+        .expect("an archive bears its direct partition")
         .filesystem()
-        .expect("a namespace")
+        .expect("an archive's content is its namespace")
         .get_file("disks/boot.h8d")
         .expect("the entry is there")
         .discover()
@@ -455,8 +502,10 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
     let discovery = session
         .medium_mut(arc)
         .expect("the medium is pooled")
+        .partition(0)
+        .expect("an archive bears its direct partition")
         .filesystem()
-        .expect("a namespace")
+        .expect("an archive's content is its namespace")
         .get_file("disk.h8d")
         .expect("the entry is there")
         .discover()
@@ -511,16 +560,29 @@ fn a_file_on_a_volume_is_refused_as_an_artifact_by_name() {
         .load_media(open_write(&path), Format::Raw)
         .expect("the floppy loads");
 
+    // The floppy records no partition scheme, so its content is reached
+    // through the direct partition — which composes a volume over the
+    // whole image, and determines no namespace, so the FAT reading is
+    // the caller's declaration and the adapter's check (P18).
     let volume = device.inspect().expect("inspects").volumes[0].id;
-    device
-        .volume(volume)
-        .expect("the volume")
-        .write_file("NOTE.TXT", b"remanence")
-        .expect("writes");
+    let mut space = device
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("fat")
+        .expect("the declaration is verified against the boot record");
+    assert_eq!(
+        space.volume_id(),
+        Some(volume),
+        "the identity the report issued names the same volume here (P21, U4)"
+    );
+    space.write_file("NOTE.TXT", b"remanence").expect("writes");
+    drop(space);
 
     let error = device
-        .volume(volume)
-        .expect("the volume")
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("fat")
+        .expect("the declaration still checks out")
         .get_file("NOTE.TXT")
         .expect("the file is there")
         .discover()

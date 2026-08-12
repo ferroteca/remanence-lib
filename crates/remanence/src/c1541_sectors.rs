@@ -1126,7 +1126,7 @@ fn describe(
     provenance
 }
 
-// ------------------------------------------------ the filesystem door
+// ------------------------------------------------- the partition door
 
 /// The sector layer as a source of the blocks a filesystem addresses.
 ///
@@ -1142,26 +1142,34 @@ impl crate::cbm_dos::BlockSource for C1541Sectors {
 }
 
 impl C1541Sectors {
-    /// The filesystem the recording bears, where it bears one (P18, P19).
+    /// The **direct partition** over this recording — the library's own
+    /// composition of the whole content, which is what a namespace above
+    /// is reached through (P19).
+    ///
+    /// A recording records no partition scheme, so there is one member
+    /// and it is synthetic: its account is provenance and never
+    /// evidence, and it composes no addressed extent, because a
+    /// recording's blocks are addressed by the recording rather than by
+    /// position. The addressable vantage is therefore absent and the
+    /// namespace vantage is *declared* —
+    /// [`filesystem_as`](crate::PartitionView::filesystem_as) with
+    /// `"cbmdos"` — because nothing here determines a reading and this
+    /// layer will not pick one.
     ///
     /// **The sector layer carries no file verbs of its own.** It may be
-    /// asked what it resolves to — this — and may not be told to act as
-    /// a namespace it is not: the node the file verbs live on is the
-    /// namespace itself, and this hands one over or names the absence.
+    /// asked what it composes — this — and may not be told to act as a
+    /// namespace it is not: the node the file verbs live on is the
+    /// namespace itself.
     ///
-    /// The answer is a refusal for the protected and the blank, in the
-    /// terms the seam that ran out of answers stated: a disk whose
-    /// directory track does not read says so with the sector layer's own
-    /// rule identity, and one that reads but claims no CBM DOS says
-    /// *that*. Everything beneath stays readable either way — a disk
-    /// with no filesystem is still a recording, still a sector layer,
-    /// and still every claim this layer made about it.
-    pub fn filesystem(&self) -> Result<crate::StorageSpace<'_>> {
-        let catalog = crate::cbm_dos::CbmDosCatalog::open(self)?;
-        Ok(crate::StorageSpace::over_catalog(
-            crate::cbm_dos::CBM_DOS,
-            Box::new(catalog),
-        ))
+    /// The declaration's refusal is the seam that ran out of answers
+    /// stating it: a disk whose directory track does not read says so
+    /// with the sector layer's own rule identity, and one that reads but
+    /// claims no CBM DOS says *that*. Everything beneath stays readable
+    /// either way — a disk with no filesystem is still a recording,
+    /// still a sector layer, and still every claim this layer made about
+    /// it.
+    pub fn partition(&self) -> crate::PartitionView<'_> {
+        crate::PartitionView::over_blocks(self)
     }
 }
 

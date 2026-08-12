@@ -197,6 +197,150 @@ static void print_assurance(const RemanenceMedium *medium) {
     remanence_assurance_free(assurance);
 }
 
+/* The medium's own partition pool -- what its content is reached through.
+ *
+ * The scheme is evidence: a medium that recorded no table says so, and
+ * the *direct partition* stands in its place. That one member is the
+ * library's own composition of the whole content, which is why it accounts
+ * for itself in provenance and carries no evidence at all -- a composition
+ * act is stated as one, never offered as something the medium said.
+ *
+ * The ordinals are the scheme's own and the indices are this walk's: a
+ * partition carrying an issue keeps its number, so the ones behind it
+ * never renumber, and it is the ordinal that names a partition. */
+static void print_partitions(RemanenceMedium *medium) {
+    const char *scheme = remanence_medium_partition_scheme(medium);
+    size_t count = remanence_medium_partition_count(medium);
+    printf("\nPartitions (%zu, %s):\n", count,
+           scheme != NULL ? scheme : "this medium records no scheme");
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t ordinal = 0;
+        uint8_t type_byte = 0;
+        uint64_t start = 0;
+        uint64_t length = 0;
+        if (!remanence_medium_partition_ordinal(medium, i, &ordinal)) {
+            continue;
+        }
+        RemanencePartition *partition = remanence_medium_partition(medium, ordinal);
+        if (partition == NULL) {
+            /* Absence is an answer and the outs are untouched for it, so
+             * there is nothing here to report as a failure. */
+            continue;
+        }
+        printf("  %" PRIu32 ": %s%s%s", remanence_partition_ordinal(partition),
+               remanence_partition_placement(partition),
+               remanence_partition_is_direct(partition) ? " [the direct partition]" : "",
+               remanence_partition_active(partition) ? ", active" : "");
+        /* The raw value beside what it *declares*. The reading describes
+         * the declaration and never the content, and it is present even
+         * for a type this release will not read -- the partition a caller
+         * most needs explained is the one the library declines. */
+        if (remanence_partition_type_byte(partition, &type_byte)) {
+            const char *reading = remanence_partition_type_reading(partition);
+            printf(", type 0x%02x (%s)%s", (unsigned int)type_byte,
+                   reading != NULL ? reading : "no reading",
+                   remanence_partition_is_claimed(partition) ? "" : " [not read]");
+        }
+        if (remanence_partition_start_bytes(partition, &start) &&
+            remanence_partition_length_bytes(partition, &length)) {
+            printf(", %" PRIu64 " bytes at %" PRIu64, length, start);
+        }
+        printf(", %s%s\n",
+               remanence_partition_is_addressable(partition) ? "addressable" : "no extent",
+               remanence_partition_bears_namespace(partition) ? ", bears a namespace" : "");
+
+        const char *provenance = remanence_partition_provenance(partition);
+        if (provenance != NULL) {
+            printf("     composed: %s\n", provenance);
+        }
+        for (size_t line = 0; line < remanence_partition_evidence_count(partition); ++line) {
+            printf("     * %s\n", remanence_partition_evidence(partition, line));
+        }
+        /* A partition carrying a refusal is still a partition and still
+         * keeps its place. */
+        const char *issue = remanence_partition_issue(partition);
+        if (issue != NULL) {
+            printf("     issue: %s\n", issue);
+        }
+        remanence_partition_free(partition);
+    }
+}
+
+/* The namespace this example reads, found by walking that same pool.
+ *
+ * A partition whose declared type *determines* a namespace opens the
+ * plain door and this caller declares nothing. Nothing determines one
+ * over a direct partition, so there the reading is declared -- and a
+ * declaration is checked rather than probed, which is why the refusal of
+ * "fat" over an HDOS disk is an answer to that question and the next
+ * declaration is a fresh one. This example takes whichever of the formats
+ * the artifact turns out to bear.
+ *
+ * Answers NULL where nothing did, handing back the last refusal for the
+ * caller to report and to free. */
+static RemanenceSpace *open_namespace(RemanenceMedium *medium,
+                                      RemanenceErrorCategory *last_category, char **last_error,
+                                      char **last_rule) {
+    size_t count = remanence_medium_partition_count(medium);
+    *last_error = NULL;
+    *last_rule = NULL;
+    for (size_t i = 0; i < count; ++i) {
+        RemanenceErrorCategory category = REMANENCE_ERROR_CATEGORY_UNSUPPORTED;
+        char *error = NULL;
+        char *rule = NULL;
+        uint32_t ordinal = 0;
+        RemanenceSpace *space = NULL;
+
+        if (!remanence_medium_partition_ordinal(medium, i, &ordinal)) {
+            continue;
+        }
+        RemanencePartition *partition = remanence_medium_partition(medium, ordinal);
+        if (partition == NULL) {
+            continue;
+        }
+        if (remanence_partition_bears_namespace(partition)) {
+            space = remanence_partition_filesystem(partition, &category, &error, &rule);
+        } else if (remanence_partition_is_direct(partition)) {
+            space = remanence_partition_filesystem_as(partition, "fat", &category, &error, &rule);
+            if (space == NULL) {
+                remanence_string_free(error);
+                remanence_string_free(rule);
+                error = NULL;
+                rule = NULL;
+                space = remanence_partition_filesystem_as(partition, "hdos", &category, &error,
+                                                          &rule);
+            }
+        }
+        /* The plain door hands back the node whether or not the reading
+         * the type determined held: a FAT partition the content does not
+         * bear out composes a space with the namespace absent on it. That
+         * is not the node this walk is after, so it keeps looking. */
+        if (space != NULL && !remanence_filesystem_has_namespace(space)) {
+            remanence_space_free(space);
+            space = NULL;
+        }
+        /* The space names its provider and never this handle, so the
+         * partition is done with either way. */
+        remanence_partition_free(partition);
+        if (space != NULL) {
+            remanence_string_free(error);
+            remanence_string_free(rule);
+            return space;
+        }
+        /* Keep the last refusal to show, and never two at once. A
+         * partition with neither vantage refused nothing -- it composed
+         * nothing to refuse -- so it leaves the kept one alone. */
+        if (error != NULL) {
+            remanence_string_free(*last_error);
+            remanence_string_free(*last_rule);
+            *last_category = category;
+            *last_error = error;
+            *last_rule = rule;
+        }
+    }
+    return NULL;
+}
+
 static const char *outcome_name(RemanenceLetterOutcome outcome) {
     switch (outcome) {
         case REMANENCE_LETTER_OUTCOME_VOLUME: return "volume";
@@ -207,9 +351,9 @@ static const char *outcome_name(RemanenceLetterOutcome outcome) {
     return "undetermined";
 }
 
-/* Composes the drive letters a DOS machine holding this one device would
- * have presented. The machine facts are ours to assert — this device is the
- * first fixed device attached — and the assignment rule is the library's.
+/* Composes the drive letters a DOS machine holding this one medium would
+ * have presented. The machine facts are ours to assert — this medium is the
+ * first fixed device's — and the assignment rule is the library's.
  * No variant is stated here, so a letter the claimed rules disagree on
  * comes back undetermined rather than guessed. */
 static void show_drive_letters(RemanenceMedium *medium) {
@@ -282,8 +426,8 @@ static void show_drive_letters(RemanenceMedium *medium) {
 /* Lists what an archive holds, without reading any entry's data.
  *
  * An archive is a medium like any other: it loads into a device of its
- * own family, and its content is the namespace that device resolves
- * to -- so this is the same walk a disk's filesystem takes, with no
+ * own family, and its content is reached through the direct partition it
+ * bears -- so this is the same walk a disk's filesystem takes, with no
  * archive journey of its own. */
 static int list_archive(const char *path) {
     RemanenceErrorCategory error_category;
@@ -325,10 +469,33 @@ static int list_archive(const char *path) {
            remanence_device_family(device));
     printf("Size:    %" PRIu64 " bytes\n\n", remanence_medium_image_size_bytes(medium));
 
+    /* An archive records no partition scheme, so its pool holds exactly
+     * one member: the direct partition at ordinal 0, which the library
+     * composed rather than read. Its content *is* a namespace -- the
+     * grammar that recognized the artifact already read the index -- so
+     * the plain door opens and nothing is declared here. */
+    RemanencePartition *partition = remanence_medium_partition(medium, 0);
+    if (partition == NULL) {
+        fprintf(stderr, "error: this medium's pool bears no direct partition\n");
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
     RemanenceSpace *namespace =
-        remanence_medium_filesystem(medium, &error_category, &error, &error_rule);
+        remanence_partition_filesystem(partition, &error_category, &error, &error_rule);
+    /* The partition is a snapshot and the space re-resolves without it,
+     * so it is done with here whether or not the door opened. */
+    remanence_partition_free(partition);
     if (namespace == NULL) {
+        /* Null with the outs untouched would be the namespace vantage
+         * simply being absent; an archive always bears one, so anything
+         * here is a refusal to report. */
         report_error("error reaching the namespace", error_category, error, error_rule);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
+    if (!remanence_filesystem_has_namespace(namespace)) {
+        fprintf(stderr, "error: this archive's content bears no namespace\n");
+        remanence_space_free(namespace);
         remanence_session_free(session);
         return EXIT_FAILURE;
     }
@@ -895,17 +1062,31 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* File access lives on one node. The device is asked what it
-     * *resolves* to, and the listing comes from the filesystem it
-     * answers with; a medium bearing no namespace is a named absence
-     * here rather than a failure of the identification above. */
+    print_partitions(medium);
+
+    /* File access lives on one node, and the node is reached through the
+     * partition that composes it. The pool was settled when the medium
+     * loaded, so this asks rather than probes; a medium bearing no
+     * namespace is a named absence here rather than a failure of the
+     * identification above. */
     int status = EXIT_SUCCESS;
+    RemanenceErrorCategory namespace_category = REMANENCE_ERROR_CATEGORY_UNSUPPORTED;
+    char *namespace_error = NULL;
+    char *namespace_rule = NULL;
     RemanenceSpace *filesystem =
-        remanence_medium_filesystem(medium, &error_category, &error, &error_rule);
+        open_namespace(medium, &namespace_category, &namespace_error, &namespace_rule);
     if (filesystem == NULL) {
         printf("\nFiles:   ");
-        report_error("none reachable", error_category, error, error_rule);
+        if (namespace_error != NULL) {
+            report_error("none reachable", namespace_category, namespace_error, namespace_rule);
+        } else {
+            /* Nothing refused: no partition of this medium bears a
+             * namespace and none declared one, which is an answer. */
+            printf("none -- no partition of this medium bears or declares one\n");
+        }
     } else {
+        remanence_string_free(namespace_error);
+        remanence_string_free(namespace_rule);
         RemanenceEntryList *entries =
             remanence_filesystem_entries(filesystem, "", &error_category, &error, &error_rule);
         if (entries == NULL) {

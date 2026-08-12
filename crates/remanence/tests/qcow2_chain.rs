@@ -12,17 +12,18 @@ use std::process::Command;
 
 use remanence::{DiskFormat, ErrorCategory, Format, MediaId, Medium, Session};
 
-/// The space on one volume of `medium`, selected by the identity the
-/// inspection report issued. One node, both vantages: `medium.volume(id)`
-/// answers with the addressable extent and the namespace together, and
-/// the file verbs live on it and nowhere else (P19).
-fn fs(
-    medium: &mut remanence::Medium,
-    volume: remanence::VolumeId,
-) -> remanence::StorageSpace<'_> {
-    medium
-        .volume(volume)
-        .expect("the report issued this volume")
+/// The space one partition of `medium` composes, reached through the
+/// door that opens on it. One node, both vantages (D26), and the file
+/// verbs live on it and nowhere else (P19).
+fn fs(medium: &mut remanence::Medium, ordinal: u32) -> remanence::StorageSpace<'_> {
+    let partition = medium
+        .partition(ordinal)
+        .expect("the pool bears this partition");
+    if partition.partition().bears_namespace() {
+        partition.filesystem().expect("the declared type determines one")
+    } else {
+        partition.filesystem_as("fat").expect("these images are FAT")
+    }
 }
 
 /// Pools `path` in a fresh session under the declaration these tests
@@ -201,12 +202,27 @@ fn run_qemu_img(qemu_img: &Path, args: &[&str]) -> String {
 }
 
 
-/// The volume a partitionless image composes, named the only way a caller
-/// can name one: by asking the library what it reported.
-fn only_volume(disk: &mut Medium) -> remanence::VolumeId {
-    let report = disk.inspect().expect("inspection reads");
-    assert_eq!(report.volumes.len(), 1, "a partitionless image, one volume");
-    report.volumes[0].id
+/// The ordinal a partitionless image's content is reached through. It
+/// records no partition scheme, so its pool bears exactly one member —
+/// the direct partition at ordinal 0, which is the library's own
+/// composition of the whole content and is carried as provenance rather
+/// than offered as something the image declared (P16, P17).
+fn only_partition(disk: &Medium) -> u32 {
+    let partitions = disk.partitions();
+    assert_eq!(
+        partitions.len(),
+        1,
+        "a partitionless image records no scheme, so the pool bears one partition"
+    );
+    assert!(
+        partitions[0].is_direct(),
+        "and that one is the library's own composition, not a table entry"
+    );
+    assert!(
+        partitions[0].volume_id().is_some(),
+        "which still composes the one volume the report issues for it"
+    );
+    partitions[0].ordinal()
 }
 
 #[test]
@@ -236,8 +252,14 @@ fn reads_compose_through_a_raw_backing_file() {
             .and_then(|label| label.name.clone()),
         Some("REMANENCE".to_owned())
     );
+    let partition = only_partition(disk);
     assert_eq!(
-        fs(disk, volume).read_file("MARKER.TXT")
+        disk.partitions()[0].volume_id(),
+        Some(volume),
+        "the partition carries the very identity the report issued (P21, U4)"
+    );
+    assert_eq!(
+        fs(disk, partition).read_file("MARKER.TXT")
             .expect("the marker reads through the chain"),
         b"read through the chain"
     );
@@ -250,8 +272,8 @@ fn reads_compose_through_a_raw_backing_file() {
     let top_header = untouched_top[..CLUSTER as usize].to_vec();
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("write chain opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    fs(disk, volume).write_file("MARKER.TXT", b"rolled back")
+    let partition = only_partition(disk);
+    fs(disk, partition).write_file("MARKER.TXT", b"rolled back")
         .expect("write buffers");
     disk.rollback().expect("a medium is pooled");
     drop(disk_session);
@@ -263,8 +285,8 @@ fn reads_compose_through_a_raw_backing_file() {
 
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("write chain opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    fs(disk, volume).write_file("MARKER.TXT", b"changed in the top")
+    let partition = only_partition(disk);
+    fs(disk, partition).write_file("MARKER.TXT", b"changed in the top")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -276,9 +298,9 @@ fn reads_compose_through_a_raw_backing_file() {
     );
     let (mut reopened_session, reopened_at) = attach(&overlay, Afford::Read).expect("written chain reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
-    let volume = only_volume(reopened);
+    let partition = only_partition(reopened);
     assert_eq!(
-        fs(reopened, volume).read_file("MARKER.TXT").expect("changed file reads"),
+        fs(reopened, partition).read_file("MARKER.TXT").expect("changed file reads"),
         b"changed in the top"
     );
 
@@ -305,8 +327,8 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
 
     let (mut disk_session, disk_at) = attach(&overlay, Afford::Write).expect("QEMU chain opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    fs(disk, volume).write_file("MARKER.TXT", b"remanence copy-on-write")
+    let partition = only_partition(disk);
+    fs(disk, partition).write_file("MARKER.TXT", b"remanence copy-on-write")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -324,7 +346,7 @@ fn qemu_reports_the_same_backing_and_reads_committed_guest_bytes() {
         attach(&flattened, Afford::Read).expect("QEMU-rendered disk opens");
     let qemu_view = qemu_session.medium_mut(qemu_at).expect("the medium is pooled");
     assert_eq!(
-        fs(qemu_view, volume).read_file("MARKER.TXT")
+        fs(qemu_view, partition).read_file("MARKER.TXT")
             .expect("QEMU-rendered changed file reads"),
         b"remanence copy-on-write"
     );
@@ -354,9 +376,14 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
     let report = disk.inspect().expect("inspection composes");
     assert_eq!(report.volumes.len(), 1);
-    let volume = report.volumes[0].id;
+    let partition = only_partition(disk);
     assert_eq!(
-        fs(disk, volume).read_file("MARKER.TXT")
+        disk.partitions()[0].volume_id(),
+        Some(report.volumes[0].id),
+        "the partition carries the very identity the report issued (P21, U4)"
+    );
+    assert_eq!(
+        fs(disk, partition).read_file("MARKER.TXT")
             .expect("reads through two members"),
         b"read through the chain"
     );
@@ -366,8 +393,8 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let mid_before = std::fs::read(dir.join("mid.qcow2")).expect("middle reads");
     let (mut disk_session, disk_at) = attach(&top, Afford::Write).expect("two-level write opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    fs(disk, volume).write_file("MARKER.TXT", b"changed above two levels")
+    let partition = only_partition(disk);
+    fs(disk, partition).write_file("MARKER.TXT", b"changed above two levels")
         .expect("write buffers");
     disk.commit().expect("write commits");
     drop(disk_session);
@@ -382,7 +409,7 @@ fn a_two_level_chain_resolves_each_name_from_its_own_image() {
     let (mut reopened_session, reopened_at) = attach(&top, Afford::Read).expect("changed chain reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     assert_eq!(
-        fs(reopened, volume).read_file("MARKER.TXT")
+        fs(reopened, partition).read_file("MARKER.TXT")
             .expect("changed marker reads"),
         b"changed above two levels"
     );
@@ -409,9 +436,9 @@ fn an_unpinned_backing_format_is_probed_by_magic() {
     // are each told apart by magic, exactly as at the top.
     let (mut disk_session, disk_at) = attach(&top, Afford::Read).expect("the chain opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
+    let partition = only_partition(disk);
     assert_eq!(
-        fs(disk, volume).read_file("MARKER.TXT")
+        fs(disk, partition).read_file("MARKER.TXT")
             .expect("reads"),
         b"read through the chain"
     );
@@ -540,9 +567,9 @@ fn every_chain_member_is_claimed_immutable() {
     assert!(disk_session.medium_mut(disk_at).is_some(), "the chain pooled");
 
     // **The library opened the backing member itself**, so P7's mandatory
-    // denial applies to it in full — the half of the rule the amendment
-    // leaves untouched. A writer is refused before a handle exists; a
-    // reader stays admitted.
+    // denial applies to it in full — this is the half of the rule the
+    // amendment leaves untouched. A writer is refused before a handle
+    // exists; a reader stays admitted.
     assert!(
         std::fs::File::options()
             .read(true)

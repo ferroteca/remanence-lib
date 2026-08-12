@@ -55,22 +55,69 @@ role-specific adapters recognize and validate formats; ambiguous
 strongest matches remain unknown rather than being resolved by catalog
 order.
 
-**File access lives on one node.** A medium is asked what it *resolves*
-to — `medium.filesystem()` walks medium → volume → filesystem where
-every seam has one supported answer, refuses naming the candidates where
-it does not, and answers a named absence where nothing bears a
-namespace — and the file verbs live on the `StorageSpace` it hands back,
-never on the medium. Where several volumes bear one, selection runs by
-the identity the inspection report issued. FAT12/FAT16 volumes and the
-HDOS catalog of a Heathkit `.h8d` are reached the same way.
+**File access lives on one node, and a partition is what reaches it.** A
+medium's content is addressed through the partition that composes it, by
+the scheme's own ordinal: `medium.partition_scheme()` names the scheme
+the pool was populated under, `medium.partitions()` hands back every
+entry that scheme declares, and `medium.partition(1)` is the one you
+mean. The pool is established when the medium is loaded and is evidence
+from then on, so nothing re-reads a table behind you and nothing is
+discovered on demand. A medium recording no scheme bears the **direct
+partition** at ordinal 0 instead — the library's own composition of the
+whole content, stated as provenance and never offered as something the
+medium said.
+
+Two doors open onto the one `StorageSpace` a partition composes.
+`volume()` is that space read and written by position within the
+partition's own extent; `filesystem()` is the same space reached by the
+names it holds. Both hand out the same node, so which question you asked
+changes nothing about what comes back, and both answer with an `Option`
+because they are lookups rather than attempts: everything behind them
+was specified when the pool was established and verified there, so an
+absence is a fact about the partition rather than a read that failed.
+The namespace opens through that door where the declared partition type
+determines one, and through `filesystem_as("hdos")` where nothing does —
+the reading is yours and the check is the library's. The file verbs live
+on the `StorageSpace` both doors hand out, never on the medium, and
+FAT12/FAT16 volumes and the HDOS catalog of a Heathkit `.h8d` are
+reached the same way.
+
+```rust
+// A partitioned disk: what the scheme declared, and the entry you mean.
+println!("{:?}", medium.partition_scheme());     // Some(PartitionScheme::Mbr)
+for declared in medium.partitions() {
+    println!("{} {} {:?}", declared.ordinal(), declared.placement(),
+             declared.type_reading());
+}
+
+// Your reading of the type, checked against the byte the table records.
+let partition = medium.partition(1).expect("the table declares entry 1");
+partition.as_type(remanence::PartitionType::DosPrimary)?;
+let mut files = partition
+    .filesystem()
+    .expect("a DOS data partition determines FAT");
+for entry in files.entries("")? {
+    println!("{} ({} bytes)", entry.name, entry.size_bytes);
+}
+
+// The same partition by position, for what no name reaches.
+let mut boot_record = [0u8; 512];
+let mut volume = medium
+    .partition(1)
+    .expect("the table declares entry 1")
+    .volume()
+    .expect("a data partition composes an extent");
+volume.read_at(0, &mut boot_record)?;
+```
 
 **An archive is a medium like any other.** A `.zip` or `.7z` is loaded
 by its declared grammar and may be seated in an archive-family device,
-and its content is the namespace it resolves to — the same node a disk's
-filesystem is reached through, with no archive journey of its own. Its
-own vantage is that namespace: an archive has no partition, no volume
-and no sector, so the verbs that address a space refuse by name rather
-than inventing a phantom volume.
+and its content **is** its namespace — the same node a disk's filesystem
+is reached through, with no archive journey of its own. Its own vantage
+is that namespace: an archive bears the direct partition like every
+other medium, extent-less and synthetic, and composes no volume and no
+sector beneath it, so the verbs that address a space refuse by name
+rather than inventing a phantom volume.
 An entry recognized as an artifact of its own is opened from the file
 view that names it and loaded into a device of its own — in a machine of
 its own where one is being reconstructed, since the host's archive was
@@ -166,10 +213,11 @@ of which reads, and an address readable claims disagree about are each
 a refusal naming the rule it broke. Nothing is repaired and no block is
 filled in.
 
-**And the disk's own directory is above that.** A recording bearing CBM
-DOS resolves to a filesystem — the same namespace node a disk image
-resolves to, because the file verbs live on one node and nowhere else —
-carrying the BAM header as the space's label, the directory in the order
+**And the disk's own directory is above that.** A recording composes the
+direct partition like any other medium, and `filesystem_as("cbmdos")`
+over it opens the same namespace node a disk image's partition hands
+out — the file verbs live on one node and nowhere else — the space
+carrying the BAM header as its label, the directory in the order
 it was written, PETSCII names read beside the sixteen bytes as recorded,
 and the CBM facts each entry declares: PRG or SEQ or USR or REL, the
 locked and never-closed flags, the block count, and the slot it was read
@@ -210,13 +258,17 @@ inspects the disk as a layered report — the block-active device, what
 its leading structure turned out to be, any recognized partition
 schema, every region that schema declares, every volume composed, and
 every filesystem recognized on one, each fact at the seam that owns it.
-Every declared region carries both its raw type value and a reading of
-what that value declares, so a type the release does not read still
-explains itself. It gives each reported volume an opaque stable
-identity, and uses that identity to work with files — list, stat, read, write
-(overwriting in place), and create directories with their missing
-parents — under a commit point: nothing touches the image until
-`commit`, and `rollback` discards everything. A qcow2 whose content
+The report keeps every one of those facts and is a **view derived from
+the partition pool**, so what it states and what the content is reached
+through cannot drift apart. Every declared region carries both its raw
+type value and a reading of what that value declares, so a type the
+release does not read still explains itself. It gives each reported
+volume an opaque stable identity, which is the report's own and stays
+the report's own; content is addressed by the partition's ordinal
+instead, and the file verbs there — list, stat, read, write (overwriting
+in place), and create directories with their missing parents — run under
+a commit point: nothing touches the image until `commit`, and `rollback`
+discards everything. A qcow2 whose content
 lives partly in a backing chain — raw or qcow2 members, relative
 paths resolved from the image that names them — opens as one composed
 disk, every backing member claimed immutable for the session's life.
@@ -339,9 +391,15 @@ let mut device = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
 println!("{}", device.attachment());      // heathfloppy0
 device.insert(disk)?;
 
-// The medium is asked what it resolves to; the file verbs live there.
+// Content is reached through the partition that composes it. This image
+// records no scheme, so the direct partition is the whole of it, and
+// nothing determines a namespace over it — the reading is declared here
+// and the library checks it.
 let medium = session.medium_mut(disk).expect("pooled");
-let mut filesystem = medium.filesystem()?;
+let mut filesystem = medium
+    .partition(0)
+    .expect("the direct partition")
+    .filesystem_as("hdos")?;
 for entry in filesystem.entries("")? {
     println!("{} ({} bytes)", entry.name, entry.size_bytes);
     // Whatever this filesystem states past name, kind and size, in its
@@ -361,11 +419,18 @@ for line in &assurance.evidence {
 }
 
 // An archive is a medium: declared by its own grammar, and its content
-// is the namespace it resolves to.
+// is its namespace — the direct partition it bears opens onto it.
 let archive = session
     .load_media(std::fs::File::open("captures.7z")?, remanence::Format::SevenZip)?
     .id();
-for entry in session.medium_mut(archive).expect("pooled").filesystem()?.entries("")? {
+let mut content = session
+    .medium_mut(archive)
+    .expect("pooled")
+    .partition(0)
+    .expect("an archive bears its direct partition")
+    .filesystem()
+    .expect("an archive's content is its namespace");
+for entry in content.entries("")? {
     println!("{} ({} bytes)", entry.name, entry.size_bytes);
 }
 
@@ -375,7 +440,10 @@ for entry in session.medium_mut(archive).expect("pooled").filesystem()?.entries(
 let member = session
     .medium_mut(archive)
     .expect("pooled")
-    .filesystem()?
+    .partition(0)
+    .expect("an archive bears its direct partition")
+    .filesystem()
+    .expect("an archive's content is its namespace")
     .get_file("track00.raw")?
     .discover()?;
 let inner = session.load_discovery(member)?.id();
@@ -438,8 +506,10 @@ print(medium.assurance.outcome, medium.assurance.claim, medium.mode)
 for layer in medium.identify().layers:
     print(layer.kind, layer.id, layer.confidence)
 
-# The medium is asked what it resolves to; the file verbs live there.
-filesystem = medium.filesystem()
+# Content is reached through the partition that composes it: this image
+# records no scheme, so the direct partition is the whole of it, and the
+# namespace is declared rather than determined.
+filesystem = medium.partition(0).filesystem_as("hdos")
 for entry in filesystem.entries():
     print(entry.name, entry.size_bytes,
           [(fact.key, fact.value) for fact in entry.declared])
@@ -470,7 +540,7 @@ for mapping in drives.mappings:                   # disagreement is reported
 
 with open("captures.7z", "rb") as source:
     archive = session.load_media(source, "7z")
-for entry in archive.filesystem().entries(""):
+for entry in archive.partition(0).filesystem().entries(""):
     print(entry.name, entry.size_bytes)
 
 with remanence.CaptureSet("captures.7z") as capture:
@@ -515,8 +585,9 @@ for claim in sectors.inspect().claims:
           claim.header_checksum_stated, claim.header_checksum_computed)
 print(sectors.read_sector(18, 0)[:3])   # the BAM: 18, 1, and DOS 'A'
 
-# And the directory CBM DOS wrote across those sectors.
-space = sectors.filesystem()
+# And the directory CBM DOS wrote across those sectors: the recording's
+# own direct partition, and the reading declared over it.
+space = sectors.partition().filesystem_as("cbmdos")
 print(space.kind, space.label().name, space.evidence()[0])
 for entry in space.entries():
     print(entry.name, entry.size_bytes,

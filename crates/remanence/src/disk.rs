@@ -37,9 +37,10 @@ use crate::error::{Error, Result};
 use crate::media::Format;
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::filesystem::Catalog;
-use crate::filesystem_catalog::{self, CatalogRecognition, FilesystemAdapter};
+use crate::filesystem_catalog::FilesystemAdapter;
 use crate::journal;
 use crate::mbr::{self, Discovery};
+use crate::partition::{PartitionPool, PartitionScheme};
 use crate::media_profile::MediaProfile;
 use crate::session::{self, Identification, Layer};
 use crate::archive::ArchiveMedium;
@@ -47,8 +48,8 @@ use crate::device_family::DeviceFamily;
 use crate::source::{self, ImageSource, ResolvedImage};
 
 use crate::report::{
-    DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
-    PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo, VolumeOrigin,
+    DeclaredGeometry, DeviceInfo, DiskReport, FilesystemId, FilesystemInfo, PartitionSchemaInfo,
+    RegionId, RegionInfo, VolumeId, VolumeInfo, VolumeOrigin,
 };
 
 #[cfg(test)]
@@ -101,6 +102,57 @@ impl Device for Composed<'_> {
 
     fn flush(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+/// One partition's extent, presented as a device of its own.
+///
+/// A filesystem adapter receives an extent and does not know whether it
+/// came from one partition or from the whole content (P18), so a
+/// declared namespace is read through this rather than through the
+/// presented disk with an offset the adapter would have to be told
+/// about.
+struct Window<'a> {
+    base: &'a mut dyn Device,
+    offset: u64,
+    length: u64,
+}
+
+impl Device for Window<'_> {
+    fn len(&self) -> u64 {
+        self.length
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        self.within(offset, buf.len() as u64, "read")?;
+        self.base.read_at(self.offset + offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        self.within(offset, data.len() as u64, "write")?;
+        self.base.write_at(self.offset + offset, data)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.base.flush()
+    }
+}
+
+impl Window<'_> {
+    /// The bound is the partition's, not the medium's, which is the point
+    /// of reading a namespace within one.
+    fn within(&self, offset: u64, length: u64, act: &str) -> Result<()> {
+        offset
+            .checked_add(length)
+            .filter(|end| *end <= self.length)
+            .map(drop)
+            .ok_or_else(|| {
+                Error::io(format!(
+                    "this partition runs {} bytes and the {act} at {offset} \
+                     reaches past it",
+                    self.length
+                ))
+            })
     }
 }
 
@@ -432,15 +484,41 @@ impl MediumState {
             Self::Archive(archive) => Some(archive),
         }
     }
+
+    /// The partition pool this medium bears, established here and
+    /// nowhere else — at the load, before the medium is handed to
+    /// anyone (F56's "checked at load").
+    ///
+    /// **The pool populates under the medium's own kind, never by
+    /// probing for a layout.** A medium whose native vantage is a space
+    /// has the scheme its family is laid out under checked against its
+    /// content, and bears the direct partition where the content does
+    /// not carry that scheme; a medium whose native vantage is a
+    /// namespace bears the direct partition with no extent at all,
+    /// because there is no position for one to be within.
+    pub(crate) fn establish_partitions(&mut self) -> Result<PartitionPool> {
+        match self {
+            Self::Archive(_) => Ok(PartitionPool::native_namespace()),
+            Self::Space(space) => {
+                let length = space.size();
+                let discovery = space.check_scheme()?;
+                Ok(PartitionPool::over_space(
+                    PartitionScheme::Mbr,
+                    &discovery,
+                    length,
+                ))
+            }
+        }
+    }
 }
 
 /// The refusal a space verb makes on a namespace-native medium.
 fn no_space(verb: &str, archive: &ArchiveMedium) -> Error {
     Error::unsupported(format!(
         "'{verb}' addresses a space and {} holds an archive medium, whose \
-         vantage is a namespace: an archive has no partition, no volume and \
-         no sector to address, and its content is reached through the \
-         filesystem this medium resolves to",
+         vantage is a namespace: an archive records no scheme, has no volume \
+         and no sector to address, and its content is reached through the \
+         namespace door of the direct partition it bears",
         archive.named()
     ))
 }
@@ -662,28 +740,48 @@ impl MediaState {
         )
     }
 
-    /// Which enrolled adapter claims the namespace this medium bears
-    /// directly (P18), for the resolver on the storage handle.
+    /// Checks the scheme this medium's family is laid out under against
+    /// the content, once, at the load.
     ///
-    /// It probes the *presented* disk, not the raw plane: what a
-    /// namespace sits on is the disk the format adapter exposes, and for
-    /// the media this reaches today the two are the same bytes.
-    pub(crate) fn recognize_namespace(&mut self) -> Result<CatalogRecognition> {
+    /// It reads the *presented* disk, not the raw plane: a partition
+    /// table sits on the disk a format adapter exposes. The answer is
+    /// the scheme adapter's own — the table it parsed, or which of the
+    /// three ways the content does not carry one (P16).
+    pub(crate) fn check_scheme(&mut self) -> Result<Discovery> {
         self.require_usable()?;
         let mut composed = self.composed();
-        filesystem_catalog::recognize(&mut composed)
+        mbr::discover(&mut composed)
     }
 
-    /// Opens the namespace `adapter` recognized. The adapter that
-    /// recognized it is the one that reads it, so nothing here branches
-    /// on a filesystem identifier.
-    pub(crate) fn open_namespace(
+    /// Opens the namespace `adapter` reads, over one partition's extent
+    /// and nothing wider.
+    ///
+    /// The adapter is the one the caller's declaration named, and it
+    /// reads the evidence to verify that declaration rather than to pick
+    /// one (P18). Its own bound is what bounds the reading (P27).
+    pub(crate) fn open_namespace_at(
         &mut self,
         adapter: &'static dyn FilesystemAdapter,
+        offset: u64,
+        length: u64,
     ) -> Result<Box<dyn Catalog>> {
         self.require_usable()?;
         let mut composed = self.composed();
-        adapter.open(&mut composed)
+        let mut window = Window {
+            base: &mut composed,
+            offset,
+            length,
+        };
+        adapter.open(&mut window)
+    }
+
+    /// Recognizes FAT on one partition's extent, answering the facts the
+    /// filesystem seam established (P18).
+    pub(crate) fn recognize_fat(&mut self, offset: u64) -> Result<crate::fat::FatRecognition> {
+        self.require_usable()?;
+        let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
+        fat.recognized(&mut composed)
     }
 
     /// The **effective** access mode this open settled on (P28): the
@@ -781,25 +879,18 @@ impl MediaState {
         Ok(segments)
     }
 
-    /// Resolves a volume the inspection report issued. The identity is
-    /// the only selector: nothing here parses a string, and a caller
-    /// cannot name a volume the library did not report.
-    fn volume_at(&mut self, id: VolumeId) -> Result<(u64, FatVolume)> {
-        let report = self.inspect()?;
-        let offset = report
-            .volume(id)
-            .map(|volume| volume.start_bytes)
-            .ok_or_else(|| Error::not_found("this disk reports no such volume".to_owned()))?;
-        let mut composed = self.composed();
-        let volume = FatVolume::open(&mut composed, offset)?;
-        Ok((offset, volume))
-    }
-
-    /// The layered inspection of this disk, built seam by seam: each fact
-    /// stays with the seam that owns it, an unread region or an
-    /// unrecognized filesystem is still reported with its refusal beside
-    /// it, and neither renumbers what follows.
-    pub(crate) fn inspect(&mut self) -> Result<DiskReport> {
+    /// The layered inspection of this disk — **a view derived from the
+    /// partition pool**, not the walk that finds it.
+    ///
+    /// The pool is the evidence and this is a reading of it: each fact
+    /// still stays with the seam that owns it, a partition whose type is
+    /// unread or whose chain broke is still reported with its refusal
+    /// beside it, and neither renumbers what follows. The direct
+    /// partition never appears here — it is the library's own
+    /// composition, carried as the pool's provenance and never offered as
+    /// something the medium declared — so a medium recording no scheme
+    /// reports no region, exactly as it always has.
+    pub(crate) fn inspect(&mut self, pool: &PartitionPool) -> Result<DiskReport> {
         self.require_usable()?;
         let device_identity = self.device_identity;
         let device = DeviceInfo {
@@ -818,95 +909,65 @@ impl MediaState {
 
         let mut report = DiskReport {
             device,
-            content: DiskContent::Blank,
-            partition_schema: None,
+            content: pool.content(),
+            partition_schema: pool.scheme().map(|scheme| PartitionSchemaInfo {
+                kind: scheme.id().to_owned(),
+                evidence: pool.schema_evidence().to_vec(),
+                issues: Vec::new(),
+            }),
             regions: Vec::new(),
             volumes: Vec::new(),
             filesystems: Vec::new(),
         };
 
-        match crate::partition::discover(&mut composed)? {
-            Discovery::Blank => {}
-            Discovery::UnknownNonblank { evidence } => {
-                report.content = DiskContent::UnknownNonblank { evidence };
-            }
-            Discovery::BareVolume => {
-                report.content = DiskContent::DirectVolume;
-                let direct = crate::volume::direct(crate::volume::AddressedRegion {
-                    device: device_identity,
-                    offset: 0,
-                    length: report.device.length_bytes,
-                });
-                report.volumes.push(VolumeInfo {
-                    id: VolumeId::whole_device(),
-                    origin: VolumeOrigin::WholeDevice,
-                    start_bytes: direct.offset,
-                    length_bytes: direct.length,
-                    evidence: vec![
-                        "sector 0 is a filesystem boot record, so the whole \
-                         device composes as one volume"
-                            .to_owned(),
-                    ],
-                    issues: Vec::new(),
-                });
-            }
-            Discovery::Partitioned(partitions) => {
-                report.content = DiskContent::Schema;
-                report.partition_schema = Some(PartitionSchemaInfo {
-                    kind: "mbr".to_owned(),
-                    evidence: vec![
-                        "sector 0 carries the boot signature and parses as an \
-                         MBR partition table"
-                            .to_owned(),
-                    ],
-                    issues: Vec::new(),
-                });
-                for partition in &partitions {
-                    let id = RegionId::declared(partition.number);
-                    let role = if mbr::is_extended(partition.type_byte) {
-                        RegionRole::Structure
-                    } else {
-                        RegionRole::Data
-                    };
-                    let claimed = partition.type_name.is_some();
-                    report.regions.push(RegionInfo {
-                        id,
-                        declared_number: partition.number,
-                        declared_placement: partition.kind.name().to_owned(),
-                        role,
-                        declared_type: partition.type_byte,
-                        declared_type_reading: mbr::declared_type_reading(partition.type_byte)
-                            .to_owned(),
-                        claimed,
-                        start_bytes: partition.start_bytes,
-                        length_bytes: partition.length_bytes,
-                        issue: partition.issue.clone(),
-                    });
-                    // A structural region is reported and is not thereby
-                    // a volume; a region this release will not read composes
-                    // nothing, and both keep their place in the report.
-                    if role == RegionRole::Structure || !claimed || partition.issue.is_some() {
-                        continue;
-                    }
-                    let composed_volume = crate::volume::direct(crate::volume::AddressedRegion {
-                        device: device_identity,
-                        offset: partition.start_bytes,
-                        length: partition.length_bytes,
-                    });
+        for partition in pool.partitions() {
+            if partition.is_direct() {
+                // The one member the report does not carry: a composition
+                // act is provenance, and the evidence answer is unchanged.
+                if let Some(id) = partition.volume_id() {
                     report.volumes.push(VolumeInfo {
-                        id: VolumeId::on_region(id),
-                        origin: VolumeOrigin::Regions(vec![id]),
-                        start_bytes: composed_volume.offset,
-                        length_bytes: composed_volume.length,
-                        evidence: vec![format!(
-                            "direct composition of one data region declared at \
-                             partition {}",
-                            partition.number
-                        )],
+                        id,
+                        origin: VolumeOrigin::WholeDevice,
+                        start_bytes: partition.start_bytes().unwrap_or(0),
+                        length_bytes: partition.length_bytes().unwrap_or(0),
+                        evidence: vec![
+                            "sector 0 is a filesystem boot record, so the whole \
+                             device composes as one volume"
+                                .to_owned(),
+                        ],
                         issues: Vec::new(),
                     });
                 }
+                continue;
             }
+            let id = RegionId::declared(partition.ordinal());
+            report.regions.push(RegionInfo {
+                id,
+                declared_number: partition.ordinal(),
+                declared_placement: partition.placement().to_owned(),
+                role: partition.role(),
+                declared_type: partition.type_byte().unwrap_or(0),
+                declared_type_reading: partition.type_reading().unwrap_or_default().to_owned(),
+                claimed: partition.is_claimed(),
+                start_bytes: partition.start_bytes().unwrap_or(0),
+                length_bytes: partition.length_bytes().unwrap_or(0),
+                issue: partition.issue().cloned(),
+            });
+            let Some(volume) = partition.volume_id() else {
+                continue;
+            };
+            report.volumes.push(VolumeInfo {
+                id: volume,
+                origin: VolumeOrigin::Regions(vec![id]),
+                start_bytes: partition.start_bytes().unwrap_or(0),
+                length_bytes: partition.length_bytes().unwrap_or(0),
+                evidence: vec![format!(
+                    "direct composition of one data region declared at \
+                     partition {}",
+                    partition.ordinal()
+                )],
+                issues: Vec::new(),
+            });
         }
 
         // Filesystem recognition is its own seam: it runs over volumes that
@@ -956,24 +1017,24 @@ impl MediaState {
         Ok(report)
     }
 
-    /// Lists a directory in the volume identified by `volume_id`
+    /// Lists a directory in the extent starting at `offset`
     /// ("" = root; "A/B" descends).
-    pub(crate) fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
+    pub(crate) fn entries(&mut self, offset: u64, path: &str) -> Result<Vec<FatEntry>> {
         let segments = Self::split_path(path)?;
-        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
         fat.entries(&mut composed, &segments)
     }
 
     /// Answers one path with its entry, or `None` where nothing exists
     /// at it — absence being an answer rather than a failure (U3).
-    pub(crate) fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
+    pub(crate) fn stat(&mut self, offset: u64, path: &str) -> Result<Option<FatEntry>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a path is required".to_owned()));
         }
-        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
         fat.stat(&mut composed, &segments)
     }
 
@@ -988,15 +1049,15 @@ impl MediaState {
     /// inside the extent while the file does not.
     fn require_whole(
         &mut self,
-        volume_id: VolumeId,
+        offset: u64,
         segments: &[&str],
         path: &str,
     ) -> Result<()> {
         let Some(bound) = self.bound else {
             return Ok(());
         };
-        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
         let end = fat.extent_end(&mut composed, segments)?;
         if end > bound.end {
             return Err(bound.withheld(&format!("'{path}'"), end));
@@ -1004,15 +1065,15 @@ impl MediaState {
         Ok(())
     }
 
-    /// Copies a file's bytes out of the volume identified by `volume_id`.
-    pub(crate) fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
+    /// Copies a file's bytes out of the extent starting at `offset`.
+    pub(crate) fn read_file(&mut self, offset: u64, path: &str) -> Result<Vec<u8>> {
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
-        self.require_whole(volume_id, &segments, path)?;
-        let (_, fat) = self.volume_at(volume_id)?;
+        self.require_whole(offset, &segments, path)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
         fat.read_file(&mut composed, &segments)
     }
 
@@ -1020,7 +1081,7 @@ impl MediaState {
     /// bytes at `offset`, which must lie within the file.
     pub(crate) fn read_file_at(
         &mut self,
-        volume_id: VolumeId,
+        at: u64,
         path: &str,
         offset: u64,
         buf: &mut [u8],
@@ -1029,22 +1090,22 @@ impl MediaState {
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
-        self.require_whole(volume_id, &segments, path)?;
-        let (_, fat) = self.volume_at(volume_id)?;
+        self.require_whole(at, &segments, path)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, at)?;
         fat.read_file_at(&mut composed, &segments, offset, buf)
     }
 
     /// Sets a file's size, creating it when absent: kept bytes preserved
     /// in place, a grown region reading as zeros. Buffered until commit.
-    pub(crate) fn resize_file(&mut self, volume_id: VolumeId, path: &str, size: u64) -> Result<()> {
+    pub(crate) fn resize_file(&mut self, offset: u64, path: &str, size: u64) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
-        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
         fat.resize_file(&mut composed, &segments, size)
     }
 
@@ -1053,7 +1114,7 @@ impl MediaState {
     /// commit.
     pub(crate) fn write_file_at(
         &mut self,
-        volume_id: VolumeId,
+        at: u64,
         path: &str,
         offset: u64,
         data: &[u8],
@@ -1063,8 +1124,8 @@ impl MediaState {
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
-        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, at)?;
         fat.write_file_at(&mut composed, &segments, offset, data)
     }
 
@@ -1123,12 +1184,12 @@ impl MediaState {
         }
     }
 
-    /// Writes a file into the volume identified by `volume_id`, an
+    /// Writes a file into the extent starting at `offset`, an
     /// existing one overwritten and an existing directory refused.
     /// Buffered until [`MediaState::commit`].
     pub(crate) fn write_file(
         &mut self,
-        volume_id: VolumeId,
+        offset: u64,
         path: &str,
         contents: &[u8],
     ) -> Result<()> {
@@ -1137,18 +1198,18 @@ impl MediaState {
         if segments.is_empty() {
             return Err(Error::io("a file path is required".to_owned()));
         }
-        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
         fat.write_file(&mut composed, &segments, contents)
     }
 
     /// Ensures a directory exists, missing parents created and an
     /// existing directory succeeding unchanged. Buffered until commit.
-    pub(crate) fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
+    pub(crate) fn make_directory(&mut self, offset: u64, path: &str) -> Result<()> {
         self.require_writable()?;
         let segments = Self::split_path(path)?;
-        let (_, fat) = self.volume_at(volume_id)?;
         let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
         fat.make_directory(&mut composed, &segments)
     }
 
@@ -1274,12 +1335,21 @@ impl MediaState {
 mod tests {
     use super::*;
 
-    /// The volume a partitionless test image composes, named the only way
-    /// a caller can name one: from the report the library issued.
-    fn only_volume(disk: &mut MediaState) -> VolumeId {
-        let report = disk.inspect().expect("inspection reads");
+    /// The pool a partitionless test image bears, established the way a
+    /// load establishes one. These tests drive the state below the medium
+    /// tier, so they run the same act `Session::admit` runs.
+    fn pool_of(disk: &mut MediaState) -> PartitionPool {
+        let discovery = disk.check_scheme().expect("the scheme is checked");
+        PartitionPool::over_space(PartitionScheme::Mbr, &discovery, disk.size())
+    }
+
+    /// The extent the one partition of a partitionless test image
+    /// composes — the position the file verbs work within.
+    fn only_extent(disk: &mut MediaState) -> u64 {
+        let pool = pool_of(disk);
+        let report = disk.inspect(&pool).expect("inspection reads");
         assert_eq!(report.volumes.len(), 1, "these images compose one volume");
-        report.volumes[0].id
+        report.volumes[0].start_bytes
     }
     use crate::qcow2::QCOW2_MAGIC;
     use std::process::Command;
@@ -1341,12 +1411,14 @@ mod tests {
         assert!(matches!(disk.format(), DiskFormat::Qcow2 { version: 3 }));
         assert_eq!(disk.size(), virtual_size);
 
-        let report = disk.inspect().expect("inspection reads");
+        let pool = pool_of(&mut disk);
+        let report = disk.inspect(&pool).expect("inspection reads");
         assert_eq!(report.volumes.len(), 1);
-        let volume = report.volumes[0].id;
+        let composed = report.volumes[0].id;
+        let volume = report.volumes[0].start_bytes;
         assert_eq!(
             report
-                .filesystem_on(volume)
+                .filesystem_on(composed)
                 .and_then(|fs| fs.label.as_ref())
                 .and_then(|label| label.name.clone()),
             Some("REMANENCE".to_owned())
@@ -1462,12 +1534,14 @@ mod tests {
             "a dynamic image is smaller than the disk it presents"
         );
 
-        let report = disk.inspect().expect("inspection reads");
+        let pool = pool_of(&mut disk);
+        let report = disk.inspect(&pool).expect("inspection reads");
         assert_eq!(report.volumes.len(), 1);
-        let volume = report.volumes[0].id;
+        let composed = report.volumes[0].id;
+        let volume = report.volumes[0].start_bytes;
         assert_eq!(
             report
-                .filesystem_on(volume)
+                .filesystem_on(composed)
                 .and_then(|fs| fs.label.as_ref())
                 .and_then(|label| label.name.clone()),
             Some("REMANENCE".to_owned())
@@ -1514,7 +1588,7 @@ mod tests {
     fn build_committed_raw(path: &std::path::Path) {
         std::fs::write(path, fat16_volume_bytes()).expect("image writes");
         let mut disk = MediaState::open(path, AccessIntent::Write).expect("opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
         disk.commit().expect("commits");
@@ -1541,7 +1615,7 @@ mod tests {
         let mut disk =
             MediaState::open(std::path::PathBuf::from(path), AccessIntent::Write)
                 .expect("child opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("child overwrites");
         disk.commit().expect("child commits");
@@ -1568,7 +1642,7 @@ mod tests {
     fn build_committed_qcow2(path: &std::path::Path) {
         build_fat16_qcow2(path);
         let mut disk = MediaState::open(path, AccessIntent::Write).expect("opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
         disk.commit().expect("commits old state");
@@ -1577,7 +1651,7 @@ mod tests {
     fn build_committed_vdi(path: &std::path::Path) {
         build_fat16_vdi(path);
         let mut disk = MediaState::open(path, AccessIntent::Write).expect("opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
         disk.commit().expect("commits old state");
@@ -1616,7 +1690,7 @@ mod tests {
         std::fs::write(&base, base_image).expect("base writes");
 
         let mut base_disk = MediaState::open(&base, AccessIntent::Write).expect("base opens");
-        let volume = only_volume(&mut base_disk);
+        let volume = only_extent(&mut base_disk);
         base_disk
             .write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
@@ -1634,7 +1708,7 @@ mod tests {
         let top = directory.join("top.qcow2");
         let virtual_size = build_fat16_qcow2(&base);
         let mut base_disk = MediaState::open(&base, AccessIntent::Write).expect("base opens");
-        let volume = only_volume(&mut base_disk);
+        let volume = only_extent(&mut base_disk);
         base_disk
             .write_file(volume, "OLD.BIN", &old_content())
             .expect("writes old state");
@@ -1696,7 +1770,7 @@ mod tests {
 
                 let mut reopened = MediaState::open(&path, AccessIntent::Read)
                     .unwrap_or_else(|error| panic!("{shape}/{boundary} reopens: {error}"));
-                let volume = only_volume(&mut reopened);
+                let volume = only_extent(&mut reopened);
                 let content = reopened
                     .read_file(volume, "OLD.BIN")
                     .unwrap_or_else(|error| panic!("{shape}/{boundary} reads: {error}"));
@@ -1766,7 +1840,7 @@ mod tests {
         let path = temp_image("streamed-verbs");
         std::fs::write(&path, fat16_volume_bytes()).expect("image writes");
         let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
 
         // Streamed replace: size the file, then write it in chunks.
         let contents = new_content();
@@ -1841,7 +1915,7 @@ mod tests {
         // commit's capture all evict and spill constantly (P27), and
         // the result is byte-identical to an unbounded run.
         let mut disk = MediaState::open_with_cache(&path, AccessIntent::Write, 1).expect("opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
         assert!(disk.is_modified());
@@ -1866,7 +1940,7 @@ mod tests {
 
         let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
 
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "NEW.BIN", &new_content())
             .expect("writes");
         disk.commit().expect("commits");
@@ -1902,7 +1976,7 @@ mod tests {
         let mut reopened =
             MediaState::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!sidecar.exists(), "the torn sidecar is discarded");
-        let volume = only_volume(&mut reopened);
+        let volume = only_extent(&mut reopened);
         assert_eq!(
             reopened
                 .read_file(volume, "OLD.BIN")
@@ -1920,7 +1994,7 @@ mod tests {
 
         let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
 
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &new_content())
             .expect("overwrites");
         let (blocks, new_len) = stage_and_arm(&mut disk);
@@ -1973,7 +2047,7 @@ mod tests {
 
         let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
 
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "NEW.BIN", &new_content())
             .expect("writes");
         let (blocks, new_len) = stage_and_arm(&mut disk);
@@ -2018,7 +2092,7 @@ mod tests {
 
         // The wholly-old state: one committed file inside the qcow2.
         let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
         disk.commit().expect("commits");
@@ -2046,7 +2120,7 @@ mod tests {
         let mut reopened =
             MediaState::open(&path, AccessIntent::Read).expect("reconciles and opens");
         assert!(!crate::journal::sidecar_path(&path).exists());
-        let volume = only_volume(&mut reopened);
+        let volume = only_extent(&mut reopened);
         assert_eq!(
             reopened.stat(volume, "NEW.BIN").expect("stats"),
             None
@@ -2073,7 +2147,7 @@ mod tests {
         ));
         let virtual_size = build_fat16_qcow2(&base);
         let mut disk = MediaState::open(&base, AccessIntent::Write).expect("opens");
-        let volume = only_volume(&mut disk);
+        let volume = only_extent(&mut disk);
         disk.write_file(volume, "OLD.BIN", &old_content())
             .expect("writes");
         disk.commit().expect("commits");

@@ -65,18 +65,6 @@ pub(crate) trait FilesystemAdapter: Sync {
     }
 }
 
-/// What the catalog made of one medium: nothing, one adapter, or several
-/// that tied.
-///
-/// The tie is not resolved here. Transparency is claimed only where a
-/// seam has exactly one supported answer (P19), so several candidates
-/// reach the resolver as candidates and are refused by name there.
-pub(crate) enum CatalogRecognition {
-    None,
-    One(&'static dyn FilesystemAdapter),
-    Several(Vec<&'static str>),
-}
-
 struct FilesystemCatalog<'a> {
     adapters: &'a [&'a dyn FilesystemAdapter],
 }
@@ -264,20 +252,29 @@ pub(crate) fn detect(volume: &mut dyn Device) -> Result<FilesystemIdentification
     FilesystemCatalog::new(&BUILT_INS).detect(volume)
 }
 
-/// Which enrolled adapter, if any, claims the namespace `volume` bears.
+/// The enrolled adapter a declaration names, or the refusal naming what
+/// this release reads (P3).
 ///
-/// This is [`detect`]'s answer kept executable rather than flattened to a
-/// name: the resolver needs the adapter itself, because the adapter that
-/// recognized a namespace is the one that opens it.
-pub(crate) fn recognize(volume: &mut dyn Device) -> Result<CatalogRecognition> {
-    let (_, mut candidates) = FilesystemCatalog::new(&BUILT_INS).strongest(volume)?;
-    Ok(match candidates.len() {
-        0 => CatalogRecognition::None,
-        1 => CatalogRecognition::One(candidates.pop().expect("one candidate").0),
-        _ => CatalogRecognition::Several(
-            candidates.into_iter().map(|(adapter, _)| adapter.id()).collect(),
-        ),
-    })
+/// **A declared reading is resolved here and verified by the adapter it
+/// names.** Nothing in this module picks a reading for a caller any
+/// more: the catalog's probes exist to identify an artifact's layers,
+/// and reading a namespace runs under a declaration.
+pub(crate) fn by_id(id: &str) -> Result<&'static dyn FilesystemAdapter> {
+    BUILT_INS
+        .iter()
+        .copied()
+        .find(|adapter| adapter.id() == id)
+        .ok_or_else(|| {
+            let claimed: Vec<&str> = BUILT_INS.iter().map(|adapter| adapter.id()).collect();
+            Error::categorized_io(
+                ErrorCategory::Unsupported,
+                format!(
+                    "'{id}' names no namespace adapter enrolled here; the \
+                     enrolled ones are {}",
+                    claimed.join(", ")
+                ),
+            )
+        })
 }
 
 #[cfg(test)]

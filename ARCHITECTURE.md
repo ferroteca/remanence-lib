@@ -56,12 +56,14 @@ never reused.
   `AttachmentId` and `DeviceFamily` — the device being the slot, with
   `insert`/`eject` the one edge between configuration and state —
   `Claim` beside the access mode,
+  `Partition`, `PartitionView`, `PartitionScheme` and `PartitionType` —
+  the partition pool being the medium's evidence, reached by the
+  scheme's own ordinal, with the two vantage doors on the view —
   `StorageSpace`, `File` and the `Entry` vocabulary — the volume and
   filesystem being two vantage traits on one node, addressable I/O and
   namespace I/O, with the file verbs living there and nowhere else —
   `Identification` and the layer/layout types,
   `Assurance` and the outcome, condition and byte-range types beside it,
-  `Archive` and `ArchiveEntry`,
   `Error`/`ErrorCategory`/`Result` and the rule sets refusals name,
   `DosMachine` and the drive-letter mapping it composes, and
   the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo
@@ -422,14 +424,16 @@ ambiguous paths are exposed or refused explicitly rather than flattened or
 guessed.
 
 **File access lives on one node and nowhere else.** The type that carries
-the file verbs is the namespace itself; a device or a volume may be asked
-what it *resolves* to, and may not be told to act as something it isn't —
-a device bearing `get_file` would be a category error in the type rather
-than a refusal waiting to happen.
+the file verbs is the namespace itself; a medium, a partition or a volume
+may be asked what it *composes*, and may not be told to act as something
+it isn't — a medium bearing `get_file` would be a category error in the
+type rather than a refusal waiting to happen.
 
-When every applicable seam has one supported result, composition is
-transparent: a simple legacy floppy image resolves to its filesystem
-without asking the caller to select the intervening layers.
+**The walk is uniform.** Every medium bears a partition its content is
+reached through, so one path serves whatever a medium turns out to be: a
+medium recording no partition scheme bears the library's own composition
+of the whole content, declared as such, and a caller who knows nothing
+about partitions still takes the step every other caller takes.
 Drive and mechanism emulation are not constructed merely to reach files.
 
 P19 is the usual high-level destination, not a universal content model. A

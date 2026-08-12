@@ -6,10 +6,10 @@
 //! private session storage, and either way the device serves bounded
 //! reads without the entry resident whole.
 //!
-//! The journey itself is the model's: the archive is a medium loaded
-//! into an archive-family device, its entries are the namespace that
-//! device resolves to, and an entry recognized as an artifact of its own
-//! is loaded into a device of its own. These tests build their zip by
+//! The journey itself is the model's: the archive is a medium loaded by
+//! a declared reading, its entries are the namespace the direct
+//! partition it bears opens onto, and an entry recognized as an artifact
+//! of its own is a medium of its own. These tests build their zip by
 //! hand, so they run without fixtures.
 
 use remanence::{
@@ -19,9 +19,9 @@ use remanence::{
 mod common;
 use common::open_read;
 
-/// Attaches `path` to a fresh session and returns both, because a medium
-/// is reachable only through the device holding it (P32). Tests keep the
-/// session alive for as long as they use the medium.
+/// Pools `path` under its declared grammar and answers with the session
+/// and the archive's identity: a medium lives in its session's pool, so
+/// tests keep the session alive for as long as they use the medium.
 fn archive_session(
     path: impl AsRef<std::path::Path>,
 ) -> remanence::Result<(Session, MediaId)> {
@@ -30,9 +30,9 @@ fn archive_session(
     Ok((session, id))
 }
 
-/// The nested journey: the archive into its own device, the entry named
-/// through the namespace that device bears, and the artifact it holds
-/// loaded into a drive **in a machine of its own** — the host's archive
+/// The nested journey: the archive pooled, the entry named through the
+/// namespace it bears, and the artifact it holds pooled in turn and
+/// seated in a drive **in a machine of its own** — the host's archive
 /// was never part of the machine whose disk it holds.
 fn load_entry(
     path: impl AsRef<std::path::Path>,
@@ -42,7 +42,10 @@ fn load_entry(
     let discovery = session
         .medium_mut(archive)
         .expect("the archive is pooled")
-        .filesystem()?
+        .partition(0)
+        .expect("an archive bears its direct partition")
+        .filesystem()
+        .expect("an archive's content is its namespace")
         .get_file(entry)?
         .discover()?;
     let disk = session.load_discovery(discovery)?.id();
@@ -194,7 +197,11 @@ fn the_archive_lists_its_entries_without_touching_their_data() {
     let device = session.medium_mut(archive).expect("the medium is pooled");
     assert_eq!(device.image_size_bytes(), zip.len() as u64);
 
-    let mut namespace = device.filesystem().expect("an archive is its namespace");
+    let mut namespace = device
+        .partition(0)
+        .expect("an archive bears its direct partition")
+        .filesystem()
+        .expect("an archive's content is its namespace");
     assert_eq!(namespace.kind().expect("a kind"), "zip");
     assert!(namespace.has_namespace());
     assert!(
@@ -270,8 +277,9 @@ fn an_archived_image_now_inspects_and_refuses_writes_by_name() {
 #[test]
 fn an_archive_writes_nothing_whatever_the_handle_affords() {
     // Read-only, as archives are: a write would have to be encoded back
-    // into the archive's own grammar and no adapter claims that (P13),
-    // so the refusal names it rather than degrading to read-only.
+    // into the archive's own grammar and no adapter claims that (P13).
+    // The caller's handle decides nothing here — what it affords is a
+    // fact about their open, and the archive writes nothing either way.
     let expected = payload();
     let zip = build_zip("disk.h8d", 0, &expected, IMAGE_LEN as u32);
     let path = temp_zip("nowrite", &zip);
@@ -286,8 +294,10 @@ fn an_archive_writes_nothing_whatever_the_handle_affords() {
     let error = session
         .medium_mut(archive)
         .expect("the medium is pooled")
+        .partition(0)
+        .expect("an archive bears its direct partition")
         .filesystem()
-        .expect("an archive is its namespace")
+        .expect("an archive's content is its namespace")
         .write_file("disk.h8d", b"denied")
         .expect_err("no adapter encodes an archive back into its grammar");
     let message = error.to_string();
@@ -302,37 +312,59 @@ fn an_archive_writes_nothing_whatever_the_handle_affords() {
 
 #[test]
 fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
-    // F43's acceptance list: the merge must not have lost the P27 bound
-    // the HDOS reader is held to. HDOS lives on small vintage disks, so
-    // anything past the bound is refused by its size alone — the point
-    // being that the refusal happens before a byte is materialized, not
-    // after a large image has been read whole.
+    // F43's acceptance list: the P27 bound the HDOS reader is held to
+    // must survive. The bound is the **adapter's own** and always was —
+    // a declaration names an adapter, and the adapter says how much of
+    // an extent it is willing to hold — so it now bites at the declared
+    // open rather than inside a walk that picked HDOS for the caller.
+    // HDOS lives on small vintage disks, and the point of the bound is
+    // that a medium past it is refused before a byte is materialized,
+    // not after a large image has been read whole.
+    const IMAGE_BYTES: usize = 9 * 1024 * 1024;
+    // `HDOS_BOUND` in the filesystem seam — the adapter's own claim
+    // about how much of an extent it is willing to hold.
+    const READER_BOUND: usize = 8 * 1024 * 1024;
     let path = std::env::temp_dir().join(format!(
         "remanence-hdos-bound-{}.img",
         std::process::id()
     ));
-    std::fs::write(&path, vec![0u8; 9 * 1024 * 1024]).expect("oversized image writes");
+    std::fs::write(&path, vec![0u8; IMAGE_BYTES]).expect("oversized image writes");
 
     let mut session = Session::new();
     let medium = session
         .load_media(open_read(&path), Format::Raw)
         .expect("the image itself opens; only the HDOS reader is bounded");
 
-    // The medium composes no volume, so the resolver would look for a
-    // namespace the medium bears itself — and that lookup is bounded
-    // (P27), so a medium this size is a named absence rather than a full
-    // scan.
-    let error = medium
-        .filesystem()
-        .expect_err("a medium past the bound is refused");
-    assert_eq!(error.category(), ErrorCategory::NotFound);
+    // The medium records no scheme, so the direct partition addresses
+    // the whole nine mebibytes — there is nothing wrong with the extent,
+    // only with asking this adapter to hold it.
+    let direct = medium.partition(0).expect("the direct partition");
+    assert!(direct.is_direct(), "no scheme was recorded here");
     assert_eq!(
-        error.rule(),
-        Some(SpaceRule::NoNamespace.as_str()),
-        "the resolver's refusals carry their rule identity (P10)"
+        direct.partition().length_bytes(),
+        Some(IMAGE_BYTES as u64),
+        "the direct partition is composed over the whole content"
     );
+
+    let error = medium
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("hdos")
+        .expect_err("an extent past the reader's bound is refused");
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();
-    assert!(message.contains("bound"), "names the bound: {message}");
+    assert!(
+        message.contains("hdos"),
+        "the refusal is attributed to the adapter that made it (P4): {message}"
+    );
+    assert!(
+        message.contains(&IMAGE_BYTES.to_string()),
+        "names what was asked of it: {message}"
+    );
+    assert!(
+        message.contains(&READER_BOUND.to_string()),
+        "and the bound it is held to: {message}"
+    );
 
     drop(session);
     std::fs::remove_file(&path).ok();

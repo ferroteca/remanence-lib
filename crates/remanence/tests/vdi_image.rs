@@ -13,20 +13,21 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessMode, DiskFormat, ErrorCategory, Format, LayerKind, MediaId, Medium, Session, VolumeId,
+    AccessMode, DiskFormat, ErrorCategory, Format, LayerKind, MediaId, Medium, Session,
 };
 
-/// The space on one volume of `medium`, selected by the identity the
-/// inspection report issued. One node, both vantages: `medium.volume(id)`
-/// answers with the addressable extent and the namespace together, and
-/// the file verbs live on it and nowhere else (P19).
-fn fs(
-    medium: &mut remanence::Medium,
-    volume: remanence::VolumeId,
-) -> remanence::StorageSpace<'_> {
-    medium
-        .volume(volume)
-        .expect("the report issued this volume")
+/// The space one partition of `medium` composes, reached through the
+/// door that opens on it. One node, both vantages (D26), and the file
+/// verbs live on it and nowhere else (P19).
+fn fs(medium: &mut remanence::Medium, ordinal: u32) -> remanence::StorageSpace<'_> {
+    let partition = medium
+        .partition(ordinal)
+        .expect("the pool bears this partition");
+    if partition.partition().bears_namespace() {
+        partition.filesystem().expect("the declared type determines one")
+    } else {
+        partition.filesystem_as("fat").expect("these images are FAT")
+    }
 }
 
 /// Pools `path` in a fresh session under the declaration these tests
@@ -64,12 +65,27 @@ fn temp_path(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("remanence-vdi-{tag}-{}-{nonce}.vdi", std::process::id()))
 }
 
-/// The one volume a synthetic image composes, named the only way a caller
-/// can name one: from the report the library issued.
-fn only_volume(disk: &mut Medium) -> VolumeId {
-    let report = disk.inspect().expect("inspection reads");
-    assert_eq!(report.volumes.len(), 1, "these images compose one volume");
-    report.volumes[0].id
+/// The ordinal these images' content is reached through. A synthetic
+/// image here carries a bare FAT16 volume and records no partition
+/// scheme, so its pool bears exactly one member — the direct partition at
+/// ordinal 0, the library's own composition of the whole content, carried
+/// as provenance and never as evidence (P16, P17).
+fn only_partition(disk: &Medium) -> u32 {
+    let partitions = disk.partitions();
+    assert_eq!(
+        partitions.len(),
+        1,
+        "these images record no scheme, so the pool bears one partition"
+    );
+    assert!(
+        partitions[0].is_direct(),
+        "and that one is the library's own composition, not a table entry"
+    );
+    assert!(
+        partitions[0].volume_id().is_some(),
+        "which still composes the one volume the report issues for it"
+    );
+    partitions[0].ordinal()
 }
 
 /// A minimal FAT16 volume: 512-byte sectors, 1 sector/cluster, 2 FATs of
@@ -259,8 +275,8 @@ fn committed_base(directory: &std::path::Path, create: &[u8; 16], content: &[u8]
 
     let (mut session, at) = attach(&path, Afford::Write).expect("base opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    fs(disk, volume).write_file("BASE.BIN", content).expect("write");
+    let partition = only_partition(disk);
+    fs(disk, partition).write_file("BASE.BIN", content).expect("write");
     disk.commit().expect("commit");
     drop(session);
     (path, volume_bytes.len() as u64)
@@ -325,10 +341,10 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
     assert_eq!(disk.size().expect("a medium is pooled"), virtual_size);
     assert_eq!(disk.mode(), AccessMode::ReadWrite);
 
-    let volume = only_volume(disk);
+    let partition = only_partition(disk);
     let contents: Vec<u8> = (0..40_000u32).map(|n| (n % 251) as u8).collect();
-    fs(disk, volume).make_directory("GUEST").expect("mkdir");
-    fs(disk, volume).write_file("GUEST/PAYLOAD.BIN", &contents)
+    fs(disk, partition).make_directory("GUEST").expect("mkdir");
+    fs(disk, partition).write_file("GUEST/PAYLOAD.BIN", &contents)
         .expect("write");
     assert!(disk.is_modified());
     assert_eq!(
@@ -348,7 +364,7 @@ fn a_dynamic_vdi_reads_writes_and_commits_as_any_other_image_does() {
         attach(&path, Afford::Read).expect("image reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     assert_eq!(
-        fs(reopened, volume).read_file("GUEST/PAYLOAD.BIN")
+        fs(reopened, partition).read_file("GUEST/PAYLOAD.BIN")
             .expect("read"),
         contents
     );
@@ -365,17 +381,22 @@ fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
     assert_eq!(disk.format().expect("a medium is pooled"), DiskFormat::Vdi { major: 1, minor: 1 });
     assert_eq!(disk.size().expect("a medium is pooled"), volume_bytes.len() as u64);
 
-    let volume = only_volume(disk);
+    let partition = only_partition(disk);
+    let volume = disk.partitions()[0]
+        .volume_id()
+        .expect("the direct partition composes the volume the report issues");
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(
         report
             .filesystem_on(volume)
             .and_then(|fs| fs.label.as_ref())
             .and_then(|label| label.name.clone()),
-        Some("REMANENCE".to_owned())
+        Some("REMANENCE".to_owned()),
+        "the identity the partition carries is the one the report files its \
+         filesystem under (P21, U4)"
     );
 
-    fs(disk, volume).write_file("FIXED.BIN", b"written in place")
+    fs(disk, partition).write_file("FIXED.BIN", b"written in place")
         .expect("write");
     disk.commit().expect("commit");
     drop(session);
@@ -384,7 +405,7 @@ fn a_fixed_vdi_presents_the_same_disk_a_dynamic_one_does() {
         attach(&path, Afford::Read).expect("image reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
     assert_eq!(
-        fs(reopened, volume).read_file("FIXED.BIN").expect("read"),
+        fs(reopened, partition).read_file("FIXED.BIN").expect("read"),
         b"written in place"
     );
     drop(reopened_session);
@@ -398,8 +419,8 @@ fn reading_a_dynamic_vdi_allocates_nothing() {
 
     let (mut session, at) = attach(&path, Afford::Read).expect("image opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    assert!(fs(disk, volume).entries("").expect("listing reads").is_empty());
+    let partition = only_partition(disk);
+    assert!(fs(disk, partition).entries("").expect("listing reads").is_empty());
 
     // A read that crosses the unallocated blocks: it answers with zeroes
     // and touches nothing (P2).
@@ -407,7 +428,7 @@ fn reading_a_dynamic_vdi_allocates_nothing() {
     disk.read_at(before.len() as u64 - 4096, &mut probe)
         .expect("bounded read");
     assert!(
-        fs(disk, volume).write_file("NO.BIN", b"denied").is_err(),
+        fs(disk, partition).write_file("NO.BIN", b"denied").is_err(),
         "a read session denies write actions"
     );
     drop(session);
@@ -490,14 +511,14 @@ fn a_differencing_chain_composes_as_one_disk() {
 
     // Every block is free in the top image, so the volume, its listing
     // and its files are all the parent's, read through (U6).
-    let volume = only_volume(disk);
+    let partition = only_partition(disk);
     assert_eq!(
-        fs(disk, volume).read_file("BASE.BIN").expect("read through"),
+        fs(disk, partition).read_file("BASE.BIN").expect("read through"),
         base_content
     );
 
     let added: Vec<u8> = (0..70_000u32).map(|n| (n % 241) as u8).collect();
-    fs(disk, volume).write_file("TOP.BIN", &added).expect("write");
+    fs(disk, partition).write_file("TOP.BIN", &added).expect("write");
     disk.commit().expect("commit");
     drop(session);
 
@@ -510,14 +531,14 @@ fn a_differencing_chain_composes_as_one_disk() {
     let (mut reopened_session, reopened_at) =
         attach(&top, Afford::Read).expect("the chain reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
-    let volume = only_volume(reopened);
+    let partition = only_partition(reopened);
     assert_eq!(
-        fs(reopened, volume).read_file("TOP.BIN").expect("read"),
+        fs(reopened, partition).read_file("TOP.BIN").expect("read"),
         added,
         "what the top image took is read back from the top image"
     );
     assert_eq!(
-        fs(reopened, volume).read_file("BASE.BIN").expect("read"),
+        fs(reopened, partition).read_file("BASE.BIN").expect("read"),
         base_content,
         "and what it never took still reads through to the parent"
     );

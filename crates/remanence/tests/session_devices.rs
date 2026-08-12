@@ -464,6 +464,39 @@ fn two_media_keep_their_volume_identities_medium_scoped() {
     );
     assert_ne!(first, second, "and so is the pool identity");
 
+    // The ordinal is the scheme's evidence and the identity is still the
+    // library's, and the two answer alike here for different reasons. The
+    // partition pools carry the same ordinals because each disk was read
+    // on its own terms — a megabyte of zeroes records no scheme, so each
+    // bears the library's own composition of the whole content at ordinal
+    // 0 (P16) — while the identities their reports issue are compared
+    // exactly as they were before any pool existed (P21).
+    let ordinals_of = |session: &Session, media: MediaId| -> Vec<u32> {
+        session
+            .medium(media)
+            .expect("the pool kept it")
+            .partitions()
+            .iter()
+            .map(|partition| partition.ordinal())
+            .collect()
+    };
+    assert_eq!(
+        ordinals_of(&session, first),
+        ordinals_of(&session, second),
+        "the ordinals are each scheme's own, and neither is qualified by \
+         the drive its medium sits in"
+    );
+    assert!(
+        session
+            .medium(first)
+            .expect("the pool kept it")
+            .partitions()
+            .iter()
+            .all(|partition| partition.is_direct() && partition.provenance().is_some()),
+        "and where no scheme was recorded, the pool says in its own words \
+         that what stands there is a composition act rather than evidence"
+    );
+
     drop(session);
     std::fs::remove_file(&a).ok();
     std::fs::remove_file(&b).ok();
@@ -471,8 +504,9 @@ fn two_media_keep_their_volume_identities_medium_scoped() {
 
 #[test]
 fn a_medium_is_claimed_by_the_callers_own_open() {
-    // P7 as amended: whoever opens owns the lock. The caller's own open
-    // is the claim, and the library asks it exactly one question.
+    // P7 as amended: whoever opens owns the lock. The caller's exclusive
+    // write open is the claim, and it holds for as long as the session
+    // holds the medium — through an eject, which severs and nothing more.
     let a = write_image("claim");
     let mut session = Session::new();
 
@@ -535,7 +569,9 @@ fn a_declaration_the_evidence_cannot_bear_is_refused_by_name() {
 fn a_flux_family_artifact_is_refused_whatever_was_declared() {
     // P13: the raw reading opens anything, so without this check a P64
     // loaded happily and read as raw — declaring the block layer
-    // authoritative when P64's own adapter declares flux.
+    // authoritative when P64's own adapter declares flux. No device in
+    // this release holds flux state; the artifact is reached through its
+    // own type.
     let path = temp_path("flux-artifact");
     let mut bytes = b"P64-1541".to_vec();
     bytes.extend_from_slice(&[0u8; 1024]);

@@ -49,39 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F56 — The partition pool and the vantage doors
-
-Partitions become the medium's evidence pool: `partition(n)` by the
-scheme's own ordinal, `partitions()`, the `partition_scheme` attribute,
-and the **direct partition** — the library's composition of the whole
-content where no scheme exists, declared as synthetic in provenance and
-never as evidence, extent-less over namespace-native media. A partition
-carries its raw type byte beside a reading (U4), `active()`, and
-`as_type(PartitionType::…)` as a declared reading checked against the
-byte. The vantage doors land: `volume()` and `filesystem()`, each
-`Option`, both handing out the **one** `StorageSpace` the partition
-composes — and everything behind them is specified, never probed: the
-pool populates under the device spec, kind-determined for every type —
-the hard-drive class by its spec's scheme, checked at load, the
-schemeless types by the direct partition — and the namespace vantage
-opens under the declared partition type where it determines one, or
-`filesystem_as` where nothing does, P18's recognizers verifying
-declarations rather than probing for readings.
-The `medium.filesystem()` resolver and `volume(id)` selector are
-deleted; in-force P19's transparency clause is amended in the same
-change — uniformity of the walk replaces resolve-without-selecting —
-and `DiskReport` demotes to a derived view.
-
-**It rehomes the one delivered door that has nowhere else to be.** The
-CBM DOS filesystem reads today through `C1541Sectors::filesystem()`,
-that layer being where a flux recording could be reached at all before
-media were pool-held; the adapter, its label and its evidence are
-delivered and move with the door rather than being rewritten, and the
-sector layer keeps carrying no file verbs of its own either way.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P4, P16,
-P17, P18, P19 (as amended here), P21; U4, U26–U29, U31, U34.
-
 ## F57 — Device types, and the articles they compose
 
 The catalog gains the **device type**: one identity per medium naming
@@ -154,7 +121,7 @@ family convention can make refuses by name and the answer grows the
 declaration (P29, nothing unnamed). The result is a `Commodore1541` medium with
 the verdicts, policy and declared-loss account as provenance.
 `Format::P64` loads the served form straight in — the one format id
-F53's declared set did not carry, because a P64 answers with a flux
+F53's declared set does not carry, because a P64 answers with a flux
 medium and that is this feature's own substance (D31). `bitstream()` and
 `bytestream()` become argument-free — the type carries the channel and
 codec (P30 reached through the type) — and the standalone `CaptureSet`

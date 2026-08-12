@@ -13,7 +13,9 @@ use remanence::{
 mod common;
 use common::open_read;
 
-/// Pools `path` in a fresh session under the h8d declaration.
+/// Pools `path` in a fresh session under the h8d declaration and returns
+/// both: a medium lives in its session's pool, so tests keep the session
+/// alive for as long as they use the medium.
 fn attach(
     path: impl AsRef<std::path::Path>,
 ) -> remanence::Result<(Session, MediaId)> {
@@ -34,7 +36,10 @@ fn attach_entry(
     let discovery = session
         .medium_mut(arc)
         .expect("the archive is pooled")
-        .filesystem()?
+        .partition(0)
+        .expect("an archive bears its direct partition")
+        .filesystem()
+        .expect("an archive's content is its namespace")
         .get_file(entry)?
         .discover()?;
     let disk = session.load_discovery(discovery)?.id();
@@ -131,12 +136,8 @@ fn identifies_the_image_inside_the_zip_fixture() {
     assert_eq!(layout.entry_name, IMAGE_NAME);
     assert_eq!(layout.uncompressed_size, Some(102_400));
     assert_eq!(identification.layers.len(), 4);
-    assert_eq!(
-        std::fs::canonicalize(disk.path().expect("this host names its handles"))
-            .expect("resolves"),
-        std::fs::canonicalize(&zip_path).expect("resolves")
-    );
-    assert_eq!(disk.image_path(), Some(PathBuf::from(IMAGE_NAME).as_path()));
+    assert_eq!(disk.path().expect("a medium is pooled"), zip_path.display().to_string());
+    assert_eq!(disk.image_path().expect("a medium is pooled"), PathBuf::from(IMAGE_NAME));
     assert_hdos_identification(&identification);
 
     drop(disk_session);
@@ -145,10 +146,10 @@ fn identifies_the_image_inside_the_zip_fixture() {
 
 #[test]
 fn the_zip_itself_is_an_archive_medium_and_not_the_disk_inside_it() {
-    // The path names a file, and this file is an archive: loading it
-    // loads the archive, whose content is a namespace. Which member is
-    // wanted is asked of that namespace rather than guessed at because
-    // there happens to be exactly one.
+    // The declaration names a grammar, and this artifact is an archive:
+    // loading it loads the archive, whose content is a namespace. Which
+    // member is wanted is asked of that namespace rather than guessed at
+    // because there happens to be exactly one.
     let zip_path = private_copy(ZIP_NAME, "explicit");
 
     let mut session = Session::new();
@@ -162,8 +163,10 @@ fn the_zip_itself_is_an_archive_medium_and_not_the_disk_inside_it() {
     assert_eq!(identification.layers[0].name, "ZIP archive");
 
     let entries = device
+        .partition(0)
+        .expect("an archive bears its direct partition")
         .filesystem()
-        .expect("an archive is its namespace")
+        .expect("an archive's content is its namespace")
         .entries("")
         .expect("the root lists");
     assert_eq!(entries.len(), 1);

@@ -54,23 +54,37 @@
 //! bytes, while [`Medium::inspect`] works over the disk a format adapter
 //! presents above them.
 //!
-//! **File access lives on one node.** [`Medium::filesystem`]
-//! resolves medium → volume → filesystem where every seam has exactly
-//! one supported answer and refuses naming the candidates where one does
-//! not; [`Medium::volume`] selects by the identity the inspection
-//! report issued where several exist. The verbs — [`StorageSpace::entries`],
-//! [`StorageSpace::stat`], [`StorageSpace::get_file`] and their kin — live
-//! on the [`StorageSpace`] the resolver answers with, and the medium
-//! carries none of them.
+//! **Content is reached through the partition that composes it.**
+//! [`Medium::partition`] answers by the scheme's own ordinal,
+//! [`Medium::partitions`] is the pool and [`Medium::partition_scheme`]
+//! the scheme it was populated under — all of it established at the load
+//! and evidence from then on, never probed for on demand. A medium
+//! recording no scheme bears the **direct partition** at ordinal 0: the
+//! library's own composition of the whole content, carried as provenance
+//! and never as evidence. A [`Partition`] states its raw type value
+//! beside a reading of what that value declares, whether the scheme
+//! flags it active, and [`PartitionView::as_type`] checks a caller's own
+//! reading against the recorded byte.
+//!
+//! **File access lives on one node.** The vantage doors —
+//! [`PartitionView::volume`] and [`PartitionView::filesystem`], each
+//! `Option` — hand out the one [`StorageSpace`] the partition composes,
+//! and the verbs ([`StorageSpace::entries`], [`StorageSpace::stat`],
+//! [`StorageSpace::get_file`] and their kin) live there and nowhere
+//! else. Both doors are lookups, because everything behind them was
+//! specified and verified: the namespace opens under the declared
+//! partition type where one determines it, and under
+//! [`PartitionView::filesystem_as`] — the caller's reading, the
+//! library's check — where nothing does.
 //!
 //! **An archive is a medium like any other.** It is loaded by its
 //! declared grammar ([`Format::Zip`], [`Format::SevenZip`]), may be
 //! seated in an archive-family device
 //! ([`DeviceFamily::ARCHIVE_DEVICE`]), and its content is walked through
-//! the [`StorageSpace`] it resolves to — a namespace with no addressed
-//! extent beneath it. An entry recognized as an artifact of its own is
-//! opened by [`File::discover`] and becomes a medium of its own, which
-//! is the one recursion this model has.
+//! the namespace door of the direct partition it bears — a namespace
+//! with no addressed extent beneath it. An entry recognized as an
+//! artifact of its own is opened by [`File::discover`] and becomes a
+//! medium of its own, which is the one recursion this model has.
 //!
 //! **The flux family's physical stratum is reached through its own
 //! type.** [`RemanenceImage`] opens a `.remanence` artifact and answers
@@ -103,12 +117,13 @@
 //! that ends, and it ends by stating what it derives — every record
 //! carrying its evidence, and [`C1541Sectors::read_sector`] refusing by
 //! name (its own [`SectorRule`] set) rather than filling in a block the
-//! recording does not hold. [`C1541Sectors::filesystem`] is the rung
-//! above that: a recording bearing CBM DOS resolves to the same
-//! [`StorageSpace`] a disk image does, because the file verbs live on
-//! the namespace and on nothing else — carrying the BAM header as its
-//! label, the directory in the order it was written, and a size
-//! established by walking each file's chain.
+//! recording does not hold. [`C1541Sectors::partition`] is the rung
+//! above that: the direct partition over the recording, whose
+//! `filesystem_as("cbmdos")` answers the same [`StorageSpace`] a disk
+//! image's partition does, because the file verbs live on the namespace
+//! and on nothing else — carrying the BAM header as its label, the
+//! directory in the order it was written, and a size established by
+//! walking each file's chain.
 //!
 //! Every open also states what it established about the evidence beneath
 //! it ([`Medium::assurance`]): a source short of what its own
@@ -195,6 +210,7 @@ pub use evidence::DeclaredLoss;
 pub use fat::FatKind;
 pub use filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
 pub use machine::{Machine, MachineView, Session};
+pub use partition::{Partition, PartitionRule, PartitionScheme, PartitionType, PartitionView};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,

@@ -44,6 +44,9 @@ pub(crate) struct PartitionInfo {
     /// its number, so the rows behind it never renumber.
     pub(crate) number: u32,
     pub(crate) kind: PartitionKind,
+    /// Whether the table flags this entry active — the boot flag, read as
+    /// the schema records it and never derived from anything else.
+    pub(crate) active: bool,
     pub(crate) type_byte: u8,
     /// The pinned type name; `None` when the type byte is outside the
     /// claim — the issue then names the refusal.
@@ -157,6 +160,9 @@ pub(crate) fn declared_type_reading(type_byte: u8) -> &'static str {
 }
 
 struct RawEntry {
+    /// The boot flag exactly as the slot records it: `0x80` is active and
+    /// every other value is not.
+    active: bool,
     type_byte: u8,
     start_lba: u32,
     sectors: u32,
@@ -172,6 +178,7 @@ fn parse_entries(sector: &[u8; 512]) -> [RawEntry; 4] {
     core::array::from_fn(|i| {
         let at = 446 + i * 16;
         RawEntry {
+            active: sector[at] == 0x80,
             type_byte: sector[at + 4],
             start_lba: u32::from_le_bytes(sector[at + 8..at + 12].try_into().unwrap()),
             sectors: u32::from_le_bytes(sector[at + 12..at + 16].try_into().unwrap()),
@@ -254,6 +261,7 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
         partitions.push(PartitionInfo {
             number,
             kind: PartitionKind::Primary,
+            active: entry.active,
             type_byte: entry.type_byte,
             type_name: type_name.map(str::to_owned),
             start_bytes: entry.start_lba as u64 * SECTOR,
@@ -320,6 +328,7 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
             partitions.push(PartitionInfo {
                 number,
                 kind: PartitionKind::Logical,
+                active: logical.active,
                 type_byte: logical.type_byte,
                 type_name: type_name.map(str::to_owned),
                 start_bytes: (current + logical.start_lba as u64) * SECTOR,

@@ -698,7 +698,7 @@ fn volumes_of(
     virtual_size: u64,
     evidence: &mut Vec<String>,
 ) -> Result<Vec<DetectedFilesystem>> {
-    let spans: Vec<(Option<u32>, u64, u64)> = match crate::partition::discover(device)? {
+    let spans: Vec<(Option<u32>, u64, u64)> = match mbr::discover(device)? {
         mbr::Discovery::Blank => {
             evidence.push("virtual disk is blank (sector 0 all zero)".to_owned());
             Vec::new()

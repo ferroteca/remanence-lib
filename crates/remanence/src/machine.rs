@@ -140,8 +140,9 @@ impl Session {
     }
 
     /// Takes an opened medium into the pool, refusing an artifact this
-    /// release holds in no device before it is pooled at all.
-    fn admit(&mut self, state: MediumState) -> Result<&mut Medium> {
+    /// release holds in no device before it is pooled at all, and
+    /// establishing its partition pool in the same act.
+    fn admit(&mut self, mut state: MediumState) -> Result<&mut Medium> {
         // A flux artifact is refused whatever was declared: the block
         // reading opens anything at the raw adapter, and letting that
         // stand would declare the block layer authoritative where the
@@ -154,7 +155,12 @@ impl Session {
                 state.named()
             )));
         }
-        let id = self.media.admit(state);
+        // The evidence pool is established here, once, before anyone holds
+        // the medium: the scheme its kind names is checked against the
+        // content, and what the check answers is what the pool bears for
+        // the session's life (F56).
+        let partitions = state.establish_partitions()?;
+        let id = self.media.admit(state, partitions);
         Ok(self.media.get_mut(id).expect("just admitted"))
     }
 
@@ -582,7 +588,15 @@ impl<'a> MachineView<'a> {
         let discovery = discover_media_with_cache(path, intent, cache_bytes)?;
         let family = default_family(&discovery)?;
         let attachment = self.place(family, None)?;
-        let media = self.pool.admit(discovery.into_medium());
+        let mut state = discovery.into_medium();
+        let partitions = match state.establish_partitions() {
+            Ok(partitions) => partitions,
+            Err(error) => {
+                self.discard(attachment);
+                return Err(error);
+            }
+        };
+        let media = self.pool.admit(state, partitions);
         let mut device = self.device_mut(attachment).expect("just placed");
         match device.insert(media) {
             Ok(()) => Ok(self.device_mut(attachment).expect("just placed")),

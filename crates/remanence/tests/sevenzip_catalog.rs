@@ -32,7 +32,10 @@ fn load_member(
     let discovery = session
         .medium_mut(archive)
         .expect("the archive is pooled")
-        .filesystem()?
+        .partition(0)
+        .expect("an archive bears its direct partition")
+        .filesystem()
+        .expect("an archive's content is its namespace")
         .get_file(member)?
         .discover()?;
     let id = session.load_discovery(discovery)?.id();
@@ -84,7 +87,11 @@ fn the_namespace_lists_every_member_in_archive_order() {
     let device = session.medium_mut(archive).expect("the medium is pooled");
     assert_eq!(device.image_size_bytes(), ARCHIVE_BYTES);
 
-    let mut namespace = device.filesystem().expect("an archive is its namespace");
+    let mut namespace = device
+        .partition(0)
+        .expect("an archive bears its direct partition")
+        .filesystem()
+        .expect("an archive's content is its namespace");
     assert_eq!(namespace.kind().expect("a kind"), "7z");
     let entries = namespace.entries("").expect("the root lists");
 
@@ -202,8 +209,10 @@ fn a_corrupted_solid_folder_fails_closed() {
         session
             .medium_mut(archive)
             .expect("the medium is pooled")
+            .partition(0)
+            .expect("an archive bears its direct partition")
             .filesystem()
-            .expect("a namespace")
+            .expect("an archive's content is its namespace")
             .entries("")
             .expect("the root lists")
             .len(),
@@ -227,8 +236,10 @@ fn an_archive_of_many_members_is_one_medium_with_many_names() {
     let device = session.medium_mut(archive).expect("the medium is pooled");
     assert_eq!(
         device
+            .partition(0)
+            .expect("an archive bears its direct partition")
             .filesystem()
-            .expect("a namespace")
+            .expect("an archive's content is its namespace")
             .entries("")
             .expect("the root lists")
             .len(),
@@ -238,8 +249,10 @@ fn an_archive_of_many_members_is_one_medium_with_many_names() {
     // And a member is reached by naming it, one of a hundred and
     // sixty-eight.
     let entry = device
+        .partition(0)
+        .expect("an archive bears its direct partition")
         .filesystem()
-        .expect("a namespace")
+        .expect("an archive's content is its namespace")
         .stat(LAST_MEMBER)
         .expect("the member is asked for")
         .expect("and is there");

@@ -15,23 +15,24 @@ use std::path::{Path, PathBuf};
 
 use remanence::{
     AccessMode, AssuranceCondition, AssuranceOutcome, ByteRange, ErrorCategory, Format, MediaId,
-    Medium, Session, VolumeId,
+    Medium, PartitionRule, Session,
 };
 
 mod common;
 use common::{open_read, open_write};
 
-/// The space on one volume of `medium`, selected by the identity the
-/// inspection report issued. One node, both vantages: `medium.volume(id)`
-/// answers with the addressable extent and the namespace together, and
-/// the file verbs live on it and nowhere else (P19).
-fn fs(
-    medium: &mut Medium,
-    volume: remanence::VolumeId,
-) -> remanence::StorageSpace<'_> {
-    medium
-        .volume(volume)
-        .expect("the report issued this volume")
+/// The space one partition of `medium` composes, reached through the
+/// door that opens on it. One node, both vantages (D26), and the file
+/// verbs live on it and nowhere else (P19).
+fn fs(medium: &mut Medium, ordinal: u32) -> remanence::StorageSpace<'_> {
+    let partition = medium
+        .partition(ordinal)
+        .expect("the pool bears this partition");
+    if partition.partition().bears_namespace() {
+        partition.filesystem().expect("the declared type determines one")
+    } else {
+        partition.filesystem_as("fat").expect("these images are FAT")
+    }
 }
 
 /// The 1.44 MiB floppy's declared size: 2880 sectors of 512 bytes.
@@ -122,18 +123,39 @@ fn build_floppy(path: &Path) {
     let medium = session
         .load_media(open_write(path), Format::Raw)
         .expect("the whole image loads");
-    let volume = only_volume_of(medium);
-    fs(medium, volume).write_file(NEAR, &near_content())
+    let partition = only_partition_of(medium);
+    fs(medium, partition).write_file(NEAR, &near_content())
         .expect("writes the near file");
-    fs(medium, volume).write_file(FAR, &far_content())
+    fs(medium, partition).write_file(FAR, &far_content())
         .expect("writes the far file");
     medium.commit().expect("commits");
 }
 
-fn only_volume_of(medium: &mut Medium) -> VolumeId {
-    let report = medium.inspect().expect("inspection reads");
-    assert_eq!(report.volumes.len(), 1, "a bare floppy composes one volume");
-    report.volumes[0].id
+/// The ordinal these images' content is reached through. A bare floppy
+/// records no partition scheme, so its pool bears exactly one member —
+/// the direct partition at ordinal 0, which is the library's own
+/// composition of the whole content and says so in its provenance rather
+/// than offering it as something the medium declared (P16, P17).
+fn only_partition_of(medium: &Medium) -> u32 {
+    let partitions = medium.partitions();
+    assert_eq!(
+        partitions.len(),
+        1,
+        "a bare floppy records no scheme, so its pool bears one partition"
+    );
+    assert!(
+        partitions[0].is_direct(),
+        "and that one is the library's own composition, not a table entry"
+    );
+    assert!(
+        partitions[0].provenance().is_some() && partitions[0].evidence().is_empty(),
+        "a composition act is provenance, never evidence (P4)"
+    );
+    assert!(
+        partitions[0].volume_id().is_some(),
+        "which still composes the one volume the report issues for it"
+    );
+    partitions[0].ordinal()
 }
 
 fn truncate(path: &Path, len: u64) {
@@ -190,9 +212,9 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
     assert_eq!(assurance.first_unavailable_byte, None);
     assert_eq!(medium.mode(), AccessMode::ReadWrite);
 
-    let volume = only_volume_of(medium);
+    let partition = only_partition_of(medium);
     assert_eq!(
-        fs(medium, volume).read_file(FAR).expect("reads whole"),
+        fs(medium, partition).read_file(FAR).expect("reads whole"),
         far_content()
     );
     drop(session);
@@ -257,7 +279,7 @@ fn a_write_intent_open_reports_its_effective_read_only_mode() {
 fn every_mutation_path_including_commit_returns_the_condition() {
     let (path, mut session, attachment) = truncated("mutations", Afford::Write);
     let medium = session.medium_mut(attachment).expect("medium");
-    let volume = only_volume_of(medium);
+    let partition = only_partition_of(medium);
 
     // Each space is taken in turn rather than four at once: a namespace
     // holds its borrow of what it reads through until it is dropped, so
@@ -265,24 +287,24 @@ fn every_mutation_path_including_commit_returns_the_condition() {
     // with it.
     let mut refusals: Vec<remanence::Error> = Vec::new();
     refusals.push(
-        fs(medium, volume)
+        fs(medium, partition)
             .write_file("NEW.BIN", b"nope")
             .expect_err("write_file is denied"),
     );
     refusals.push(
-        fs(medium, volume)
+        fs(medium, partition)
             .get_file(NEAR)
             .expect("the entry is inside the readable extent")
             .write_at(0, b"nope")
             .expect_err("the ranged write is denied"),
     );
     refusals.push(
-        fs(medium, volume)
+        fs(medium, partition)
             .resize_file(NEAR, 10)
             .expect_err("resize_file is denied"),
     );
     refusals.push(
-        fs(medium, volume)
+        fs(medium, partition)
             .make_directory("SUB")
             .expect_err("make_directory is denied"),
     );
@@ -314,9 +336,9 @@ fn every_mutation_path_including_commit_returns_the_condition() {
 fn wholly_present_directory_and_file_data_still_read() {
     let (path, mut session, attachment) = truncated("reads", Afford::Read);
     let medium = session.medium_mut(attachment).expect("medium");
-    let volume = only_volume_of(medium);
+    let partition = only_partition_of(medium);
 
-    let names: Vec<String> = fs(medium, volume).entries("")
+    let names: Vec<String> = fs(medium, partition).entries("")
         .expect("the root directory is wholly present, so it lists")
         .into_iter()
         .map(|entry| entry.name)
@@ -327,7 +349,7 @@ fn wholly_present_directory_and_file_data_still_read() {
     );
 
     assert_eq!(
-        fs(medium, volume).stat(FAR)
+        fs(medium, partition).stat(FAR)
             .expect("stat reads the record")
             .map(|entry| entry.size_bytes),
         Some(far_content().len() as u64),
@@ -335,7 +357,7 @@ fn wholly_present_directory_and_file_data_still_read() {
     );
 
     assert_eq!(
-        fs(medium, volume).read_file(NEAR).expect("the near file reads"),
+        fs(medium, partition).read_file(NEAR).expect("the near file reads"),
         near_content()
     );
 
@@ -347,9 +369,9 @@ fn wholly_present_directory_and_file_data_still_read() {
 fn a_crossing_file_is_refused_whole_rather_than_clipped() {
     let (path, mut session, attachment) = truncated("crossing", Afford::Read);
     let medium = session.medium_mut(attachment).expect("medium");
-    let volume = only_volume_of(medium);
+    let partition = only_partition_of(medium);
 
-    let refusal = fs(medium, volume).read_file(FAR)
+    let refusal = fs(medium, partition).read_file(FAR)
         .expect_err("a chain leaving the readable extent is refused");
     assert_eq!(refusal.category(), ErrorCategory::Unavailable);
     assert_eq!(
@@ -366,7 +388,7 @@ fn a_crossing_file_is_refused_whole_rather_than_clipped() {
     // span sits inside the readable extent, but the file does not, and an
     // extracted file is whole or it is nothing.
     let mut buf = [0u8; 512];
-    let ranged = fs(medium, volume)
+    let ranged = fs(medium, partition)
         .get_file(FAR)
         .expect("the directory record is inside the readable extent")
         .read_at(0, &mut buf)
@@ -447,24 +469,64 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
         Some(AssuranceCondition::SourceTruncated.as_str())
     );
 
-    // And the node answers the same way one seam up: the space composed
-    // for that volume carries the recognition seam's own refusal,
-    // category and rule intact, rather than a coarser absence of this
-    // seam's own. The volume itself is still there — an absent namespace
-    // is not a failure to select the space.
+    // And the node answers the same way one seam up. **An absent
+    // namespace is not a failure to reach the space** — which is no
+    // longer a claim made beside the door but the door's own semantics:
+    // `volume()` is a lookup, answering because the extent was settled
+    // when the pool was established, and it answers whether or not
+    // anything declares a namespace over the partition (P19, D26).
     let volume = report.volumes[0].id;
-    let mut space = medium.volume(volume).expect("the volume composed");
-    assert!(space.is_addressable(), "the volume composed an extent");
-    assert!(!space.has_namespace(), "nothing was recognized on it");
+    let ordinal = only_partition_of(medium);
+    assert_eq!(
+        medium.partitions()[0].volume_id(),
+        Some(volume),
+        "and the partition carries the very identity the report issued (P21, U4)"
+    );
+    let mut space = medium
+        .partition(ordinal)
+        .expect("the pool bears the direct partition")
+        .volume()
+        .expect("which composes the whole content as one extent");
+    assert!(space.is_addressable(), "the direct partition composed an extent");
+    assert!(!space.has_namespace(), "and nothing declares one over it");
     let refusal = space.kind().expect_err("no namespace is addressable");
-    assert_eq!(refusal.category(), ErrorCategory::Unavailable);
+    assert_eq!(
+        refusal.rule(),
+        Some(PartitionRule::UnclaimedNamespace.as_str()),
+        "the absence is this seam's own, and names the declaration that \
+         would settle it: {refusal}"
+    );
     let listing = space.entries("").expect_err("and the verbs answer alike");
-    assert_eq!(listing.category(), ErrorCategory::Unavailable);
+    assert_eq!(
+        listing.rule(),
+        refusal.rule(),
+        "one absence, however it is met"
+    );
 
     // The space holds its borrow of what it reads through until it is
-    // dropped, so the session outlives it rather than the other way
-    // round.
+    // dropped, so the medium is free for the next door only once this one
+    // is done with it.
     drop(space);
+
+    // The declared reading is where the recognition seam actually runs,
+    // and its refusal surfaces there with category and rule intact rather
+    // than as a coarser absence of this seam's own: the FAT adapter is
+    // asked to verify the declaration and answers that the structures it
+    // would read are past the readable extent.
+    let declared = medium
+        .partition(ordinal)
+        .expect("the pool bears the direct partition")
+        .filesystem_as("fat")
+        .expect_err("the structures a FAT reading needs are gone");
+    assert_eq!(declared.category(), ErrorCategory::Unavailable);
+    assert_eq!(
+        declared.rule(),
+        Some(AssuranceCondition::SourceTruncated.as_str()),
+        "the recognizing seam's own rule, not one this seam invented: {declared}"
+    );
+
+    // The session outlives what borrows it rather than the other way
+    // round.
     drop(session);
     std::fs::remove_file(&path).ok();
 }

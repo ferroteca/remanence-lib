@@ -5,12 +5,19 @@
 //! outright: a hand-built FAT16 volume, bare and behind an MBR, on raw
 //! disks. (qcow2 round-trips are unit-tested inside the crate, where the
 //! writer can build the image.)
+//!
+//! The content of every one of them is reached the one way there is: the
+//! partition pool the medium was loaded with, by the scheme's own ordinal
+//! (P16, P17). An MBR table numbers its own entries from one; an image
+//! that records no scheme bears the direct partition at zero, which is
+//! the library's own composition of the whole content and says so.
 
 use std::path::PathBuf;
 
 use remanence::{
-    AccessMode, DiskContent, DiskFormat, DosNameRule, ErrorCategory, EntryKind, FatKind, Format,
-    MediaId, Medium, SpaceRule, RegionRole, Session, VolumeId, VolumeOrigin,
+    AccessMode, DiskContent, DiskFormat, DosNameRule, EntryKind, ErrorCategory, FatKind, Format,
+    MediaId, Medium, PartitionRule, PartitionScheme, PartitionType, RegionRole, Session, SpaceRule,
+    StorageSpace, VolumeOrigin,
 };
 
 mod common;
@@ -25,17 +32,21 @@ enum Afford {
     Write,
 }
 
-/// The space on one volume of `medium`, selected by the identity the
-/// inspection report issued. One node, both vantages: `medium.volume(id)`
-/// answers with the addressable extent and the namespace together, and
-/// the file verbs live on it and nowhere else (P19).
-fn fs(
-    medium: &mut Medium,
-    volume: remanence::VolumeId,
-) -> remanence::StorageSpace<'_> {
-    medium
-        .volume(volume)
-        .expect("the report issued this volume")
+/// The space one partition of `medium` composes, reached through the
+/// door that opens on it. One node, both vantages (D26): the doors hand
+/// out the same `StorageSpace`, and the file verbs live on it and
+/// nowhere else (P19).
+fn fs(medium: &mut Medium, ordinal: u32) -> StorageSpace<'_> {
+    let partition = medium
+        .partition(ordinal)
+        .expect("the pool bears this partition");
+    if partition.partition().bears_namespace() {
+        partition.filesystem().expect("the declared type determines one")
+    } else {
+        // A medium recording no scheme declares no type, so the reading
+        // is the caller's and the check is the library's.
+        partition.filesystem_as("fat").expect("these images are FAT")
+    }
 }
 
 /// Pools `path` in a fresh session under the raw declaration and returns
@@ -139,19 +150,24 @@ fn synthetic_fat12_floppy() -> Vec<u8> {
 }
 
 /// Wraps volumes in an MBR disk, one primary slot each (up to four),
-/// placed consecutively from LBA 2048.
-fn synthetic_multi_mbr(entries: &[(u8, &[u8])]) -> Vec<u8> {
+/// placed consecutively from LBA 2048. Each entry states its type value,
+/// whether the slot carries the boot flag — byte 0 of the slot, `0x80`
+/// and nothing else — and the volume to lay behind it.
+fn synthetic_flagged_mbr(entries: &[(u8, bool, &[u8])]) -> Vec<u8> {
     let mut start_lba = 2048usize;
     let mut layout = Vec::new();
-    for (type_byte, volume) in entries {
+    for (type_byte, active, volume) in entries {
         let sectors = volume.len() / 512;
-        layout.push((*type_byte, start_lba, sectors, *volume));
+        layout.push((*type_byte, *active, start_lba, sectors, *volume));
         start_lba += sectors;
     }
 
     let mut disk = vec![0u8; start_lba * 512];
-    for (slot, (type_byte, start, sectors, volume)) in layout.iter().enumerate() {
+    for (slot, (type_byte, active, start, sectors, volume)) in layout.iter().enumerate() {
         let at = 446 + slot * 16;
+        if *active {
+            disk[at] = 0x80;
+        }
         disk[at + 4] = *type_byte;
         disk[at + 8..at + 12].copy_from_slice(&(*start as u32).to_le_bytes());
         disk[at + 12..at + 16].copy_from_slice(&(*sectors as u32).to_le_bytes());
@@ -160,6 +176,16 @@ fn synthetic_multi_mbr(entries: &[(u8, &[u8])]) -> Vec<u8> {
     disk[510] = 0x55;
     disk[511] = 0xaa;
     disk
+}
+
+/// The same disk with no slot flagged active, which is what most of these
+/// images want to say nothing about.
+fn synthetic_multi_mbr(entries: &[(u8, &[u8])]) -> Vec<u8> {
+    let flagged: Vec<(u8, bool, &[u8])> = entries
+        .iter()
+        .map(|(type_byte, volume)| (*type_byte, false, *volume))
+        .collect();
+    synthetic_flagged_mbr(&flagged)
 }
 
 /// Wraps a volume image in a one-partition MBR disk (partition 1 starts
@@ -232,15 +258,6 @@ fn label_of(filesystem: &remanence::FilesystemInfo) -> Option<&str> {
         .as_deref()
 }
 
-/// The volume a caller works in, named the only way a caller can name
-/// one: by asking the library what it reported. Nothing here builds an
-/// identity or parses one.
-fn only_volume(disk: &mut Medium) -> remanence::VolumeId {
-    let report = disk.inspect().expect("inspection reads");
-    assert_eq!(report.volumes.len(), 1, "these images compose one volume");
-    report.volumes[0].id
-}
-
 #[test]
 fn fat16_roundtrip_on_a_bare_raw_image() {
     let path = temp_path("bare");
@@ -273,42 +290,42 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     assert_eq!(filesystem.declared_geometry.cylinders, None);
 
     // Write a directory and a file; read them back through the overlay.
-    fs(disk, volume).make_directory("SUB").expect("mkdir");
+    fs(disk, 0).make_directory("SUB").expect("mkdir");
     let payload: Vec<u8> = (0..2000u32).flat_map(|n| n.to_le_bytes()).collect();
-    fs(disk, volume).write_file("SUB/HELLO.BIN", &payload)
+    fs(disk, 0).write_file("SUB/HELLO.BIN", &payload)
         .expect("write");
     assert!(disk.is_modified());
 
-    let entries = fs(disk, volume).entries("SUB").expect("list");
+    let entries = fs(disk, 0).entries("SUB").expect("list");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "HELLO.BIN");
     assert_eq!(entries[0].kind, EntryKind::File);
     assert_eq!(entries[0].size_bytes, payload.len() as u64);
     assert_eq!(
-        fs(disk, volume).read_file("SUB/HELLO.BIN")
+        fs(disk, 0).read_file("SUB/HELLO.BIN")
             .expect("read"),
         payload
     );
     assert_eq!(
-        fs(disk, volume).read_file("SUB")
+        fs(disk, 0).read_file("SUB")
             .expect_err("directory is not a file")
             .category(),
         ErrorCategory::IsDirectory
     );
     assert_eq!(
-        fs(disk, volume).entries("SUB/HELLO.BIN")
+        fs(disk, 0).entries("SUB/HELLO.BIN")
             .expect_err("file is not a directory")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        fs(disk, volume).read_file("SUB/MISSING.BIN")
+        fs(disk, 0).read_file("SUB/MISSING.BIN")
             .expect_err("missing file is refused")
             .category(),
         ErrorCategory::NotFound
     );
     assert_eq!(
-        fs(disk, volume).write_file("TOO-BIG.BIN", &vec![0u8; 5_000_000],)
+        fs(disk, 0).write_file("TOO-BIG.BIN", &vec![0u8; 5_000_000],)
             .expect_err("allocation exhaustion is refused")
             .category(),
         ErrorCategory::NoSpace
@@ -317,13 +334,13 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     // Rollback: the image is untouched.
     disk.rollback().expect("a medium is pooled");
     assert!(!disk.is_modified());
-    assert!(fs(disk, volume).entries("SUB").is_err());
+    assert!(fs(disk, 0).entries("SUB").is_err());
 
     // Write again and commit this time; overwriting replaces the
     // contents rather than refusing (U3).
-    fs(disk, volume).write_file("KEPT.TXT", b"the first draft, rather longer")
+    fs(disk, 0).write_file("KEPT.TXT", b"the first draft, rather longer")
         .expect("write");
-    fs(disk, volume).write_file("KEPT.TXT", b"kept bytes")
+    fs(disk, 0).write_file("KEPT.TXT", b"kept bytes")
         .expect("overwrite");
     disk.commit().expect("commit");
     assert!(!disk.is_modified());
@@ -332,14 +349,13 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
 
-    let volume_reopened = only_volume(reopened);
     assert_eq!(
         reopened.mode(),
         AccessMode::ReadOnly,
         "the mode echoes the intent"
     );
     assert_eq!(
-        fs(reopened, volume_reopened).read_file("KEPT.TXT")
+        fs(reopened, 0).read_file("KEPT.TXT")
             .expect("read"),
         b"kept bytes"
     );
@@ -355,7 +371,6 @@ fn fat16_behind_an_mbr_partition() {
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
     let report = disk.inspect().expect("inspection reads");
     assert_eq!(report.content, DiskContent::Schema);
     assert_eq!(report.regions.len(), 1);
@@ -376,7 +391,9 @@ fn fat16_behind_an_mbr_partition() {
         Some("REMANENCE")
     );
 
-    fs(disk, volume).write_file("ROOT.TXT", b"in the partition")
+    // Entry 1 of the declared table, which is the scheme's own number for
+    // it and the only way this partition is named.
+    fs(disk, 1).write_file("ROOT.TXT", b"in the partition")
         .expect("write");
     disk.commit().expect("commit");
     drop(disk_session);
@@ -384,9 +401,8 @@ fn fat16_behind_an_mbr_partition() {
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
 
-    let volume_reopened = only_volume(reopened);
     assert_eq!(
-        fs(reopened, volume_reopened).read_file("ROOT.TXT").expect("read"),
+        fs(reopened, 1).read_file("ROOT.TXT").expect("read"),
         b"in the partition"
     );
     drop(reopened_session);
@@ -401,19 +417,18 @@ fn stat_answers_presence_and_absence_distinctly() {
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    fs(disk, volume).make_directory("SUB").expect("mkdir");
-    fs(disk, volume).write_file("SUB/FILE.BIN", b"1234567890")
+    fs(disk, 0).make_directory("SUB").expect("mkdir");
+    fs(disk, 0).write_file("SUB/FILE.BIN", b"1234567890")
         .expect("write");
 
-    let file = fs(disk, volume).stat("sub/file.bin")
+    let file = fs(disk, 0).stat("sub/file.bin")
         .expect("stat succeeds")
         .expect("the file exists");
     assert_eq!(file.name, "FILE.BIN");
     assert_eq!(file.kind, EntryKind::File);
     assert_eq!(file.size_bytes, 10);
 
-    let directory = fs(disk, volume).stat("SUB")
+    let directory = fs(disk, 0).stat("SUB")
         .expect("stat succeeds")
         .expect("the directory exists");
     assert_eq!(directory.kind, EntryKind::Directory);
@@ -421,30 +436,33 @@ fn stat_answers_presence_and_absence_distinctly() {
     // Absence is an answer, not a failure: a missing leaf, a missing
     // parent, and a parent that is a file all answer None.
     assert_eq!(
-        fs(disk, volume).stat("SUB/MISSING.BIN")
+        fs(disk, 0).stat("SUB/MISSING.BIN")
             .expect("an answer"),
         None
     );
     assert_eq!(
-        fs(disk, volume).stat("NOWHERE/FILE.BIN")
+        fs(disk, 0).stat("NOWHERE/FILE.BIN")
             .expect("an answer"),
         None
     );
     assert_eq!(
-        fs(disk, volume).stat("SUB/FILE.BIN/DEEPER.BIN")
+        fs(disk, 0).stat("SUB/FILE.BIN/DEEPER.BIN")
             .expect("an answer"),
         None
     );
 
-    // Failure stays failure: a missing volume identity, an empty path.
-    assert_eq!(
-        disk.volume(VolumeId::from_value(0xdead_beef))
-            .expect_err("no such volume")
-            .category(),
-        ErrorCategory::NotFound
-    );
+    // An ordinal the pool never issued is absence answered, not a
+    // failure: this image records no scheme, so the direct partition at
+    // zero is the whole of what it bears and nothing is manufactured to
+    // stand at 1.
     assert!(
-        fs(disk, volume).stat("").is_err(),
+        disk.partition(1).is_none(),
+        "the pool bears no partition at that ordinal"
+    );
+    // Failure stays failure where a verb is asked something it cannot
+    // answer: the root is a directory and not an entry in one.
+    assert!(
+        fs(disk, 0).stat("").is_err(),
         "the root has no entry to answer with"
     );
     drop(disk_session);
@@ -459,31 +477,30 @@ fn overwrite_releases_and_reclaims_clusters() {
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
     // 7000 of the volume's 7903 data clusters: two of these can never
     // coexist, so each rewrite below only fits by releasing the last.
     let big = vec![0xabu8; 7000 * 512];
-    fs(disk, volume).write_file("BIG.BIN", &big)
+    fs(disk, 0).write_file("BIG.BIN", &big)
         .expect("first write");
 
     let replacement = vec![0xcdu8; 7000 * 512];
-    fs(disk, volume).write_file("BIG.BIN", &replacement)
+    fs(disk, 0).write_file("BIG.BIN", &replacement)
         .expect("overwriting releases the old clusters first");
     assert_eq!(
-        fs(disk, volume).read_file("BIG.BIN").expect("read"),
+        fs(disk, 0).read_file("BIG.BIN").expect("read"),
         replacement
     );
 
     // Shrinking releases clusters for other files to claim.
-    fs(disk, volume).write_file("BIG.BIN", b"now tiny")
+    fs(disk, 0).write_file("BIG.BIN", b"now tiny")
         .expect("shrinking overwrite");
-    fs(disk, volume).write_file("OTHER.BIN", &big)
+    fs(disk, 0).write_file("OTHER.BIN", &big)
         .expect("the released clusters are claimable again");
 
     // Overwriting a directory is refused by name.
-    fs(disk, volume).make_directory("DIR").expect("mkdir");
+    fs(disk, 0).make_directory("DIR").expect("mkdir");
     assert_eq!(
-        fs(disk, volume).write_file("DIR", b"not a file")
+        fs(disk, 0).write_file("DIR", b"not a file")
             .expect_err("a directory is not overwritable")
             .category(),
         ErrorCategory::IsDirectory
@@ -495,13 +512,12 @@ fn overwrite_releases_and_reclaims_clusters() {
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
 
-    let volume_reopened = only_volume(reopened);
     assert_eq!(
-        fs(reopened, volume_reopened).read_file("BIG.BIN").expect("read"),
+        fs(reopened, 0).read_file("BIG.BIN").expect("read"),
         b"now tiny"
     );
     assert_eq!(
-        fs(reopened, volume_reopened).read_file("OTHER.BIN").expect("read"),
+        fs(reopened, 0).read_file("OTHER.BIN").expect("read"),
         big
     );
     drop(reopened_session);
@@ -523,13 +539,12 @@ fn make_directory_creates_parents_and_is_idempotent() {
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
 
     // Missing parents are created in one call.
-    fs(disk, volume).make_directory("A/B/C")
+    fs(disk, 0).make_directory("A/B/C")
         .expect("missing parents are created");
     assert_eq!(
-        fs(disk, volume).stat("A/B/C")
+        fs(disk, 0).stat("A/B/C")
             .expect("stat")
             .expect("exists")
             .kind,
@@ -538,28 +553,28 @@ fn make_directory_creates_parents_and_is_idempotent() {
 
     // Already existing — wholly, partly, or the root itself — succeeds
     // unchanged, and the chain extends from wherever it stops.
-    fs(disk, volume).make_directory("A/B/C")
+    fs(disk, 0).make_directory("A/B/C")
         .expect("idempotent");
-    fs(disk, volume).make_directory("A/B")
+    fs(disk, 0).make_directory("A/B")
         .expect("an existing prefix succeeds");
-    fs(disk, volume).make_directory("")
+    fs(disk, 0).make_directory("")
         .expect("the root already exists");
-    fs(disk, volume).make_directory("A/B/C/D")
+    fs(disk, 0).make_directory("A/B/C/D")
         .expect("extends the existing chain");
 
     // The created directories hold files like any other.
-    fs(disk, volume).write_file("A/B/C/D/DEEP.TXT", b"nested payload")
+    fs(disk, 0).write_file("A/B/C/D/DEEP.TXT", b"nested payload")
         .expect("write");
 
     // A file in the way is refused by name, at the leaf or mid-path.
     assert_eq!(
-        fs(disk, volume).make_directory("A/B/C/D/DEEP.TXT")
+        fs(disk, 0).make_directory("A/B/C/D/DEEP.TXT")
             .expect_err("a file at the leaf is refused")
             .category(),
         ErrorCategory::NotDirectory
     );
     assert_eq!(
-        fs(disk, volume).make_directory("A/B/C/D/DEEP.TXT/E")
+        fs(disk, 0).make_directory("A/B/C/D/DEEP.TXT/E")
             .expect_err("a file mid-path is refused")
             .category(),
         ErrorCategory::NotDirectory
@@ -571,9 +586,8 @@ fn make_directory_creates_parents_and_is_idempotent() {
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
 
-    let volume_reopened = only_volume(reopened);
     assert_eq!(
-        fs(reopened, volume_reopened).read_file("A/B/C/D/DEEP.TXT")
+        fs(reopened, 0).read_file("A/B/C/D/DEEP.TXT")
             .expect("read"),
         b"nested payload"
     );
@@ -589,15 +603,14 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
 
     let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
-    let volume = only_volume(disk);
-    fs(disk, volume).make_directory("SUB").expect("mkdir");
+    fs(disk, 0).make_directory("SUB").expect("mkdir");
 
     // One 512-byte cluster holds 16 records; "." and ".." take two, so
     // the fifteenth file forces the directory to grow mid-write, and
     // the grown cluster must never collide with a file's data clusters.
     let names: Vec<String> = (0..20).map(|n| format!("FILE{n:02}.BIN")).collect();
     for (n, name) in names.iter().enumerate() {
-        fs(disk, volume).write_file(&format!("SUB/{name}"), &vec![n as u8; 700])
+        fs(disk, 0).write_file(&format!("SUB/{name}"), &vec![n as u8; 700])
             .expect("write");
     }
     disk.commit().expect("commit");
@@ -606,12 +619,11 @@ fn a_growing_subdirectory_never_collides_with_file_clusters() {
     let (mut reopened_session, reopened_at) = attach(&path, Afford::Read).expect("reopens");
     let reopened = reopened_session.medium_mut(reopened_at).expect("the medium is pooled");
 
-    let volume_reopened = only_volume(reopened);
-    let entries = fs(reopened, volume_reopened).entries("SUB").expect("list");
+    let entries = fs(reopened, 0).entries("SUB").expect("list");
     assert_eq!(entries.len(), 20);
     for (n, name) in names.iter().enumerate() {
         assert_eq!(
-            fs(reopened, volume_reopened).read_file(&format!("SUB/{name}"))
+            fs(reopened, 0).read_file(&format!("SUB/{name}"))
                 .expect("read"),
             vec![n as u8; 700],
             "{name} reads back intact"
@@ -634,13 +646,64 @@ fn a_blank_disk_is_an_answer_with_zero_volumes() {
     assert!(report.regions.is_empty());
     assert!(report.volumes.is_empty());
 
-    // Zero volumes means no identity names one. A value this disk never
-    // issued resolves to nothing rather than to something plausible.
+    // Zero volumes composed, and yet the medium still bears the direct
+    // partition: blank is a fact about what was recorded, not a reason to
+    // withhold the door the content is reached through (P17). It is the
+    // library's own composition, so it is addressable over the whole
+    // content and its account is provenance rather than evidence.
+    let direct = disk
+        .partition(0)
+        .expect("every medium bears a partition to be reached through");
+    assert!(direct.is_direct(), "nothing recorded a scheme to declare one");
     assert_eq!(
-        disk.volume(VolumeId::from_value(0))
-            .expect_err("an unissued identity is refused")
-            .category(),
-        ErrorCategory::NotFound
+        direct.type_byte(),
+        None,
+        "and so nothing recorded a type either"
+    );
+    assert!(
+        direct.partition().provenance().is_some(),
+        "a composition act states itself as one"
+    );
+    assert!(
+        direct.partition().evidence().is_empty(),
+        "and never as something the medium said"
+    );
+    assert_eq!(
+        direct.partition().volume_id(),
+        None,
+        "the report composed no volume here, and the pool says the same"
+    );
+
+    let mut space = direct
+        .volume()
+        .expect("the whole content is one addressed extent");
+    assert_eq!(
+        space.start_bytes(),
+        Some(0),
+        "it begins where the presented content does"
+    );
+    assert_eq!(
+        space.length_bytes(),
+        Some(8000 * 512),
+        "the direct partition runs the whole of the presented content"
+    );
+    assert!(
+        !space.has_namespace(),
+        "a blank medium bears no namespace, and the absence is answered"
+    );
+    let mut head = [0u8; 16];
+    space.read_at(0, &mut head).expect("the extent reads");
+    assert_eq!(head, [0u8; 16], "and reads back the zeros that are there");
+    drop(space);
+
+    // The namespace door answers the same absence, rather than a failure
+    // to have read one.
+    assert!(
+        disk.partition(0)
+            .expect("the direct partition")
+            .filesystem()
+            .is_none(),
+        "nothing declares a namespace over a blank medium"
     );
     drop(disk_session);
 
@@ -692,12 +755,13 @@ fn the_extended_chain_reports_primary_and_logical_kinds() {
         .collect();
     assert_eq!(referenced, [1, 3, 4]);
 
-    // The file verbs take exactly the identities the report supplied.
-    let volumes: Vec<_> = report.volumes.iter().map(|volume| volume.id).collect();
-    for volume in volumes {
+    // The file verbs answer on exactly the partitions the scheme declared
+    // as data, by the scheme's own numbers: the extended container at 2
+    // composes nothing, and the logicals behind it are still 3 and 4 (U4).
+    for ordinal in referenced {
         assert!(
-            fs(disk, volume).entries("").is_ok(),
-            "volume {volume:?} readable"
+            fs(disk, ordinal).entries("").is_ok(),
+            "partition {ordinal} is readable through the door that opens on it"
         );
     }
     drop(disk_session);
@@ -805,7 +869,8 @@ fn p7_the_callers_own_open_is_the_claim_and_is_honoured_exactly() {
 
     // No lock of the library's own: the caller opened with the sharing
     // they chose, so a second ordinary handle over the same artifact is
-    // the caller's business and loads.
+    // the caller's business and loads. A caller who wants exclusivity
+    // asks their own open for it.
     let (mut observer_session, observer_at) =
         attach(&path, Afford::Read).expect("the library adds no claim of its own");
     assert_eq!(
@@ -828,18 +893,22 @@ fn p7_the_callers_own_open_is_the_claim_and_is_honoured_exactly() {
 
     assert!(
         std::fs::File::options().read(true).write(true).open(&path).is_err(),
-        "the caller cannot open a read-only file for writing, which is the          whole of what the library then has"
+        "the caller cannot open a read-only file for writing, which is the \
+         whole of what the library then has"
     );
     let (mut readonly_session, readonly_at) =
         attach(&path, Afford::Read).expect("a read handle opens");
     let readonly = readonly_session.medium_mut(readonly_at).expect("the medium is pooled");
-    let volume_readonly = only_volume(readonly);
     assert_eq!(readonly.mode(), AccessMode::ReadOnly);
     assert!(readonly.inspect().is_ok(), "analysis proceeds");
-    let refused = fs(readonly, volume_readonly)
+    let refused = fs(readonly, 0)
         .write_file("NO.TXT", b"denied")
         .expect_err("write actions are denied on a handle affording none");
     assert_eq!(refused.category(), ErrorCategory::ReadOnly);
+    assert!(
+        refused.to_string().contains("affords no write"),
+        "the refusal names whose open it was: {refused}"
+    );
     drop(readonly_session);
 
     permissions.set_readonly(false);
@@ -1346,19 +1415,18 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
     let (mut session, at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
-    let volume = only_volume(disk);
 
-    fs(disk, volume).make_directory("out").expect("mkdir");
-    fs(disk, volume).write_file("out/x.txt", b"payload")
+    fs(disk, 0).make_directory("out").expect("mkdir");
+    fs(disk, 0).write_file("out/x.txt", b"payload")
         .expect("write");
 
-    let entries = fs(disk, volume).entries("OUT").expect("list");
+    let entries = fs(disk, 0).entries("OUT").expect("list");
     assert_eq!(entries.len(), 1);
     assert_eq!(
         entries[0].name, "X.TXT",
         "the listing returns the name as stored, not as supplied"
     );
-    let root = fs(disk, volume).entries("").expect("list root");
+    let root = fs(disk, 0).entries("").expect("list root");
     assert!(
         root.iter().any(|entry| entry.name == "OUT"),
         "the directory name was uppercased at the seam too"
@@ -1366,13 +1434,13 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
 
     for spelling in ["out/x.txt", "OUT/X.TXT", "Out/X.Txt"] {
         assert_eq!(
-            fs(disk, volume).read_file(spelling).expect("read"),
+            fs(disk, 0).read_file(spelling).expect("read"),
             b"payload",
             "'{spelling}' matches the stored name without regard to case"
         );
     }
     assert_eq!(
-        fs(disk, volume).stat("out/x.txt")
+        fs(disk, 0).stat("out/x.txt")
             .expect("stat reads")
             .expect("the file is there")
             .name,
@@ -1381,9 +1449,9 @@ fn the_seam_normalizes_a_written_name_and_matches_a_read_one_without_case() {
 
     // Case is not a second file: writing the same name in another case
     // overwrites the one record rather than adding a second.
-    fs(disk, volume).write_file("OUT/X.TXT", b"replaced")
+    fs(disk, 0).write_file("OUT/X.TXT", b"replaced")
         .expect("overwrite");
-    assert_eq!(fs(disk, volume).entries("out").expect("list").len(), 1);
+    assert_eq!(fs(disk, 0).entries("out").expect("list").len(), 1);
 
     drop(session);
     std::fs::remove_file(&path).ok();
@@ -1399,7 +1467,6 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
     std::fs::write(&path, synthetic_fat16()).expect("image writes");
     let (mut session, at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = session.medium_mut(at).expect("the medium is pooled");
-    let volume = only_volume(disk);
 
     let cases = [
         (".txt", DosNameRule::EmptyBase),
@@ -1417,28 +1484,28 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
         ("lpt1", DosNameRule::ReservedDeviceName),
     ];
     for (name, expected) in cases {
-        let error = fs(disk, volume).write_file(name, b"contents")
+        let error = fs(disk, 0).write_file(name, b"contents")
             .expect_err("a name outside the namespace is refused");
         assert_eq!(refused_rule(error), expected, "writing '{name}'");
 
-        let error = fs(disk, volume).make_directory(name)
+        let error = fs(disk, 0).make_directory(name)
             .expect_err("a directory name takes the same rules");
         assert_eq!(refused_rule(error), expected, "creating '{name}'");
     }
 
     assert!(
-        fs(disk, volume).entries("").expect("list root").is_empty(),
+        fs(disk, 0).entries("").expect("list root").is_empty(),
         "a refused name is refused, not repaired into some other name"
     );
     assert!(!disk.is_modified(), "nothing was staged for commit");
 
     // The rule sits beside the category rather than replacing it, and a
     // refusal belonging to no rule set carries none at all.
-    let error = fs(disk, volume).write_file("con", b"contents")
+    let error = fs(disk, 0).write_file("con", b"contents")
         .expect_err("reserved");
     assert_eq!(error.category(), ErrorCategory::Io);
     assert_eq!(
-        fs(disk, volume).read_file("MISSING.TXT")
+        fs(disk, 0).read_file("MISSING.TXT")
             .expect_err("absent")
             .rule(),
         None
@@ -1449,97 +1516,696 @@ fn a_refused_name_names_the_rule_it_broke_and_writes_nothing() {
 }
 
 // ---------------------------------------------------------------------------
-// The namespace node (P19): file access lives on one type, and the device
-// answers only what it *resolves* to.
+// The partition pool and the vantage doors (P16, P17, P19, D26). A
+// medium's content is reached through the partition that composes it, by
+// the scheme's own ordinal — and where a medium records no scheme,
+// through the direct partition the library composes and states as its
+// own. The pool is established at the load and is evidence from then on;
+// nothing below discovers a layout on demand.
 
-/// One supported answer at every seam, so the walk is transparent: no
-/// volume is named and none has to be.
+/// A medium that records no scheme bears the direct partition, and the
+/// library states it as its own composition rather than dressing it up as
+/// something the medium said (P4).
 #[test]
-fn the_resolver_is_transparent_where_every_seam_has_one_answer() {
-    let path = temp_path("resolve-one");
-    std::fs::write(&path, synthetic_fat16()).expect("image writes");
+fn the_direct_partition_stands_where_a_medium_records_no_scheme() {
+    let path = image_at("pool-direct", &synthetic_fat16());
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
     let disk = session.medium_mut(attachment).expect("the medium is pooled");
 
-    let expected = only_volume(disk);
-    let mut filesystem = disk.filesystem().expect("one volume, one filesystem");
     assert_eq!(
-        filesystem.kind().expect("the volume bears one"),
-        FatKind::Fat16.name()
+        disk.partition_scheme(),
+        None,
+        "this image records no partition table, and the pool says so \
+         rather than naming a scheme it was populated under"
+    );
+    let pool = disk.partitions();
+    assert_eq!(pool.len(), 1, "the direct partition is the whole of the pool");
+    let direct = &pool[0];
+    assert_eq!(
+        direct.ordinal(),
+        0,
+        "a scheme numbers its own entries from one, so zero is the \
+         library's to spend on the partition no scheme declared"
+    );
+    assert!(
+        direct.is_direct(),
+        "it is the one member of the pool the library composes rather than reads"
     );
     assert_eq!(
-        filesystem.volume_id(),
-        Some(expected),
-        "the resolver reports which volume it walked to"
+        direct.placement(), "direct",
+        "placement is the scheme's own vocabulary, and no scheme placed this"
+    );
+    assert_eq!(
+        direct.role(), RegionRole::Data,
+        "the whole content is data; there is no structure to be one of"
+    );
+    assert!(!direct.active(), "nothing flagged it, and nothing is derived");
+    assert!(!direct.is_claimed(), "there is no declared type to have read");
+
+    // A composition act is provenance, never evidence: the library says
+    // what it composed, and never offers that as something it read.
+    assert!(
+        direct.provenance().is_some_and(|account| !account.is_empty()),
+        "the direct partition accounts for itself"
+    );
+    assert!(
+        direct.evidence().is_empty(),
+        "and read nothing to do it, so it claims no evidence"
+    );
+    assert_eq!(direct.type_byte(), None, "no scheme recorded a type here");
+    assert_eq!(direct.type_reading(), None, "so there is nothing to read");
+
+    // A declared reading is weighed against a recorded byte, and there is
+    // none: the refusal names that rather than accepting a reading of
+    // nothing (P3, P10).
+    let refusal = direct
+        .as_type(PartitionType::DosPrimary)
+        .expect_err("nothing was recorded for the reading to be checked against");
+    assert_eq!(
+        refusal.rule(),
+        Some(PartitionRule::NoDeclaredType.as_str()),
+        "the refusal carries which rule of the seam's set it broke"
+    );
+    assert_eq!(
+        refusal.category(),
+        ErrorCategory::Unsupported,
+        "the category answers how the caller should behave, beside the rule"
+    );
+
+    // The identity the pool carries is the identity the report issued, so
+    // one volume is the same volume wherever it is met (P21, U4).
+    let report = disk.inspect().expect("inspection reads");
+    assert_eq!(report.volumes.len(), 1, "this image composes one volume");
+    assert_eq!(
+        direct.volume_id(),
+        Some(report.volumes[0].id),
+        "the pool and the report name one volume between them, not two"
+    );
+
+    // The addressable door opens over the whole presented content.
+    let mut space = disk
+        .partition(0)
+        .expect("the pool bears the direct partition")
+        .volume()
+        .expect("the whole content is one addressed extent");
+    assert_eq!(
+        space.start_bytes(),
+        Some(0),
+        "it begins where the presented content does"
+    );
+    assert_eq!(
+        space.length_bytes(),
+        Some(8000 * 512),
+        "the direct partition runs the whole of the content"
+    );
+    assert_eq!(
+        space.volume_id(),
+        Some(report.volumes[0].id),
+        "and the space answers with the identity the report issued"
+    );
+    let mut boot = [0_u8; 3];
+    space.read_at(0, &mut boot).expect("the extent reads");
+    assert_eq!(
+        boot[0], 0xeb,
+        "position zero within the partition is the volume's own boot record"
+    );
+    drop(space);
+
+    // The namespace door answers absence, because no scheme declared a
+    // type here and so no type determines a namespace. That is the honest
+    // absence P19 requires, not a failure to have read one.
+    assert!(
+        disk.partition(0)
+            .expect("the direct partition")
+            .filesystem()
+            .is_none(),
+        "nothing declares a namespace over this partition"
+    );
+
+    // Which is exactly what the declared reading is for: the reading is
+    // the caller's and the check is the library's (P18).
+    let mut named = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("fat")
+        .expect("this image is FAT, and the recognizer verifies the declaration");
+    assert_eq!(
+        named.kind().expect("the declaration was verified"),
+        FatKind::Fat16.name(),
+        "the recognizer filled the values under the caller's reading"
+    );
+    assert!(
+        named.entries("").is_ok(),
+        "the file verbs answer on the node the door handed out"
+    );
+    assert!(
+        named.is_addressable(),
+        "and the same node still addresses its own extent"
+    );
+
+    drop(named);
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// An MBR disk's pool is the table's own entries, in the table's own
+/// order and under the table's own numbers.
+#[test]
+fn an_mbr_table_populates_the_pool_under_its_own_numbers() {
+    let fat = synthetic_fat16();
+    let path = image_at("pool-mbr", &synthetic_multi_mbr(&[(0x06, &fat), (0x06, &fat)]));
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+
+    assert_eq!(
+        disk.partition_scheme(),
+        Some(PartitionScheme::Mbr),
+        "the medium's family names the scheme its content is laid out under"
+    );
+    let pool = disk.partitions();
+    let ordinals: Vec<u32> = pool.iter().map(|partition| partition.ordinal()).collect();
+    assert_eq!(
+        ordinals,
+        [1, 2],
+        "the pool keeps the table's own order and the table's own numbers"
+    );
+    assert!(
+        pool.iter().all(|partition| !partition.is_direct()),
+        "a medium that records a scheme bears no direct partition: there \
+         was nothing for the library to compose"
+    );
+    assert!(
+        pool.iter().all(|partition| !partition.evidence().is_empty()),
+        "and every declared partition says what was read to declare it (P4)"
+    );
+    assert!(
+        pool.iter().all(|partition| partition.provenance().is_none()),
+        "none of them is a composition act, so none accounts for one"
+    );
+
+    let first = &pool[0];
+    assert_eq!(
+        first.type_byte(),
+        Some(0x06),
+        "the type value is kept exactly as the slot records it"
+    );
+    assert_eq!(
+        first.type_reading(),
+        Some("FAT16B"),
+        "and what that value declares is quotable without a second type table"
+    );
+    assert!(first.is_claimed(), "0x06 is a type this release reads");
+    assert_eq!(
+        first.placement(),
+        "primary",
+        "it occupies one of the table's four slots"
+    );
+    assert_eq!(
+        first.role(),
+        RegionRole::Data,
+        "and the scheme declares it as data rather than as structure"
+    );
+    assert_eq!(
+        first.start_bytes(),
+        Some(2048 * 512),
+        "the extent is where the table said it is"
+    );
+    assert_eq!(
+        first.length_bytes(),
+        Some(fat.len() as u64),
+        "and runs as far as the table said it runs"
+    );
+    assert!(
+        first.is_addressable(),
+        "a claimed data partition composes an extent to address"
+    );
+    assert!(first.bears_namespace(), "a DOS data partition determines FAT");
+    assert!(first.issue().is_none(), "nothing about it was refused");
+
+    // The caller's own reading, checked against the recorded byte: 0x06
+    // bears a DOS data partition and no extended container, and the
+    // refusal names both sides rather than saying only that something
+    // disagreed (P3, P10).
+    let view = disk.partition(1).expect("the declared table bears entry 1");
+    assert_eq!(
+        view.ordinal(),
+        1,
+        "the view answers the same number the record does"
+    );
+    assert_eq!(
+        view.type_byte(),
+        Some(0x06),
+        "and the same recorded value, without a second lookup"
+    );
+    assert_eq!(view.type_reading(), Some("FAT16B"), "and the same reading");
+    assert!(!view.is_direct(), "the table declared it; the library did not");
+    view.as_type(PartitionType::DosPrimary)
+        .expect("0x06 is one of the values that reading covers");
+    let refusal = view
+        .as_type(PartitionType::DosExtended)
+        .expect_err("0x06 declares no extended container");
+    assert_eq!(
+        refusal.rule(),
+        Some(PartitionRule::TypeDisagrees.as_str()),
+        "the refusal carries which rule of the seam's set it broke"
+    );
+    assert_eq!(
+        refusal.category(),
+        ErrorCategory::InvalidImage,
+        "a declaration the image contradicts is a fact about the image"
+    );
+    let message = refusal.to_string();
+    assert!(
+        message.contains("0x06"),
+        "the refusal names the byte recorded: {message}"
+    );
+    assert!(
+        message.contains("dos-extended"),
+        "and the reading declared: {message}"
+    );
+
+    // And the declared type is what opens the namespace door: nothing was
+    // probed for, because the declaration was settled at the load.
+    let mut filesystem = view
+        .filesystem()
+        .expect("a DOS data partition determines FAT");
+    assert_eq!(
+        filesystem.kind().expect("the declaration was verified"),
+        FatKind::Fat16.name(),
+        "the recognizer verified what the partition type declared"
     );
     assert!(
         filesystem.entries("").is_ok(),
-        "the verbs answer on the node the resolver handed back"
+        "and the file verbs answer on the node that door handed out"
     );
-
     drop(filesystem);
-    drop(session);
-    std::fs::remove_file(&path).ok();
-}
 
-/// Two volumes bearing filesystems and the resolver refuses, naming both
-/// — transparent when there is one supported result, explicit when there
-/// are several, never guessing. The refusal carries its rule identity so
-/// a caller can branch on it without reading the sentence (P10).
-#[test]
-fn several_candidates_are_refused_by_name_and_selected_by_identity() {
-    let path = temp_path("resolve-several");
-    let volume = synthetic_fat16();
-    std::fs::write(
-        &path,
-        synthetic_multi_mbr(&[(0x06, &volume), (0x06, &volume)]),
-    )
-    .expect("image writes");
-    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
-    let disk = session.medium_mut(attachment).expect("the medium is pooled");
-
+    // Each partition is reached by the scheme's own number and answers
+    // with the identity the report issued for it — never by position in a
+    // list, and never by a door guessing which of the two was meant.
     let report = disk.inspect().expect("inspection reads");
-    let volumes: Vec<VolumeId> = report.volumes.iter().map(|volume| volume.id).collect();
-    assert_eq!(volumes.len(), 2);
-
-    let refusal = disk
-        .filesystem()
-        .expect_err("two answers, so there is nothing to be transparent about");
-    assert_eq!(refusal.category(), ErrorCategory::Unsupported);
-    assert_eq!(
-        refusal.rule(),
-        Some(SpaceRule::SeveralCandidates.as_str())
-    );
-    let message = refusal.to_string();
-    for volume in &volumes {
+    assert_eq!(report.volumes.len(), 2, "both regions composed a volume");
+    for (ordinal, composed) in [1_u32, 2].into_iter().zip(&report.volumes) {
+        let mut space = fs(disk, ordinal);
+        assert_eq!(
+            space.volume_id(),
+            Some(composed.id),
+            "partition {ordinal} composes the volume the report issued for it"
+        );
         assert!(
-            message.contains(&volume.value().to_string()),
-            "the refusal names each candidate: {message}"
+            space.entries("").is_ok(),
+            "and partition {ordinal} is readable through its own door"
         );
     }
 
-    // Selection is by the identity the report issued, never by position.
-    for volume in volumes {
-        let mut filesystem = disk.volume(volume).expect("the report issued it");
-        assert_eq!(filesystem.volume_id(), Some(volume));
-        assert!(filesystem.entries("").is_ok());
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// The boot flag is one of the scheme's own facts, read exactly as the
+/// slot records it and derived from nothing else.
+#[test]
+fn the_boot_flag_is_read_as_the_table_records_it() {
+    let fat = synthetic_fat16();
+    let path = image_at(
+        "pool-active",
+        &synthetic_flagged_mbr(&[(0x06, false, &fat), (0x06, true, &fat)]),
+    );
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+
+    let pool = disk.partitions();
+    assert_eq!(pool.len(), 2, "the table declares two entries");
+    assert!(
+        !pool[0].active(),
+        "the first slot's flag byte is zero, and no default is invented for it"
+    );
+    assert!(
+        pool[1].active(),
+        "the second slot records 0x80, which is the whole of what the flag is"
+    );
+    assert_eq!(
+        pool[1].ordinal(),
+        2,
+        "the flag is a fact about the entry and changes nothing else about it"
+    );
+    assert!(
+        disk.partition(2)
+            .expect("the table bears entry 2")
+            .active(),
+        "the view answers the same fact the record does"
+    );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// A type outside this release's claim keeps its place in the pool: it is
+/// still declared, still numbered, still explained — and the partitions
+/// behind it never renumber (U4).
+#[test]
+fn a_type_outside_the_claim_keeps_its_place_and_opens_neither_door() {
+    let fat = synthetic_fat16();
+    let path = image_at(
+        "pool-unread",
+        &synthetic_multi_mbr(&[(0x06, &fat), (0x07, &fat), (0x06, &fat)]),
+    );
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+
+    let pool = disk.partitions();
+    let ordinals: Vec<u32> = pool.iter().map(|partition| partition.ordinal()).collect();
+    assert_eq!(ordinals, [1, 2, 3], "every declared entry is in the pool");
+
+    let unread = &pool[1];
+    assert_eq!(
+        unread.type_byte(),
+        Some(0x07),
+        "the raw value is kept exactly as the slot records it"
+    );
+    assert_eq!(
+        unread.type_reading(),
+        Some("NTFS or exFAT"),
+        "the partition a caller most needs explained is the one the \
+         library declines to read, so the reading is present regardless — \
+         and it describes the declaration, never the content"
+    );
+    assert!(!unread.is_claimed(), "0x07 is outside this release's claim");
+    assert!(
+        unread.issue().is_some(),
+        "the refusal stays on the partition rather than failing the disk"
+    );
+    assert!(!unread.is_addressable(), "it composes no extent");
+    assert!(!unread.bears_namespace(), "and determines no namespace");
+    assert_eq!(unread.volume_id(), None, "so it composed no volume either");
+
+    assert!(
+        disk.partition(2)
+            .expect("entry 2 is still in the pool")
+            .volume()
+            .is_none(),
+        "there is no extent to read by position within"
+    );
+    assert!(
+        disk.partition(2)
+            .expect("entry 2 is still in the pool")
+            .filesystem()
+            .is_none(),
+        "and nothing determines a namespace over it"
+    );
+
+    // Nothing behind it shifted: entry 3 is still entry 3, and its own
+    // door opens exactly as it would have.
+    assert_eq!(pool[2].ordinal(), 3, "the unread entry renumbered nothing");
+    assert!(
+        pool[2].is_claimed(),
+        "and the refusal in front of it cost it nothing"
+    );
+    assert!(
+        fs(disk, 3).entries("").is_ok(),
+        "the partition behind an unread one is reached by its own number"
+    );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// The extended container is structure rather than data. It is declared,
+/// with the extent the table gave it, *and* it composes nothing: two
+/// different facts, and the pool keeps both.
+#[test]
+fn a_structural_partition_is_declared_with_its_extent_and_opens_neither_door() {
+    let path = image_at(
+        "pool-structure",
+        &synthetic_extended_disk(&synthetic_fat16(), false),
+    );
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+
+    let pool = disk.partitions();
+    let placements: Vec<&str> = pool
+        .iter()
+        .map(|partition| partition.placement())
+        .collect();
+    assert_eq!(
+        placements,
+        ["primary", "primary", "logical", "logical"],
+        "placement is the scheme's own vocabulary for where an entry sits"
+    );
+
+    let extended = &pool[1];
+    assert_eq!(
+        extended.role(),
+        RegionRole::Structure,
+        "placement and role are different axes and neither implies the \
+         other: this one occupies a primary slot and its role is structural"
+    );
+    assert_eq!(
+        extended.type_byte(),
+        Some(0x05),
+        "the value the slot records is what makes it the container"
+    );
+    assert_eq!(
+        extended.type_reading(),
+        Some("an extended partition, CHS-addressed"),
+        "and the reading explains it in a sentence fit to show a user"
+    );
+    extended
+        .as_type(PartitionType::DosExtended)
+        .expect("0x05 is one of the values that reading covers");
+    assert!(
+        extended.start_bytes().is_some() && extended.length_bytes().is_some(),
+        "it is still declared, and its extent is still what the table said"
+    );
+    assert_eq!(extended.ordinal(), 2, "and it still numbers what follows it");
+
+    assert!(
+        disk.partition(2)
+            .expect("the extended container is in the pool")
+            .volume()
+            .is_none(),
+        "a structural partition composes no volume to address"
+    );
+    assert!(
+        disk.partition(2)
+            .expect("the extended container is in the pool")
+            .filesystem()
+            .is_none(),
+        "and determines no namespace to name files in"
+    );
+
+    // The logicals on its chain are partitions in their own right, each
+    // reached by the number the walk gave it.
+    for ordinal in [3_u32, 4] {
+        assert!(
+            fs(disk, ordinal).entries("").is_ok(),
+            "logical partition {ordinal} is reached by its own number"
+        );
     }
 
     drop(session);
     std::fs::remove_file(&path).ok();
 }
 
-/// A volume that bears no filesystem is an ordinary volume: the node
-/// answers a named absence rather than an empty listing.
+/// Both doors hand out the same node (D26). Which door was opened says
+/// which question was asked, not which object comes back: the space
+/// carries whichever vantages the partition has, either way.
 #[test]
-fn a_volume_bearing_no_filesystem_is_a_named_absence() {
+fn both_vantage_doors_hand_out_one_node() {
+    let path = image_at("pool-one-node", &synthetic_mbr_disk(&synthetic_fat16()));
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+
+    let mut through_volume = disk
+        .partition(1)
+        .expect("the declared table bears entry 1")
+        .volume()
+        .expect("a DOS data partition composes an extent");
+    assert!(
+        through_volume.is_addressable(),
+        "the door that was opened is the addressable one"
+    );
+    assert!(
+        through_volume.has_namespace(),
+        "and the node names its files too, because the partition has both"
+    );
+    let start = through_volume.start_bytes();
+    let length = through_volume.length_bytes();
+    let identity = through_volume.volume_id();
+    let kind = through_volume
+        .kind()
+        .expect("the declared type was verified")
+        .to_owned();
+    assert!(
+        through_volume.entries("").is_ok(),
+        "the file verbs answer here, whichever door was opened"
+    );
+    drop(through_volume);
+
+    let mut through_filesystem = disk
+        .partition(1)
+        .expect("the declared table bears entry 1")
+        .filesystem()
+        .expect("a DOS data partition determines FAT");
+    assert!(
+        through_filesystem.has_namespace(),
+        "the door that was opened is the namespace one"
+    );
+    assert!(
+        through_filesystem.is_addressable(),
+        "the other door hands out the same node, extent and all"
+    );
+    assert_eq!(
+        through_filesystem.start_bytes(),
+        start,
+        "one partition, one extent, one start"
+    );
+    assert_eq!(
+        through_filesystem.length_bytes(),
+        length,
+        "and one length"
+    );
+    assert_eq!(
+        through_filesystem.volume_id(),
+        identity,
+        "and one volume identity, whichever door issued it"
+    );
+    assert_eq!(
+        through_filesystem
+            .kind()
+            .expect("the declared type was verified"),
+        kind,
+        "and one namespace, recognized once per space rather than per door"
+    );
+
+    // The addressable vantage of the space the namespace door handed out
+    // reads within the partition rather than within the medium, which is
+    // the whole point of addressing within one.
+    let mut boot = [0_u8; 1];
+    through_filesystem
+        .read_at(0, &mut boot)
+        .expect("the extent reads");
+    assert_eq!(
+        boot[0], 0xeb,
+        "position zero is the partition's first sector, not the disk's"
+    );
+    assert_eq!(
+        start,
+        Some(2048 * 512),
+        "and the partition does not start where the medium does"
+    );
+
+    drop(through_filesystem);
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// A namespace spelling this release does not read is refused by name,
+/// and the refusal says what *is* read rather than only what is not (P3).
+#[test]
+fn a_declared_namespace_outside_the_claim_is_refused_by_name() {
+    let path = image_at("pool-unclaimed-namespace", &synthetic_fat16());
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+
+    let refusal = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("ext4")
+        .expect_err("this release reads no ext4");
+    assert_eq!(
+        refusal.rule(),
+        Some(PartitionRule::UnclaimedNamespace.as_str()),
+        "the refusal carries which rule of the seam's set it broke"
+    );
+    assert_eq!(
+        refusal.category(),
+        ErrorCategory::Unsupported,
+        "a spelling outside the claim is a limit of this release, not a \
+         fault in the image"
+    );
+    let message = refusal.to_string();
+    assert!(
+        message.contains("ext4"),
+        "the refusal names what was read: {message}"
+    );
+    assert!(
+        message.contains("fat") && message.contains("hdos"),
+        "and what this release reads instead: {message}"
+    );
+
+    // A claimed spelling is claimed at this seam and still answerable at
+    // the next: CP/M is a namespace this release recognizes and does not
+    // read, and it refuses at the open under its own rule, because
+    // recognizing and reading are separate claims.
+    let recognized = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("cpm")
+        .expect_err("this release recognizes CP/M and does not read it");
+    assert_eq!(
+        recognized.rule(),
+        Some(SpaceRule::RecognizedNotRead.as_str()),
+        "the refusal belongs to the seam that made it, not to this one"
+    );
+
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// An ordinal the pool never issued is answered with absence. Nothing is
+/// manufactured to stand at it, and no error is invented for a question
+/// that has a plain answer.
+#[test]
+fn an_ordinal_the_pool_never_issued_is_answered_with_absence() {
+    let fat = synthetic_fat16();
+    let path = image_at("pool-absent-ordinal", &synthetic_mbr_disk(&fat));
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+
+    assert!(disk.partition(1).is_some(), "the table declares entry 1");
+    assert!(
+        disk.partition(2).is_none(),
+        "the table declares no entry 2, and none is composed to fill the gap"
+    );
+    assert!(
+        disk.partition(0).is_none(),
+        "the direct partition stands only where a medium records no scheme, \
+         and this one records an MBR table"
+    );
+    drop(session);
+    std::fs::remove_file(&path).ok();
+
+    // And the converse: an image recording no scheme bears the direct
+    // partition, and nothing at the numbers a scheme would have used.
+    let path = image_at("pool-absent-declared", &fat);
+    let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
+    let disk = session.medium_mut(attachment).expect("the medium is pooled");
+    assert!(
+        disk.partition(0).is_some(),
+        "the direct partition is what its content is reached through"
+    );
+    assert!(
+        disk.partition(1).is_none(),
+        "and no table numbered anything for 1 to name"
+    );
+    drop(session);
+    std::fs::remove_file(&path).ok();
+}
+
+/// A partition whose declared type determines a namespace the content
+/// turns out not to bear is an ordinary partition still: the node answers
+/// a named absence rather than an empty listing, and its addressable
+/// vantage is untouched by the namespace's failure to be there.
+#[test]
+fn a_partition_bearing_no_readable_namespace_is_a_named_absence() {
     let good = synthetic_fat16();
     let mut rubbish = vec![0u8; good.len()];
     rubbish[..2].copy_from_slice(b"\xeb\x3c");
     rubbish[510] = 0x55;
     rubbish[511] = 0xaa;
     let path = image_at(
-        "resolve-absent",
+        "pool-absent-namespace",
         &synthetic_multi_mbr(&[(0x06, &good), (0x06, &rubbish)]),
     );
     let (mut session, attachment) = attach(&path, Afford::Read).expect("image opens");
@@ -1547,9 +2213,15 @@ fn a_volume_bearing_no_filesystem_is_a_named_absence() {
 
     let report = disk.inspect().expect("inspection reads");
     let bare = report.volumes[1].id;
+    let bare_length = report.volumes[1].length_bytes;
+
+    // The declared type still determines a namespace, so the door opens;
+    // what it hands over carries the recognizing seam's own refusal (P4).
     let refusal = disk
-        .volume(bare)
-        .expect("the volume composed")
+        .partition(2)
+        .expect("the table declares entry 2")
+        .filesystem()
+        .expect("0x06 determines FAT, whatever the content turns out to be")
         .kind()
         .expect_err("it bears nothing this release recognizes");
     assert!(
@@ -1558,15 +2230,31 @@ fn a_volume_bearing_no_filesystem_is_a_named_absence() {
     );
 
     // And the space is still addressable, with its own extent: the 0..1 is
-    // trait presence, so a volume bearing no namespace is an ordinary
-    // volume rather than a failure to compose one.
-    let mut space = disk.volume(bare).expect("the volume composed");
-    assert_eq!(space.volume_id(), Some(bare));
-    assert!(space.is_addressable());
-    assert!(!space.has_namespace());
+    // trait presence, so a partition bearing no namespace is an ordinary
+    // volume rather than a failure to have composed one.
+    let mut space = disk
+        .partition(2)
+        .expect("the table declares entry 2")
+        .volume()
+        .expect("the partition composed an extent");
+    assert_eq!(
+        space.volume_id(),
+        Some(bare),
+        "the identity is the one the report issued for this partition"
+    );
+    assert!(
+        space.is_addressable(),
+        "the partition composed its extent, whatever the extent holds"
+    );
+    assert!(
+        !space.has_namespace(),
+        "and bears no namespace, which is a fact about the content rather \
+         than about the partition"
+    );
     assert_eq!(
         space.length_bytes(),
-        Some(report.volumes[1].length_bytes)
+        Some(bare_length),
+        "the extent is the one the report stated for this volume"
     );
 
     // The addressable vantage reaches what no namespace names, and the
@@ -1574,10 +2262,16 @@ fn a_volume_bearing_no_filesystem_is_a_named_absence() {
     let mut head = [0_u8; 16];
     space.read_at(0, &mut head).expect("the extent reads");
     let past = space
-        .read_at(report.volumes[1].length_bytes, &mut head)
+        .read_at(bare_length, &mut head)
         .expect_err("a read past the space's end is refused");
-    assert_eq!(past.rule(), Some(remanence::SpaceRule::OutsideExtent.as_str()));
+    assert_eq!(
+        past.rule(),
+        Some(SpaceRule::OutsideExtent.as_str()),
+        "the bound is the space's own, not the medium's"
+    );
 
+    drop(space);
+    drop(session);
     std::fs::remove_file(&path).ok();
 }
 
@@ -1591,12 +2285,11 @@ fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
     let disk = session.medium_mut(attachment).expect("the medium is pooled");
 
     let payload: Vec<u8> = (0..4000u32).map(|n| (n % 251) as u8).collect();
-    disk.filesystem()
-        .expect("resolves")
+    fs(disk, 0)
         .write_file("PAYLOAD.BIN", &payload)
         .expect("write buffers");
 
-    let mut filesystem = disk.filesystem().expect("resolves");
+    let mut filesystem = fs(disk, 0);
     let mut file = filesystem.get_file("payload.bin").expect("matched case-insensitively");
     assert_eq!(file.name(), "PAYLOAD.BIN", "the name comes back as stored");
     assert_eq!(file.size_bytes(), payload.len() as u64);
@@ -1635,8 +2328,8 @@ fn a_file_view_offers_the_whole_value_and_the_bounded_form() {
     std::fs::remove_file(&path).ok();
 }
 
-/// One node, both vantages: the space a resolver hands back addresses its
-/// own extent *and* names its files, and a write through one vantage is
+/// One node, both vantages: the space a door hands out addresses its own
+/// extent *and* names its files, and a write through one vantage is
 /// visible through the other.
 ///
 /// This is what the addressable vantage exists for — reaching what a
@@ -1650,9 +2343,9 @@ fn a_space_addresses_its_extent_and_names_its_files() {
     let (mut session, attachment) = attach(&path, Afford::Write).expect("image opens");
     let disk = session.medium_mut(attachment).expect("the medium is pooled");
 
-    let mut space = disk.filesystem().expect("the medium resolves to one");
+    let mut space = fs(disk, 0);
 
-    // Both vantages, on the one object the resolver answered with.
+    // Both vantages, on the one object the door handed out.
     assert!(space.has_namespace(), "a FAT volume names files");
     assert!(space.is_addressable(), "and a volume composed its extent");
     let length = space.length_bytes().expect("it is addressable");
@@ -1669,7 +2362,8 @@ fn a_space_addresses_its_extent_and_names_its_files() {
         .expect_err("a read past the space's end is refused");
     assert_eq!(
         past.rule(),
-        Some(remanence::SpaceRule::OutsideExtent.as_str())
+        Some(SpaceRule::OutsideExtent.as_str()),
+        "the bound is the space's own, not the medium's"
     );
 
     // A namespace write and an addressable read see one state, because

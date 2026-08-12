@@ -4,11 +4,15 @@
 //! Tests for the HDOS namespace over the fixture image, reached through
 //! the node that carries file verbs.
 //!
-//! The H8D composes no volume — its leading sector is neither blank, an
-//! MBR, nor a FAT boot record — so `device.filesystem()` resolves to the
-//! namespace the medium bears itself. That the resolver takes no volume
-//! selector here is not an inconsistency but its transparent form: the
-//! walk had exactly one supported answer at every seam (P19).
+//! The H8D records no partition scheme, so the pool established when the
+//! medium was loaded bears exactly one member: the direct partition, the
+//! library's own composition of the whole content, carried as provenance
+//! and never as evidence. Nothing there determines a namespace — a
+//! declared partition type is what would, and no scheme declared one —
+//! so the reading is the caller's and the check is the library's. These
+//! tests declare `"hdos"`, and the adapter that declaration names is
+//! what verifies it against the evidence rather than probing for a
+//! filesystem on the caller's behalf (P18, P19).
 
 use std::path::PathBuf;
 
@@ -65,12 +69,26 @@ fn lists_files_from_hdos_fixture_image() {
     let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
 
-    let mut filesystem = disk.filesystem().expect("the resolver walks to one namespace");
+    let mut filesystem = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("hdos")
+        .expect("the declaration is the caller's and the adapter verifies it");
     assert_eq!(filesystem.kind().expect("the medium bears a namespace"), "hdos");
+    // The direct partition over an h8d is composed over the whole
+    // content, so the addressable vantage opens — and nothing composed a
+    // volume over it, so the report issued no identity to answer with.
+    // The two facts sit side by side rather than one implying the other:
+    // a namespace the medium bears itself gets no phantom volume minted
+    // to carry it (D26, U4).
+    assert!(
+        filesystem.is_addressable(),
+        "the direct partition addresses the whole content"
+    );
     assert_eq!(
         filesystem.volume_id(),
         None,
-        "the medium bears this namespace itself; no volume composed"
+        "and composes no volume; the inspection report issued no identity here"
     );
 
     let files = filesystem.entries("").expect("directory parses");
@@ -146,10 +164,18 @@ fn lists_files_from_hdos_fixture_image() {
 #[test]
 fn reads_a_file_out_through_the_grt_chain() {
     let path = private_copy("read");
-    let (mut disk_session, disk_at) = attach(&path, Afford::Read).expect("disk opens");
+    // The handle affords writing, so the refusal at the end of this test
+    // is the namespace's own rather than the claim's (P7 as amended):
+    // this release reads the HDOS catalog and does not write it, whatever
+    // the caller's open allows.
+    let (mut disk_session, disk_at) = attach(&path, Afford::Write).expect("disk opens");
     let disk = disk_session.medium_mut(disk_at).expect("the medium is pooled");
 
-    let mut filesystem = disk.filesystem().expect("the resolver walks to one namespace");
+    let mut filesystem = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("hdos")
+        .expect("the declaration is the caller's and the adapter verifies it");
     let contents = filesystem
         .get_file("DEMO.BAS")
         .expect("the catalog names it")
@@ -187,9 +213,10 @@ fn reads_a_file_out_through_the_grt_chain() {
     std::fs::remove_file(&path).ok();
 }
 
-/// A blank medium composes no volume and bears no namespace, and the
-/// resolver says exactly that — a named absence carrying its rule
-/// identity (P10), never an empty listing.
+/// Two absences, each stated by the seam that owns it (P10): nothing
+/// determines a namespace over the direct partition, so the plain door
+/// answers `None`; and a declaration the content cannot bear is refused
+/// by the adapter the declaration named. Neither is an empty listing.
 #[test]
 fn a_medium_bearing_no_namespace_is_a_named_absence() {
     let path = std::env::temp_dir().join(format!(
@@ -200,9 +227,41 @@ fn a_medium_bearing_no_namespace_is_a_named_absence() {
 
     let (mut session, attachment) = attach(&path, Afford::Read).expect("disk opens");
     let disk = session.medium_mut(attachment).expect("the medium is pooled");
-    let error = disk.filesystem().expect_err("there is no namespace to resolve to");
-    assert_eq!(error.category(), ErrorCategory::NotFound);
-    assert_eq!(error.rule(), Some(SpaceRule::NoNamespace.as_str()));
+
+    // This medium records no scheme, so it bears the direct partition —
+    // and nothing there declares a namespace, a declared partition type
+    // being what would. The plain door answers the honest absence P19
+    // requires rather than probing for one.
+    let direct = disk.partition(0).expect("the direct partition");
+    assert!(direct.is_direct(), "a medium recording no scheme bears exactly this");
+    assert!(
+        !direct.partition().bears_namespace(),
+        "no type is declared here, so nothing determines a namespace"
+    );
+    assert!(
+        direct.filesystem().is_none(),
+        "and the plain door says so by answering nothing at all"
+    );
+
+    // The declared reading is where a caller who knows says so, and the
+    // check is the library's: a blank image bears no HDOS label, and the
+    // adapter the declaration named is what refuses — attributed to that
+    // seam rather than to the walk that reached it (P4, P18).
+    let error = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("hdos")
+        .expect_err("a blank image is no HDOS volume");
+    assert_eq!(error.category(), ErrorCategory::InvalidImage);
+    let message = error.to_string();
+    assert!(
+        message.contains("hdos"),
+        "the refusal names the adapter that made it: {message}"
+    );
+    assert!(
+        message.contains("HDOS label"),
+        "and what it read to make it: {message}"
+    );
 
     drop(session);
     std::fs::remove_file(&path).ok();

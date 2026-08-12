@@ -4,8 +4,8 @@
 //! C ABI for the Remanence disk image analysis library.
 //!
 //! Conventions:
-//! - Handles (`RemanenceIdentification`, `RemanenceVolume`,
-//!   `RemanenceSpace`, `RemanenceFile`, `RemanenceArchive`) are
+//! - Handles (`RemanenceIdentification`, `RemanencePartition`,
+//!   `RemanenceSpace`, `RemanenceFile`, `RemanenceDiskReport`) are
 //!   opaque and freed with their matching `*_free` function.
 //! - `const char*` return values are UTF-8, owned by the handle they were read
 //!   from, and valid until that handle is freed. Do not free them.
@@ -731,7 +731,10 @@ pub unsafe extern "C" fn remanence_discovery_path(
     discovery: *const RemanenceDiscovery,
 ) -> *const c_char {
     unsafe { discovery.as_ref() }.map_or(ptr::null(), |discovery| {
-        discovery.path.as_ref().map_or(ptr::null(), |path| path.as_ptr())
+        discovery
+            .path
+            .as_ref()
+            .map_or(ptr::null(), |path| path.as_ptr())
     })
 }
 
@@ -742,7 +745,10 @@ pub unsafe extern "C" fn remanence_discovery_image_path(
     discovery: *const RemanenceDiscovery,
 ) -> *const c_char {
     unsafe { discovery.as_ref() }.map_or(ptr::null(), |discovery| {
-        discovery.image_path.as_ref().map_or(ptr::null(), |path| path.as_ptr())
+        discovery
+            .image_path
+            .as_ref()
+            .map_or(ptr::null(), |path| path.as_ptr())
     })
 }
 
@@ -2824,7 +2830,7 @@ pub struct RemanenceAssurance {
 ///
 /// It is available before anything is read, so a caller meets a deficiency
 /// by being told rather than by an operation failing halfway. Null only
-/// when the device holding this medium was released.
+/// once the medium itself has been released.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_medium_assurance(
     medium: *const RemanenceMedium,
@@ -3083,40 +3089,60 @@ pub unsafe extern "C" fn remanence_medium_is_modified(medium: *const RemanenceMe
 }
 
 // ---------------------------------------------------------------------------
-// The namespace surface (P19): file access lives on one node.
+// The partition surface (P16, P17, P19): content is reached through the
+// partition that composes it.
 //
-// A device carries no file verbs at all. It answers what it *resolves*
-// to — `remanence_device_filesystem`, and `remanence_device_volume` where
-// several answers exist — and the verbs live on the filesystem that
-// resolver hands back.
+// A medium carries no file verbs at all. It carries its pool — the scheme
+// it was populated under, and every partition in it — and the vantage
+// doors live on the partition: `remanence_partition_volume` for the
+// addressable vantage, `remanence_partition_filesystem` for the namespace
+// one, and `remanence_partition_filesystem_as` where nothing determines a
+// namespace and the caller declares the reading. **Both doors compose the
+// same node**, so which one was opened changes nothing about what comes
+// back — only which question was asked of it.
 //
-// The three handles below name their provider by session, machine,
-// attachment and volume identity rather than by pointer, and re-resolve
-// on every call: a medium that has been ejected answers by name instead
-// of reaching state that has left.
+// The pool is established when the medium is loaded and is evidence from
+// then on, so the doors are lookups rather than probes: a vantage the
+// partition does not have is null with the error outs untouched, and only
+// a composition that was attempted and refused writes them.
+//
+// The handles below name their provider — session and medium, or the
+// record layer a recording's sectors are held behind — rather than
+// holding a borrow, and re-resolve on every call: a medium that has been
+// released answers by name instead of reaching state that has left.
 
-/// One volume of a device's medium, selected by the identity the
-/// inspection report issued. Free with `remanence_space_free`.
+use remanence::{Partition, PartitionScheme, PartitionType, PartitionView};
+
+/// One space of a medium's content, composed over the partition that
+/// bears it. Free with `remanence_space_free`.
 pub struct RemanenceSpace {
     session: *mut RemanenceSession,
-    /// The medium this namespace was resolved through. `None` where no
-    /// medium composed it at all.
+    /// The medium whose pool holds the partition this was composed over.
+    /// `None` where no medium composed it at all.
     media: Option<MediaId>,
     /// The sector layer this namespace is presented over, where no
-    /// device composed it — the flux family is reached through its own
-    /// types rather than through a device. Null for a device-backed
+    /// medium composed it — the flux family is reached through its own
+    /// types rather than through a device. Null for a medium-backed
     /// space, and borrowed from the handle that owns it either way.
     sectors: *const RemanenceC1541Sectors,
-    /// The volume that composed it, where it has the addressable
-    /// vantage. `None` where the medium bears its namespace directly.
+    /// The scheme's own ordinal of the partition that composed it, which
+    /// is what re-resolution looks the partition up by. `None` where no
+    /// pool named it.
+    ordinal: Option<u32>,
+    /// The namespace reading a caller declared to mint it, where one did.
+    /// It is carried so re-resolution declares the same thing again
+    /// rather than falling back on what the pool records.
+    declared: Option<CString>,
+    /// Whether the composed space carries the addressable vantage.
+    addressable: bool,
+    /// The identity the inspection report issued for the volume composed
+    /// over the partition, absent where it issued none.
     volume: Option<u64>,
     start_bytes: u64,
     length_bytes: u64,
     /// The namespace kind, where it has the namespace vantage.
     kind: Option<CString>,
 }
-
-
 
 /// One file, named by the filesystem that holds it. Free with
 /// `remanence_file_free`.
@@ -3126,133 +3152,756 @@ pub struct RemanenceFile {
     /// As on `RemanenceSpace`: the sector layer a flux-family namespace
     /// is presented over, or null.
     sectors: *const RemanenceC1541Sectors,
-    volume: Option<u64>,
+    ordinal: Option<u32>,
+    declared: Option<CString>,
     path: CString,
     name: CString,
     kind: RemanenceEntryKind,
     size_bytes: u64,
 }
 
-/// Resolves the named filesystem and runs `action` over it.
+/// What a space or a file re-composes itself from: the provider it was
+/// minted through, the partition within it, and the reading declared over
+/// that partition where one was.
 ///
-/// Every verb below passes through here, so the refusals a caller meets
-/// are the library's own — the resolver's where the walk had no single
-/// answer, the namespace's where it did.
-unsafe fn with_space<T>(
+/// It is the whole of what either handle knows about where it came from,
+/// named once so both carry the same thing rather than two spellings of
+/// it.
+#[derive(Clone, Copy)]
+struct SpaceOrigin<'a> {
     session: *mut RemanenceSession,
     media: Option<MediaId>,
-    volume: Option<u64>,
     sectors: *const RemanenceC1541Sectors,
-    action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
-) -> remanence::Result<T> {
-    // A namespace presented over a sector layer re-resolves from that
-    // layer, exactly as a medium-backed one re-resolves from its
-    // medium: the node is a view over what is beneath it and never an
-    // instance, whichever seam that is.
-    if let Some(held) = unsafe { sectors.as_ref() } {
-        let mut space = held.sectors.filesystem()?;
-        return action(&mut space);
-    }
-    let handle =
-        unsafe { session.as_mut() }.ok_or_else(|| remanence::Error::io("null session"))?;
-    let media = media.ok_or_else(|| {
-        remanence::Error::io("this namespace names no medium to be resolved through")
-    })?;
-    let medium = handle
-        .session
-        .medium_mut(media)
-        .ok_or_else(|| remanence::Error::io("the medium this namespace reads was released"))?;
-    let mut space = match volume {
-        Some(id) => medium.volume(VolumeId::from_value(id))?,
-        None => medium.filesystem()?,
-    };
-    action(&mut space)
+    ordinal: Option<u32>,
+    declared: Option<&'a str>,
 }
 
-/// The space this device resolves to, or null with the refusal set.
-///
-/// The walk device to volume to namespace is transparent where every
-/// seam has exactly one supported answer, and refuses naming the
-/// candidates where one does not. A volume bearing no filesystem is a
-/// named absence, not an empty listing. Free with
-/// `remanence_space_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_medium_filesystem(
-    medium: *mut RemanenceMedium,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceSpace {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { medium.as_mut() }) else {
-        return ptr::null_mut();
-    };
-    let (session, media) = (handle.session, Some(handle.id));
-    match unsafe {
-        with_space(session, media, None, ptr::null(), |space| {
-            Ok((
-                space.kind()?.to_owned(),
-                space.volume_id(),
-                space.start_bytes().unwrap_or(0),
-                space.length_bytes().unwrap_or(0),
-            ))
-        })
-    } {
-        Ok((kind, volume, start_bytes, length_bytes)) => Box::into_raw(Box::new(RemanenceSpace {
-            session,
-            media,
-            sectors: ptr::null(),
-            volume: volume.map(VolumeId::value),
-            start_bytes,
-            length_bytes,
-            kind: Some(to_cstring(&kind)),
-        })),
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
+impl RemanenceSpace {
+    /// Where this space came from, for the re-composition every verb on
+    /// it passes through.
+    fn origin(&self) -> SpaceOrigin<'_> {
+        SpaceOrigin {
+            session: self.session,
+            media: self.media,
+            sectors: self.sectors,
+            ordinal: self.ordinal,
+            declared: self.declared.as_deref().and_then(|id| id.to_str().ok()),
         }
     }
 }
 
-/// One space of this device's medium, by the identity the inspection
-/// report issued for its volume — the selector where several namespaces
-/// exist, and the way to reach a volume bearing none. Free with
-/// `remanence_space_free`.
+impl RemanenceFile {
+    /// The same origin the space this file was named through carries: a
+    /// file is a name within a namespace, never storage of its own.
+    fn origin(&self) -> SpaceOrigin<'_> {
+        SpaceOrigin {
+            session: self.session,
+            media: self.media,
+            sectors: self.sectors,
+            ordinal: self.ordinal,
+            declared: self.declared.as_deref().and_then(|id| id.to_str().ok()),
+        }
+    }
+}
+
+/// Re-composes the space this origin names and runs `action` over it.
+///
+/// Every verb below passes through here, so the refusals a caller meets
+/// are the library's own — the pool's where the partition it named has
+/// left, the partition's where a declared reading does not hold, the
+/// namespace's where it does.
+///
+/// **Both doors compose the same node**, so the space is reconstructed
+/// the same way whichever door minted it: a declared reading is declared
+/// again, and where the caller declared nothing the vantages the pool
+/// records answer — the namespace where the partition bears one, the
+/// addressable extent where it does not.
+unsafe fn with_space<T>(
+    origin: SpaceOrigin<'_>,
+    action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
+) -> remanence::Result<T> {
+    // A namespace presented over a sector layer re-composes from that
+    // layer, exactly as a medium-backed one re-composes from its
+    // medium: the node is a view over what is beneath it and never an
+    // instance, whichever seam that is (P13). A recording determines no
+    // reading of its own, so the declaration stands again here — CBM DOS
+    // where the mint made no other.
+    if let Some(held) = unsafe { origin.sectors.as_ref() } {
+        let mut space = held
+            .sectors
+            .partition()
+            .filesystem_as(origin.declared.unwrap_or("cbmdos"))?;
+        return action(&mut space);
+    }
+    let handle =
+        unsafe { origin.session.as_mut() }.ok_or_else(|| remanence::Error::io("null session"))?;
+    let media = origin
+        .media
+        .ok_or_else(|| remanence::Error::io("this space names no medium to be composed over"))?;
+    let ordinal = origin
+        .ordinal
+        .ok_or_else(|| remanence::Error::io("this space names no partition to be composed over"))?;
+    let medium = handle
+        .session
+        .medium_mut(media)
+        .ok_or_else(|| remanence::Error::io("the medium this space reads was released"))?;
+    let partition = medium.partition(ordinal).ok_or_else(|| {
+        remanence::Error::io(format!(
+            "the medium's partition pool holds no partition {ordinal}"
+        ))
+    })?;
+    let bears_namespace = partition.partition().bears_namespace();
+    let addressable = partition.partition().is_addressable();
+    let mut space = match origin.declared {
+        Some(id) => partition.filesystem_as(id)?,
+        None if bears_namespace => partition
+            .filesystem()
+            .expect("the namespace vantage the pool records"),
+        None if addressable => partition
+            .volume()
+            .expect("the addressable vantage the pool records"),
+        None => {
+            return Err(remanence::Error::io(format!(
+                "partition {ordinal} composes neither the vantage this space \
+                 was minted through nor any other"
+            )));
+        }
+    };
+    action(&mut space)
+}
+
+// ------------------------------------------------ the claimed vocabulary
+
+/// A claimed enumerand's two spellings: the stable one that crosses the
+/// boundary and the one fit to show a user.
+struct SpellingView {
+    id: CString,
+    name: CString,
+}
+
+fn scheme_spellings() -> &'static [SpellingView] {
+    static SCHEMES: std::sync::OnceLock<Vec<SpellingView>> = std::sync::OnceLock::new();
+    SCHEMES.get_or_init(|| {
+        PartitionScheme::ALL
+            .iter()
+            .map(|scheme| SpellingView {
+                id: to_cstring(scheme.id()),
+                name: to_cstring(scheme.name()),
+            })
+            .collect()
+    })
+}
+
+fn partition_type_spellings() -> &'static [SpellingView] {
+    static TYPES: std::sync::OnceLock<Vec<SpellingView>> = std::sync::OnceLock::new();
+    TYPES.get_or_init(|| {
+        PartitionType::ALL
+            .iter()
+            .map(|declared| SpellingView {
+                id: to_cstring(declared.id()),
+                name: to_cstring(declared.name()),
+            })
+            .collect()
+    })
+}
+
+/// How many partition schemes this release reads (P16).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_medium_volume(
+pub extern "C" fn remanence_partition_scheme_count() -> usize {
+    PartitionScheme::ALL.len()
+}
+
+/// One read scheme's stable spelling (`mbr`), by index, or null out of
+/// range. The set is enumerated, so a caller can hold every spelling it
+/// may meet without waiting to meet one. Owned by the library; do not
+/// free.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_partition_scheme_id(index: usize) -> *const c_char {
+    scheme_spellings()
+        .get(index)
+        .map_or(ptr::null(), |spelling| spelling.id.as_ptr())
+}
+
+/// That scheme's name, fit to show a user, or null out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_partition_scheme_name(index: usize) -> *const c_char {
+    scheme_spellings()
+        .get(index)
+        .map_or(ptr::null(), |spelling| spelling.name.as_ptr())
+}
+
+/// How many readings of a partition's type value a declaration may name
+/// (P3).
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_partition_type_count() -> usize {
+    PartitionType::ALL.len()
+}
+
+/// One declarable reading's stable spelling (`dos-primary`), by index —
+/// the value passed to `remanence_partition_as_type` — or null out of
+/// range. Owned by the library; do not free.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_partition_type_id(index: usize) -> *const c_char {
+    partition_type_spellings()
+        .get(index)
+        .map_or(ptr::null(), |spelling| spelling.id.as_ptr())
+}
+
+/// What that reading names, in a sentence fit to show a user beside the
+/// value a partition records, or null out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_partition_type_name(index: usize) -> *const c_char {
+    partition_type_spellings()
+        .get(index)
+        .map_or(ptr::null(), |spelling| spelling.name.as_ptr())
+}
+
+// ----------------------------------------------------- the medium's pool
+
+/// The stable spelling of the scheme this medium's content is laid out
+/// under, or **null where it records none** — the direct partition stands
+/// there, and that is an answer rather than a refusal. Owned by the
+/// library; do not free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_partition_scheme(
+    medium: *const RemanenceMedium,
+) -> *const c_char {
+    let Some(scheme) = (unsafe { medium.as_ref() })
+        .and_then(|handle| handle.medium())
+        .and_then(|medium| medium.partition_scheme())
+    else {
+        return ptr::null();
+    };
+    PartitionScheme::ALL
+        .iter()
+        .position(|claimed| *claimed == scheme)
+        .and_then(|at| scheme_spellings().get(at))
+        .map_or(ptr::null(), |spelling| spelling.id.as_ptr())
+}
+
+/// How many partitions this medium's pool holds. A medium recording no
+/// scheme answers 1 — the direct partition, which is what its content is
+/// reached through.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_partition_count(medium: *const RemanenceMedium) -> usize {
+    unsafe { medium.as_ref() }
+        .and_then(|handle| handle.medium())
+        .map_or(0, |medium| medium.partitions().len())
+}
+
+/// The scheme's own ordinal of the partition at `index` in the pool's own
+/// order. False past the end.
+///
+/// The two numbers differ on purpose: a partition carrying an issue keeps
+/// its ordinal, so the partitions behind it never renumber (U4), and the
+/// ordinal — never the index — is what `remanence_medium_partition`
+/// takes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_partition_ordinal(
+    medium: *const RemanenceMedium,
+    index: usize,
+    value_out: *mut u32,
+) -> bool {
+    let ordinal = unsafe { medium.as_ref() }
+        .and_then(|handle| handle.medium())
+        .and_then(|medium| {
+            let partitions = medium.partitions();
+            partitions.get(index).map(Partition::ordinal)
+        });
+    unsafe { write_opt_u32(ordinal, value_out) }
+}
+
+/// The partition the scheme's own ordinal names — MBR entry 1 is `1`, and
+/// the direct partition is `0` — or **null where the pool holds none**.
+///
+/// It takes no error outs because absence is an answer here, exactly as
+/// it is for `remanence_session_medium`: the pool was established when
+/// the medium was loaded, so a number it does not hold is a fact about
+/// the medium rather than a failure to look. Free with
+/// `remanence_partition_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_partition(
     medium: *mut RemanenceMedium,
-    volume_id: u64,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceSpace {
-    unsafe { clear_error(error_out, error_rule_out) };
+    ordinal: u32,
+) -> *mut RemanencePartition {
     let Some(handle) = (unsafe { medium.as_mut() }) else {
         return ptr::null_mut();
     };
     let (session, media) = (handle.session, Some(handle.id));
     let Some(target) = handle.medium() else {
-        let error = remanence::Error::io("this medium was released");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match target.volume(VolumeId::from_value(volume_id)) {
-        Ok(space) => {
-            let start_bytes = space.start_bytes().unwrap_or(0);
-            let length_bytes = space.length_bytes().unwrap_or(0);
-            // A volume bearing no namespace is an ordinary volume, so the
-            // absence travels on the handle rather than failing here.
-            let kind = space.kind().ok().map(to_cstring);
-            Box::into_raw(Box::new(RemanenceSpace {
-                session,
-                media,
-                sectors: ptr::null(),
-                volume: Some(volume_id),
-                start_bytes,
-                length_bytes,
-                kind,
-            }))
+    let Some(view) = target.partition(ordinal) else {
+        return ptr::null_mut();
+    };
+    partition_handle(session, media, ptr::null(), view.partition())
+}
+
+// ------------------------------------------------- the partition handle
+
+/// One partition of a medium's evidence pool: what the scheme declared
+/// about it, what the library composed over it, and the doors onto that
+/// composition. Free with `remanence_partition_free`.
+///
+/// **It is a snapshot, not a borrow.** The record is a value on the Rust
+/// side and it is one here too: the facts below are copied when the pool
+/// answers, and every string reached through them is borrowed from this
+/// handle and dies with it. The doors name their provider — session and
+/// medium, or the record layer — the way `RemanenceDevice` does, and
+/// re-resolve through it rather than holding state that may leave.
+///
+/// The Rust view is spent by opening a door; this handle is not, so a
+/// caller may open both off one partition. That changes nothing about
+/// what comes back: both doors compose the same node.
+pub struct RemanencePartition {
+    /// The session the medium is pooled in, null for a partition over a
+    /// recording's own record layer.
+    session: *mut RemanenceSession,
+    /// The medium whose pool declared it, `None` for the same case.
+    media: Option<MediaId>,
+    /// The record layer it is composed over, where no medium composed it.
+    /// Null for a pooled partition, and borrowed from the handle that
+    /// owns it either way.
+    sectors: *const RemanenceC1541Sectors,
+    ordinal: u32,
+    direct: bool,
+    active: bool,
+    type_byte: Option<u8>,
+    type_reading: Option<CString>,
+    claimed: bool,
+    placement: CString,
+    role: RemanenceRegionRole,
+    start_bytes: Option<u64>,
+    length_bytes: Option<u64>,
+    addressable: bool,
+    bears_namespace: bool,
+    volume: Option<u64>,
+    issue: Option<IssueView>,
+    evidence: Vec<CString>,
+    provenance: Option<CString>,
+}
+
+/// Copies one partition record's facts across the boundary, beside the
+/// provider its doors re-resolve through.
+fn partition_handle(
+    session: *mut RemanenceSession,
+    media: Option<MediaId>,
+    sectors: *const RemanenceC1541Sectors,
+    partition: &Partition,
+) -> *mut RemanencePartition {
+    Box::into_raw(Box::new(RemanencePartition {
+        session,
+        media,
+        sectors,
+        ordinal: partition.ordinal(),
+        direct: partition.is_direct(),
+        active: partition.active(),
+        type_byte: partition.type_byte(),
+        type_reading: partition.type_reading().map(to_cstring),
+        claimed: partition.is_claimed(),
+        placement: to_cstring(partition.placement()),
+        role: match partition.role() {
+            RegionRole::Data => RemanenceRegionRole::Data,
+            RegionRole::Structure => RemanenceRegionRole::Structure,
+        },
+        start_bytes: partition.start_bytes(),
+        length_bytes: partition.length_bytes(),
+        addressable: partition.is_addressable(),
+        bears_namespace: partition.bears_namespace(),
+        volume: partition.volume_id().map(VolumeId::value),
+        issue: partition.issue().map(issue_view),
+        evidence: evidence_views(partition.evidence()),
+        provenance: partition.provenance().map(to_cstring),
+    }))
+}
+
+/// Re-resolves the partition this handle names and runs `action` over the
+/// view.
+///
+/// The pool is immutable for the session's life, so this answers the same
+/// record every time — but it answers it *through* the provider, so a
+/// medium that has been released refuses by name here rather than being
+/// acted on from a copy of facts that have gone.
+unsafe fn with_partition<T>(
+    handle: &RemanencePartition,
+    action: impl FnOnce(PartitionView<'_>) -> remanence::Result<T>,
+) -> remanence::Result<T> {
+    // A partition over a recording's own record layer re-resolves from
+    // that layer, exactly as a pooled one re-resolves from its medium
+    // (P13).
+    if let Some(held) = unsafe { handle.sectors.as_ref() } {
+        return action(held.sectors.partition());
+    }
+    let session =
+        unsafe { handle.session.as_mut() }.ok_or_else(|| remanence::Error::io("null session"))?;
+    let media = handle.media.ok_or_else(|| {
+        remanence::Error::io("this partition names no medium to be reached through")
+    })?;
+    let medium = session
+        .session
+        .medium_mut(media)
+        .ok_or_else(|| remanence::Error::io("the medium this partition belongs to was released"))?;
+    let view = medium.partition(handle.ordinal).ok_or_else(|| {
+        remanence::Error::io(format!(
+            "the medium's partition pool holds no partition {}",
+            handle.ordinal
+        ))
+    })?;
+    action(view)
+}
+
+/// Frees a partition handle. The medium and its pool are untouched, and
+/// so is every space already composed through it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_free(partition: *mut RemanencePartition) {
+    if !partition.is_null() {
+        drop(unsafe { Box::from_raw(partition) });
+    }
+}
+
+/// The scheme's own ordinal for this partition, or 0 for a null handle —
+/// which is also the direct partition's own number, so
+/// `remanence_partition_is_direct` is the question to ask about it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_ordinal(partition: *const RemanencePartition) -> u32 {
+    unsafe { partition.as_ref() }.map_or(0, |partition| partition.ordinal)
+}
+
+/// Whether this is the direct partition — the library's own composition
+/// of the whole content, which stands where the medium records no scheme.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_is_direct(
+    partition: *const RemanencePartition,
+) -> bool {
+    unsafe { partition.as_ref() }.is_some_and(|partition| partition.direct)
+}
+
+/// Whether the scheme flags this partition active, as it records it. The
+/// direct partition is flagged by nothing and answers false.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_active(partition: *const RemanencePartition) -> bool {
+    unsafe { partition.as_ref() }.is_some_and(|partition| partition.active)
+}
+
+/// The type value exactly as the scheme records it. False for the direct
+/// partition, which records none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_type_byte(
+    partition: *const RemanencePartition,
+    out: *mut u8,
+) -> bool {
+    let Some(type_byte) = (unsafe { partition.as_ref() }).and_then(|partition| partition.type_byte)
+    else {
+        return false;
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = type_byte;
+    }
+    true
+}
+
+/// What that value *declares*, in a sentence fit to quote in a refusal a
+/// user reads, or null for the direct partition.
+///
+/// It is present whether or not this release reads the type, because the
+/// partition a caller most needs explained is the one the library
+/// declines to read — and it describes the declaration, never the
+/// content: an unread `0x07` partition is not thereby asserted to hold
+/// NTFS.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_type_reading(
+    partition: *const RemanencePartition,
+) -> *const c_char {
+    unsafe { partition.as_ref() }
+        .and_then(|partition| partition.type_reading.as_ref())
+        .map_or(ptr::null(), |reading| reading.as_ptr())
+}
+
+/// Whether this release reads the declared type.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_is_claimed(
+    partition: *const RemanencePartition,
+) -> bool {
+    unsafe { partition.as_ref() }.is_some_and(|partition| partition.claimed)
+}
+
+/// How the scheme places this partition, in the scheme's own vocabulary:
+/// for MBR, `"primary"` for one of the four slots and `"logical"` for an
+/// entry on the extended chain. The direct partition answers `"direct"`.
+///
+/// This is a different axis from `remanence_partition_role` and neither
+/// implies the other.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_placement(
+    partition: *const RemanencePartition,
+) -> *const c_char {
+    unsafe { partition.as_ref() }.map_or(ptr::null(), |partition| partition.placement.as_ptr())
+}
+
+/// Whether the scheme declares this partition as data or as structure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_role(
+    partition: *const RemanencePartition,
+) -> RemanenceRegionRole {
+    unsafe { partition.as_ref() }.map_or(RemanenceRegionRole::Data, |partition| partition.role)
+}
+
+/// Where this partition starts in the presented content. False where it
+/// has no addressed extent at all — the direct partition over a medium
+/// whose native vantage is a namespace.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_start_bytes(
+    partition: *const RemanencePartition,
+    out: *mut u64,
+) -> bool {
+    unsafe {
+        write_opt_u64(
+            partition
+                .as_ref()
+                .and_then(|partition| partition.start_bytes),
+            out,
+        )
+    }
+}
+
+/// How far this partition runs, under the same rule.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_length_bytes(
+    partition: *const RemanencePartition,
+    out: *mut u64,
+) -> bool {
+    unsafe {
+        write_opt_u64(
+            partition
+                .as_ref()
+                .and_then(|partition| partition.length_bytes),
+            out,
+        )
+    }
+}
+
+/// Whether the addressable vantage opens — whether
+/// `remanence_partition_volume` answers with a space rather than null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_is_addressable(
+    partition: *const RemanencePartition,
+) -> bool {
+    unsafe { partition.as_ref() }.is_some_and(|partition| partition.addressable)
+}
+
+/// Whether the namespace vantage opens — whether
+/// `remanence_partition_filesystem` answers with a space rather than
+/// null. Where it does not, the namespace is declared with
+/// `remanence_partition_filesystem_as`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_bears_namespace(
+    partition: *const RemanencePartition,
+) -> bool {
+    unsafe { partition.as_ref() }.is_some_and(|partition| partition.bears_namespace)
+}
+
+/// The identity the inspection report issued for the volume composed over
+/// this partition. False where it composed none, which an addressable
+/// partition may still be.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_volume_id(
+    partition: *const RemanencePartition,
+    out: *mut u64,
+) -> bool {
+    unsafe {
+        write_opt_u64(
+            partition.as_ref().and_then(|partition| partition.volume),
+            out,
+        )
+    }
+}
+
+/// The category of the refusal that keeps this partition in the pool when
+/// its type is outside the claim or its chain could not be followed.
+/// False where the partition reads cleanly.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_issue_category(
+    partition: *const RemanencePartition,
+    category_out: *mut RemanenceErrorCategory,
+) -> bool {
+    let Some(issue) =
+        (unsafe { partition.as_ref() }).and_then(|partition| partition.issue.as_ref())
+    else {
+        return false;
+    };
+    if let Some(out) = unsafe { category_out.as_mut() } {
+        *out = issue.category;
+    }
+    true
+}
+
+/// That refusal, or null where the partition reads cleanly. A partition
+/// carrying one is still a partition and still keeps its place.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_issue(
+    partition: *const RemanencePartition,
+) -> *const c_char {
+    unsafe { partition.as_ref() }.map_or(ptr::null(), |partition| {
+        partition
+            .issue
+            .as_ref()
+            .map_or(ptr::null(), |issue| issue.message.as_ptr())
+    })
+}
+
+/// How many observations the scheme's adapter read to declare this
+/// partition (P4). The direct partition read nothing and answers 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_evidence_count(
+    partition: *const RemanencePartition,
+) -> usize {
+    unsafe { partition.as_ref() }.map_or(0, |partition| partition.evidence.len())
+}
+
+/// One of them, or null past the end. Borrowed from the handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_evidence(
+    partition: *const RemanencePartition,
+    index: usize,
+) -> *const c_char {
+    unsafe { partition.as_ref() }.map_or(ptr::null(), |partition| {
+        partition
+            .evidence
+            .get(index)
+            .map_or(ptr::null(), |line| line.as_ptr())
+    })
+}
+
+/// The direct partition's account of itself: what the library composed
+/// and why. Present for the direct partition and null for every partition
+/// a scheme declared, which is the whole of the distinction — a
+/// composition act is provenance, never evidence.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_provenance(
+    partition: *const RemanencePartition,
+) -> *const c_char {
+    unsafe { partition.as_ref() }
+        .and_then(|partition| partition.provenance.as_ref())
+        .map_or(ptr::null(), |provenance| provenance.as_ptr())
+}
+
+/// The caller's own reading of the type, checked against the value the
+/// scheme recorded (P3).
+///
+/// The declaration is the caller's and the check is the library's: a
+/// reading the recorded byte does not bear is refused naming both sides,
+/// and the direct partition — which records no type — refuses by name
+/// rather than accepting a reading of nothing. `type_id` is one of the
+/// spellings `remanence_partition_type_id` enumerates; any other is
+/// refused naming what this release declares.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_as_type(
+    partition: *const RemanencePartition,
+    type_id: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { partition.as_ref() }) else {
+        return false;
+    };
+    let Some(type_id) = (unsafe { utf8_arg(type_id) }) else {
+        let error = remanence::Error::io("null partition type");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let declared = match PartitionType::from_id(type_id.as_ref()) {
+        Ok(declared) => declared,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return false;
         }
+    };
+    match unsafe { with_partition(handle, |view| view.as_type(declared)) } {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+// -------------------------------------------------- the vantage doors
+
+/// Which vantage a caller asked a partition for.
+#[derive(Clone, Copy)]
+enum Door<'a> {
+    /// The addressable vantage the pool records.
+    Addressable,
+    /// The namespace vantage the pool records.
+    Namespace,
+    /// The namespace vantage the caller declares, where nothing
+    /// determines one (P18).
+    Declared(&'a str),
+}
+
+/// What a composed space carries across the boundary.
+struct SpaceFacts {
+    volume: Option<u64>,
+    addressable: bool,
+    start_bytes: u64,
+    length_bytes: u64,
+    kind: Option<CString>,
+}
+
+fn space_facts(space: &remanence::StorageSpace<'_>) -> SpaceFacts {
+    SpaceFacts {
+        volume: space.volume_id().map(VolumeId::value),
+        addressable: space.is_addressable(),
+        start_bytes: space.start_bytes().unwrap_or(0),
+        length_bytes: space.length_bytes().unwrap_or(0),
+        // A space bearing no namespace is an ordinary space, so the
+        // absence travels on the handle rather than failing here.
+        kind: space.kind().ok().map(to_cstring),
+    }
+}
+
+/// Opens one door onto the node this partition composes. `Ok(None)` is
+/// the vantage being absent rather than anything having failed.
+fn open_door(view: PartitionView<'_>, door: Door<'_>) -> remanence::Result<Option<SpaceFacts>> {
+    Ok(match door {
+        Door::Addressable => view.volume().map(|space| space_facts(&space)),
+        Door::Namespace => view.filesystem().map(|space| space_facts(&space)),
+        Door::Declared(id) => Some(space_facts(&view.filesystem_as(id)?)),
+    })
+}
+
+unsafe fn partition_space(
+    partition: *const RemanencePartition,
+    door: Door<'_>,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceSpace {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { partition.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    match unsafe { with_partition(handle, |view| open_door(view, door)) } {
+        Ok(Some(facts)) => Box::into_raw(Box::new(RemanenceSpace {
+            session: handle.session,
+            media: handle.media,
+            sectors: handle.sectors,
+            ordinal: Some(handle.ordinal),
+            declared: match door {
+                Door::Declared(id) => Some(to_cstring(id)),
+                Door::Addressable | Door::Namespace => None,
+            },
+            addressable: facts.addressable,
+            volume: facts.volume,
+            start_bytes: facts.start_bytes,
+            length_bytes: facts.length_bytes,
+            kind: facts.kind,
+        })),
+        // The vantage is absent, which the pool settled when the medium
+        // was loaded: null, and nothing written to the outs.
+        Ok(None) => ptr::null_mut(),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             ptr::null_mut()
@@ -3260,7 +3909,102 @@ pub unsafe extern "C" fn remanence_medium_volume(
     }
 }
 
-/// Frees a space handle. The device and its medium are untouched.
+/// The addressable vantage: the space this partition composes, read and
+/// written **by position within the partition's own extent** — the
+/// vantage that reaches a boot record, allocation metadata, or the
+/// extents a filesystem calls free.
+///
+/// **Null means two different things and the caller can tell them
+/// apart.** Null with the error outs untouched is the vantage being
+/// absent — a structural region, a type this release will not read, or a
+/// partition over content whose native vantage is a namespace — which
+/// `remanence_partition_is_addressable` states in advance. Null with the
+/// outs set is a composition that was attempted and refused. Free with
+/// `remanence_space_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_volume(
+    partition: *const RemanencePartition,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceSpace {
+    unsafe {
+        partition_space(
+            partition,
+            Door::Addressable,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// The namespace vantage: the same node, reached by the names it holds,
+/// and where every `remanence_filesystem_*` verb lives.
+///
+/// Null with the error outs untouched is nothing determining a namespace
+/// over this partition — the honest absence, which
+/// `remanence_partition_bears_namespace` states in advance and
+/// `remanence_partition_filesystem_as` is where a caller who knows says
+/// so. Null with the outs set is a refusal. Free with
+/// `remanence_space_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_filesystem(
+    partition: *const RemanencePartition,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceSpace {
+    unsafe {
+        partition_space(
+            partition,
+            Door::Namespace,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// The declared reading, where no partition type determines one: `"fat"`,
+/// `"hdos"`, `"cpm"` or `"cbmdos"`.
+///
+/// **The reading is the caller's and the check is the library's.** The
+/// adapter the declaration names is the one that reads it, and it reads
+/// the evidence to verify the declaration rather than to pick one — a
+/// declaration the content cannot bear is refused by that adapter, by
+/// name, and a spelling this release does not read is refused naming what
+/// it does (P3). Recognizing a format and reading it are separate claims,
+/// so `"cpm"` still refuses at the open.
+///
+/// This door always attempted a composition, so null here always carries
+/// the refusal. Free with `remanence_space_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_filesystem_as(
+    partition: *const RemanencePartition,
+    id: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceSpace {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(id) = (unsafe { utf8_arg(id) }) else {
+        let error = remanence::Error::io("null namespace");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    unsafe {
+        partition_space(
+            partition,
+            Door::Declared(id.as_ref()),
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// Frees a space handle. The partition and its medium are untouched.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_space_free(space: *mut RemanenceSpace) {
     if !space.is_null() {
@@ -3269,16 +4013,19 @@ pub unsafe extern "C" fn remanence_space_free(space: *mut RemanenceSpace) {
 }
 
 /// Whether this space has the addressable vantage — an extent to read and
-/// write by position. False where the medium bears its namespace directly
-/// and composed no volume.
+/// write by position. False where the partition composes none: an
+/// archive's direct partition, a recording's, or a region a scheme
+/// declares as structure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_volume_is_addressable(space: *const RemanenceSpace) -> bool {
-    unsafe { space.as_ref() }.is_some_and(|space| space.volume.is_some())
+    unsafe { space.as_ref() }.is_some_and(|space| space.addressable)
 }
 
 /// This space's opaque volume identity, as the inspection report issued
-/// it, or 0 where it has no addressable vantage —
-/// `remanence_volume_is_addressable` distinguishes the two.
+/// it, or 0 where the report composed no volume for the partition — which
+/// an addressable space may still be, a blank disk's direct partition
+/// being the delivered case. `remanence_volume_is_addressable` is the
+/// vantage question; this is the identity.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_volume_id(space: *const RemanenceSpace) -> u64 {
     unsafe { space.as_ref() }.map_or(0, |space| space.volume.unwrap_or(0))
@@ -3319,15 +4066,7 @@ pub unsafe extern "C" fn remanence_volume_read_at(
         return false;
     }
     let buf = unsafe { std::slice::from_raw_parts_mut(buffer, len) };
-    match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |space| space.read_at(offset, buf),
-        )
-    } {
+    match unsafe { with_space(handle.origin(), |space| space.read_at(offset, buf)) } {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -3356,15 +4095,7 @@ pub unsafe extern "C" fn remanence_volume_write_at(
         return false;
     }
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
-    match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |space| space.write_at(offset, bytes),
-        )
-    } {
+    match unsafe { with_space(handle.origin(), |space| space.write_at(offset, bytes)) } {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -3390,9 +4121,11 @@ pub unsafe extern "C" fn remanence_filesystem_kind(space: *const RemanenceSpace)
 }
 
 /// The label the recognizing filesystem read, or null where this space
-/// bears none. Free with `remanence_string_free`. Sets the error on a
-/// failure to read the namespace, which a caller tells from an honest
-/// absence by whether `error_out` was written.
+/// bears none — a namespace whose format has no such field, or one that
+/// bears no namespace at all. Free with `remanence_string_free`.
+///
+/// Sets the error on a failure to read the namespace, which a caller
+/// tells from an honest absence by whether `error_out` was written.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_filesystem_label(
     filesystem: *const RemanenceSpace,
@@ -3404,15 +4137,7 @@ pub unsafe extern "C" fn remanence_filesystem_label(
     let Some(handle) = (unsafe { filesystem.as_ref() }) else {
         return ptr::null_mut();
     };
-    match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.label(),
-        )
-    } {
+    match unsafe { with_space(handle.origin(), |target| target.label()) } {
         Ok(label) => label
             .and_then(|label| label.name)
             .map_or(ptr::null_mut(), |name| to_owned_c_char(&name)),
@@ -3423,25 +4148,18 @@ pub unsafe extern "C" fn remanence_filesystem_label(
     }
 }
 
-/// How many readings the label answer holds — the sources the
-/// recognizing filesystem consulted, in its own policy's order (P4).
+/// How many readings the label answer holds, and each one's source and
+/// stored value: the sources the recognizing filesystem consulted, in
+/// the order its own policy consults them (P4).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_filesystem_label_reading_count(
     filesystem: *const RemanenceSpace,
 ) -> usize {
     unsafe { filesystem.as_ref() }.map_or(0, |handle| {
-    unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.label(),
-        )
-    }
-        .ok()
-        .flatten()
-        .map_or(0, |label| label.readings.len())
+        unsafe { with_space(handle.origin(), |target| target.label()) }
+            .ok()
+            .flatten()
+            .map_or(0, |label| label.readings.len())
     })
 }
 
@@ -3457,17 +4175,10 @@ pub unsafe extern "C" fn remanence_filesystem_label_reading(
     let Some(handle) = (unsafe { filesystem.as_ref() }) else {
         return false;
     };
-    let Some(label) = (unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.label(),
-        )
-    })
-    .ok()
-    .flatten() else {
+    let Some(label) = (unsafe { with_space(handle.origin(), |target| target.label()) })
+        .ok()
+        .flatten()
+    else {
         return false;
     };
     let Some(reading) = label.readings.get(index) else {
@@ -3493,16 +4204,8 @@ pub unsafe extern "C" fn remanence_filesystem_evidence_count(
     filesystem: *const RemanenceSpace,
 ) -> usize {
     unsafe { filesystem.as_ref() }.map_or(0, |handle| {
-    unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.evidence(),
-        )
-    }
-        .map_or(0, |evidence| evidence.len())
+        unsafe { with_space(handle.origin(), |target| target.evidence()) }
+            .map_or(0, |evidence| evidence.len())
     })
 }
 
@@ -3515,18 +4218,10 @@ pub unsafe extern "C" fn remanence_filesystem_evidence(
     let Some(handle) = (unsafe { filesystem.as_ref() }) else {
         return ptr::null_mut();
     };
-    unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.evidence(),
-        )
-    }
-    .ok()
-    .and_then(|evidence| evidence.get(index).map(|line| to_owned_c_char(line)))
-    .unwrap_or(ptr::null_mut())
+    unsafe { with_space(handle.origin(), |target| target.evidence()) }
+        .ok()
+        .and_then(|evidence| evidence.get(index).map(|line| to_owned_c_char(line)))
+        .unwrap_or(ptr::null_mut())
 }
 
 /// Lists a directory ("" = root, "A/B" descends). Free with
@@ -3544,15 +4239,7 @@ pub unsafe extern "C" fn remanence_filesystem_entries(
         return ptr::null_mut();
     };
     let path = unsafe { utf8_arg(path) }.unwrap_or_default();
-    match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.entries(path.as_ref()),
-        )
-    } {
+    match unsafe { with_space(handle.origin(), |target| target.entries(path.as_ref())) } {
         Ok(entries) => {
             let entries = entries.iter().map(EntryView::new).collect();
             Box::into_raw(Box::new(RemanenceEntryList { entries }))
@@ -3586,15 +4273,7 @@ pub unsafe extern "C" fn remanence_filesystem_stat(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.stat(path.as_ref()),
-        )
-    } {
+    match unsafe { with_space(handle.origin(), |target| target.stat(path.as_ref())) } {
         Ok(entry) => {
             let entries = entry.iter().map(EntryView::new).collect();
             Box::into_raw(Box::new(RemanenceEntryList { entries }))
@@ -3710,26 +4389,21 @@ pub unsafe extern "C" fn remanence_filesystem_get_file(
         return ptr::null_mut();
     };
     match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| {
-                let file = target.get_file(path.as_ref())?;
-                Ok((
-                    file.name().to_owned(),
-                    entry_kind(file.entry().kind),
-                    file.size_bytes(),
-                ))
-            },
-        )
+        with_space(handle.origin(), |target| {
+            let file = target.get_file(path.as_ref())?;
+            Ok((
+                file.name().to_owned(),
+                entry_kind(file.entry().kind),
+                file.size_bytes(),
+            ))
+        })
     } {
         Ok((name, kind, size_bytes)) => Box::into_raw(Box::new(RemanenceFile {
             session: handle.session,
             media: handle.media,
             sectors: handle.sectors,
-            volume: handle.volume,
+            ordinal: handle.ordinal,
+            declared: handle.declared.clone(),
             path: to_cstring(path.as_ref()),
             name: to_cstring(&name),
             kind,
@@ -3774,13 +4448,9 @@ pub unsafe extern "C" fn remanence_filesystem_discover(
         return ptr::null_mut();
     };
     let discovered = unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.get_file(path.as_ref())?.discover(),
-        )
+        with_space(handle.origin(), |target| {
+            target.get_file(path.as_ref())?.discover()
+        })
     };
     match discovered {
         Ok(discovery) => Box::into_raw(Box::new(RemanenceDiscovery::new(discovery))),
@@ -3810,15 +4480,7 @@ pub unsafe extern "C" fn remanence_filesystem_read_file(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.read_file(path.as_ref()),
-        )
-    } {
+    match unsafe { with_space(handle.origin(), |target| target.read_file(path.as_ref())) } {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -3848,13 +4510,9 @@ pub unsafe extern "C" fn remanence_filesystem_resize_file(
         return false;
     };
     match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.resize_file(path.as_ref(), size),
-        )
+        with_space(handle.origin(), |target| {
+            target.resize_file(path.as_ref(), size)
+        })
     } {
         Ok(()) => true,
         Err(error) => {
@@ -3897,13 +4555,9 @@ pub unsafe extern "C" fn remanence_filesystem_write_file(
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
     match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.write_file(path.as_ref(), contents),
-        )
+        with_space(handle.origin(), |target| {
+            target.write_file(path.as_ref(), contents)
+        })
     } {
         Ok(()) => true,
         Err(error) => {
@@ -3933,13 +4587,9 @@ pub unsafe extern "C" fn remanence_filesystem_make_directory(
         return false;
     };
     match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.make_directory(path.as_ref()),
-        )
+        with_space(handle.origin(), |target| {
+            target.make_directory(path.as_ref())
+        })
     } {
         Ok(()) => true,
         Err(error) => {
@@ -3996,15 +4646,7 @@ pub unsafe extern "C" fn remanence_file_bytes(
         return ptr::null_mut();
     };
     let path = handle.path.to_string_lossy().into_owned();
-    match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.get_file(&path)?.bytes(),
-        )
-    } {
+    match unsafe { with_space(handle.origin(), |target| target.get_file(&path)?.bytes()) } {
         Ok(bytes) => Box::into_raw(Box::new(RemanenceFileData { bytes })),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -4038,13 +4680,9 @@ pub unsafe extern "C" fn remanence_file_read_at(
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
     let path = handle.path.to_string_lossy().into_owned();
     match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.get_file(&path)?.read_at(offset, buffer),
-        )
+        with_space(handle.origin(), |target| {
+            target.get_file(&path)?.read_at(offset, buffer)
+        })
     } {
         Ok(()) => true,
         Err(error) => {
@@ -4084,13 +4722,9 @@ pub unsafe extern "C" fn remanence_file_write_at(
     };
     let path = handle.path.to_string_lossy().into_owned();
     match unsafe {
-        with_space(
-            handle.session,
-            handle.media,
-            handle.volume,
-            handle.sectors,
-            |target| target.get_file(&path)?.write_at(offset, data),
-        )
+        with_space(handle.origin(), |target| {
+            target.get_file(&path)?.write_at(offset, data)
+        })
     } {
         Ok(()) => true,
         Err(error) => {
@@ -6502,49 +7136,38 @@ pub unsafe extern "C" fn remanence_c1541_sectors_read(
     }
 }
 
-/// The filesystem this recording bears, or null with the refusal set.
+/// The **direct partition** over this recording — the library's own
+/// composition of the whole content, which is what a namespace above is
+/// reached through (P19). Null only for a null sector layer.
 ///
-/// **The sector layer carries no file verbs of its own**: it may be
-/// asked what it resolves to — this — and the verbs live on the space
-/// handed back, which is the same `RemanenceSpace` a device resolves to
-/// and takes every `remanence_filesystem_*` verb. The protected and the
-/// blank are refusals naming the seam that ran out of answers.
+/// A recording records no partition scheme, so there is one member and it
+/// is synthetic: its account is provenance and never evidence, and it
+/// composes no addressed extent, because a recording's blocks are
+/// addressed by the recording rather than by position. The addressable
+/// vantage is therefore absent and the namespace vantage is *declared* —
+/// `remanence_partition_filesystem_as` with `"cbmdos"` — because nothing
+/// here determines a reading and this layer will not pick one.
 ///
-/// The space **borrows** the sector layer: keep it alive for as long as
-/// the space and anything reached through it, and free the space with
-/// `remanence_space_free` before freeing the sectors.
+/// **The sector layer carries no file verbs of its own**: it may be asked
+/// what it composes — this — and may not be told to act as a namespace it
+/// is not. The declaration's refusal is the seam that ran out of answers
+/// stating it, and everything beneath stays readable either way: a disk
+/// with no filesystem is still a recording, still a sector layer, and
+/// still every claim this layer made about it.
+///
+/// The partition **borrows** the sector layer, and so does every space
+/// composed through it: keep the sectors alive for as long as any of
+/// them, and free them last — the partition with
+/// `remanence_partition_free` and the space with `remanence_space_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_sectors_filesystem(
+pub unsafe extern "C" fn remanence_c1541_sectors_partition(
     sectors: *const RemanenceC1541Sectors,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceSpace {
-    unsafe { clear_error(error_out, error_rule_out) };
+) -> *mut RemanencePartition {
     let Some(held) = (unsafe { sectors.as_ref() }) else {
-        let error = remanence::Error::io("null sector layer");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match held
-        .sectors
-        .filesystem()
-        .and_then(|space| space.kind().map(str::to_owned))
-    {
-        Ok(kind) => Box::into_raw(Box::new(RemanenceSpace {
-            session: ptr::null_mut(),
-            media: None,
-            sectors,
-            volume: None,
-            start_bytes: 0,
-            length_bytes: 0,
-            kind: Some(to_cstring(&kind)),
-        })),
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            ptr::null_mut()
-        }
-    }
+    let view = held.sectors.partition();
+    partition_handle(ptr::null_mut(), None, sectors, view.partition())
 }
 
 /// How many bytes of payload one sector carries.
@@ -6816,6 +7439,13 @@ pub unsafe extern "C" fn remanence_c1541_sectors_evidence(
 // relationships. Strings are borrowed from the handle that owns them, and
 // identities cross the ABI as opaque values a caller round-trips without
 // parsing.
+//
+// **It is a view derived from the partition pool, and nothing navigates
+// through it.** Content is reached through `remanence_medium_partition`;
+// the report is what a caller shows a user and what a drive-letter
+// machine is asserted over. The direct partition is a composition act
+// rather than something a scheme declared, so it never appears as a
+// region here: a medium recording no scheme reports zero regions.
 
 /// A snapshot of one disk's layered inspection. Owned by the caller and
 /// released with `remanence_report_free`; every string and record
@@ -6957,9 +7587,9 @@ fn label_view(label: &remanence::VolumeLabel) -> VolumeLabelView {
     }
 }
 
-/// Inspects the medium in an occupied device and returns its layered
-/// report. Null on failure,
-/// with the category and message written to the out-parameters.
+/// Inspects the medium and returns its layered report, derived from the
+/// pool the load established. Null on failure, with the category and
+/// message written to the out-parameters.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_medium_inspect(
     medium: *mut RemanenceMedium,
@@ -9777,8 +10407,10 @@ mod tests {
             .expect("the whole image loads");
         let content: Vec<u8> = (0..1_200_000u32).map(|n| (n % 241) as u8).collect();
         medium
-            .filesystem()
-            .expect("the floppy resolves to its one filesystem")
+            .partition(0)
+            .expect("a partitionless floppy bears its direct partition")
+            .filesystem_as("fat")
+            .expect("the declared reading the boot record bears out")
             .write_file("FAR.BIN", &content)
             .expect("writes");
         medium.commit().expect("commits");

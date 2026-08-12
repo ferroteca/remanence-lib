@@ -38,10 +38,11 @@ use crate::disk::{DiskFormat, MediumState};
 use crate::discovery::Discovery;
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
-use crate::filesystem::{Catalog, StorageSpace};
-use crate::filesystem_catalog::{CatalogRecognition, FilesystemAdapter};
+use crate::filesystem::Catalog;
+use crate::filesystem_catalog::FilesystemAdapter;
 use crate::media_profile::MediaProfile;
-use crate::report::{DiskReport, VolumeId};
+use crate::partition::{Partition, PartitionPool, PartitionScheme, PartitionView};
+use crate::report::DiskReport;
 use crate::session::Identification;
 use crate::storage_device::AttachmentId;
 
@@ -215,14 +216,18 @@ pub struct Medium {
     id: MediaId,
     state: MediumState,
     link: Option<MediaLink>,
+    /// The evidence pool, established at the load and immutable for as
+    /// long as the session holds the medium (F56).
+    partitions: PartitionPool,
 }
 
 impl Medium {
-    pub(crate) fn new(id: MediaId, state: MediumState) -> Self {
+    pub(crate) fn new(id: MediaId, state: MediumState, partitions: PartitionPool) -> Self {
         Self {
             id,
             state,
             link: None,
+            partitions,
         }
     }
 
@@ -357,32 +362,42 @@ impl Medium {
     /// refusal — a disk in no format this release knows is a fact about
     /// the disk. An image that cannot be *read* still fails.
     pub fn inspect(&mut self) -> Result<DiskReport> {
-        self.state.space_mut("inspect")?.inspect()
+        let pool = self.partitions.clone();
+        self.state.space_mut("inspect")?.inspect(&pool)
     }
 
-    /// The filesystem this medium resolves to, or the refusal that says
-    /// why it does not resolve to exactly one (P19, P10).
+    // ------------------------------------------------ the partition pool
+
+    /// The scheme this medium's content is laid out under, or `None`
+    /// where it records none and the direct partition stands.
     ///
-    /// **The medium carries no file access of its own.** This is a query
-    /// about what it resolves to, whose answer set already includes
-    /// *refuse* and *absent*; the file verbs live on the
-    /// [`StorageSpace`] it answers with and nowhere else. Where several
-    /// volumes bear one, select with [`Medium::volume`] rather than
-    /// being guessed for.
-    pub fn filesystem(&mut self) -> Result<StorageSpace<'_>> {
-        StorageSpace::resolve(self)
+    /// It is the evidence answer, and the direct partition leaves it
+    /// unchanged: a medium that recorded no table still says so here.
+    pub fn partition_scheme(&self) -> Option<PartitionScheme> {
+        self.partitions.scheme()
     }
 
-    /// One space of this medium, by the identity the inspection report
-    /// issued for its volume — the selector where several namespaces
-    /// exist, and the way to reach a volume bearing none.
+    /// Every partition in the pool, in the scheme's own order.
     ///
-    /// It answers with the same [`StorageSpace`] the resolver does:
-    /// addressable because a volume composed it, and bearing a namespace
-    /// only where one was recognized on it.
-    pub fn volume(&mut self, id: VolumeId) -> Result<StorageSpace<'_>> {
-        self.state.space("volume")?;
-        StorageSpace::select(self, id)
+    /// A medium recording no scheme answers with exactly one — the
+    /// direct partition, which is the library's own composition of the
+    /// whole content and says so in its provenance.
+    pub fn partitions(&self) -> Vec<Partition> {
+        self.partitions.partitions().to_vec()
+    }
+
+    /// The partition the scheme's own ordinal names, ready to be worked —
+    /// or `None`, absence being an answer and nothing manufactured to
+    /// report it.
+    ///
+    /// The ordinals are the scheme's own: MBR entry 1 is `1`, and the
+    /// direct partition is `0`. **The content of a medium is reached
+    /// through here**: the vantage doors on the view hand out the one
+    /// [`StorageSpace`](crate::StorageSpace) the partition composes, and
+    /// the file verbs live on that node and nowhere else (P19).
+    pub fn partition(&mut self, ordinal: u32) -> Option<PartitionView<'_>> {
+        let partition = self.partitions.get(ordinal)?.clone();
+        Some(PartitionView::over_medium(partition, self))
     }
 
     /// The commit point (P2): writes everything buffered since the medium
@@ -454,83 +469,79 @@ impl Medium {
         )?))
     }
 
-    /// Which enrolled adapter claims the namespace this medium bears
-    /// directly, for the resolver above.
-    pub(crate) fn recognize_namespace(&mut self) -> Result<CatalogRecognition> {
-        self.state.space_mut("filesystem")?.recognize_namespace()
-    }
-
-    /// Opens the namespace `adapter` recognized — the adapter that
-    /// recognized it is the one that reads it.
-    pub(crate) fn open_namespace(
+    /// Opens the namespace a declaration named, over one partition's
+    /// extent — the adapter the declaration names is the one that reads
+    /// it, so nothing here branches on a filesystem identifier.
+    pub(crate) fn open_namespace_at(
         &mut self,
         adapter: &'static dyn FilesystemAdapter,
+        offset: u64,
+        length: u64,
     ) -> Result<Box<dyn Catalog>> {
-        self.state.space_mut("filesystem")?.open_namespace(adapter)
+        self.state
+            .space_mut("filesystem_as")?
+            .open_namespace_at(adapter, offset, length)
     }
 
-    pub(crate) fn entries(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<FatEntry>> {
-        self.state.space_mut("entries")?.entries(volume_id, path)
+    /// Recognizes FAT on one partition's extent — the verification under
+    /// a declared partition type, and under a declared `"fat"` reading
+    /// where no type declared one (P18).
+    pub(crate) fn recognize_fat(&mut self, offset: u64) -> Result<crate::fat::FatRecognition> {
+        self.state.space_mut("filesystem")?.recognize_fat(offset)
     }
 
-    pub(crate) fn stat(&mut self, volume_id: VolumeId, path: &str) -> Result<Option<FatEntry>> {
-        self.state.space_mut("stat")?.stat(volume_id, path)
+    pub(crate) fn entries(&mut self, at: u64, path: &str) -> Result<Vec<FatEntry>> {
+        self.state.space_mut("entries")?.entries(at, path)
     }
 
-    pub(crate) fn read_file(&mut self, volume_id: VolumeId, path: &str) -> Result<Vec<u8>> {
-        self.state.space_mut("read_file")?.read_file(volume_id, path)
+    pub(crate) fn stat(&mut self, at: u64, path: &str) -> Result<Option<FatEntry>> {
+        self.state.space_mut("stat")?.stat(at, path)
+    }
+
+    pub(crate) fn read_file(&mut self, at: u64, path: &str) -> Result<Vec<u8>> {
+        self.state.space_mut("read_file")?.read_file(at, path)
     }
 
     pub(crate) fn read_file_at(
         &mut self,
-        volume_id: VolumeId,
+        at: u64,
         path: &str,
         offset: u64,
         buf: &mut [u8],
     ) -> Result<()> {
         self.state
             .space_mut("read_file_at")?
-            .read_file_at(volume_id, path, offset, buf)
+            .read_file_at(at, path, offset, buf)
     }
 
-    pub(crate) fn resize_file(
-        &mut self,
-        volume_id: VolumeId,
-        path: &str,
-        size: u64,
-    ) -> Result<()> {
+    pub(crate) fn resize_file(&mut self, at: u64, path: &str, size: u64) -> Result<()> {
         self.state
             .space_mut("resize_file")?
-            .resize_file(volume_id, path, size)
+            .resize_file(at, path, size)
     }
 
     pub(crate) fn write_file_at(
         &mut self,
-        volume_id: VolumeId,
+        at: u64,
         path: &str,
         offset: u64,
         data: &[u8],
     ) -> Result<()> {
         self.state
             .space_mut("write_file_at")?
-            .write_file_at(volume_id, path, offset, data)
+            .write_file_at(at, path, offset, data)
     }
 
-    pub(crate) fn write_file(
-        &mut self,
-        volume_id: VolumeId,
-        path: &str,
-        contents: &[u8],
-    ) -> Result<()> {
+    pub(crate) fn write_file(&mut self, at: u64, path: &str, contents: &[u8]) -> Result<()> {
         self.state
             .space_mut("write_file")?
-            .write_file(volume_id, path, contents)
+            .write_file(at, path, contents)
     }
 
-    pub(crate) fn make_directory(&mut self, volume_id: VolumeId, path: &str) -> Result<()> {
+    pub(crate) fn make_directory(&mut self, at: u64, path: &str) -> Result<()> {
         self.state
             .space_mut("make_directory")?
-            .make_directory(volume_id, path)
+            .make_directory(at, path)
     }
 }
 
@@ -551,10 +562,10 @@ pub(crate) struct MediaPool {
 impl MediaPool {
     /// Takes an opened medium into the pool, unlinked, and answers with
     /// the identity it was issued.
-    pub(crate) fn admit(&mut self, state: MediumState) -> MediaId {
+    pub(crate) fn admit(&mut self, state: MediumState, partitions: PartitionPool) -> MediaId {
         let id = MediaId::new(self.next);
         self.next += 1;
-        self.media.push(Medium::new(id, state));
+        self.media.push(Medium::new(id, state, partitions));
         id
     }
 

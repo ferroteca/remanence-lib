@@ -101,9 +101,9 @@ Medium                                         pool-owned, holdable — ALL cont
    error manufactured. Creation, linking, and everything touching
    evidence → `Result`: the world can refuse, and refusals are named
    (P10). `stat` keeps `Result<Option<…>>` — failure to read and
-   honest absence are different answers (U3). *Delivered for the
-   machine, device and media pools; the partition pool and the vantage
-   doors carry it in with F56.*
+   honest absence are different answers (U3). *Delivered: the machine,
+   device and media pools answer with `Option`, and so do the partition
+   pool's lookup and the two vantage doors.*
 3. **Lifecycle.** Create / lookup / release at every pool. No
    get-or-create, no auto-creation, no `require_*` forms — a caller
    who wants a demand writes it. Releasing configuration cascades
@@ -210,7 +210,8 @@ Medium                                         pool-owned, holdable — ALL cont
    values* under it; it never picks a reading — probing belongs to the
    question tier. No phantom vantage is ever invented (D26); the
    **direct partition** is the library's own composition act, carried
-   as provenance, never as evidence.
+   as provenance, never as evidence. *Delivered, with the scheme named
+   by the medium's kind until device specs arrive to name it (D32).*
 10. **The edge.** `insert` / `eject` are the one crossing between
     configuration and state: insert checks the device family against
     the media type and refuses naming both sides; eject severs only —
@@ -321,7 +322,8 @@ the features that make each real.
   (`partition_scheme: None`) is unchanged; the navigation answer gains
   the declared synthetic member. In-force P19's transparency clause is
   amended accordingly: uniformity of the walk replaces
-  resolve-without-selecting.
+  resolve-without-selecting. *Delivered: the amendment is in force,
+  folded into P19's own text at the root.*
 - **The media-type vocabulary is superseded by the device type**:
   `media_type()` and its two-level strings give way to `device_type()`
   answering `Option<DeviceType>` — one device type per medium, a
@@ -345,14 +347,19 @@ the features that make each real.
 
 - "Machine" is the wrong name for the machine node; kept until a
   better one arrives.
-- The spelling of the declared partition reading (`as_type`) and of
-  `Location` addressing.
+- The spelling of `Location` addressing. *The declared partition
+  reading is settled: `as_type` takes an enumerated `PartitionType` and
+  answers `Result<()>`, the check being the whole of it (D32).*
 - Whether `release_media` of a linked medium severs (uniform with the
   cascade) or refuses; the cascade argument says sever. *Settled: it
   severs.*
 - The C and Python spellings of the vantage doors and the pool
   lookups (`Option` maps to null/None cleanly; the doors should not
-  multiply handle types). *Settled for the pool lookups: C answers
-  null without touching the error outs — which is why those entry
-  points take none — and Python answers `None`. The vantage doors are
-  still open, and stay with F56.*
+  multiply handle types). *Settled. The pool lookups answer null in C
+  without touching the error outs — which is why those entry points
+  take none — and `None` in Python. The doors take the error outs and
+  distinguish the two answers by which of them they touch: null with
+  the outs untouched is the absent vantage, null with the outs set is a
+  refused composition, and the `is_addressable` / `bears_namespace`
+  predicates sit beside them. One handle type is added, the partition
+  itself; the space is the one that was already there.*
