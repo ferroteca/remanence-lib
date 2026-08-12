@@ -270,11 +270,27 @@ ABI, or Python module.
   deliberately thin — `error`, `evidence`, `io`'s bytes and claims,
   `codec`'s DEFLATE pair, and the two named crossings noted below.
 
-  **The family holds two models.** `capture.rs` is the private
-  flux-capture model — locations, capture runs, circular observations,
-  exact timebases, parallel marker channels, and the section-addressable
-  backing they stream into — with `kryoflux.rs` the KryoFlux capture-set
-  adapter above it: the member grammar and its completeness, the stream
+  **The family holds two models.** `capture/` is the private
+  flux-capture model, in four files. `capture/records.rs` is what a
+  capture is made of — exact timebases, the markers and foreign records
+  a source wrote in the order it wrote them, and the `TrackKey` and
+  fractional `SourcePosition` that address a location in the source's
+  own terms, unrounded. `capture/wire.rs` is the byte grammar those
+  records are written in: varints and length-prefixed text underneath,
+  and above them the two chunk forms — transitions delta-coded,
+  markers at absolute positions — each decode refusing rather than
+  partly believing a chunk, and each split deterministic so a section
+  key means one thing forever. `capture/sections.rs` is the
+  section-addressable backing: records streamed to a `ByteSink`, an
+  ordered index behind them, and a reader that walks to the one section
+  asked for and reads nothing else (P27) — with `SectionAddress` the
+  seam that lets one backing serve both of the family's models, which
+  do not address alike. `capture/mod.rs` is the model those three
+  compose: locations, capture runs, circular observations, and the
+  builder and metadata codec over them. Only `records`' three key
+  fields are `pub(super)`, read by the backing to write a section key
+  and by nothing else. Above it all sits `kryoflux.rs`, the KryoFlux
+  capture-set adapter: the member grammar and its completeness, the stream
   grammar, and the assembler that reads one disk out of a declared
   collection of members — a stream per head per drive-step position —
   for the collection-sourced load. `medium.rs` is the second model, what
