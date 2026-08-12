@@ -191,13 +191,23 @@ fn agreeing_sources_establish_the_coordinates_and_each_reading_says_where_it_cam
     assert!(geometry.conflicts().is_empty());
     assert!(geometry.unsettled().is_empty());
 
-    // Every source that spoke is on the record, with where it was read.
+    // Every source a load reads is on the record, with where it was read.
+    // Authorship is deliberately not among them: it is the one source
+    // that is no reading of an artifact, and it belongs to the one medium
+    // that has none — an authored geometry never stands beside another.
     let sources: Vec<GeometrySource> = geometry
         .readings()
         .iter()
         .map(|reading| reading.source)
         .collect();
     for source in GeometrySource::ALL {
+        if source == GeometrySource::Authorship {
+            assert!(
+                !sources.contains(&source),
+                "nothing was authored onto a medium that was loaded: {sources:?}"
+            );
+            continue;
+        }
         assert!(
             sources.contains(&source),
             "{source} states something about this disk and is not on the \

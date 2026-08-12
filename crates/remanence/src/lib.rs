@@ -82,6 +82,22 @@
 //! flags it active, and [`PartitionView::as_type`] checks a caller's own
 //! reading against the recorded byte.
 //!
+//! **Authorship is the third fact class, and it creates media whole.**
+//! Evidence is discovered onto media and declarations are configured
+//! onto machines; [`Session::new_media`] is neither.
+//! It takes one enumerated [`NewMedia`] kind — the **blank article
+//! kinds**, each naming one article of the catalog and creating that
+//! manufactured substrate with nothing recorded on it, and
+//! [`NewMedia::ChsDisk`], whose content is addressed in the cylinders,
+//! heads and sectors the author states — and the facts that declaration
+//! carries become the medium's original facts: its provenance, and its
+//! [`Medium::geometry`], whose one reading is
+//! [`GeometrySource::Authorship`]. **An authored blank assumes no
+//! device**: [`Medium::device_type`] answers `None`, no drive takes one,
+//! and the arc from authored to recorded is reserved. It is
+//! session-backed until an explicit encode gives it an artifact, and
+//! [`Medium::commit`] is the ordinary commit point over it.
+//!
 //! **Geometry is discovered, and the sector verbs address in it.**
 //! [`Medium::geometry`] is what the sources beneath the medium stated
 //! about the recording's coordinates — the format's own declaration, a
@@ -174,6 +190,7 @@
 mod adapters;
 mod archive;
 mod assurance;
+mod authored;
 mod c1541_presentation;
 mod c1541_sectors;
 mod c64_renditions;
@@ -226,6 +243,7 @@ mod volume;
 mod zip;
 
 pub use assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
+pub use authored::{NewMedia, NewMediaClaim};
 pub use c64_renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
 pub use c1541_presentation::{
     BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport, C1541Bitstream,

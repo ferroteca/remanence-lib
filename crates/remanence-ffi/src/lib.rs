@@ -1543,7 +1543,7 @@ pub unsafe extern "C" fn remanence_layer_fs_length_bytes(
 
 use remanence::{
     AccessIntent, AccessMode, DeviceSlot, DeviceType, DiskContent, DiskFormat, Entry, EntryKind,
-    RegionRole, StorageDevice, VolumeId, VolumeOrigin,
+    NewMedia, RegionRole, StorageDevice, VolumeId, VolumeOrigin,
 };
 
 /// The caller's declared intent when opening a disk (P7).
@@ -1805,7 +1805,8 @@ unsafe fn utf8_arg<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
 ///
 /// In-force P7 makes denying writes to every other process mandatory
 /// **where the library opens**, and leaves the claim to the caller where
-/// the caller opened.
+/// the caller opened. A third answer exists because a third fact class
+/// does: nobody opened an authored medium.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemanenceClaim {
@@ -1815,12 +1816,17 @@ pub enum RemanenceClaim {
     /// The caller opened the artifact and handed the handle over. What
     /// that handle affords is the whole of what the session has.
     CallerOpened = 1,
+    /// Nobody opened anything: the medium was created whole by the
+    /// author (`remanence_session_new_media`), and there is no artifact
+    /// for a claim to be over.
+    Authored = 2,
 }
 
 fn claim_class(claim: remanence::Claim) -> RemanenceClaim {
     match claim {
         remanence::Claim::LibraryOpened => RemanenceClaim::LibraryOpened,
         remanence::Claim::CallerOpened => RemanenceClaim::CallerOpened,
+        remanence::Claim::Authored => RemanenceClaim::Authored,
     }
 }
 
@@ -1944,6 +1950,149 @@ pub extern "C" fn remanence_format_takes_collection(index: usize) -> bool {
     format_views()
         .get(index)
         .is_some_and(|view| view.collection)
+}
+
+struct NewMediaView {
+    id: CString,
+    name: CString,
+    article: CString,
+    geometry: bool,
+}
+
+fn new_media_views() -> &'static [NewMediaView] {
+    static KINDS: std::sync::OnceLock<Vec<NewMediaView>> = std::sync::OnceLock::new();
+    KINDS.get_or_init(|| {
+        NewMedia::claimed()
+            .iter()
+            .map(|claim| NewMediaView {
+                id: to_cstring(claim.id()),
+                name: to_cstring(claim.name()),
+                article: to_cstring(claim.article()),
+                geometry: claim.takes_geometry(),
+            })
+            .collect()
+    })
+}
+
+/// How many kinds of blank medium this release authors.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_new_media_count() -> usize {
+    new_media_views().len()
+}
+
+/// One authored kind's stable spelling (`chs-disk`, `flexible-5.25-soft`),
+/// by index, or null out of range. Owned by the library; do not free.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_new_media_id(index: usize) -> *const c_char {
+    new_media_views()
+        .get(index)
+        .map_or(ptr::null(), |view| view.id.as_ptr())
+}
+
+/// That kind's name, fit to show a user, or null out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_new_media_name(index: usize) -> *const c_char {
+    new_media_views()
+        .get(index)
+        .map_or(ptr::null(), |view| view.name.as_ptr())
+}
+
+/// The article a medium of kind `index` is, by the article catalog's own
+/// stable spelling — the manufactured substrate for a blank article kind,
+/// and `authored` where no manufactured one stands behind it. Null out of
+/// range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_new_media_article(index: usize) -> *const c_char {
+    new_media_views()
+        .get(index)
+        .map_or(ptr::null(), |view| view.article.as_ptr())
+}
+
+/// Whether a declaration of kind `index` carries the recording's
+/// coordinates — true for the CHS disk alone, which is the kind whose
+/// facts *are* coordinates. Every other kind is a blank article and takes
+/// zeros.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_new_media_takes_geometry(index: usize) -> bool {
+    new_media_views()
+        .get(index)
+        .is_some_and(|view| view.geometry)
+}
+
+/// Creates blank media whole — **authorship, the third fact class** — and
+/// answers with the medium, linked to nothing. The session owns the view;
+/// never free it. Null on failure.
+///
+/// Nothing is discovered and nothing is opened, because there is no
+/// artifact: the author declares one enumerated `kind` (a stable spelling
+/// from `remanence_new_media_id`), and the facts that declaration states
+/// become the medium's original facts — carried from creation as its
+/// assurance provenance and, where the kind states coordinates, as its
+/// `remanence_medium_geometry`, whose one reading is `authorship`.
+///
+/// `cylinders`, `heads`, `sectors_per_track` and `sector_bytes` are the
+/// author's own coordinates, for the kind whose claim takes them
+/// (`remanence_new_media_takes_geometry`); every other kind takes zeros
+/// and refuses anything else by name. Coordinates that address nothing —
+/// a zero in any part, or a product no medium could hold — are refused
+/// here, when they are stated, which is the one moment authorship offers.
+///
+/// **An authored blank assumes no device**: `remanence_medium_device_type`
+/// answers null, so no drive takes one and `remanence_device_insert`
+/// refuses by name. It is session-backed until an explicit encode gives it
+/// an artifact, and `remanence_medium_commit` is the ordinary commit point
+/// over it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_new_media(
+    session: *mut RemanenceSession,
+    kind: *const c_char,
+    cylinders: u32,
+    heads: u32,
+    sectors_per_track: u32,
+    sector_bytes: u64,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMedium {
+    unsafe { clear_error(error_out, error_rule_out) };
+    if session.is_null() {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let Some(kind) = (unsafe { utf8_arg(kind) }) else {
+        let error = remanence::Error::io("null authored kind");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    // All-zero coordinates are "none stated", which is what a blank
+    // article kind takes; anything else is the author speaking, and the
+    // kind's own claim decides whether it may.
+    let stated = cylinders != 0 || heads != 0 || sectors_per_track != 0 || sector_bytes != 0;
+    let geometry = stated.then_some(remanence::RecordingGeometry {
+        cylinders,
+        heads,
+        sectors_per_track,
+        sector_bytes,
+    });
+    let kind = match NewMedia::declared(kind.as_ref(), geometry) {
+        Ok(kind) => kind,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    let handle = unsafe { &mut *session };
+    match handle.session.new_media(kind) {
+        Ok(medium) => {
+            let id = medium.id();
+            unsafe { medium_view(session, id) }
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
 }
 
 /// Takes ownership of a caller-opened OS file handle.

@@ -172,6 +172,9 @@ works — not while writing, not while merely reading. **Denying write
 permission to every other process is mandatory where the library opens,
 and caller-owned where the caller opened.** Which of the two a medium
 holds is the claim's class, and it travels on that medium's assurance.
+A medium **created whole by its author** holds neither, and says so as a
+third class: nothing was opened, so there is no file for this principle
+to be about until an explicit encode gives it one.
 
 **Where the library opens** — an artifact reached by name, every file of
 a composed chain, every artifact it creates — the denial is mandatory
@@ -366,8 +369,14 @@ presentations operate on that state through their own seams. An article
 contains neither image recognition nor hardware behavior and
 cannot implicitly choose how far hardware emulation descends. Every medium
 the library holds names one enrolled article: a block medium is named by
-the image-format adapter that loaded its state, and a flux medium by the
-family declaration of the drive profile it was mastered under.
+the image-format adapter that loaded its state, a flux medium by the
+family declaration of the drive profile it was mastered under, and a
+medium created whole by its author by the kind the author declared. An
+author who names a manufactured article gets that article's published
+facts; one who states coordinates instead names the **authored**
+article, which declares no physical fact because nobody made one — the
+virtual family's rule holding rather than bending, as the archive's
+entry already showed.
 
 **The recording side is the device type, and it is a catalog of its
 own.** A medium carries one — the device its content is assumed recorded
@@ -376,7 +385,8 @@ by — enumerated in two levels: the **class** (`Floppy`, `HardDrive`, with
 **concrete type** within it. A type the library does not know fails to
 compile; its display string survives in provenance, refusals and the
 cross-language spellings. Archives were recorded by no device, and
-`None` is the honest answer rather than a gap.
+neither was a medium its author created whole; `None` is the honest
+answer rather than a gap, and a medium answering it goes in no drive.
 
 The **granularity rule** cuts that catalog: a device type is the coarsest
 name fixing the whole addressing surface and recording discipline without

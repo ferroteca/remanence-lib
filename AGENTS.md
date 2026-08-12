@@ -48,8 +48,23 @@ ABI, or Python module.
   common), and the declarative article catalog they are enrolled in,
   which holds no recognition, no grammar and no behavior; every medium
   the library holds names one entry, a block medium from the
-  image-format adapter that loaded its state and a flux medium from the
-  drive profile's declaration of what its family is served;
+  image-format adapter that loaded its state, a flux medium from the
+  drive profile's declaration of what its family is served, and an
+  authored one from the kind its author declared — the virtual family
+  holding two entries for the two things nobody manufactured, the
+  archive whose native vantage is a namespace and the **authored**
+  article whose vantage is a space;
+  `authored.rs` the third fact class — **authorship**, which creates
+  media whole where discovery reads and declaration configures: the
+  enumerated `NewMedia` kinds (the blank article kinds, each spelled by
+  the article it makes with nothing recorded on it, and
+  `ChsDisk { geometry }`, whose facts *are* coordinates), the check the
+  author's statement passes at the one moment authorship offers, the
+  provenance it becomes, and the session-backed sparse blank the
+  content lives on — P2's commit point over it with no journal beneath,
+  because no file changes for an interruption to leave half-written,
+  and no device assumed, the authored-to-recorded arc that would bind
+  one being reserved;
   `partition.rs` the partition-layout catalog;
   `geometry.rs` the discovered-geometry seam — the recording's own
   coordinates as *evidence*: the enumerated sources (the format's
@@ -61,8 +76,11 @@ ABI, or Python module.
   disagree** — both readings standing, neither preferred — beside
   `Unstated`, which is the different fact that nothing spoke at all;
   the coordinate arithmetic and the `GeometryRule` set the sector verbs
-  refuse by are here too. Geometry is established at the load beside the
-  partition pool and never declared onto a medium that exists;
+  refuse by are here too, beside `Authorship` — the one source that is
+  no reading of an artifact, belonging to the one medium that has none.
+  Geometry is established at the load beside the
+  partition pool, or stated by the author in the act that creates the
+  medium, and never declared onto a medium that exists;
   which types *have* coordinates is the device type's own
   `addressing` declaration, and how many of each is this;
   `filesystem.rs` the P19 volume/filesystem node and the presentation
@@ -239,7 +257,8 @@ ABI, or Python module.
   discovered geometry and the `get_sector`/`put_sector` pair that
   addresses in it, the argument-free `bitstream`/`bytestream` pair a
   flux medium answers, commit and
-  rollback), a medium being created by a declared reading and destroyed
+  rollback), a medium being created by a declared reading **or by its
+  author** (`authored_as` saying which) and destroyed
   only by `release_media`; `handle.rs` the **caller-owned claim**: what a
   handed-over `std::fs::File` affords, asked by a zero-length write that
   changes nothing, and the name recovered from it for **location only**,
@@ -249,7 +268,8 @@ ABI, or Python module.
   `device.rs` the block-device seam, the P7 claims
   (the library's own declared-intent open, the discovery ladder for
   identification sessions, and the `Claim` class that says whose open a
-  medium's is), and the host-write capture a durable
+  medium's is — the library's, the caller's, or nobody's, an authored
+  medium having been opened by no one), and the host-write capture a durable
   commit stages into; `cache.rs` the session cache — the P2 commit
   buffer and the bounded working set (P27): unaltered extents
   evict and re-read from the image, altered extents spill to private
@@ -298,7 +318,9 @@ ABI, or Python module.
   `release_media` severs its own link then ends the claim; `load_media`
   and `load_discovery`/`load_discovery_as` — the plain door and the
   declared one, the second taking the device type a format recording
-  several leaves to the caller — fill the media pool, and
+  several leaves to the caller — fill the media pool, as does
+  `new_media`, the authorship door where the caller has no artifact at
+  all, and
   `MachineView`/`DeviceView`
   are the borrows that hold a node and the pool at once, since linking is
   the one act that crosses — with `storage_device.rs` the **slot**: its
@@ -352,7 +374,7 @@ ABI, or Python module.
   handle. `planning/TASKS.md` is the pre-approved task queue: **agents
   do not add tasks on their own initiative, and ask before editing that
   file at all**; anyone may pick up what is already there.
-- **The vision is in force.** Use cases U1–U6, U22, U25, U26 and U33
+- **The vision is in force.** Use cases U1–U6, U22, U25, U26, U32 and U33
   (root [USE-CASES.md](USE-CASES.md)) and architectural principles
   (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage
@@ -640,7 +662,12 @@ qcow2 — refuses there and names the types to pass. Its report carries
 the medium's discovered geometry with every reading that produced it,
 and reads cylinder 0, head 0, sector 1 in the recording's own
 coordinates wherever the evidence settled them.
-`identify --list <archive>` walks an archive's
+`identify --author [kind]` authors a blank medium instead of opening
+one — the third fact class, where the caller has no artifact — listing
+the kinds this release makes, showing the author's own facts as the
+medium's provenance and geometry, writing and committing a boot sector
+in the authored coordinates, and meeting the refusal that no drive
+takes it. `identify --list <archive>` walks an archive's
 namespace, `identify --discover <path>` reports what an artifact is
 without loading it, `identify --remanence <path> [write-to]` reads a
 `.remanence` artifact through its own type — there is no device to

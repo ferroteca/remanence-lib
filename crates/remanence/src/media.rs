@@ -34,6 +34,7 @@ use std::path::Path;
 use crate::adapters::RECORDED_HARD_DRIVES;
 use crate::archive::ArchiveMedium;
 use crate::assurance::Assurance;
+use crate::authored::NewMedia;
 use crate::c1541_presentation::{C1541Bitstream, C1541Bytestream};
 use crate::c1541_sectors::C1541Sectors;
 use crate::device::AccessMode;
@@ -765,10 +766,12 @@ impl Medium {
         Ok(self.state.space("format")?.format())
     }
 
-    /// The presented disk's size (the guest-visible size for qcow2), or
-    /// the refusal naming a medium that presents no disk.
+    /// The presented content's size — the guest-visible size for a
+    /// qcow2, and what the author's own coordinates address for an
+    /// authored disk — or the refusal naming a medium that presents
+    /// none.
     pub fn size(&self) -> Result<u64> {
-        Ok(self.state.space("size")?.size())
+        self.state.presented_size("size")
     }
 
     /// Whether uncommitted changes exist.
@@ -781,9 +784,23 @@ impl Medium {
     /// recorded it.
     ///
     /// `None` is the honest answer rather than a gap: an archive was
-    /// recorded by no device, and neither is an authored blank.
+    /// recorded by no device, and neither was an authored blank — an
+    /// author assumes none, and only the reserved authored-to-recorded
+    /// arc would bind one.
     pub fn device_type(&self) -> Option<DeviceType> {
         self.state.device_type()
+    }
+
+    /// The authored kind this medium was created as, or `None` where it
+    /// was loaded from an artifact instead.
+    ///
+    /// It is the third fact class showing on the surface: a medium
+    /// answers what it was *made* as exactly where an author made it, and
+    /// answers nothing where evidence is what it has.
+    pub fn authored_as(&self) -> Option<NewMedia> {
+        self.state
+            .authored_medium()
+            .map(crate::authored::AuthoredMedium::kind)
     }
 
     /// The article this medium is (P14), by the catalog's stable
@@ -800,11 +817,10 @@ impl Medium {
     }
 
     /// What slot this medium goes in — the recording side of the insert
-    /// check, and the whole of it.
-    pub(crate) fn slot(&self) -> DeviceSlot {
-        self.state
-            .slot()
-            .expect("the pool admits no medium that cannot say what recorded it")
+    /// check, and the whole of it — or `None` where it goes in no slot
+    /// at all, which is what an authored blank answers.
+    pub(crate) fn slot(&self) -> Option<DeviceSlot> {
+        self.state.slot()
     }
 
     /// The layered inspection of this medium: the block-active device,
@@ -910,7 +926,7 @@ impl Medium {
             ));
         }
         let offset = geometry.offset_of(cylinder, head, sector)?;
-        let held = self.state.space(verb)?.size();
+        let held = self.state.presented_size(verb)?;
         if offset + geometry.sector_bytes > held {
             return Err(geometry::refuse(
                 GeometryRule::OutsideGeometry,
@@ -927,7 +943,29 @@ impl Medium {
 
     /// The coordinates this medium's sector verbs address in, or the
     /// refusal naming what it has instead.
+    ///
+    /// **What declares the addressing is whichever fact class the medium
+    /// has.** A recorded medium's device type declares it (P14's
+    /// granularity rule), and an authored one's kind does — the author
+    /// stating coordinates is exactly what makes their blank addressed
+    /// by them. A medium neither recorded nor authored with coordinates
+    /// has none, and says which of the two it is.
     fn sector_coordinates(&self) -> Result<RecordingGeometry> {
+        if let Some(authored) = self.state.authored_medium() {
+            if !authored.is_sector_addressed() {
+                return Err(geometry::refuse(
+                    GeometryRule::NotSectorAddressed,
+                    format!(
+                        "{} is a blank article with nothing recorded on it, so \
+                         there is no cylinder, head or sector of it to address: \
+                         an authored medium addressed by coordinates states \
+                         them at creation",
+                        authored.named()
+                    ),
+                ));
+            }
+            return self.geometry.require(&self.state.named());
+        }
         let Some(device) = self.device_type() else {
             return Err(geometry::refuse(
                 GeometryRule::NotSectorAddressed,
@@ -1040,15 +1078,22 @@ impl Medium {
     /// The journal lands **beside the artifact**, so a medium whose
     /// source handle has no recoverable name refuses here by name rather
     /// than committing without it.
+    ///
+    /// **An authored medium commits too, and there is nowhere for it to
+    /// commit to but itself**: it holds no artifact, so the commit point
+    /// makes the buffered writes the medium's own state — session-backed
+    /// until an explicit encode gives it an artifact — and there is no
+    /// journal, because no file changes for an interruption to leave
+    /// half-written.
     pub fn commit(&mut self) -> Result<()> {
-        self.state.space_mut("commit")?.commit()
+        self.state.commit()
     }
 
-    /// Discards everything buffered; the image is untouched. Unaltered
-    /// cached extents stay resident — they still mirror the image.
+    /// Discards everything buffered; what the medium already holds is
+    /// untouched. Unaltered cached extents stay resident — they still
+    /// mirror it.
     pub fn rollback(&mut self) -> Result<()> {
-        self.state.space_mut("rollback")?.rollback();
-        Ok(())
+        self.state.rollback()
     }
 
     // ------------------------------------- the plumbing the spaces read
@@ -1056,15 +1101,13 @@ impl Medium {
     /// Reads within a space's extent, the offset already resolved against
     /// the presented disk by the space that owns the bound.
     pub(crate) fn read_space_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        self.state.space_mut("read_at")?.read_space_at(offset, buf)
+        self.state.read_space_at(offset, buf)
     }
 
     /// Writes within a space's extent, buffered until commit like every
     /// other write (P2).
     pub(crate) fn write_space_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        self.state
-            .space_mut("write_at")?
-            .write_space_at(offset, data)
+        self.state.write_space_at(offset, data)
     }
 
     /// The namespace an archive medium bears, where this is one.

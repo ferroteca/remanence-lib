@@ -125,13 +125,32 @@ cylinder count. **Sources that disagree settle nothing**: the state is
 Nothing states one at all is `Unstated`, which is a different fact and
 kept as one.
 
+**Authorship is the third fact class, and it creates media whole.**
+Evidence is discovered onto media and declarations are configured onto
+machines; `session.new_media(kind)` is neither. There is no artifact —
+nothing is read, probed or opened — and the facts you state at creation
+*become* the medium's original facts, carried as its provenance and, for
+the kind that states coordinates, as its geometry, whose one reading is
+authorship. The kinds are enumerated as every creation grammar here is:
+the **blank article kinds** each name one article of the catalog and
+make that manufactured substrate with nothing recorded on it, and
+`NewMedia::ChsDisk { geometry }` is the kind whose facts *are*
+coordinates. **An authored blank assumes no device** — `device_type()`
+answers `None`, so no drive takes one — and it is session-backed until
+an explicit encode gives it an artifact: `commit()` is the ordinary
+commit point over it, with no recovery journal beneath, because no file
+changes for an interruption to leave half-written. The arc from authored
+to recorded, which would bind a device type, is reserved.
+
 `get_sector` and `put_sector` address in what that established — on the
 device types whose `addressing()` says `sector`, which is every floppy
-and the CHS hard drive. Cylinders and heads number from zero and
+and the CHS hard drive, and on an authored disk in the coordinates its
+author stated. Cylinders and heads number from zero and
 **sectors from one**, because that is the recording's convention rather
 than this library's. Everything else refuses by name, its own rule set
-saying which: a block-addressed drive or a medium no device recorded has
-no such coordinates at all, an unsettled geometry has none to address in
+saying which: a block-addressed drive, an archive, or a blank article
+with nothing recorded on it has no such coordinates at all, an unsettled
+geometry has none to address in
 and points at the readings, and a coordinate the geometry does not cover
 — or one it covers and the content does not hold — is refused rather
 than answered with zeros. A write buffers until `commit()` like every
@@ -574,6 +593,30 @@ for entry in cbm.entries("")? {
         entry.fact("size-blocks").unwrap_or(""),
         entry.fact("type").unwrap_or(""));
 }
+
+// Authorship is the third fact class: nothing is discovered here,
+// because there is no artifact yet. The facts you state at creation
+// become the medium's own — and no device is assumed, so it goes in no
+// drive until the reserved authored-to-recorded arc binds one.
+let blank = session.new_media(remanence::NewMedia::ChsDisk {
+    geometry: remanence::RecordingGeometry {
+        cylinders: 1024, heads: 16, sectors_per_track: 63, sector_bytes: 512,
+    },
+})?;
+assert_eq!(blank.device_type(), None);
+assert_eq!(blank.article(), "authored");   // nobody manufactured it
+for line in &blank.assurance().evidence {
+    println!("{line}");                    // the author's facts, as provenance
+}
+let mut boot = [0u8; 512];
+boot[510] = 0x55; boot[511] = 0xaa;
+blank.put_sector(0, 0, 1, &boot)?;         // the authored geometry answers
+blank.commit()?;                           // session-backed: no artifact yet
+
+// A blank article kind states the article and nothing else — a disk in
+// its sleeve, with nothing recorded on it.
+let unrecorded = session.new_media(remanence::NewMedia::Flexible525HardTen)?;
+assert_eq!(unrecorded.article(), "flexible-5.25-hard-10");
 ```
 
 ```python
@@ -682,6 +725,16 @@ print(space.read_file("PCS.4000")[:2])  # a PRG's own load address
 with open("pinball.p64", "rb") as source:
     p64_disk = session.load_media(source, "p64")
 print(p64_disk.device_type, p64_disk.article)
+
+# Authorship is the third fact class: no artifact, nothing discovered,
+# and the facts you state at creation become the medium's own.
+print(remanence.new_media_kinds())     # what an author may declare
+blank = session.new_media("chs-disk", cylinders=1024, heads=16,
+                          sectors_per_track=63, sector_bytes=512)
+print(blank.device_type, blank.article, blank.authored_as)  # None authored chs-disk
+print(blank.geometry.readings[0].source)                    # authorship
+blank.put_sector(0, 0, 1, bytes(510) + b"\x55\xaa")
+blank.commit()                         # session-backed until an encode
 ```
 
 ## Changes

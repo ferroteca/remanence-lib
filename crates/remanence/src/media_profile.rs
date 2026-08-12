@@ -328,14 +328,42 @@ pub(crate) static VIRTUAL: MediaProfile = MediaProfile {
     }),
 };
 
+/// The authored article: state an author created whole, with no
+/// manufactured article behind it and no drive that ever held one.
+///
+/// It sits in the virtual family for the same reason the archive does —
+/// P14's own definition already covers it, media being the independent
+/// mutable state between image formats and drives — and it differs from
+/// the archive in exactly the fact that family declares: its native
+/// vantage is a **space**, because what the author states is the
+/// recording's own coordinates and its content is reached by position.
+///
+/// No physical fact is declared here and none is invented: an authored
+/// blank has no coercivity, no form factor and no punched hole, because
+/// nobody manufactured it. A caller authoring the *manufactured* article
+/// names that article instead ([`crate::NewMedia`]'s blank article
+/// kinds), and gets its published facts rather than these.
+pub(crate) static AUTHORED: MediaProfile = MediaProfile {
+    id: "authored",
+    name: "authored medium",
+    provenance: "declared from what authorship is rather than from a published \
+                 article: state created whole by an author, held by no drive and \
+                 recorded by no device, whose coordinates are the author's own \
+                 facts and whose content is reached by position",
+    facts: MediaFacts::Virtual(Virtual {
+        native_vantage: "space",
+    }),
+};
+
 /// The enrolled articles. Adding one changes its declaration, its
 /// tests, and this list — nothing else, because there is no behavior
 /// here to wire up.
-static ENROLLED: [&MediaProfile; 4] = [
+static ENROLLED: [&MediaProfile; 5] = [
     &FLEXIBLE_5_25_SOFT,
     &FLEXIBLE_5_25_HARD_10,
     &LOGICAL_BLOCK_512,
     &VIRTUAL,
+    &AUTHORED,
 ];
 
 pub(crate) fn enrolled() -> &'static [&'static MediaProfile] {
@@ -386,6 +414,33 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), count, "two entries share an id");
+    }
+
+    #[test]
+    fn the_virtual_family_is_two_entries_and_the_vantage_is_what_parts_them() {
+        // The family declares one fact, so two members of it differ in
+        // that fact and in nothing else: an archive is reached by the
+        // names it holds and an authored blank by position.
+        assert_eq!(AUTHORED.family(), MediaFamily::Virtual);
+        assert_eq!(
+            AUTHORED
+                .virtual_media()
+                .expect("its own family's facts")
+                .native_vantage,
+            "space"
+        );
+        assert_eq!(
+            VIRTUAL
+                .virtual_media()
+                .expect("its own family's facts")
+                .native_vantage,
+            "namespace"
+        );
+        assert!(
+            AUTHORED.flexible_magnetic().is_none() && AUTHORED.logical_block().is_none(),
+            "nobody manufactured an authored medium, so it answers no \
+             physical question"
+        );
     }
 
     #[test]

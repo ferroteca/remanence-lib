@@ -13,6 +13,16 @@
 //! and heads, the MBR table's end tuples, and extent arithmetic over the
 //! content under the track geometry the others fixed.
 //!
+//! **[`Authorship`](GeometrySource::Authorship) is the one source that
+//! reads nothing**, and it belongs to the one medium with no artifact
+//! beneath it: a caller who creates media whole
+//! ([`Session::new_media`](crate::Session::new_media)) states the
+//! coordinates in that same act, and they are the medium's own facts
+//! from then on. It is not an exception to the sentence above — nothing
+//! is declared onto a medium that *exists* — and it never stands beside
+//! another source, so nothing here has to settle authorship against
+//! evidence.
+//!
 //! **Sources that disagree settle nothing.** Where two readings state
 //! different values for one part of the coordinates, that part is
 //! unsettled, the medium's geometry is
@@ -62,15 +72,26 @@ pub enum GeometrySource {
     /// the other sources fixed. It states the cylinder count and nothing
     /// else, because that is all an extent can say.
     ExtentArithmetic,
+    /// The author's own statement, made when the medium was created
+    /// ([`Session::new_media`](crate::Session::new_media)).
+    ///
+    /// It is the one source that is not a reading of an artifact, and it
+    /// belongs to the one medium that has none: authorship is its own
+    /// fact class, so an authored blank's coordinates are the author's
+    /// facts rather than evidence about anything. It never appears
+    /// beside another source — nothing is authored onto a medium that
+    /// was loaded, and nothing is discovered onto one that was authored.
+    Authorship,
 }
 
 impl GeometrySource {
     /// Every source this release reads a geometry out of.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::FormatDeclaration,
         Self::BootRecord,
         Self::PartitionTable,
         Self::ExtentArithmetic,
+        Self::Authorship,
     ];
 
     /// The stable cross-language spelling.
@@ -80,6 +101,7 @@ impl GeometrySource {
             Self::BootRecord => "boot-record",
             Self::PartitionTable => "partition-table",
             Self::ExtentArithmetic => "extent-arithmetic",
+            Self::Authorship => "authorship",
         }
     }
 
@@ -238,6 +260,20 @@ impl RecordingGeometry {
         self.total_sectors() * self.sector_bytes
     }
 
+    /// The same, where coordinates that came from nowhere but a caller
+    /// might not fit in one: `None` where the product overflows.
+    ///
+    /// Discovered coordinates are read off an artifact that exists, so
+    /// they describe something a host already holds; authored ones are
+    /// stated, and stating them is the moment to find out that no medium
+    /// could hold what was asked for.
+    pub(crate) fn checked_total_bytes(self) -> Option<u64> {
+        u64::from(self.cylinders)
+            .checked_mul(u64::from(self.heads))?
+            .checked_mul(u64::from(self.sectors_per_track))?
+            .checked_mul(self.sector_bytes)
+    }
+
     /// Where one coordinate sits in the content, in CHS order, or the
     /// refusal naming the geometry it lies outside.
     pub(crate) fn offset_of(self, cylinder: u32, head: u32, sector: u32) -> Result<u64> {
@@ -336,6 +372,35 @@ impl Geometry {
     /// value: no reading, so no part settled and nothing in conflict.
     pub(crate) fn unstated() -> Self {
         settle(Vec::new(), 0)
+    }
+
+    /// The geometry of a medium the author stated one for — the third
+    /// fact class arriving where the other two never do.
+    ///
+    /// There is nothing to settle: authorship states every part at once
+    /// or it is not a geometry at all (the creation verb refuses a
+    /// partial one), and no second source exists to disagree with, an
+    /// authored medium having no artifact beneath it to read. The one
+    /// reading says so, and says who stated it (P4).
+    pub(crate) fn authored(coordinates: RecordingGeometry) -> Self {
+        let mut reading = GeometryReading::new(
+            GeometrySource::Authorship,
+            "the author's own statement at new_media",
+            format!(
+                "the author created this medium whole and stated {coordinates}; \
+                 nothing was read off an artifact, there being none"
+            ),
+        );
+        reading.cylinders = Some(coordinates.cylinders);
+        reading.heads = Some(coordinates.heads);
+        reading.sectors_per_track = Some(coordinates.sectors_per_track);
+        reading.sector_bytes = Some(coordinates.sector_bytes);
+        Self {
+            determined: Some(coordinates),
+            conflicts: Vec::new(),
+            unsettled: Vec::new(),
+            readings: vec![reading],
+        }
     }
 
     /// What the evidence established.
@@ -825,6 +890,49 @@ mod tests {
         assert!(
             error.to_string().contains("the head count"),
             "the refusal names what is missing: {error}"
+        );
+    }
+
+    #[test]
+    fn an_authored_geometry_is_the_authors_one_reading_and_settles_by_construction() {
+        let coordinates = RecordingGeometry {
+            cylinders: 1024,
+            heads: 16,
+            sectors_per_track: 63,
+            sector_bytes: 512,
+        };
+        let geometry = Geometry::authored(coordinates);
+        assert_eq!(geometry.state(), GeometryState::Determined);
+        assert_eq!(geometry.determined(), Some(coordinates));
+        assert!(geometry.conflicts().is_empty());
+        assert!(geometry.unsettled().is_empty());
+        assert_eq!(
+            geometry.readings().len(),
+            1,
+            "authorship states every part at once and has no second source \
+             to agree or disagree with"
+        );
+        assert_eq!(geometry.readings()[0].source, GeometrySource::Authorship);
+        assert!(
+            geometry.readings()[0].detail.contains("there being none"),
+            "the reading says nothing was read: {}",
+            geometry.readings()[0].detail
+        );
+        assert_eq!(
+            geometry.require("this authored medium").expect("stated"),
+            coordinates
+        );
+        assert_eq!(coordinates.checked_total_bytes(), Some(528_482_304));
+        assert_eq!(
+            RecordingGeometry {
+                cylinders: u32::MAX,
+                heads: u32::MAX,
+                sectors_per_track: u32::MAX,
+                sector_bytes: u64::MAX,
+            }
+            .checked_total_bytes(),
+            None,
+            "coordinates that came from nowhere but a caller may not fit"
         );
     }
 

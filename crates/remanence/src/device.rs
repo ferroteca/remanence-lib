@@ -57,6 +57,16 @@ pub enum Claim {
     /// library checked it for one thing, honours it exactly, and takes no
     /// lock of its own.
     CallerOpened,
+    /// **Nobody opened anything**: the medium was created whole by the
+    /// author ([`Session::new_media`](crate::Session::new_media)), and
+    /// there is no artifact for a claim to be over.
+    ///
+    /// It is a third answer rather than either of the two above for the
+    /// reason authorship is a third fact class: saying the library
+    /// opened it, or that the caller did, would each assert a file that
+    /// does not exist. An authored medium is session-backed until an
+    /// explicit encode gives it one.
+    Authored,
 }
 
 impl Claim {
@@ -65,6 +75,7 @@ impl Claim {
         match self {
             Self::LibraryOpened => "library-opened",
             Self::CallerOpened => "caller-opened",
+            Self::Authored => "authored",
         }
     }
 }

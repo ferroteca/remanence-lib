@@ -264,7 +264,19 @@ impl DeviceView<'_> {
                  it here"
             )));
         }
-        let recorded = medium.slot();
+        // An authored blank goes in no slot at all: nothing recorded it,
+        // so there is no recording for the equality check to weigh, and
+        // seating it somewhere would assert the drive the author
+        // deliberately did not. Only the reserved authored-to-recorded
+        // arc binds one.
+        let Some(recorded) = medium.slot() else {
+            return Err(Error::unsupported(format!(
+                "{media} was created whole by its author and assumes no device \
+                 — authorship is its own fact class, and device_type() answers \
+                 none — so no drive takes it; {attachment} takes {}",
+                served_reading(slot),
+            )));
+        };
         if recorded != slot {
             return Err(Error::unsupported(format!(
                 "{media} holds {}, and {attachment} takes {}",

@@ -349,6 +349,49 @@ DOS running, and `LOAD"$"` — the directory as the drive's ROM
 synthesizes it — is the future Commodore DOS device seam's journey, not
 this one.
 
+## U32 — I author a blank CHS disk and lay down its boot sector
+
+Nothing is discovered here: there is no artifact yet. I am the author,
+and my facts are the medium's original facts.
+
+```rust
+let mut session = Session::new();
+
+let disk = session.new_media(NewMedia::ChsDisk {
+    geometry: RecordingGeometry {
+        cylinders: 1024, heads: 16, sectors_per_track: 63, sector_bytes: 512,
+    },
+})?;
+// authored provenance — geometry mine, marked mine — and no device
+// assumed: authorship is its own fact class, and only the future
+// authored-to-recorded arc binds a device type
+assert_eq!(disk.device_type(), None);
+assert_eq!(disk.article(), "authored");
+assert_eq!(disk.geometry().readings()[0].source, GeometrySource::Authorship);
+
+let mut boot = [0u8; 512];
+boot[510] = 0x55; boot[511] = 0xaa;
+disk.put_sector(0, 0, 1, &boot)?;               // the authored geometry answers
+disk.commit()?;
+```
+
+The kinds are enumerated as every creation grammar here is: the **blank
+article kinds** — `NewMedia::Flexible525Soft`,
+`NewMedia::Flexible525HardTen` — each name one article of the catalog
+and make that manufactured substrate with nothing recorded on it, so
+they state no coordinates and bear no content; `ChsDisk` is the kind
+whose facts *are* coordinates, and a geometry with a zero anywhere in it
+is refused when it is stated, which is the one moment authorship offers
+to check it.
+
+The disk is session-backed until an explicit encode gives it an
+artifact: the commit point is the ordinary one and there is no recovery
+journal, because no file changes for an interruption to leave
+half-written. The arc from authored to recorded stays reserved: a future
+partition editor consumes my geometry into MBR end tuples and BPBs,
+after which any later discovery recovers it as evidence — the artifact
+testifying for itself.
+
 ## U33 — The disk outlives its source, and enters a machine of its own
 
 Media are session state, independent of every machine and of each

@@ -835,34 +835,6 @@ lands beside the file, its name recovered from my handle for location
 and nothing else; interrupted anywhere, the next open reconciles to
 wholly the old image or wholly the new one.
 
-## U32 — I author a blank CHS disk and lay down its boot sector
-
-Nothing is discovered here: there is no artifact yet. I am the author,
-and my facts are the medium's original facts.
-
-```rust
-let mut session = Session::new();
-
-let disk = session.new_media(NewMedia::ChsDisk {
-    cylinders: 1024, heads: 16, sectors: 63, sector_bytes: 512,
-})?;
-// authored provenance — geometry mine, marked mine — and no device
-// assumed: authorship is its own fact class, and only the future
-// authored-to-recorded arc binds a device type
-assert_eq!(disk.device_type(), None);
-
-let mut boot = [0u8; 512];
-boot[510] = 0x55; boot[511] = 0xaa;
-disk.put_sector(0, 0, 1, &boot)?;               // the authored geometry answers
-disk.commit()?;
-```
-
-The disk is session-backed until an explicit encode gives it an
-artifact. The arc from authored to recorded stays reserved: a future
-partition editor consumes my geometry into MBR end tuples and BPBs,
-after which any later discovery recovers it as evidence — the artifact
-testifying for itself.
-
 ## U34 — I load the one image inside an archive, by naming it
 
 An archive holding a disk image is two media, and I take them one

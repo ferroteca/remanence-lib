@@ -84,7 +84,8 @@ typedef enum {
 //
 // In-force P7 makes denying writes to every other process mandatory
 // **where the library opens**, and leaves the claim to the caller where
-// the caller opened.
+// the caller opened. A third answer exists because a third fact class
+// does: nobody opened an authored medium.
 typedef enum {
   // The library opened the artifact and holds P7's denial itself —
   // the discovery path, and every artifact reached by name.
@@ -92,6 +93,10 @@ typedef enum {
   // The caller opened the artifact and handed the handle over. What
   // that handle affords is the whole of what the session has.
   REMANENCE_CLAIM_CALLER_OPENED = 1,
+  // Nobody opened anything: the medium was created whole by the
+  // author (`remanence_session_new_media`), and there is no artifact
+  // for a claim to be over.
+  REMANENCE_CLAIM_AUTHORED = 2,
 } RemanenceClaim;
 
 // What an open established about the evidence beneath it (P28).
@@ -910,6 +915,61 @@ bool remanence_format_takes_block_bytes(size_t index);
 // `remanence_session_load_media_sources`; every other format loads one
 // source.
 bool remanence_format_takes_collection(size_t index);
+
+// How many kinds of blank medium this release authors.
+size_t remanence_new_media_count(void);
+
+// One authored kind's stable spelling (`chs-disk`, `flexible-5.25-soft`),
+// by index, or null out of range. Owned by the library; do not free.
+const char *remanence_new_media_id(size_t index);
+
+// That kind's name, fit to show a user, or null out of range.
+const char *remanence_new_media_name(size_t index);
+
+// The article a medium of kind `index` is, by the article catalog's own
+// stable spelling — the manufactured substrate for a blank article kind,
+// and `authored` where no manufactured one stands behind it. Null out of
+// range.
+const char *remanence_new_media_article(size_t index);
+
+// Whether a declaration of kind `index` carries the recording's
+// coordinates — true for the CHS disk alone, which is the kind whose
+// facts *are* coordinates. Every other kind is a blank article and takes
+// zeros.
+bool remanence_new_media_takes_geometry(size_t index);
+
+// Creates blank media whole — **authorship, the third fact class** — and
+// answers with the medium, linked to nothing. The session owns the view;
+// never free it. Null on failure.
+//
+// Nothing is discovered and nothing is opened, because there is no
+// artifact: the author declares one enumerated `kind` (a stable spelling
+// from `remanence_new_media_id`), and the facts that declaration states
+// become the medium's original facts — carried from creation as its
+// assurance provenance and, where the kind states coordinates, as its
+// `remanence_medium_geometry`, whose one reading is `authorship`.
+//
+// `cylinders`, `heads`, `sectors_per_track` and `sector_bytes` are the
+// author's own coordinates, for the kind whose claim takes them
+// (`remanence_new_media_takes_geometry`); every other kind takes zeros
+// and refuses anything else by name. Coordinates that address nothing —
+// a zero in any part, or a product no medium could hold — are refused
+// here, when they are stated, which is the one moment authorship offers.
+//
+// **An authored blank assumes no device**: `remanence_medium_device_type`
+// answers null, so no drive takes one and `remanence_device_insert`
+// refuses by name. It is session-backed until an explicit encode gives it
+// an artifact, and `remanence_medium_commit` is the ordinary commit point
+// over it.
+RemanenceMedium *remanence_session_new_media(RemanenceSession *session,
+                                             const char *kind,
+                                             uint32_t cylinders,
+                                             uint32_t heads,
+                                             uint32_t sectors_per_track,
+                                             uint64_t sector_bytes,
+                                             RemanenceErrorCategory *error_category_out,
+                                             char **error_out,
+                                             char **error_rule_out);
 
 // Loads the caller's own opened artifact as the format they **declare**
 // it to be, and answers with the medium — linked to nothing. The session

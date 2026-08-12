@@ -623,6 +623,32 @@ fn formats() -> Vec<(String, String, Vec<String>, bool, bool)> {
         .collect()
 }
 
+/// Every kind of blank medium this release authors (P3): its stable
+/// spelling, its name, the article a medium of it is, and whether its
+/// declaration carries the recording's coordinates.
+///
+/// **Authorship is the third fact class.** Evidence is discovered onto
+/// media and declarations are configured onto machines; `new_media`
+/// creates one whole, and what the author states becomes the medium's
+/// original facts. The **blank article kinds** each name one article of
+/// the catalog and create that manufactured substrate with nothing
+/// recorded on it; `chs-disk` is the kind whose facts *are* coordinates,
+/// and it is the one whose flag here is true.
+#[pyfunction]
+fn new_media_kinds() -> Vec<(String, String, String, bool)> {
+    remanence::NewMedia::claimed()
+        .iter()
+        .map(|claim| {
+            (
+                claim.id().to_owned(),
+                claim.name().to_owned(),
+                claim.article().to_owned(),
+                claim.takes_geometry(),
+            )
+        })
+        .collect()
+}
+
 /// Every device a machine's slot may hold: one per device type this
 /// release claims (P14), plus the archive receiver.
 #[pyfunction]
@@ -1083,9 +1109,11 @@ pub struct Assurance {
     /// `"read-only"`.
     pub access: String,
     /// Whose open this medium's P7 claim is: `"library-opened"` where
-    /// the library opened the artifact and holds the denial itself, or
+    /// the library opened the artifact and holds the denial itself,
     /// `"caller-opened"` where the caller handed a handle over and what
-    /// it affords is the whole of what the session has.
+    /// it affords is the whole of what the session has, or `"authored"`
+    /// where nobody opened anything — the medium was created whole by
+    /// its author and there is no artifact for a claim to be over.
     pub claim: String,
     /// The size the interpretation declares, where one declares a size.
     pub declared_bytes: Option<u64>,
@@ -1665,6 +1693,65 @@ impl Session {
             None => session.load_media(source, format),
         };
         let id = loaded.map_err(to_py_err)?.id();
+        drop(session);
+        Ok(Medium {
+            session: Arc::clone(&self.inner),
+            id,
+        })
+    }
+
+    /// Creates blank media whole — **authorship, the third fact class** —
+    /// and returns the medium, **linked to nothing**.
+    ///
+    /// Nothing is discovered and nothing is opened, because there is no
+    /// artifact: the author declares one enumerated `kind` (a stable
+    /// spelling from `new_media_kinds()`), and the facts that declaration
+    /// states become the medium's original facts — carried from creation
+    /// as its `assurance` provenance and, where the kind states
+    /// coordinates, as its `geometry`, whose one reading is `authorship`.
+    ///
+    /// `cylinders`, `heads`, `sectors_per_track` and `sector_bytes` are
+    /// the author's own coordinates, for the kind whose claim takes them;
+    /// a blank article kind takes none and refuses them by name.
+    /// Coordinates that address nothing — a zero in any part, or a
+    /// product no medium could hold — are refused when they are stated,
+    /// which is the one moment authorship offers to check them.
+    ///
+    /// **An authored blank assumes no device**: `device_type` is `None`,
+    /// so no drive takes one and `StorageDevice.insert` refuses by name.
+    /// It is session-backed until an explicit encode gives it an
+    /// artifact, and `Medium.commit` is the ordinary commit point over
+    /// it.
+    #[pyo3(signature = (
+        kind, *, cylinders = None, heads = None, sectors_per_track = None,
+        sector_bytes = None, cache_bytes = None
+    ))]
+    fn new_media(
+        &self,
+        kind: &str,
+        cylinders: Option<u32>,
+        heads: Option<u32>,
+        sectors_per_track: Option<u32>,
+        sector_bytes: Option<u64>,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<Medium> {
+        let stated = cylinders.is_some()
+            || heads.is_some()
+            || sectors_per_track.is_some()
+            || sector_bytes.is_some();
+        let geometry = stated.then(|| remanence::RecordingGeometry {
+            cylinders: cylinders.unwrap_or(0),
+            heads: heads.unwrap_or(0),
+            sectors_per_track: sectors_per_track.unwrap_or(0),
+            sector_bytes: sector_bytes.unwrap_or(0),
+        });
+        let kind = remanence::NewMedia::declared(kind, geometry).map_err(to_py_err)?;
+        let mut session = self.lock();
+        let created = match cache_bytes {
+            Some(cache_bytes) => session.new_media_with_cache(kind, cache_bytes),
+            None => session.new_media(kind),
+        };
+        let id = created.map_err(to_py_err)?.id();
         drop(session);
         Ok(Medium {
             session: Arc::clone(&self.inner),
@@ -2281,7 +2368,8 @@ impl Medium {
 
     /// The device this medium's content was recorded by, by the device
     /// catalog's stable spelling — or `None` where no device recorded
-    /// it, which is an archive's honest answer rather than a gap.
+    /// it, which is an archive's and an authored blank's honest answer
+    /// rather than a gap.
     #[getter]
     fn device_type(&self) -> PyResult<Option<String>> {
         Ok(self
@@ -2290,9 +2378,22 @@ impl Medium {
             .map(|device| device.id().to_owned()))
     }
 
+    /// The authored kind this medium was created as, by
+    /// `new_media_kinds()`'s stable spelling — or **`None` where it was
+    /// loaded from an artifact instead**.
+    ///
+    /// It is the third fact class showing on the surface: a medium says
+    /// what it was *made* as exactly where an author made it, and says
+    /// nothing where evidence is what it has.
+    #[getter]
+    fn authored_as(&self) -> PyResult<Option<&'static str>> {
+        Ok(self.get()?.authored_as().map(remanence::NewMedia::id))
+    }
+
     /// The artifact the medium was loaded from (the archive itself for an
     /// image loaded out of one), or **`None` where the caller's handle
-    /// has no recoverable name** — a name serves location alone.
+    /// has no recoverable name** — a name serves location alone. An
+    /// authored medium answers `None` because it has no artifact at all.
     #[getter]
     fn path(&self) -> PyResult<Option<String>> {
         Ok(self.get()?.path().map(str::to_owned))
@@ -5206,6 +5307,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
     m.add_function(wrap_pyfunction!(formats, m)?)?;
     m.add_function(wrap_pyfunction!(geometry_sources, m)?)?;
+    m.add_function(wrap_pyfunction!(new_media_kinds, m)?)?;
     m.add_function(wrap_pyfunction!(partition_schemes, m)?)?;
     m.add_function(wrap_pyfunction!(partition_types, m)?)?;
     Ok(())

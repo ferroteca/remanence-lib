@@ -966,6 +966,124 @@ static int write_renditions(const char *path, const char *stem) {
     return status;
 }
 
+/* Authors a blank medium and works it: the third fact class, where the
+ * caller has no artifact at all.
+ *
+ * Nothing is discovered here and nothing is opened. The kinds this
+ * release authors are enumerated, exactly as the formats are; what the
+ * author states at creation becomes the medium's own facts; and the
+ * medium answers in those coordinates, commits into the session, and
+ * goes into no drive -- because nothing recorded it. */
+static int author_media(const char *kind) {
+    RemanenceErrorCategory error_category;
+    char *error = NULL;
+    char *error_rule = NULL;
+
+    size_t kinds = remanence_new_media_count();
+    printf("Authored kinds (%zu):\n", kinds);
+    for (size_t i = 0; i < kinds; ++i) {
+        printf("  %-22s %-58s article %s%s\n", remanence_new_media_id(i),
+               remanence_new_media_name(i), remanence_new_media_article(i),
+               remanence_new_media_takes_geometry(i) ? ", states its coordinates" : "");
+    }
+
+    /* A real consumer states the disk it means to make. This example's
+     * default is the CHS disk U32 authors; a kind named on the command
+     * line takes its place, and a blank article kind takes no
+     * coordinates -- passing zeros is how a C caller states none. */
+    int coordinates = 0;
+    for (size_t i = 0; i < kinds; ++i) {
+        const char *id = remanence_new_media_id(i);
+        if (id != NULL && strcmp(id, kind) == 0) {
+            coordinates = remanence_new_media_takes_geometry(i) ? 1 : 0;
+        }
+    }
+
+    RemanenceSession *session = remanence_session_new();
+    RemanenceMedium *medium = remanence_session_new_media(
+        session, kind, coordinates ? 1024 : 0, coordinates ? 16 : 0, coordinates ? 63 : 0,
+        coordinates ? 512 : 0, &error_category, &error, &error_rule);
+    if (medium == NULL) {
+        report_error("\nerror", error_category, error, error_rule);
+        remanence_session_free(session);
+        return EXIT_FAILURE;
+    }
+
+    /* No device is assumed: authorship is its own fact class, and only
+     * the reserved authored-to-recorded arc would bind one. */
+    const char *recorded = remanence_medium_device_type(medium);
+    printf("\nAuthored: %s\n", kind);
+    printf("Article:  %s\n", remanence_medium_article(medium));
+    printf("Recorded by: %s\n", recorded != NULL ? recorded : "nothing -- the author assumed none");
+    printf("Source:  %s\n", name_or(remanence_medium_path(medium)));
+    print_assurance(medium);
+
+    /* The author's facts ride the medium as provenance from creation, and
+     * the claim class says nobody opened anything. */
+    RemanenceAssurance *provenance = remanence_medium_assurance(medium);
+    if (provenance != NULL) {
+        printf("Claim:   %s\n",
+               remanence_assurance_claim(provenance) == REMANENCE_CLAIM_AUTHORED
+                   ? "authored -- nobody opened anything"
+                   : "an open's");
+        printf("Provenance (the author's own facts):\n");
+        for (size_t i = 0; i < remanence_assurance_evidence_count(provenance); ++i) {
+            printf("  * %s\n", remanence_assurance_evidence(provenance, i));
+        }
+        remanence_assurance_free(provenance);
+    }
+
+    /* The geometry is the author's own, and its one reading says so. The
+     * sector verbs address in exactly that. */
+    print_geometry(medium);
+    print_partitions(medium);
+
+    if (coordinates) {
+        unsigned char boot[512];
+        memset(boot, 0, sizeof boot);
+        boot[510] = 0x55;
+        boot[511] = 0xaa;
+        if (!remanence_medium_put_sector(medium, 0, 0, 1, boot, sizeof boot, &error_category,
+                                         &error, &error_rule)) {
+            report_error("\nerror writing sector 0/0/1", error_category, error, error_rule);
+            remanence_session_free(session);
+            return EXIT_FAILURE;
+        }
+        /* Buffered until the commit point, like every other write -- and
+         * there is no journal here, because there is no artifact for an
+         * interruption to leave half-written. */
+        printf("\nModified: %s\n", remanence_medium_is_modified(medium) ? "yes" : "no");
+        if (!remanence_medium_commit(medium, &error_category, &error, &error_rule)) {
+            report_error("error committing", error_category, error, error_rule);
+            remanence_session_free(session);
+            return EXIT_FAILURE;
+        }
+        printf("Committed; modified: %s\n",
+               remanence_medium_is_modified(medium) ? "yes" : "no");
+
+        unsigned char back[512];
+        if (remanence_medium_get_sector(medium, 0, 0, 1, back, sizeof back, &error_category,
+                                        &error, &error_rule)) {
+            printf("sector 0/0/1 signature: %02x %02x\n", back[510], back[511]);
+        } else {
+            report_error("error reading it back", error_category, error, error_rule);
+        }
+    }
+
+    /* And it goes in no drive: the edge weighs the recording, and there
+     * is none to weigh. */
+    RemanenceDevice *drive = remanence_session_add_device(session, "mbr-sector-hd",
+                                                          &error_category, &error, &error_rule);
+    if (drive != NULL &&
+        !remanence_device_insert(drive, remanence_medium_id(medium), &error_category, &error,
+                                 &error_rule)) {
+        report_error("\nno drive takes it", error_category, error, error_rule);
+    }
+
+    remanence_session_free(session);
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--list") == 0) {
         return list_archive(argv[2]);
@@ -983,6 +1101,9 @@ int main(int argc, char **argv) {
         list_devices();
         return EXIT_SUCCESS;
     }
+    if ((argc == 2 || argc == 3) && strcmp(argv[1], "--author") == 0) {
+        return author_media(argc == 3 ? argv[2] : "chs-disk");
+    }
     if (argc < 2 || argc > 3) {
         fprintf(stderr, "Usage: %s <path-to-image> [device-type]\n", argv[0]);
         fprintf(stderr, "       %s --discover <path-to-image>\n", argv[0]);
@@ -991,6 +1112,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "       %s --renditions <path-to-artifact> <destination-stem>\n",
                 argv[0]);
         fprintf(stderr, "       %s --devices\n", argv[0]);
+        fprintf(stderr, "       %s --author [authored-kind]\n", argv[0]);
         return EXIT_FAILURE;
     }
     /* Which drive serves a medium is machine configuration, so it is this

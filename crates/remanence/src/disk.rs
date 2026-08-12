@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{self, ActiveLayer, DeviceIdentity, ImageFormatDescriptor, OpenedImage};
 use crate::archive::ArchiveMedium;
 use crate::assurance::{self, Assurance, ReadBound, Shortfall};
+use crate::authored::{AuthoredMedium, AuthoredSpace, NewMedia};
 use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Claim, Device};
 use crate::device_type::{DeviceSlot, DeviceType};
@@ -309,6 +310,14 @@ pub(crate) enum MediumState {
     /// under the profile's declared defaults, and a P64 loaded straight
     /// in (F59).
     Flux(FluxState),
+    /// A medium the author created whole (F60): no artifact beneath it,
+    /// the author's own facts as its original facts, and no device
+    /// assumed. It is the third fact class arriving at the state tier —
+    /// authorship, beside the evidence the three above are read from —
+    /// and the same rule shapes it: an authored blank whose kind states
+    /// coordinates bears the content they address, and one that is a
+    /// blank article bears none.
+    Authored(AuthoredMedium),
 }
 
 impl MediumState {
@@ -446,6 +455,18 @@ impl MediumState {
         }
     }
 
+    /// Creates the medium an author declared, whole — the third fact
+    /// class (F60).
+    ///
+    /// Nothing is read, nothing is probed and nothing is opened: there is
+    /// no artifact yet. The declaration is checked against itself — a
+    /// kind this release does not author, and coordinates that address
+    /// nothing, are refused by name — and what it states becomes the
+    /// medium's original facts.
+    pub(crate) fn authored(kind: NewMedia, cache_bytes: u64) -> Result<Self> {
+        Ok(Self::Authored(AuthoredMedium::create(kind, cache_bytes)?))
+    }
+
     /// Opens one archive entry as a medium of its own — the nested
     /// journey, reached from the file view that names the entry.
     pub(crate) fn open_entry(resolved: ResolvedImage, cache_bytes: u64) -> Result<Self> {
@@ -462,13 +483,20 @@ impl MediumState {
             Self::Space(space) => space.path(),
             Self::Archive(archive) => archive.path(),
             Self::Flux(flux) => flux.path(),
+            // An authored medium has no artifact to name and no handle a
+            // name could be recovered from.
+            Self::Authored(_) => None,
         }
     }
 
-    /// The artifact as a refusal names it: the recovered name, or the
-    /// stated fact that the caller's handle has none.
+    /// The artifact as a refusal names it: the recovered name, the stated
+    /// fact that the caller's handle has none, or — where nothing was
+    /// opened at all — what the author made.
     pub(crate) fn named(&self) -> String {
-        crate::media::named(self.path())
+        match self {
+            Self::Authored(authored) => authored.named(),
+            _ => crate::media::named(self.path()),
+        }
     }
 
     /// The resolved artifact — the entry name for an image loaded out of
@@ -478,16 +506,18 @@ impl MediumState {
             Self::Space(space) => space.image_path(),
             Self::Archive(archive) => archive.path().map(Path::new),
             Self::Flux(flux) => flux.path().map(Path::new),
+            Self::Authored(_) => None,
         }
     }
 
-    /// The artifact's own bytes, which every medium has: the evidence
-    /// plane, distinct from any vantage above it.
+    /// The artifact's own bytes, where the medium came from one — zero
+    /// for an authored medium, which came from nowhere but its author.
     pub(crate) fn image_size_bytes(&self) -> u64 {
         match self {
             Self::Space(space) => space.image_size_bytes(),
             Self::Archive(archive) => archive.size_bytes(),
             Self::Flux(flux) => flux.source_bytes(),
+            Self::Authored(_) => 0,
         }
     }
 
@@ -501,6 +531,10 @@ impl MediumState {
             // byte plane either — the collection has no one artifact,
             // and the reading of one is the presentation ladder's.
             Self::Flux(flux) => Err(flux_media::no_space("read_at", flux)),
+            // And an authored medium has no artifact plane at all: its
+            // content is what the author created, reached in the
+            // coordinates they stated.
+            Self::Authored(authored) => Err(authored.no_image("read_at")),
         }
     }
 
@@ -509,6 +543,7 @@ impl MediumState {
             Self::Space(space) => space.media(),
             Self::Archive(archive) => archive.media(),
             Self::Flux(flux) => flux.media(),
+            Self::Authored(authored) => authored.media(),
         }
     }
 
@@ -524,18 +559,45 @@ impl MediumState {
     pub(crate) fn device_type(&self) -> Option<DeviceType> {
         match self {
             Self::Space(space) => space.device_type(),
-            Self::Archive(_) => None,
+            // An archive was recorded by no device, and neither was an
+            // authored blank: authorship assumes none, and only the
+            // reserved authored-to-recorded arc would bind one.
+            Self::Archive(_) | Self::Authored(_) => None,
             Self::Flux(flux) => Some(flux.device_type()),
         }
     }
 
-    /// What slot this medium goes in, where it can say — the recording
-    /// side of the insert check.
+    /// What slot this medium goes in, where it goes in one at all — the
+    /// recording side of the insert check.
+    ///
+    /// An authored medium answers `None` and it is not a gap: no drive
+    /// takes a blank nobody recorded, so the edge refuses by name rather
+    /// than seating it somewhere.
     pub(crate) fn slot(&self) -> Option<DeviceSlot> {
         match self {
             Self::Space(space) => space.device_type().map(DeviceSlot::Recorded),
             Self::Archive(_) => Some(DeviceSlot::Archive),
             Self::Flux(flux) => Some(DeviceSlot::Recorded(flux.device_type())),
+            Self::Authored(_) => None,
+        }
+    }
+
+    /// Whether this medium is a reading that could not say what recorded
+    /// it — the discovery over a format admitting several device types,
+    /// which the pool refuses to admit (P3).
+    ///
+    /// It is not the same question as [`MediumState::slot`]: an authored
+    /// medium has no device type either, and there is nothing missing
+    /// about it.
+    pub(crate) fn undeclared(&self) -> bool {
+        matches!(self, Self::Space(space) if space.device_type().is_none())
+    }
+
+    /// The authored medium this is, where it is one.
+    pub(crate) fn authored_medium(&self) -> Option<&AuthoredMedium> {
+        match self {
+            Self::Authored(authored) => Some(authored),
+            Self::Space(_) | Self::Archive(_) | Self::Flux(_) => None,
         }
     }
 
@@ -561,6 +623,7 @@ impl MediumState {
             Self::Space(space) => space.mode(),
             Self::Archive(archive) => archive.mode(),
             Self::Flux(flux) => flux.mode(),
+            Self::Authored(authored) => authored.mode(),
         }
     }
 
@@ -569,6 +632,7 @@ impl MediumState {
             Self::Space(space) => space.assurance(),
             Self::Archive(archive) => archive.assurance(),
             Self::Flux(flux) => flux.assurance(),
+            Self::Authored(authored) => authored.assurance(),
         }
     }
 
@@ -577,6 +641,7 @@ impl MediumState {
             Self::Space(space) => space.identify(),
             Self::Archive(archive) => archive.identify(),
             Self::Flux(flux) => flux.identify(),
+            Self::Authored(authored) => authored.identify(),
         }
     }
 
@@ -585,6 +650,7 @@ impl MediumState {
             Self::Space(space) => space.is_modified(),
             // Read-only, so there is never anything buffered to lose.
             Self::Archive(_) | Self::Flux(_) => false,
+            Self::Authored(authored) => authored.is_modified(),
         }
     }
 
@@ -595,6 +661,9 @@ impl MediumState {
             Self::Space(space) => space.descriptor().id,
             Self::Archive(archive) => archive.format_id(),
             Self::Flux(flux) => flux.format_id(),
+            // No format recognized an authored medium, because no
+            // artifact was read; what it is instead is its kind.
+            Self::Authored(authored) => authored.kind().id(),
         }
     }
 
@@ -604,6 +673,7 @@ impl MediumState {
             Self::Space(space) => space.descriptor().name,
             Self::Archive(archive) => archive.format_name(),
             Self::Flux(flux) => flux.format_name(),
+            Self::Authored(authored) => authored.kind().name(),
         }
     }
 
@@ -613,7 +683,7 @@ impl MediumState {
     pub(crate) fn recorded_devices(&self) -> &'static [DeviceType] {
         match self {
             Self::Space(space) => space.descriptor().devices,
-            Self::Archive(_) => &[],
+            Self::Archive(_) | Self::Authored(_) => &[],
             Self::Flux(_) => &FLUX_RECORDED_DEVICES,
         }
     }
@@ -624,8 +694,9 @@ impl MediumState {
         match self {
             Self::Space(space) => space.foreign_family(),
             // A flux medium loaded by its own declaration is not a
-            // foreign family — it is the family, at home.
-            Self::Archive(_) | Self::Flux(_) => None,
+            // foreign family — it is the family, at home — and an
+            // authored medium was read from no artifact at all.
+            Self::Archive(_) | Self::Flux(_) | Self::Authored(_) => None,
         }
     }
 
@@ -641,6 +712,7 @@ impl MediumState {
             Self::Space(space) => Ok(space),
             Self::Archive(archive) => Err(no_space(verb, archive)),
             Self::Flux(flux) => Err(flux_media::no_space(verb, flux)),
+            Self::Authored(authored) => Err(authored.no_image(verb)),
         }
     }
 
@@ -649,13 +721,14 @@ impl MediumState {
             Self::Space(space) => Ok(space),
             Self::Archive(archive) => Err(no_space(verb, archive)),
             Self::Flux(flux) => Err(flux_media::no_space(verb, flux)),
+            Self::Authored(authored) => Err(authored.no_image(verb)),
         }
     }
 
     /// The archive this medium is, where it is one.
     pub(crate) fn archive(&self) -> Option<&ArchiveMedium> {
         match self {
-            Self::Space(_) | Self::Flux(_) => None,
+            Self::Space(_) | Self::Flux(_) | Self::Authored(_) => None,
             Self::Archive(archive) => Some(archive),
         }
     }
@@ -679,6 +752,80 @@ impl MediumState {
                  answer where the device type's profile bears flux (P13, P30)",
                 archive.named()
             ))),
+            Self::Authored(authored) => Err(Error::unsupported(format!(
+                "'{verb}' reads a flux recording's presentation, and {} was \
+                 recorded by no device at all — the author created it whole: \
+                 the flux questions answer where the device type's profile \
+                 bears flux (P13, P30)",
+                authored.named()
+            ))),
+        }
+    }
+
+    // ------------------------- the content an authored medium also bears
+
+    /// The presented content's own size, for the media that present one.
+    ///
+    /// An authored medium answers here beside the block media: what its
+    /// coordinates address *is* its content, and a blank article — which
+    /// states no coordinates — refuses by name.
+    pub(crate) fn presented_size(&self, verb: &str) -> Result<u64> {
+        match self {
+            Self::Space(space) => Ok(space.size()),
+            Self::Authored(authored) => authored.space(verb).map(AuthoredSpace::size),
+            Self::Archive(archive) => Err(no_space(verb, archive)),
+            Self::Flux(flux) => Err(flux_media::no_space(verb, flux)),
+        }
+    }
+
+    /// Reads within the presented content, the offset already resolved by
+    /// whatever owns the bound.
+    pub(crate) fn read_space_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        match self {
+            Self::Space(space) => space.read_space_at(offset, buf),
+            Self::Authored(authored) => authored.space_mut("read_at")?.read_at(offset, buf),
+            Self::Archive(archive) => Err(no_space("read_at", archive)),
+            Self::Flux(flux) => Err(flux_media::no_space("read_at", flux)),
+        }
+    }
+
+    /// Writes within the presented content, buffered until commit like
+    /// every other write (P2).
+    pub(crate) fn write_space_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        match self {
+            Self::Space(space) => space.write_space_at(offset, data),
+            Self::Authored(authored) => authored.space_mut("write_at")?.write_at(offset, data),
+            Self::Archive(archive) => Err(no_space("write_at", archive)),
+            Self::Flux(flux) => Err(flux_media::no_space("write_at", flux)),
+        }
+    }
+
+    /// The commit point (P2), wherever the medium's state lives: through
+    /// to the artifact for a medium that has one, and into the session's
+    /// own backing for a medium the author created.
+    pub(crate) fn commit(&mut self) -> Result<()> {
+        match self {
+            Self::Space(space) => space.commit(),
+            Self::Authored(authored) => authored.space_mut("commit")?.commit(),
+            Self::Archive(archive) => Err(no_space("commit", archive)),
+            Self::Flux(flux) => Err(flux_media::no_space("commit", flux)),
+        }
+    }
+
+    /// Discards everything buffered since the medium was loaded or
+    /// created, or since the last commit or rollback.
+    pub(crate) fn rollback(&mut self) -> Result<()> {
+        match self {
+            Self::Space(space) => {
+                space.rollback();
+                Ok(())
+            }
+            Self::Authored(authored) => {
+                authored.space_mut("rollback")?.rollback();
+                Ok(())
+            }
+            Self::Archive(archive) => Err(no_space("rollback", archive)),
+            Self::Flux(flux) => Err(flux_media::no_space("rollback", flux)),
         }
     }
 
@@ -703,6 +850,14 @@ impl MediumState {
         match self {
             Self::Archive(_) => Ok(PartitionPool::native_namespace()),
             Self::Flux(_) => Ok(PartitionPool::over_recording()),
+            // An authored blank records no scheme — nobody recorded
+            // anything on it — so it bears the direct partition over
+            // whatever content its kind gave it, and nothing is read to
+            // establish that: a blank the author just made is blank.
+            Self::Authored(authored) => Ok(match authored.space("partitions") {
+                Ok(space) => PartitionPool::authored_space(space.size()),
+                Err(_) => PartitionPool::authored_blank(),
+            }),
             Self::Space(space) => {
                 let device = space.device_type().ok_or_else(|| {
                     Error::unsupported(format!(
@@ -749,6 +904,10 @@ impl MediumState {
             // source below it states a cylinder-head-sector geometry.
             Self::Archive(_) | Self::Flux(_) => Geometry::unstated(),
             Self::Space(space) => space.establish_geometry(partitions),
+            // Nothing is established for an authored medium, because
+            // nothing is read: the author stated its coordinates when
+            // they created it, and those are already its own.
+            Self::Authored(authored) => authored.geometry(),
         }
     }
 }
@@ -1492,6 +1651,14 @@ impl MediaState {
                 ),
                 Claim::LibraryOpened => format!(
                     "{} was opened for reading; write actions are denied",
+                    self.named()
+                ),
+                // Unreachable: an authored medium is not block state and
+                // never reaches this seam. Spelled as an answer rather
+                // than an unreachable, because a refusal is one (P6).
+                Claim::Authored => format!(
+                    "{} was created by its author and holds no artifact to \
+                     write through",
                     self.named()
                 ),
             }));

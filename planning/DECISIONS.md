@@ -58,6 +58,115 @@ removes it is the record either way.
 
 ## Decisions
 
+### D36 — Rulings made delivering authored media
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-12. **Supports** S1, S2, S3; the pledged media-first design and
+its fact-class and creation-grammar rules; in-force P2, P3, P5, P10,
+P13, P14, P27; U32; D34.
+
+F60's delivery is recorded by the commit; these are the calls made in
+its course.
+
+**"The blank article kinds and `ChsDisk`" is read as two kinds of
+kind, and the enumeration is flat.** F60 names both halves, and they
+are genuinely different things: a blank article kind states an
+*article* — the manufactured substrate, with nothing recorded on it —
+and `ChsDisk` states *coordinates*, which no manufactured article
+carries. The reading taken is that the set is one per authorable
+article plus the coordinate one, and the blank article kinds are
+spelled by their own article ids (`flexible-5.25-soft`,
+`flexible-5.25-hard-10`), because that is the whole of what each
+declares. `NewMedia` is flat rather than two-level, as `Format` is: a
+second enum would name a set with one member outside it.
+
+**An authored disk's article is `authored`, a second member of the
+virtual family.** No manufactured article stands behind coordinates a
+caller stated, and the candidates all lied: `logical-block-512`
+declares "no cylinder, head, track… fact of any kind" and would also
+have forced 512-byte sectors on an author who wanted 256, and
+inventing a physical article would assert a coating and a form factor
+nobody made. The virtual family already exists for exactly this —
+independent recorded state with no physical article behind it — and
+the one fact it declares is the native vantage, which parts the two
+members cleanly: an archive's is a namespace, an authored blank's is a
+space. A caller who wants a *manufactured* article authors that
+article by name and gets its published facts.
+
+**A third `Claim` class, because a third fact class exists.** The
+claim answers whose open a medium's P7 claim is, and an authored
+medium was opened by nobody: `library-opened` and `caller-opened` each
+assert a file that does not exist. `Claim::Authored` is the honest
+third answer, and it travels to S2 and S3 as one — the same shape
+`device_type()` answering `None` already has.
+
+**`GeometrySource::Authorship` is a source and does not break the
+fact classes.** A geometry is still never *declared onto* a medium
+that exists: authorship states coordinates in the same act the medium
+is created in, and the created medium's geometry is settled from that
+moment and immutable, exactly as a loaded medium's is settled at the
+load. The source never appears beside another — there is no artifact
+under an authored medium for a second reading to be taken from — so
+the settling machinery is bypassed rather than run over one reading:
+running it would add an extent-arithmetic reading derived from the
+author's own coordinates, which is a source agreeing with itself.
+D34's "weighed and declined" pointed here for a caller's own
+coordinates, and this is where they enter.
+
+**An authored blank goes in no drive, and `Medium::slot()` became an
+`Option` to say so.** Insert is device-type equality and an authored
+medium has no device type, so there is nothing to weigh; seating it
+anywhere would assert the drive the author deliberately did not. The
+pool's admission check had to be re-cut at the same time: it used to
+refuse a medium with no slot, which now also describes an authored
+one, so the question it asks became the one it always meant — *is
+this a reading that could not say what recorded it?* — leaving the
+authored medium, which is not missing anything, admitted.
+
+**An authored medium bears the direct partition, and no namespace.**
+The walk stays uniform (P19 as amended): every medium is reached
+through a partition, so an authored disk bears the direct partition
+over the content its coordinates address, addressable and composing no
+volume, and a blank article bears an extent-less one. Nothing is
+classified to establish it — a blank the author just made is blank,
+which is the one case where the content's answer is known without
+reading it. The **namespace vantage is refused by name** rather than
+opened: recording a layout onto an authored blank is precisely the
+authored-to-recorded arc F60 reserves, and offering `filesystem_as`
+over a blank would deliver a door that can only ever refuse at the
+adapter.
+
+**The commit point stands, with no journal beneath it.** P2 is about
+when buffered writes become the medium's state and P9 is about a
+*file* being left reconcilable after an interruption. An authored
+medium has no file, so it keeps the first and needs none of the
+second: `commit` writes the buffered extents through into the
+session's own sparse backing and `rollback` discards them. The backing
+is the private transient storage the cache already spills to —
+unlinked at birth, delete-on-close on Windows — which is what
+"session-backed" means and why a 528 MB authored disk costs what was
+written to it rather than what it addresses (P27).
+
+**The bound is checked where the write is offered.** A block medium's
+format adapter answers for the disk it presents and clamps a
+write-through to it; an authored medium has no adapter, so a write
+past the author's coordinates would buffer and be dropped at the
+commit. The authored space checks its own bound instead, so the
+refusal arrives where the caller can act on it.
+
+**Weighed and declined:** deriving the blank article kinds from the
+article catalog at run time (the catalog holds articles no author can
+make whole — the archive's `virtual`, and `logical-block-512`, which
+states no size — so the authorable set is a claim of its own, and P3
+wants it enumerated); giving an authored blank the file verbs by
+routing FAT recognition over it (it can only refuse until something
+records a boot record, and that something is the reserved arc);
+`ChsDisk` carrying the four coordinates as loose fields, as the
+pledged U32 walk spelled it (F60's own "Needs nothing" clause says the
+coordinates an authored blank states are the delivered geometry's own,
+and a second spelling of `RecordingGeometry` would be two shapes for
+one fact — the walk is updated to the delivered one).
+
 ### D35 — Rulings made delivering the collection-sourced load and the flux fold-in
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

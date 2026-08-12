@@ -43,6 +43,13 @@ use crate::report::{DiskContent, RegionId, RegionRole, VolumeId};
 /// recorded a table.
 pub(crate) const DIRECT_ORDINAL: u32 = 0;
 
+/// The direct partition's account of itself over a medium that was
+/// loaded and records no scheme.
+const RECORDS_NO_SCHEME: &str = "the library's own composition of the whole content: this \
+                                 medium records no partition scheme, so the direct partition \
+                                 is what the content is reached through — synthetic, and never \
+                                 evidence";
+
 /// One partition-layout scheme this release reads (P16).
 ///
 /// The set is an enumerated claim: a medium's family names the scheme
@@ -482,7 +489,11 @@ impl Partition {
     }
 
     /// The direct partition over a medium's whole presented content.
-    fn direct_over_space(length_bytes: u64, volume: Option<VolumeId>) -> Self {
+    fn direct_over_space(
+        length_bytes: u64,
+        volume: Option<VolumeId>,
+        provenance: &'static str,
+    ) -> Self {
         Self {
             ordinal: DIRECT_ORDINAL,
             placement: "direct",
@@ -498,12 +509,7 @@ impl Partition {
             namespace: None,
             issue: None,
             evidence: Vec::new(),
-            provenance: Some(
-                "the library's own composition of the whole content: this \
-                 medium records no partition scheme, so the direct partition \
-                 is what the content is reached through — synthetic, and never \
-                 evidence",
-            ),
+            provenance: Some(provenance),
         }
     }
 
@@ -876,6 +882,47 @@ impl PartitionPool {
         }
     }
 
+    /// The pool an authored medium bears whose kind states coordinates:
+    /// the direct partition over the whole of the content the author
+    /// created, blank by construction.
+    ///
+    /// Nothing is classified and nothing is read, because there is no
+    /// artifact to read: a blank the author just made is blank, which is
+    /// the one case where the content's own answer is known without
+    /// asking it. The addressable vantage opens over it; no namespace
+    /// does, because nothing recorded one and the arc that would is
+    /// reserved.
+    pub(crate) fn authored_space(length_bytes: u64) -> Self {
+        Self::direct(
+            DiskContent::Blank,
+            length_bytes,
+            None,
+            "the library's own composition of the whole content: this medium \
+             was authored and nothing has been recorded onto it, so it \
+             records no partition scheme and the direct partition is what \
+             its content is reached through — synthetic, and never evidence",
+        )
+    }
+
+    /// The pool an authored **blank article** bears: one direct
+    /// partition, extent-less and namespace-less. The article is the
+    /// whole of what the author stated, and nothing is recorded on it to
+    /// be a position within.
+    pub(crate) fn authored_blank() -> Self {
+        Self {
+            scheme: None,
+            schema_evidence: Vec::new(),
+            content: DiskContent::Blank,
+            partitions: vec![Partition::direct_over_namespace(
+                None,
+                "the library's own composition of the whole medium: this blank \
+                 was authored as an article and nothing is recorded on it, so \
+                 the direct partition has no addressed extent and no namespace \
+                 — synthetic, and never evidence",
+            )],
+        }
+    }
+
     /// The pool a medium bears whose **device type declares no scheme**:
     /// the direct partition over the whole content, with no table read
     /// and none looked for.
@@ -890,14 +937,18 @@ impl PartitionPool {
                 DiskContent::DirectVolume,
                 length_bytes,
                 Some(VolumeId::whole_device()),
+                RECORDS_NO_SCHEME,
             ),
-            mbr::Discovery::Blank => Self::direct(DiskContent::Blank, length_bytes, None),
+            mbr::Discovery::Blank => {
+                Self::direct(DiskContent::Blank, length_bytes, None, RECORDS_NO_SCHEME)
+            }
             mbr::Discovery::UnknownNonblank { evidence } => Self::direct(
                 DiskContent::UnknownNonblank {
                     evidence: evidence.clone(),
                 },
                 length_bytes,
                 None,
+                RECORDS_NO_SCHEME,
             ),
             // Unreachable by construction: the schemeless classifier
             // never reads a table. Spelled as the same absence rather
@@ -909,6 +960,7 @@ impl PartitionPool {
                 },
                 length_bytes,
                 None,
+                RECORDS_NO_SCHEME,
             ),
         }
     }
@@ -942,12 +994,21 @@ impl PartitionPool {
         }
     }
 
-    fn direct(content: DiskContent, length_bytes: u64, volume: Option<VolumeId>) -> Self {
+    fn direct(
+        content: DiskContent,
+        length_bytes: u64,
+        volume: Option<VolumeId>,
+        provenance: &'static str,
+    ) -> Self {
         Self {
             scheme: None,
             schema_evidence: Vec::new(),
             content,
-            partitions: vec![Partition::direct_over_space(length_bytes, volume)],
+            partitions: vec![Partition::direct_over_space(
+                length_bytes,
+                volume,
+                provenance,
+            )],
         }
     }
 }
@@ -1064,7 +1125,11 @@ mod tests {
 
     #[test]
     fn the_direct_partition_declares_no_type_and_says_so_by_name() {
-        let direct = Partition::direct_over_space(4_096_000, Some(VolumeId::whole_device()));
+        let direct = Partition::direct_over_space(
+            4_096_000,
+            Some(VolumeId::whole_device()),
+            RECORDS_NO_SCHEME,
+        );
         assert!(direct.is_direct());
         assert_eq!(direct.ordinal(), DIRECT_ORDINAL);
         assert_eq!(direct.type_byte(), None);

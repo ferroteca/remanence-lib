@@ -44,6 +44,7 @@
 
 use std::path::Path;
 
+use crate::authored::NewMedia;
 use crate::device::AccessIntent;
 use crate::device_type::{DeviceSlot, DeviceType};
 use crate::discovery::{Discovery, discover_media_with_cache};
@@ -202,9 +203,55 @@ impl Session {
         self.admit(state)
     }
 
-    /// Takes an opened medium into the pool, refusing an artifact this
-    /// release holds in no device before it is pooled at all, and
-    /// establishing its partition pool in the same act.
+    /// Creates blank media whole — **authorship, the third fact class**
+    /// — and answers with the medium, linked to nothing.
+    ///
+    /// Nothing is discovered here, because there is no artifact: the
+    /// author declares one enumerated [`NewMedia`] kind, and the facts
+    /// that declaration states become the medium's original facts,
+    /// carried from creation as its [`assurance`](Medium::assurance)
+    /// provenance and — where the kind states coordinates — as its
+    /// [`geometry`](Medium::geometry), whose one reading is authorship.
+    ///
+    /// **A declaration names a concrete catalog entry** (P3), as every
+    /// creation verb here does: the **blank article kinds**, each naming
+    /// one article of the P14 catalog and creating that manufactured
+    /// substrate with nothing recorded on it, and
+    /// [`NewMedia::ChsDisk`], whose article is authored rather than
+    /// manufactured and whose content is addressed in the cylinders,
+    /// heads and sectors the author stated. Coordinates that address
+    /// nothing are refused when they are stated, which is the one moment
+    /// authorship offers to check them.
+    ///
+    /// **An authored blank assumes no device.**
+    /// [`device_type`](Medium::device_type) answers `None` — the same
+    /// honest absence an archive answers — so no drive takes one and
+    /// [`DeviceView::insert`] refuses by name. The arc from authored to
+    /// recorded, which would bind a device type, is reserved.
+    ///
+    /// The medium is **session-backed**: its content lives in the
+    /// session's own bounded working set (P27) until an explicit encode
+    /// gives it an artifact, and [`Medium::commit`] is the ordinary
+    /// commit point over it (P2).
+    pub fn new_media(&mut self, kind: NewMedia) -> Result<&mut Medium> {
+        self.new_media_with_cache(kind, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// [`Session::new_media`] under a caller-declared session cache
+    /// bound (P27), which is what bounds the authored content's resident
+    /// working set.
+    pub fn new_media_with_cache(
+        &mut self,
+        kind: NewMedia,
+        cache_bytes: u64,
+    ) -> Result<&mut Medium> {
+        let state = MediumState::authored(kind, cache_bytes)?;
+        self.admit(state)
+    }
+
+    /// Takes an opened or authored medium into the pool, refusing an
+    /// artifact this release holds in no device before it is pooled at
+    /// all, and establishing its partition pool in the same act.
     ///
     /// **A pooled medium can always say what recorded it.** A discovery
     /// over a format that records several device types asserts none, and
@@ -226,7 +273,11 @@ impl Session {
                 state.named()
             )));
         }
-        if state.slot().is_none() {
+        // A *reading* that could not say what recorded it is refused. An
+        // authored medium says none either, and there is nothing missing
+        // about it — the author assumed no device — so the question the
+        // pool asks is which of the two this is.
+        if state.undeclared() {
             return Err(undeclared_device(&state));
         }
         // The evidence pool is established here, once, before anyone holds

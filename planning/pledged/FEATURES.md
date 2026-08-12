@@ -49,22 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F60 — Authored media
-
-`new_media(kind)` creates blank media whole: the blank article kinds
-and `ChsDisk { geometry }`, session-backed, authored provenance —
-authorship being the third fact class, the author's facts becoming the
-medium's original facts. An authored blank assumes no device —
-`device_type()` answers `None`. The authored-to-recorded arc (a
-partition editor consuming authored geometry into MBR end-tuples and
-BPBs, binding a device type) remains reserved in the partition pool's
-create/release slots.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P13,
-P27; U32. Needs nothing: the coordinates an authored blank states are
-the delivered geometry's own, and authorship is the third fact class
-beside the discovery that fills them today.
-
 ## F67 — Discovery holds the claim and builds no cache
 
 The constraint D30 reinstated the discovery surface *on*, made real.

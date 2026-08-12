@@ -20,6 +20,54 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **Authored media: `new_media` creates blank media whole, and
+  authorship is the third fact class.** Evidence is discovered onto
+  media and declarations are configured onto machines;
+  `Session::new_media(kind)` is neither. It takes one enumerated
+  `NewMedia` kind and the facts that declaration states become the
+  medium's *original* facts — carried from creation as its
+  `assurance()` provenance and, where the kind states coordinates, as
+  its `geometry()`, whose one reading is the new
+  `GeometrySource::Authorship`. Nothing is read, probed or opened,
+  there being no artifact.
+
+  The kinds are an enumerated claim like every other creation grammar
+  here (P3). The **blank article kinds** —
+  `NewMedia::Flexible525Soft`, `NewMedia::Flexible525HardTen`, each
+  spelled by the article it makes — create that manufactured substrate
+  with nothing recorded on it: the article is the whole of what they
+  state, so they state no coordinates and bear no content.
+  `NewMedia::ChsDisk { geometry }` is the kind whose facts *are*
+  coordinates; its article is the new **`authored`** entry, a second
+  member of the virtual family whose native vantage is a space where
+  the archive's is a namespace — nobody manufactured either. A geometry
+  with a zero anywhere in it, or one addressing more bytes than a
+  medium could hold, is refused when it is stated, which is the one
+  moment authorship offers to check it.
+
+  **An authored blank assumes no device**: `device_type()` answers
+  `None`, as an archive's does and for the same reason, so no drive
+  takes one and `insert` refuses by name. `Medium::authored_as()` says
+  which kind made it, or `None` for a medium loaded from an artifact.
+  It bears the direct partition over its own content — addressable, no
+  namespace, nothing classified to establish it — and the namespace
+  vantage refuses toward the **authored-to-recorded arc**, which stays
+  reserved. It is **session-backed** until an explicit encode gives it
+  an artifact: the content lives on a sparse blank in private session
+  storage within the declared cache bound (P27), so a 528 MB authored
+  disk costs what was written to it, and `commit()`/`rollback()` are
+  the ordinary commit point over it (P2) with no recovery journal
+  beneath — no file changes for an interruption to leave half-written.
+  `Claim` gains a third class, `authored`, because nobody opened
+  anything.
+
+  S2 mirrors it: `remanence_session_new_media` with the
+  `remanence_new_media_count`/`_id`/`_name`/`_article`/`_takes_geometry`
+  catalog and `REMANENCE_CLAIM_AUTHORED`; `identify --author [kind]` is
+  the example consumer's walk. S3 mirrors it: `Session.new_media(kind,
+  cylinders=…, heads=…, sectors_per_track=…, sector_bytes=…)`,
+  `Medium.authored_as`, and the module-level `new_media_kinds()`.
+
 - **`load_media` gains its source shapes, and a KryoFlux capture loads
   as a medium.** The one load verb now reads four declared source
   shapes (`MediaSource`, arrived at by plain conversion): the caller's

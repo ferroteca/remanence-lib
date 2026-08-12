@@ -43,6 +43,9 @@ Session::new()                                 OWNED root
    │                                     std::fs::File(s), or File(s) from
    │                                     another medium's namespace
    │     .new_media(kind)?                     → &mut Medium   authored
+   │                                     DELIVERED (F60): the blank article
+   │                                     kinds and ChsDisk { geometry },
+   │                                     session-backed, no device assumed
    │     .medium(id) → Option · .media()
    │     .release_media(id)?          severs its own link if inserted, then ends
    │                                  the claim and discards uncommitted state —
@@ -125,8 +128,17 @@ Medium                                         pool-owned, holdable — ALL cont
    contradict each other" are different facts (D34). The load's own
    declaration of a raw block size enters as one source among the
    others rather than as an override, which is this rule holding rather
-   than an exception to it. Authorship arrives with the feature that
-   creates media whole.*
+   than an exception to it. **The authored half is delivered whole
+   (F60)**: `new_media(kind)` is authorship, and the facts the author
+   states become the medium's original facts — carried as its assurance
+   provenance and, where the kind states coordinates, as the geometry
+   whose one reading is `Authorship`. That source never stands beside
+   another, an authored medium having no artifact to read one off, and
+   nothing crossed to put it there: coordinates are stated *at
+   creation*, in the same act the medium is made in, and no verb
+   declares one onto a medium that exists (D36). An authored blank
+   assumes no device, so `device_type()` answers `None`, no drive takes
+   one, and the arc from authored to recorded stays reserved.*
 5. **Creation grammar.** Every creation verb declares a **concrete
    catalog entry by its enumerated identifier** and the check is that
    entry's own: `load_media` a format (`Format::Zip`,
@@ -134,6 +146,11 @@ Medium                                         pool-owned, holdable — ALL cont
    `new_media` an authored kind, `as_type` a partition type
    (`PartitionType::DosPrimary`). A classification ("archive", "some
    floppy") can check nothing and is refused as a declaration.
+   *Delivered for `new_media` (F60): `NewMedia` is the enumerated set —
+   the blank article kinds, each naming one article of the P14 catalog
+   and spelled by it, and `ChsDisk { geometry }`, whose article is
+   `authored` because no manufactured one stands behind it — with
+   `NewMedia::declared` the text boundary's own refusal.*
 6. **Source shapes, and whose lock.** `load_media` reads one artifact
    however reached: an opened `std::fs::File` — the portable file, the
    caller's own open — or a collection of them; a `File` inside another
@@ -283,7 +300,8 @@ the zip to the CBM DOS directory, the LBA hard disk to a FAT root
 listing, COMMAND.COM off a CHS disk, the boot block through the volume
 door); U30–U34 close the concept coverage (the reconstructed machine
 and its letters, the write and the commit point, authored media, pool
-independence and machine teardown, the single-`File` source). The
+independence and machine teardown, the single-`File` source). *U25,
+U26, U32 and U33 are in force at the root list.* The
 simplified workflows where discovery does the specifying work belong to
 the question tier, proposed; when they arrive they layer above these
 walks, which remain valid forever — the declared tier is permanent
