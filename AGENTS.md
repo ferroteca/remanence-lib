@@ -12,294 +12,227 @@ from an earlier implementation lineage. The Rust code here is the
 authoritative implementation; callers consume it through the Rust API, C
 ABI, or Python module.
 
-- `crates/remanence/` — the core library. `error.rs` owns the error
-  taxonomy (`Error`, three diagnostic variants, the stable
-  `ErrorCategory` set, and the rule identity beside it — a value the seam
-  owning the broken rule spells, never a second global set; display
-  messages remain human diagnostics); `assurance.rs` the P28 gate — the
-  outcome one open established, the enumerated condition set a withheld
-  operation names as its rule, the ordered evidence, the exact readable
-  extents, and the effective access mode, with the read bound carried to
-  where the reads happen;
-  `adapters.rs` the executable image-format adapters, probe aggregation,
-  authoritative/active layer vocabulary, device identity, the built-in
-  image catalog, and each format's **recorded device types** — the
-  recording-side fact an article cannot hold: one means the format
-  carries the type bare, several mean the load declares which, and none
-  is an archive grammar;
-  `discovery.rs` the first-class `discover_media`, on no handle at all:
-  the claim, the identification, the exact article, the devices derived
-  from the catalog's own declarations as accepting it, and the device
-  the format records where it records one — answered as a consumable
-  handle a load takes the claim out of, so nothing runs twice and no
-  window opens between the question and the load. **It holds the claim
-  and builds no cache**: no medium, no session cache, no spilled
-  backing, the bound being the load's own declaration and stated at
-  `load_discovery`, where the medium comes into existence; what a
-  discovery holds instead is the `MediumRecognition` beneath it — the
-  claimed source, the adapter that claimed it, and what the assurance
-  gate settled — which the load turns into state over the very claim
-  already held; `device_type.rs` the
-  P14 recording seam — the **device-type catalog** in its two levels
-  (the class, then the concrete type), one spec shape per class and one
-  instance per concrete type, the granularity rule that cuts it, the
-  article each type composes, the flux path it claims, the partition
-  scheme the hard-drive specs carry, and the **addressing** every type
-  declares — `sector` or `block`, which is the type's half of the
-  sector verbs and the medium's discovered geometry the other — beside
-  `DeviceSlot`, which is a
-  device type or the archive receiver, the receiver being no recording
-  device at all; `media_profile.rs` the P14 substrate seam — the passive
-  compatibility facts of an **article**, family-specific by construction
-  (flexible magnetic and logical-block are claimed, with no fact in
-  common), and the declarative article catalog they are enrolled in,
-  which holds no recognition, no grammar and no behavior; every medium
-  the library holds names one entry, a block medium from the
-  image-format adapter that loaded its state, a flux medium from the
-  drive profile's declaration of what its family is served, and an
-  authored one from the kind its author declared — the virtual family
-  holding two entries for the two things nobody manufactured, the
-  archive whose native vantage is a namespace and the **authored**
-  article whose vantage is a space;
-  `authored.rs` the third fact class — **authorship**, which creates
-  media whole where discovery reads and declaration configures: the
+- `crates/remanence/` — the core library, laid out under `src/` in
+  **eight groups plus the root**. The grouping is the architecture made
+  physical: each group's `mod.rs` states its own seam and the principles
+  that govern it, and `lib.rs` declares the groups and nothing else. The
+  paragraphs below are the map from a principle to a path.
+
+  **The root** holds what every group stands on and what belongs to no
+  group. `error.rs` owns the error taxonomy (`Error`, three diagnostic
+  variants, the stable `ErrorCategory` set, and the rule identity beside
+  it — a value the seam owning the broken rule spells, never a second
+  global set; display messages remain human diagnostics); `evidence.rs`
+  the vocabulary a derived fact carries its basis in — declared facts,
+  issues, provenance and the declared-loss account; `checksum.rs` the
+  small checks several formats share.
+
+  **`codec/`** — the compression the library owns (P1), self-contained
+  by construction: `inflate.rs` the streaming RFC 1951 DEFLATE decoder,
+  `deflate.rs` its encoder counterpart (deterministic within this
+  implementation; cross-implementation byte identity deliberately
+  unclaimed), and `lzma.rs` the streaming LZMA/LZMA2 decoders. Every one
+  of them decodes through its own LZ window into private session
+  storage, so nothing is resident whole.
+
+  **`io/`** — bytes, claims, and the bound over them; everything above
+  reads and writes through here. `handle.rs` is the **caller-owned
+  claim** (P7): what a handed-over `std::fs::File` affords, asked by a
+  zero-length write that changes nothing, and the name recovered from it
+  for **location only**, under an identity check — a nameless handle
+  refusing the commit journal's *beside* and a backing parent's *next
+  door* by name and serving everything else. `device.rs` is the
+  block-device seam, the P7 claims (the library's own declared-intent
+  open, the discovery ladder for identification sessions, and the
+  `Claim` class that says whose open a medium's is — the library's, the
+  caller's, or nobody's, an authored medium having been opened by no
+  one), and the host-write capture a durable commit stages into.
+  `cache.rs` is the session cache — the P2 commit buffer and the bounded
+  working set (P27): unaltered extents evict and re-read from the image,
+  altered extents spill to private session storage, and the bound is
+  declared at open with a stated default. `journal.rs` is the durable
+  commit's intent record (P9), and `source.rs` resolves a file named by
+  path, or one entry named through the file view that reaches it, under
+  the archive's own claim.
+
+  **`model/`** — the session model: the pools, the node a caller holds,
+  and the three fact classes that fill them.
+
+  `machine.rs` is the session and its two pools (P32) — the session
+  being the claim and cache scope, owning the **media pool** (state) and
+  the machines (configuration) independently of each other, a machine
+  being one device set with its own attachment identities and attachment
+  order, and the anonymous machine being the one whose identity is null;
+  **every pool runs the same three verbs — create, look up, release** —
+  where a lookup (`machine`, `device`, `medium`) answers with an
+  `Option` and nothing is manufactured to report absence, there is no
+  `require_*` form at all (a caller who wants a demand writes it, where
+  they know what the absence means), creation still refuses by name
+  (duplicate identity, taken slot, empty identity), and the removals are
+  all spelled `release_*`: `release_machine` cascades through the
+  configuration below it, `release_device` ejects first, and
+  `release_media` severs its own link then ends the claim. `load_media`
+  and `load_discovery`/`load_discovery_as` — the plain door and the
+  declared one, the second taking the device type a format recording
+  several leaves to the caller — fill the media pool, as does
+  `new_media`, the authorship door where the caller has no artifact at
+  all, and `MachineView`/`DeviceView` are the borrows that hold a node
+  and the pool at once, since linking is the one act that crosses.
+
+  `storage_device.rs` is the **slot**: its attachment identity (`hdd0`),
+  the acts that fill it (`add_device` on the machine view, then
+  `insert`/`eject`, with an empty device first-class configuration, a
+  medium in the wrong drive refused naming both sides, and **eject
+  severing only** so the claim and buffered writes survive pooled), and
+  the one convenience over discovery that composes the acts
+  (`add_device_for`, adding a device of the format-declared default
+  family and refusing by name where a format declares none) — **and
+  nothing else: every content verb lives on the medium**, file access
+  included, because a device holding a partitionable medium and bearing
+  `get_file` would be a category error in the type rather than a refusal
+  waiting to happen.
+
+  `media.rs` is the **media pool and the medium a caller holds** — the
+  declared `Format` set with each format's declared source shape, the
+  `MediaSource` conversions (the caller's opened file, a collection of
+  them, a `FileSource` from an archive medium's namespace, a collection
+  of those), the pool identity, and every content verb (identify,
+  inspect, read_at, the space and namespace doors, the discovered
+  geometry and the `get_sector`/`put_sector` pair that addresses in it,
+  the argument-free `bitstream`/`bytestream` pair a flux medium answers,
+  commit and rollback), a medium being created by a declared reading
+  **or by its author** (`authored_as` saying which) and destroyed only
+  by `release_media`; `disk.rs` is the private `MediaState` a medium
+  homes.
+
+  The three fact classes meet here. **Discovery reads**: `discovery.rs`
+  is the first-class `discover_media`, on no handle at all — the claim,
+  the identification, the exact article, the devices derived from the
+  catalog's own declarations as accepting it, and the device the format
+  records where it records one — answered as a consumable handle a load
+  takes the claim out of, so nothing runs twice and no window opens
+  between the question and the load. **It holds the claim and builds no
+  cache**: no medium, no session cache, no spilled backing, the bound
+  being the load's own declaration and stated at `load_discovery`, where
+  the medium comes into existence; what a discovery holds instead is the
+  `MediumRecognition` beneath it — the claimed source, the adapter that
+  claimed it, and what the assurance gate settled — which the load turns
+  into state over the very claim already held.
+
+  **Declaration configures**: `device_type.rs` is the P14 recording
+  seam — the **device-type catalog** in its two levels (the class, then
+  the concrete type), one spec shape per class and one instance per
+  concrete type, the granularity rule that cuts it, the article each
+  type composes, the flux path it claims, the partition scheme the
+  hard-drive specs carry, and the **addressing** every type declares —
+  `sector` or `block`, which is the type's half of the sector verbs and
+  the medium's discovered geometry the other — beside `DeviceSlot`,
+  which is a device type or the archive receiver, the receiver being no
+  recording device at all. `media_profile.rs` is the P14 substrate
+  seam — the passive compatibility facts of an **article**,
+  family-specific by construction (flexible magnetic and logical-block
+  are claimed, with no fact in common), and the declarative article
+  catalog they are enrolled in, which holds no recognition, no grammar
+  and no behavior; every medium the library holds names one entry, a
+  block medium from the image-format adapter that loaded its state, a
+  flux medium from the drive profile's declaration of what its family is
+  served, and an authored one from the kind its author declared — the
+  virtual family holding two entries for the two things nobody
+  manufactured, the archive whose native vantage is a namespace and the
+  **authored** article whose vantage is a space.
+
+  **Authorship creates media whole**: `authored.rs` is the third fact
+  class, where discovery reads and declaration configures — the
   enumerated `NewMedia` kinds (the blank article kinds, each spelled by
   the article it makes with nothing recorded on it, and
   `ChsDisk { geometry }`, whose facts *are* coordinates), the check the
   author's statement passes at the one moment authorship offers, the
-  provenance it becomes, and the session-backed sparse blank the
-  content lives on — P2's commit point over it with no journal beneath,
-  because no file changes for an interruption to leave half-written,
-  and no device assumed, the authored-to-recorded arc that would bind
-  one being reserved;
-  `partition.rs` the partition-layout catalog;
-  `geometry.rs` the discovered-geometry seam — the recording's own
-  coordinates as *evidence*: the enumerated sources (the format's
-  declaration or a raw load's declared block size, a FAT boot record's
-  recorded track geometry, the partition table's end tuples solved
-  against the extent the same entry declares, and extent arithmetic for
-  the cylinder count), each reading kept with where it was taken, what
-  they settle between them, and **`Undetermined` where two of them
-  disagree** — both readings standing, neither preferred — beside
-  `Unstated`, which is the different fact that nothing spoke at all;
-  the coordinate arithmetic and the `GeometryRule` set the sector verbs
-  refuse by are here too, beside `Authorship` — the one source that is
-  no reading of an artifact, belonging to the one medium that has none.
-  Geometry is established at the load beside the
-  partition pool, or stated by the author in the act that creates the
-  medium, and never declared onto a medium that exists;
-  which types *have* coordinates is the device type's own
-  `addressing` declaration, and how many of each is this;
-  `filesystem.rs` the P19 volume/filesystem node and the presentation
-  contract beneath it — the public `StorageSpace` carrying **two vantage
-  traits on one object**, addressable I/O within its own extent and
-  namespace I/O over the files it names, so that a FAT volume has both, a
-  volume bearing no filesystem has only the first, and a medium's own
-  namespace only the second (the 0..1 as trait presence rather than
-  prose); the `File` view, the one `Entry` vocabulary with the facts a
-  filesystem declares in its own spelling, the label and evidence a
-  recognition answers with, the enumerated `SpaceRule` set
+  provenance it becomes, and the session-backed sparse blank the content
+  lives on — P2's commit point over it with no journal beneath, because
+  no file changes for an interruption to leave half-written, and no
+  device assumed, the authored-to-recorded arc that would bind one being
+  reserved.
+
+  What an open established travels with the medium. `assurance.rs` is
+  the P28 gate — the outcome one open established, the enumerated
+  condition set a withheld operation names as its rule, the ordered
+  evidence, the exact readable extents, and the effective access mode,
+  with the read bound carried to where the reads happen. `geometry.rs`
+  is the discovered-geometry seam — the recording's own coordinates as
+  *evidence*: the enumerated sources (the format's declaration or a raw
+  load's declared block size, a FAT boot record's recorded track
+  geometry, the partition table's end tuples solved against the extent
+  the same entry declares, and extent arithmetic for the cylinder
+  count), each reading kept with where it was taken, what they settle
+  between them, and **`Undetermined` where two of them disagree** — both
+  readings standing, neither preferred — beside `Unstated`, which is the
+  different fact that nothing spoke at all; the coordinate arithmetic
+  and the `GeometryRule` set the sector verbs refuse by are here too,
+  beside `Authorship` — the one source that is no reading of an
+  artifact, belonging to the one medium that has none. Geometry is
+  established at the load beside the partition pool, or stated by the
+  author in the act that creates the medium, and never declared onto a
+  medium that exists; which types *have* coordinates is the device
+  type's own `addressing` declaration, and how many of each is this.
+  `session.rs` is the layered identification model — the layers of an
+  artifact's nesting, reached through the medium — `report.rs` the
+  layered inspection report a medium's records are returned in (device,
+  content outcome, partition schema, regions, volumes, filesystems,
+  joined by opaque layout-derived identities), and `volume.rs` the P17
+  composition seam.
+
+  **`image/`** — block image formats, implementations at representation
+  seams (P12). `adapters.rs` is the catalog and the wiring: the
+  executable image-format adapters, probe aggregation,
+  authoritative/active layer vocabulary, device identity, the built-in
+  image catalog, and each format's **recorded device types** — the
+  recording-side fact an article cannot hold: one means the format
+  carries the type bare, several mean the load declares which, and none
+  is an archive grammar. `qcow2.rs` is the native qcow2 v2/v3 driver (P8
+  version gate first, run for every member of a backing chain; chains
+  compose for reading and allocate writes into the top image only, with
+  each backing file claimed immutable; write path refuses snapshots and
+  non-16-bit refcounts by name). `vdi.rs` is the native VDI driver (P8
+  version gate first, then the enumerated image-type claim — dynamically
+  allocated, fixed and differencing, with undo refused by name; the
+  block map stays in the file and is read where it is needed, so the
+  driver holds no mutable state and a block a dynamic image never
+  allocated is allocated on the write path alone; a differencing chain
+  composes for reading and takes writes copy-on-write into the top image
+  only, and because the format records the parent's identity and no
+  path, the parent is **searched for by identity** — beside the child,
+  then the directory above it — with the identity checking the file the
+  search found rather than a path being trusted). The flux family's
+  formats are deliberately **not** here: block and flux are disjoint
+  (P13), so a flux artifact is reached through its own type rather than
+  by opening a byte-addressed device.
+
+  **`partition/`** — `mod.rs` is the partition-layout catalog and the
+  vantage doors (P16, P17, P19), with `mbr.rs` the one scheme reader
+  beneath it: partition discovery with pinned types.
+
+  **`filesystem/`** — `mod.rs` is the P19 volume/filesystem node and the
+  presentation contract beneath it: the public `StorageSpace` carrying
+  **two vantage traits on one object**, addressable I/O within its own
+  extent and namespace I/O over the files it names, so that a FAT volume
+  has both, a volume bearing no filesystem has only the first, and a
+  medium's own namespace only the second (the 0..1 as trait presence
+  rather than prose); the `File` view, the one `Entry` vocabulary with
+  the facts a filesystem declares in its own spelling, the label and
+  evidence a recognition answers with, the enumerated `SpaceRule` set
   its refusals name, and the resolver that walks device → volume →
   namespace where every seam has one supported answer and refuses naming
   the candidates where it does not; **the file verbs live here and on
   nothing else** — including for a namespace no device composed, where
   the node is the same one with its device and its extent absent rather
-  than a second type carrying the same verbs;
-  `filesystem_catalog.rs` the streamed filesystem adapters and catalog
-  for the namespaces a medium bears directly (crate-private, reached
-  through the device's `identify` and through the resolver — the adapter
-  that recognized a namespace being the one that opens it, so nothing
-  branches on a filesystem identifier);
-  `session.rs` the layered
-  identification model — the layers of an artifact's nesting, reached
-  through the medium; `hdos.rs` the HDOS directory lister and file
-  extractor, private behind the namespace node; `archive.rs` the archive **medium** and the
-  catalog seam beneath it — the `ArchiveCatalog` trait and the
-  enrollment each grammar is reached by, the `ArchiveMedium` an
-  archive-family device holds, and the namespace it presents through the
-  same `Catalog` seam a flat on-medium catalog does — with `source.rs`
-  resolving a file named by path, or one entry named through the file
-  view that reaches it, under the archive's own claim;
-  `zip.rs` + `inflate.rs` the self-contained ZIP catalog and streaming
-  DEFLATE decompressor, and `sevenzip.rs` + `lzma.rs` the 7z catalog
-  and streaming LZMA/LZMA2 decompressors — archives are read in place by
-  positioned reads, and a coded entry decodes through its decompressor's
-  LZ window into private session storage, never resident whole; the 7z
-  claim is a single-coder folder using Copy, LZMA, or LZMA2, and
-  everything outside it refuses by name;
-  `flux_capture.rs` the private flux-capture model — locations, capture
-  runs, circular observations, exact timebases, parallel marker
-  channels, and the section-addressable backing they stream into — with
-  `kryoflux.rs` the KryoFlux capture-set adapter above it: the member
-  grammar and its completeness, the stream grammar, and the assembler
-  that reads one disk out of a declared collection of members — a
-  stream per head per drive-step position — for the collection-sourced
-  load; `flux_medium.rs` the flux family's
-  second model, what a drive would read rather than what an instrument
-  recorded — one circular pulse stream per family-addressed location, an
-  exact rotational frame, per-pulse strength, and the medium-level facts
-  beside them — always derived and never constructible without the
-  policy that produced it, over the same backing keyed by the family's
-  own addressing; `drive_profile.rs` the P30 seam — a family's declared
-  stepping, rotation, surfaces, encoding shape and density map, its
-  read-channel and group-code declarations, the
-  C1541 entry, and the probe that recognizes a capture from interval
-  statistics alone and reports a ranked verdict with its evidence;
-  `hardware_bitstream.rs` and
-  `encoded_bytestream.rs` the two P23 layers above the medium — circular
-  track-relative clocked bit state, every bit saying whether it was
-  recorded or resolved by a declared rule, and the byte sequence a
-  declared group code makes of it, which assigns no header, sector or
-  file to any of them — with `c1541_presentation.rs` the family's read
-  channel and GCR codec above both: the declared policies of each
-  transition — the profile's own declarations, read argument-free
-  through the type (P30), with the deviation surfaces deferred (D29) —
-  the clocking, the framing, the `Location`-addressed framed-byte
-  reads, and the account of what each layer does not carry from the one
-  below. **The ladder's two entry points are a flux medium and a
-  remanence image**: the medium a flux load pools answers
-  `bitstream()`/`bytestream()` directly, and an image carries no clock,
-  so its entry stands on the served projection of it rather than on the
-  image directly;
-  `cbm_dos.rs` the P18 adapter at the top of that ladder — the
-  directory CBM DOS wrote, read through a `BlockSource` and nothing
-  else, so the filesystem never learns what it is standing on: the BAM
-  header as the space's label, the directory chain in its own order,
-  PETSCII names read beside the sixteen bytes as recorded, the CBM facts
-  as declared entry facts, and byte sizes established by walking each
-  chain — with the recorded block count kept where a block that never
-  came back stops the walk, so one unreadable sector qualifies its own
-  entry instead of taking the listing down;
-  `c1541_sectors.rs` the rung above them — the **seam where the
-  bytestream's silence ends**, and it ends by a new layer stating what
-  it derives: the family's declared record grammar (which byte opens
-  each block, how long it is, where the header states track, sector and
-  disk identity, which bytes each checksum covers) recognized over the
-  bytestream's own runs, one record per framing the layer below
-  declared, pairing grammatical rather than metric, every claim
-  carrying both checksums stated beside computed, and reads by the
-  recording's own (track, sector) refusing by name — its own `SectorRule`
-  set — where nothing states an address, where no claim of one reads, or
-  where several readable claims disagree. It is derived rather than a
-  seventh active layer, and its payloads stream to private session
-  storage as they are recognized; **the filesystem door is on it** —
-  `filesystem()` answering the same `StorageSpace` a device resolves to,
-  because the file verbs live on the namespace and on nothing else, and
-  a space presented over a layer no device composed carries the
-  namespace vantage alone;
-  `p64.rs` the P64 image-format adapter, claimed in
-  both directions — the container grammar and its own range coder, the
-  version gate and the structural refusals, decode of a stored medium
-  into the flux-medium layer (the served form `Format::P64` loads
-  straight in), and encode of a projected image into a new artifact
-  under a claim stated before the file exists. It sits outside
-  `adapters.rs`'s catalog deliberately: that catalog's adapters open a
-  byte-addressed device, and block and flux are disjoint families
-  (P13), so a flux load builds a flux medium rather than opening a
-  block device;
-  `flux_media.rs` the flux family's **medium state**: the two declared
-  flux loads — a KryoFlux collection checked whole (member grammar,
-  completeness, stream grammar, the declared device's profile claim)
-  then reduced under the profile's declared `Materialization` defaults,
-  and a P64 decoded straight in — the verdicts, policy and
-  declared-loss account riding the medium as provenance, and the
-  presentation ladder materialized once on demand under the profile's
-  declarations;
-  `remanence_image.rs` the flux family's physical stratum — the public
-  `RemanenceImage` root, which answers the image's *shape* and nothing
-  below it (form factor, the angular unit, holes, surfaces, and per
-  orbit its radius and counts), over the crate-private model it is a
-  face of: form factor, holes as angular data,
-  and per surface the orbits, each an ordered circular array of packed
-  32-bit points (28-bit angle high, magnetization and widths flags
-  low) held as cache-backed chunks over the family's
-  section-addressable backing, with the model's own invariants
-  (alternation, the rewrite splice, one radius one recording), the
-  refinement where only ignorance may be overwritten, and the reversal
-  where spans reverse rather than points; `remanence_format.rs` the
-  `.remanence` artifact, claimed in both directions and carrying the
-  root's own `open`/`open_with_cache`/`write` — a flux artifact is
-  reached through its own type rather than a device, as the capture
-  set and the P64 image are, block and flux being disjoint families
-  (P13) — magic, binary sentinel, version gate, then one zlib-framed
-  DEFLATE
-  payload of varint angle deltas with the magnetization byte elided
-  wherever alternation derives it — read through `inflate.rs` under
-  new zlib framing and written through `deflate.rs`, the library's own
-  RFC 1951 encoder (deterministic within this implementation;
-  cross-implementation byte identity deliberately unclaimed, and the
-  P29 account empty because the artifact is the model's own);
-  `flux_analysis.rs` the gap-first reconstruction's numeric core over
-  plain arrays — the cell lattice from a comb
-  periodogram with per-context peak-shift medians and the alternation
-  parity, the gap correspondence's resynchronising walk, the
-  gap-first integration whose closure solves the cell exactly, the
-  coherence rule, the fat-track comparison, and the orbit clock —
-  floats measure, integers state; `remanence_reconstruction.rs` the
-  P29 reduction from an opened capture to a remanence image under a
-  declared policy: every revolution of every location aligned and
-  integrated, recordings measured by the count-spread discriminator
-  or declared, the fat track merged under measured agreement, the
-  plan/execute split and the declared-loss account, survey facts
-  riding provenance with their basis stated — and **it answers with
-  the image itself**, the same root a `.remanence` artifact opens to,
-  rather than a second root beside it, the account of how it came to
-  be belonging to the plan that computed it; `c64_renditions.rs` the
-  d64, g64 and p64 renditions off the remanence image — each claimed
-  twice, as a `describe_` that computes everything and writes nothing
-  and a `write_` that does both, and each stating what its
-  destination did not carry (P29): clocking, the crate-private GCR
-  group code and sector reading (analysis machinery, deliberately
-  **not** the F61 sector surface), the CBM DOS 683-block grid with
-  the error map as the d64's declared-loss account made flesh, the
-  `GCR-1541` grammar, and the served projection into the delivered
-  P64 encode path — with `deflate.rs` beside `inflate.rs` as the
-  compression pair the core owns;
-  `media.rs` the **media pool and the medium a caller holds** — the
-  declared `Format` set with each format's declared source shape, the
-  `MediaSource` conversions (the caller's opened file, a collection of
-  them, a `FileSource` from an archive medium's namespace, a collection
-  of those), the pool identity, and every content verb
-  (identify, inspect, read_at, the space and namespace doors, the
-  discovered geometry and the `get_sector`/`put_sector` pair that
-  addresses in it, the argument-free `bitstream`/`bytestream` pair a
-  flux medium answers, commit and
-  rollback), a medium being created by a declared reading **or by its
-  author** (`authored_as` saying which) and destroyed
-  only by `release_media`; `handle.rs` the **caller-owned claim**: what a
-  handed-over `std::fs::File` affords, asked by a zero-length write that
-  changes nothing, and the name recovered from it for **location only**,
-  under an identity check, a nameless handle refusing the commit
-  journal's *beside* and a backing parent's *next door* by name and
-  serving everything else;
-  `device.rs` the block-device seam, the P7 claims
-  (the library's own declared-intent open, the discovery ladder for
-  identification sessions, and the `Claim` class that says whose open a
-  medium's is — the library's, the caller's, or nobody's, an authored
-  medium having been opened by no one), and the host-write capture a durable
-  commit stages into; `cache.rs` the session cache — the P2 commit
-  buffer and the bounded working set (P27): unaltered extents
-  evict and re-read from the image, altered extents spill to private
-  session storage, and the bound is declared at open with a stated
-  default;
-  `qcow2.rs` the native qcow2 v2/v3
-  driver (P8 version gate first, run for every member of a backing
-  chain; chains compose for reading and allocate writes into the top
-  image only, with each backing file claimed immutable; write path
-  refuses snapshots and non-16-bit refcounts by name); `vdi.rs` the
-  native VDI driver (P8 version gate first, then the enumerated
-  image-type claim — dynamically allocated, fixed and differencing,
-  with undo refused by name; the block map stays in the file and is
-  read where it is needed, so the driver holds no mutable state and a
-  block a dynamic image never allocated is allocated on the write path
-  alone; a differencing chain composes for reading and takes writes
-  copy-on-write into the top image only, and because the format records
-  the parent's identity and no path, the parent is **searched for by
-  identity** — beside the child, then the directory above it — with the
-  identity checking the file the search found rather than a path being
-  trusted); `mbr.rs`
-  partition discovery with
-  pinned types; `fat.rs` FAT12/16 volume read/write, with `dos_name.rs`
+  than a second type carrying the same verbs.
+
+  `catalog.rs` holds the streamed filesystem adapters and catalog for
+  the namespaces a medium bears directly (crate-private, reached through
+  the device's `identify` and through the resolver — the adapter that
+  recognized a namespace being the one that opens it, so nothing
+  branches on a filesystem identifier). Beneath it sits one module per
+  filesystem: `fat.rs` FAT12/16 volume read/write, with `dos_name.rs`
   owning every 8.3 name decision it makes — reading a stored name,
   matching one without regard to case, storing a caller's, and the
   seven-rule set a refusal names; `dos_letters.rs` the DOS drive-letter
@@ -308,46 +241,168 @@ ABI, or Python module.
   or read from a machine's own device set in attachment order, the
   variant-by-variant assignment rules it claims, the conditions it
   refuses to model, and the mapping it answers with, undetermined
-  letters included; `machine.rs` the
-  session and its two pools (P32) — the session being the claim and cache
-  scope, owning the **media pool** (state) and the machines
-  (configuration) independently of each other, a machine being one device
-  set with its own attachment identities and attachment order, and the
-  anonymous machine being the one whose identity is null; **every pool
-  runs the same three verbs — create, look up, release** — where a
-  lookup (`machine`, `device`, `medium`) answers with an `Option` and
-  nothing is manufactured to report absence, there is no `require_*`
-  form at all (a caller who wants a demand writes it, where they know
-  what the absence means), creation still refuses by name (duplicate
-  identity, taken slot, empty identity), and the removals are all
-  spelled `release_*`: `release_machine` cascades through the
-  configuration below it, `release_device` ejects first, and
-  `release_media` severs its own link then ends the claim; `load_media`
-  and `load_discovery`/`load_discovery_as` — the plain door and the
-  declared one, the second taking the device type a format recording
-  several leaves to the caller — fill the media pool, as does
-  `new_media`, the authorship door where the caller has no artifact at
-  all, and
-  `MachineView`/`DeviceView`
-  are the borrows that hold a node and the pool at once, since linking is
-  the one act that crosses — with `storage_device.rs` the **slot**: its
-  attachment identity (`hdd0`), the acts that fill it (`add_device` on
-  the machine view, then `insert`/`eject`, with an empty device
-  first-class configuration, a medium in the wrong drive refused naming
-  both sides, and **eject severing only** so the claim and buffered
-  writes survive pooled), and the one convenience over discovery that
-  composes the acts (`add_device_for`, adding a device of the
-  format-declared default family and refusing by name where a format
-  declares none) — **and nothing else: every content verb lives on the
-  medium**, file access included, because a device holding a
-  partitionable medium and bearing `get_file` would be a category error
-  in the type rather than a refusal waiting to happen; `disk.rs` the
-  private `MediaState` a medium homes, with `report.rs` the layered
-  inspection report its records are returned in — device, content outcome, partition schema,
-  regions, volumes, filesystems, joined by opaque layout-derived
-  identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2/VDI
-  images built in-test, including the truncated floppy the degraded
-  reading is stated over, plus the fixture-driven HDOS tests.
+  letters included; `hdos.rs` the HDOS directory lister and file
+  extractor, private behind the namespace node; and `cbm_dos.rs` the P18
+  adapter at the top of the flux ladder — the directory CBM DOS wrote,
+  read through a `BlockSource` and nothing else, so the filesystem never
+  learns what it is standing on: the BAM header as the space's label,
+  the directory chain in its own order, PETSCII names read beside the
+  sixteen bytes as recorded, the CBM facts as declared entry facts, and
+  byte sizes established by walking each chain — with the recorded block
+  count kept where a block that never came back stops the walk, so one
+  unreadable sector qualifies its own entry instead of taking the
+  listing down.
+
+  **`archive/`** — `mod.rs` is the archive **medium** and the catalog
+  seam beneath it: the `ArchiveCatalog` trait and the enrollment each
+  grammar is reached by, the `ArchiveMedium` an archive-family device
+  holds, and the namespace it presents through the same `Catalog` seam a
+  flat on-medium catalog does. `zip.rs` is the self-contained ZIP
+  central-directory catalog and `sevenzip.rs` the 7z header reader —
+  archives are read in place by positioned reads, and a coded entry
+  decodes through `codec/`'s decompressors into private session storage,
+  never resident whole; the 7z claim is a single-coder folder using
+  Copy, LZMA, or LZMA2, and everything outside it refuses by name.
+
+  **`flux/`** — the flux family (P22), and the largest group: magnetic
+  recording descended to timed flux transitions, and the ladder that
+  reads back up from them. Its dependence on the rest of the crate is
+  deliberately thin — `error`, `evidence`, `io`'s bytes and claims,
+  `codec`'s DEFLATE pair, and the two named crossings noted below.
+
+  **The family holds two models.** `capture.rs` is the private
+  flux-capture model — locations, capture runs, circular observations,
+  exact timebases, parallel marker channels, and the section-addressable
+  backing they stream into — with `kryoflux.rs` the KryoFlux capture-set
+  adapter above it: the member grammar and its completeness, the stream
+  grammar, and the assembler that reads one disk out of a declared
+  collection of members — a stream per head per drive-step position —
+  for the collection-sourced load. `medium.rs` is the second model, what
+  a drive would read rather than what an instrument recorded — one
+  circular pulse stream per family-addressed location, an exact
+  rotational frame, per-pulse strength, and the medium-level facts
+  beside them — always derived and never constructible without the
+  policy that produced it, over the same backing keyed by the family's
+  own addressing. `analysis.rs` is the gap-first reconstruction's
+  numeric core over plain arrays — the cell lattice from a comb
+  periodogram with per-context peak-shift medians and the alternation
+  parity, the gap correspondence's resynchronising walk, the gap-first
+  integration whose closure solves the cell exactly, the coherence rule,
+  the fat-track comparison, and the orbit clock — floats measure,
+  integers state.
+
+  `drive_profile.rs` is the P30 seam — a family's declared stepping,
+  rotation, surfaces, encoding shape and density map, its read-channel
+  and group-code declarations, the C1541 entry, and the probe that
+  recognizes a capture from interval statistics alone and reports a
+  ranked verdict with its evidence. Every rung reads its rules through
+  it, which is why the rungs take no policy arguments.
+
+  `bitstream.rs` and `bytestream.rs` are the two P23 layers above the
+  medium — circular track-relative clocked bit state, every bit saying
+  whether it was recorded or resolved by a declared rule, and the byte
+  sequence a declared group code makes of it, which assigns no header,
+  sector or file to any of them. Both are family-agnostic, which is why
+  they sit here rather than under `c1541/`.
+
+  `c1541/presentation.rs` is the family's read channel and GCR codec
+  above both: the declared policies of each transition — the profile's
+  own declarations, read argument-free through the type (P30), with the
+  deviation surfaces deferred (D29) — the clocking, the framing, the
+  `Location`-addressed framed-byte reads, and the account of what each
+  layer does not carry from the one below. **The ladder's two entry
+  points are a flux medium and a remanence image**: the medium a flux
+  load pools answers `bitstream()`/`bytestream()` directly, and an image
+  carries no clock, so its entry stands on the served projection of it
+  rather than on the image directly.
+
+  `c1541/sectors.rs` is the rung above them — the **seam where the
+  bytestream's silence ends**, and it ends by a new layer stating what
+  it derives: the family's declared record grammar (which byte opens
+  each block, how long it is, where the header states track, sector and
+  disk identity, which bytes each checksum covers) recognized over the
+  bytestream's own runs, one record per framing the layer below
+  declared, pairing grammatical rather than metric, every claim carrying
+  both checksums stated beside computed, and reads by the recording's
+  own (track, sector) refusing by name — its own `SectorRule` set —
+  where nothing states an address, where no claim of one reads, or where
+  several readable claims disagree. It is derived rather than a seventh
+  active layer, and its payloads stream to private session storage as
+  they are recognized; **the filesystem door is on it** — `filesystem()`
+  answering the same `StorageSpace` a device resolves to, because the
+  file verbs live on the namespace and on nothing else, and a space
+  presented over a layer no device composed carries the namespace
+  vantage alone. Its `impl BlockSource` is one of the group's two
+  crossings back into the core.
+
+  `c1541/renditions.rs` masters the d64, g64 and p64 renditions off the
+  remanence image — each claimed twice, as a `describe_` that computes
+  everything and writes nothing and a `write_` that does both, and each
+  stating what its destination did not carry (P29): clocking, the
+  crate-private GCR group code and sector reading (analysis machinery,
+  deliberately **not** the F61 sector surface), the CBM DOS 683-block
+  grid with the error map as the d64's declared-loss account made flesh,
+  the `GCR-1541` grammar, and the served projection into the delivered
+  P64 encode path.
+
+  `remanence/` is the family's **physical stratum** — the disk's own
+  magnetization, below every clock and every code. `image.rs` is the
+  public `RemanenceImage` root, which answers the image's *shape* and
+  nothing below it (form factor, the angular unit, holes, surfaces, and
+  per orbit its radius and counts), over the crate-private model it is a
+  face of: form factor, holes as angular data, and per surface the
+  orbits, each an ordered circular array of packed 32-bit points
+  (28-bit angle high, magnetization and widths flags low) held as
+  cache-backed chunks over the family's section-addressable backing,
+  with the model's own invariants (alternation, the rewrite splice, one
+  radius one recording), the refinement where only ignorance may be
+  overwritten, and the reversal where spans reverse rather than points.
+  `format.rs` is the `.remanence` artifact, claimed in both directions
+  and carrying the root's own `open`/`open_with_cache`/`write` — a flux
+  artifact is reached through its own type rather than a device, as the
+  capture set and the P64 image are, block and flux being disjoint
+  families (P13) — magic, binary sentinel, version gate, then one
+  zlib-framed DEFLATE payload of varint angle deltas with the
+  magnetization byte elided wherever alternation derives it, read and
+  written through `codec/` (the P29 account empty because the artifact
+  is the model's own). `reconstruction.rs` is the P29 reduction from an
+  opened capture to a remanence image under a declared policy: every
+  revolution of every location aligned and integrated, recordings
+  measured by the count-spread discriminator or declared, the fat track
+  merged under measured agreement, the plan/execute split and the
+  declared-loss account, survey facts riding provenance with their basis
+  stated — and **it answers with the image itself**, the same root a
+  `.remanence` artifact opens to, rather than a second root beside it,
+  the account of how it came to be belonging to the plan that computed
+  it. Its 7z gather is the group's other crossing into the core.
+
+  `p64.rs` is the P64 image-format adapter, claimed in both directions —
+  the container grammar and its own range coder, the version gate and
+  the structural refusals, decode of a stored medium into the
+  flux-medium layer (the served form `Format::P64` loads straight in),
+  and encode of a projected image into a new artifact under a claim
+  stated before the file exists. It sits outside `image/adapters.rs`'s
+  catalog deliberately: that catalog's adapters open a byte-addressed
+  device, and block and flux are disjoint families (P13), so a flux load
+  builds a flux medium rather than opening a block device.
+
+  `load.rs` is the group's **one seam into the session model**: the two
+  declared flux loads — a KryoFlux collection checked whole (member
+  grammar, completeness, stream grammar, the declared device's profile
+  claim) then reduced under the profile's declared `Materialization`
+  defaults, and a P64 decoded straight in — the verdicts, policy and
+  declared-loss account riding the medium as provenance, and the
+  presentation ladder materialized once on demand under the profile's
+  declarations. Everything else in `flux/` reaches the core only for
+  bytes, a claim and a cache bound, which is what keeps the group
+  separable.
+
+  Unit tests live in their modules; integration tests in `tests/` —
+  synthetic FAT/MBR/qcow2/VDI images built in-test, including the
+  truncated floppy the degraded reading is stated over, plus the
+  fixture-driven HDOS tests. A test that names its own path in a string
+  (the commit crash harness in `model/disk.rs` re-invokes the test
+  binary by name) must be updated when its module moves.
 - `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`
   regenerates `include/remanence.h` with cbindgen on every build; the
@@ -523,28 +578,29 @@ compiled into the wheel.
 
 ### Prior art and provenance notes
 
-- `crates/remanence/src/inflate.rs` follows the structure of Mark Adler's
+- `crates/remanence/src/codec/inflate.rs` follows the structure of Mark Adler's
   "puff" reference DEFLATE implementation, as did the C++ file it ports
   (the C++ described puff as public-domain; puff ships in zlib's contrib
   under the zlib licence — tier 1 either way). The Rust is an original
   implementation of RFC 1951 following that published structure, written
   from the project's own C++ lineage, not from puff.c. Keep the
   attribution comment in the file.
-- `crates/remanence/src/lzma.rs` is an original Rust implementation of
+- `crates/remanence/src/codec/lzma.rs` is an original Rust implementation of
   the LZMA and LZMA2 decoders, written from the format description Igor
   Pavlov published with the LZMA SDK (which he placed in the public
   domain — tier 1). The probability model, range coder, and chunk
   grammar are what the published description specifies; no SDK source
-  was copied or ported. `crates/remanence/src/sevenzip.rs` reads the 7z
+  was copied or ported. `crates/remanence/src/archive/sevenzip.rs` reads the 7z
   container from the same published description. Keep the attribution
   comments in both files.
 - The remanence image model, the `.remanence` grammar, the gap-first
   reconstruction, and the C64 renditions
-  (`remanence_image.rs`, `remanence_format.rs`, `flux_analysis.rs`,
-  `remanence_reconstruction.rs`, `c64_renditions.rs`) are ported from
+  (`flux/remanence/image.rs`, `flux/remanence/format.rs`,
+  `flux/analysis.rs`, `flux/remanence/reconstruction.rs`,
+  `flux/c1541/renditions.rs`) are ported from
   the owner's own private, unpublished flux-capture research
   implementation — owner-authored throughout, so title to every line
-  is already the project's. `deflate.rs` is an original RFC 1951/1950
+  is already the project's. `codec/deflate.rs` is an original RFC 1951/1950
   encoder written for this port. **Nothing in the suite compares against
   that implementation's own rendered output.** It did once — the port was
   validated against its d64, g64 and `.remanence` renderings of the same

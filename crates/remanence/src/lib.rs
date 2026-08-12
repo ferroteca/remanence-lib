@@ -190,102 +190,66 @@
 //! read-only, with the shortfall named rather than hidden or thrown away
 //! whole (P28).
 
-mod adapters;
+// The crate's own strata, outermost first. Each group's `mod.rs` says
+// what its seam is and which principles govern it; `AGENTS.md` maps the
+// same eight groups onto the architecture.
 mod archive;
-mod assurance;
-mod authored;
-mod c1541_presentation;
-mod c1541_sectors;
-mod c64_renditions;
-mod cache;
-mod cbm_dos;
 mod checksum;
-mod deflate;
-mod device;
-mod device_type;
-mod discovery;
-mod disk;
-mod dos_letters;
-mod dos_name;
-mod drive_profile;
-mod encoded_bytestream;
+mod codec;
 mod error;
 mod evidence;
-mod fat;
 mod filesystem;
-mod filesystem_catalog;
-mod flux_analysis;
-mod flux_capture;
-mod flux_media;
-mod flux_medium;
-mod geometry;
-mod handle;
-mod hardware_bitstream;
-mod hdos;
-mod inflate;
-mod journal;
-mod kryoflux;
-mod lzma;
-mod machine;
-mod mbr;
-mod media;
-mod media_profile;
-mod p64;
+mod flux;
+mod image;
+mod io;
+mod model;
 mod partition;
-mod qcow2;
-mod remanence_format;
-mod remanence_image;
-mod remanence_reconstruction;
-mod report;
-mod session;
-mod sevenzip;
-mod source;
-mod storage_device;
-mod vdi;
-mod volume;
-mod zip;
 
-pub use assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
-pub use authored::{NewMedia, NewMediaClaim};
-pub use c64_renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
-pub use c1541_presentation::{
-    BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport, C1541Bitstream,
-    C1541Bytestream, Location, LocationBytes,
-};
-pub use c1541_sectors::{
-    C1541Sectors, ContestedAddress, SectorClaim, SectorLocation, SectorReport, SectorRule,
-};
-pub use cache::DEFAULT_CACHE_BYTES;
-pub use device::{AccessIntent, AccessMode, Claim};
-pub use device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive};
-pub use discovery::{Discovery, discover_media};
-pub use disk::DiskFormat;
-pub use dos_letters::{
+pub use crate::filesystem::dos_letters::{
     DosAssignmentRule, DosMachine, DriveMap, DriveMapping, LetterOutcome, MachineDevice,
     ResidentCondition,
 };
-pub use dos_name::DosNameRule;
-pub use error::{Error, ErrorCategory, Result, RuleIdentity};
-pub use evidence::DeclaredLoss;
-pub use fat::FatKind;
-pub use filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
-pub use geometry::{
+pub use crate::filesystem::dos_name::DosNameRule;
+pub use crate::filesystem::fat::FatKind;
+pub use crate::filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
+pub use crate::flux::c1541::presentation::{
+    BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport, C1541Bitstream,
+    C1541Bytestream, Location, LocationBytes,
+};
+pub use crate::flux::c1541::renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
+pub use crate::flux::c1541::sectors::{
+    C1541Sectors, ContestedAddress, SectorClaim, SectorLocation, SectorReport, SectorRule,
+};
+pub use crate::flux::p64::{P64HalfTrack, P64Report};
+pub use crate::flux::remanence::format::RemanenceWriteReport;
+pub use crate::flux::remanence::image::{
+    RemanenceHole, RemanenceImage, RemanenceImageReport, RemanenceOrbit,
+};
+pub use crate::io::cache::DEFAULT_CACHE_BYTES;
+pub use crate::io::device::{AccessIntent, AccessMode, Claim};
+pub use crate::io::source::FileSource;
+pub use crate::model::assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
+pub use crate::model::authored::{NewMedia, NewMediaClaim};
+pub use crate::model::device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive};
+pub use crate::model::discovery::{Discovery, discover_media};
+pub use crate::model::disk::DiskFormat;
+pub use crate::model::geometry::{
     Geometry, GeometryReading, GeometryRule, GeometrySource, GeometryState, RecordingGeometry,
 };
-pub use machine::{Machine, MachineView, Session};
-pub use media::{Format, FormatClaim, MediaId, MediaSource, Medium};
-pub use p64::{P64HalfTrack, P64Report};
-pub use partition::{Partition, PartitionRule, PartitionScheme, PartitionType, PartitionView};
-pub use remanence_format::RemanenceWriteReport;
-pub use remanence_image::{RemanenceHole, RemanenceImage, RemanenceImageReport, RemanenceOrbit};
-pub use report::{
+pub use crate::model::machine::{Machine, MachineView, Session};
+pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
+pub use crate::model::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,
     VolumeLabel, VolumeOrigin,
 };
-pub use session::{
+pub use crate::model::session::{
     ArchiveLayout, DiskLayout, FilesystemLayout, Identification, ImageLayout, Layer, LayerKind,
     LayerLayout, PhysicalMediaLayout, SectorLayout, SizeInformation, TrackSectorLayout,
 };
-pub use source::FileSource;
-pub use storage_device::{AttachmentId, DeviceView, StorageDevice};
+pub use crate::model::storage_device::{AttachmentId, DeviceView, StorageDevice};
+pub use crate::partition::{
+    Partition, PartitionRule, PartitionScheme, PartitionType, PartitionView,
+};
+pub use error::{Error, ErrorCategory, Result, RuleIdentity};
+pub use evidence::DeclaredLoss;
