@@ -58,6 +58,98 @@ removes it is the record either way.
 
 ## Decisions
 
+### D34 — Rulings made delivering the discovered geometry and the recording's coordinates
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-12. **Supports** S1, S2, S3; the pledged media-first design
+(fact classes, and the kind-declared actions on the medium); in-force
+P2, P3, P4, P6, P10, P14, P27; in-force U4, and pledged U28, U32.
+
+Rulings made in F58's course. The delivery itself is recorded by the
+commit; these are the calls made along the way.
+
+**The floppy class is sector-addressed, and the addressing attribute
+becomes total.** The delivered `addressing()` answered `Option`, `None`
+for every floppy, with a note deferring the question to this feature.
+The answer is that it was never a hard-drive fact: a floppy drive steps
+to a track and reads records around it, which is exactly what a
+cylinder, head and sector name. What the granularity rule keeps *out* of
+the type is how many of each, not whether there are any. So the
+attribute is total — `sector` or `block` for every device type — and the
+cut it makes is the one the sector verbs need: the type declares that
+there are coordinates, the medium's evidence says how many. The C and
+Python spellings keep their nullability because the archive receiver is
+no device type at all.
+
+**An end tuple states nothing on its own, and is solved rather than
+read.** The obvious inference — heads are the head number plus one,
+sectors per track are the sector number — is wrong twice over: a drive
+past what CHS can address writes a saturated tuple whose numbers name no
+geometry, and a partition that ends mid-cylinder names a head that is a
+floor rather than a count. What makes a tuple evidence is that the same
+entry declares the same block a second way, as the last block of its own
+LBA extent, so the geometry is whatever puts the one where the other
+says it is. Where exactly one geometry within the field widths does
+that, it is the reading; where several do, or none, the tuple states
+nothing and nothing is inferred from it. Verification fills values under
+a reading and never picks one.
+
+**The load's declaration of a raw block size is a source, not an
+override.** `Format::Raw` carries the block size because a raw image
+records no addressable unit — but a table read in 512-byte blocks states
+one too, and this release's MBR reading is written against exactly that.
+Ranking the caller's declaration above the evidence would hide a real
+contradiction about one disk, so the declaration enters as one reading
+among the others and a disagreement reports as `Undetermined` like any
+other. This is the fact-class rule holding: the declaration belongs to
+the *load*, and what a medium's coordinates are stays discovered.
+
+**The article's addressable unit is not a geometry source.** The
+logical-block article declares 512-byte blocks and every hard-drive spec
+composes it, so it was available and was deliberately left out: the
+article is what the *substrate* is, and a sector size is a fact about
+what was recorded on it (D19's boundary, at "recorded"). Reading it here
+would also manufacture a conflict with a raw load declaring some other
+unit, out of a fact that was never about the recording.
+
+**The extent states the cylinders the recording spans, and the sector
+verbs check the content separately.** The strict reading — a cylinder
+count only where the track geometry divides the extent exactly — was
+weighed and declined: it is the delivered rule for the *filesystem's*
+declared geometry, where inventing a number would be a false claim about
+a boot record, but here it would leave every image whose size is not a
+whole number of cylinders with no coordinates at all, which is most of
+them. The extent reading answers the cylinder its last sector falls in,
+plus one, and says in its own words how far short of that cylinder the
+content stops. The gate that would otherwise be lost is not lost: a
+coordinate inside the geometry and past the content is refused by name,
+with a different sentence from one outside the geometry altogether.
+
+**A geometry is whole or it is nothing.** Three of the four parts
+settled is not a geometry with a hole in it — it addresses nothing — so
+the state is `Unstated` and `unsettled()` names the missing parts. That
+keeps three answers apart that a partial record would blur: the sources
+agreed, the sources disagreed, and nothing spoke. `Unstated` and
+`Undetermined` are deliberately two states for the same reason U4 keeps
+blank apart from unreadable.
+
+**Establishing a geometry never fails a load.** It runs beside the
+partition pool, after it, over the positions the pool already
+established — so nothing hunts for a volume — and a source that cannot
+be read states nothing rather than refusing. A geometry is evidence
+about an artifact, not a condition of opening one, and a degraded
+session (P28) that can no longer read a boot record still loads and
+still says what it does know.
+
+**Weighed and declined:** a geometry the caller could declare onto a
+loaded medium (the design's fact classes forbid it, and F60's authorship
+is where a caller's own coordinates enter); ranking the sources so a
+disagreement always resolves (it would settle by fiat what the artifact
+leaves open, which is the one thing `Undetermined` exists to refuse);
+`get_sector` on the block-addressed types under a synthesized geometry
+(a `mbr-block-hd` records no cylinder or head, and answering one would
+be the library asserting a drive nobody had).
+
 ### D33 — Rulings made delivering the device types and the articles they compose
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

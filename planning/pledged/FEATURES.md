@@ -49,20 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F58 — Discovered geometry and recording coordinates
-
-Geometry becomes discovered instance evidence with provenance: the
-format's declaration where one exists, the FAT BPB's recorded
-sectors-per-track and heads, MBR end-tuple inference, extent
-arithmetic — and **`Undetermined`** where sources disagree, reported
-with both readings and settled by neither. `get_sector` / `put_sector`
-answer on geometry-bearing types in the recording's own coordinates,
-refuse by name toward the evidence state otherwise, and writes buffer
-until commit (P2). Nothing is ever declared onto an existing medium.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P4;
-U4, U28, U32.
-
 ## F59 — Collection sources, and the flux family folds in
 
 `load_media` gains its source shapes: a collection of the caller's
@@ -98,7 +84,9 @@ BPBs, binding a device type) remains reserved in the partition pool's
 create/release slots.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P13,
-P27; U32. Needs F58.
+P27; U32. Needs nothing: the coordinates an authored blank states are
+the delivered geometry's own, and authorship is the third fact class
+beside the discovery that fills them today.
 
 ## F67 — Discovery holds the claim and builds no cache
 

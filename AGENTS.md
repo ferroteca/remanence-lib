@@ -36,8 +36,11 @@ ABI, or Python module.
   P14 recording seam — the **device-type catalog** in its two levels
   (the class, then the concrete type), one spec shape per class and one
   instance per concrete type, the granularity rule that cuts it, the
-  article each type composes, the flux path it claims, and the partition
-  scheme the hard-drive specs carry — beside `DeviceSlot`, which is a
+  article each type composes, the flux path it claims, the partition
+  scheme the hard-drive specs carry, and the **addressing** every type
+  declares — `sector` or `block`, which is the type's half of the
+  sector verbs and the medium's discovered geometry the other — beside
+  `DeviceSlot`, which is a
   device type or the archive receiver, the receiver being no recording
   device at all; `media_profile.rs` the P14 substrate seam — the passive
   compatibility facts of an **article**, family-specific by construction
@@ -48,6 +51,20 @@ ABI, or Python module.
   image-format adapter that loaded its state and a flux medium from the
   drive profile's declaration of what its family is served;
   `partition.rs` the partition-layout catalog;
+  `geometry.rs` the discovered-geometry seam — the recording's own
+  coordinates as *evidence*: the enumerated sources (the format's
+  declaration or a raw load's declared block size, a FAT boot record's
+  recorded track geometry, the partition table's end tuples solved
+  against the extent the same entry declares, and extent arithmetic for
+  the cylinder count), each reading kept with where it was taken, what
+  they settle between them, and **`Undetermined` where two of them
+  disagree** — both readings standing, neither preferred — beside
+  `Unstated`, which is the different fact that nothing spoke at all;
+  the coordinate arithmetic and the `GeometryRule` set the sector verbs
+  refuse by are here too. Geometry is established at the load beside the
+  partition pool and never declared onto a medium that exists;
+  which types *have* coordinates is the device type's own
+  `addressing` declaration, and how many of each is this;
   `filesystem.rs` the P19 volume/filesystem node and the presentation
   contract beneath it — the public `StorageSpace` carrying **two vantage
   traits on one object**, addressable I/O within its own extent and
@@ -201,7 +218,9 @@ ABI, or Python module.
   compression pair the core owns;
   `media.rs` the **media pool and the medium a caller holds** — the
   declared `Format` set, the pool identity, and every content verb
-  (identify, inspect, read_at, the space and namespace doors, commit and
+  (identify, inspect, read_at, the space and namespace doors, the
+  discovered geometry and the `get_sector`/`put_sector` pair that
+  addresses in it, commit and
   rollback), a medium being created by a declared reading and destroyed
   only by `release_media`; `handle.rs` the **caller-owned claim**: what a
   handed-over `std::fs::File` affords, asked by a zero-length write that
@@ -599,7 +618,11 @@ takes the device type as an optional second argument
 and declares its format and that device — whoever opens owns the lock —
 and given none it asks the artifact instead, through the convenience over
 discovery, so a format recording several device types — a raw image, a
-qcow2 — refuses there and names the types to pass. `identify --list <archive>` walks an archive's
+qcow2 — refuses there and names the types to pass. Its report carries
+the medium's discovered geometry with every reading that produced it,
+and reads cylinder 0, head 0, sector 1 in the recording's own
+coordinates wherever the evidence settled them.
+`identify --list <archive>` walks an archive's
 namespace, `identify --discover <path>` reports what an artifact is
 without loading it, `identify --remanence <path> [write-to]` reads a
 `.remanence` artifact through its own type — there is no device to

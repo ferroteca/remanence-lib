@@ -74,6 +74,20 @@
 //! flags it active, and [`PartitionView::as_type`] checks a caller's own
 //! reading against the recorded byte.
 //!
+//! **Geometry is discovered, and the sector verbs address in it.**
+//! [`Medium::geometry`] is what the sources beneath the medium stated
+//! about the recording's coordinates — the format's own declaration, a
+//! FAT boot record's recorded heads and sectors-per-track, the partition
+//! table's end tuples, arithmetic over the content's extent — each
+//! reading kept with where it came from. Sources that disagree settle
+//! nothing: the answer is [`GeometryState::Undetermined`], carrying both
+//! readings. [`Medium::get_sector`] and [`Medium::put_sector`] address
+//! in the coordinates that establishes, on the types whose
+//! [`DeviceType::addressing`] says the recording is sector-addressed,
+//! and refuse by name — their own [`GeometryRule`] set — everywhere
+//! else. A write buffers until [`Medium::commit`] like every other
+//! write, and **nothing is ever declared onto a medium that exists**.
+//!
 //! **File access lives on one node.** The vantage doors —
 //! [`PartitionView::volume`] and [`PartitionView::filesystem`], each
 //! `Option` — hand out the one [`StorageSpace`] the partition composes,
@@ -166,6 +180,7 @@ mod filesystem_catalog;
 mod flux_analysis;
 mod flux_capture;
 mod flux_medium;
+mod geometry;
 mod handle;
 mod hardware_bitstream;
 mod hdos;
@@ -218,6 +233,9 @@ pub use error::{Error, ErrorCategory, Result, RuleIdentity};
 pub use evidence::DeclaredLoss;
 pub use fat::FatKind;
 pub use filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
+pub use geometry::{
+    Geometry, GeometryReading, GeometryRule, GeometrySource, GeometryState, RecordingGeometry,
+};
 pub use kryoflux::{
     CaptureIssue, CaptureRunReport, CaptureSet, CaptureSetMember, CaptureSetReport,
     ObservationReport, StepPosition, TimeBaseReport,

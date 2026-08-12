@@ -538,8 +538,7 @@ fn slots() -> &'static [SlotView] {
                     .map(to_cstring),
                 addressing: slot
                     .device_type()
-                    .and_then(DeviceType::addressing)
-                    .map(to_cstring),
+                    .map(|device| to_cstring(device.addressing())),
             })
             .collect()
     })
@@ -619,7 +618,12 @@ pub extern "C" fn remanence_device_slot_scheme(index: usize) -> *const c_char {
 }
 
 /// How slot `index`'s device type addresses its recording — `sector` or
-/// `block`. Null outside the hard-drive class.
+/// `block`. Every device type declares one; null for the archive
+/// receiver, which is no device type at all.
+///
+/// A `sector` type is one whose medium answers
+/// `remanence_medium_get_sector` and `remanence_medium_put_sector`, in
+/// the coordinates that medium's own geometry established.
 #[unsafe(no_mangle)]
 pub extern "C" fn remanence_device_slot_addressing(index: usize) -> *const c_char {
     slot_string(index, |slot| slot.addressing.as_ref())
@@ -3305,6 +3309,427 @@ pub unsafe extern "C" fn remanence_medium_is_modified(medium: *const RemanenceMe
     unsafe { medium.as_ref() }
         .and_then(|handle| handle.medium())
         .is_some_and(|medium| medium.is_modified())
+}
+
+// ---------------------------------------------------------------------------
+// Discovered geometry, and the recording's own coordinates.
+//
+// A medium's geometry is *read* when it is loaded and is evidence from
+// then on: there is no verb here that declares one, because nothing is
+// ever declared onto a medium that exists. What the surface carries is
+// what the sources said — each reading with where it was taken — what
+// they settled between them, and what they contradict each other about.
+//
+// `remanence_medium_get_sector` and `remanence_medium_put_sector` address
+// in what that established, on the device types whose
+// `remanence_device_slot_addressing` says `sector`. Everything else
+// refuses by name, carrying one of this seam's rule identities in
+// `error_rule_out`: `not-sector-addressed`, `geometry-unstated`,
+// `geometry-undetermined`, `outside-geometry`, `partial-sector`.
+
+/// What the evidence established about a medium's geometry.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemanenceGeometryState {
+    /// No source beneath the medium states a whole geometry — an
+    /// archive's answer, and a block image whose sources stayed silent.
+    Unstated = 0,
+    /// Every part is established and the readings agree.
+    Determined = 1,
+    /// Two sources state different values for the same part. Both
+    /// readings stand and neither settles it.
+    Undetermined = 2,
+}
+
+/// One source's own statement about the recording's coordinates, in the
+/// C view: the strings are owned by the geometry that carries it.
+struct GeometryReadingView {
+    source: CString,
+    at: CString,
+    detail: CString,
+    cylinders: Option<u32>,
+    heads: Option<u32>,
+    sectors_per_track: Option<u32>,
+    sector_bytes: Option<u64>,
+}
+
+/// One medium's geometry as the evidence left it. Free it with
+/// `remanence_geometry_free`; every string it returns is owned by it.
+pub struct RemanenceGeometry {
+    state: RemanenceGeometryState,
+    determined: Option<remanence::RecordingGeometry>,
+    conflicts: Vec<CString>,
+    unsettled: Vec<CString>,
+    readings: Vec<GeometryReadingView>,
+}
+
+/// The geometry the sources beneath this medium stated: what was
+/// settled, what they contradict each other about, and every reading
+/// taken.
+///
+/// It was established when the medium was loaded and is evidence from
+/// then on — nothing re-reads a boot record behind a caller. Null only
+/// once the medium itself has been released.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_geometry(
+    medium: *const RemanenceMedium,
+) -> *mut RemanenceGeometry {
+    let Some(medium) = (unsafe { medium.as_ref() }).and_then(RemanenceMedium::medium) else {
+        return ptr::null_mut();
+    };
+    let geometry = medium.geometry();
+    Box::into_raw(Box::new(RemanenceGeometry {
+        state: match geometry.state() {
+            remanence::GeometryState::Unstated => RemanenceGeometryState::Unstated,
+            remanence::GeometryState::Determined => RemanenceGeometryState::Determined,
+            remanence::GeometryState::Undetermined => RemanenceGeometryState::Undetermined,
+        },
+        determined: geometry.determined(),
+        conflicts: geometry
+            .conflicts()
+            .iter()
+            .map(|line| to_cstring(line))
+            .collect(),
+        unsettled: geometry
+            .unsettled()
+            .iter()
+            .map(|part| to_cstring(part))
+            .collect(),
+        readings: geometry
+            .readings()
+            .iter()
+            .map(|reading| GeometryReadingView {
+                source: to_cstring(reading.source.as_str()),
+                at: to_cstring(&reading.at),
+                detail: to_cstring(&reading.detail),
+                cylinders: reading.cylinders,
+                heads: reading.heads,
+                sectors_per_track: reading.sectors_per_track,
+                sector_bytes: reading.sector_bytes,
+            })
+            .collect(),
+    }))
+}
+
+/// Frees a geometry record and everything borrowed from it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_free(geometry: *mut RemanenceGeometry) {
+    if !geometry.is_null() {
+        drop(unsafe { Box::from_raw(geometry) });
+    }
+}
+
+/// What the evidence established.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_state(
+    geometry: *const RemanenceGeometry,
+) -> RemanenceGeometryState {
+    unsafe { geometry.as_ref() }.map_or(RemanenceGeometryState::Unstated, |geometry| geometry.state)
+}
+
+/// The coordinates, where the evidence settled them: cylinders, heads,
+/// sectors per track and bytes per sector, written to whichever outputs
+/// are non-null. False where nothing settled them, leaving every output
+/// untouched — the state says which of the two absences it is.
+///
+/// Cylinders and heads number from zero and sectors from one, which is
+/// the recording's own convention.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_coordinates(
+    geometry: *const RemanenceGeometry,
+    cylinders_out: *mut u32,
+    heads_out: *mut u32,
+    sectors_per_track_out: *mut u32,
+    sector_bytes_out: *mut u64,
+) -> bool {
+    let Some(coordinates) = (unsafe { geometry.as_ref() }).and_then(|geometry| geometry.determined)
+    else {
+        return false;
+    };
+    if !cylinders_out.is_null() {
+        unsafe { *cylinders_out = coordinates.cylinders };
+    }
+    if !heads_out.is_null() {
+        unsafe { *heads_out = coordinates.heads };
+    }
+    if !sectors_per_track_out.is_null() {
+        unsafe { *sectors_per_track_out = coordinates.sectors_per_track };
+    }
+    if !sector_bytes_out.is_null() {
+        unsafe { *sector_bytes_out = coordinates.sector_bytes };
+    }
+    true
+}
+
+/// How many parts of the coordinates the sources contradict each other
+/// about.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_conflict_count(
+    geometry: *const RemanenceGeometry,
+) -> usize {
+    unsafe { geometry.as_ref() }.map_or(0, |geometry| geometry.conflicts.len())
+}
+
+/// One conflict, naming both readings, or null when the index is out of
+/// range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_conflict(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+) -> *const c_char {
+    unsafe { geometry.as_ref() }
+        .and_then(|geometry| geometry.conflicts.get(index))
+        .map_or(ptr::null(), |line| line.as_ptr())
+}
+
+/// How many parts of the coordinates no source settled. Zero for a
+/// determined geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_unsettled_count(
+    geometry: *const RemanenceGeometry,
+) -> usize {
+    unsafe { geometry.as_ref() }.map_or(0, |geometry| geometry.unsettled.len())
+}
+
+/// One unsettled part, named the way the refusals name it, or null when
+/// the index is out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_unsettled(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+) -> *const c_char {
+    unsafe { geometry.as_ref() }
+        .and_then(|geometry| geometry.unsettled.get(index))
+        .map_or(ptr::null(), |part| part.as_ptr())
+}
+
+/// How many readings were taken, in the order the sources were read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_count(
+    geometry: *const RemanenceGeometry,
+) -> usize {
+    unsafe { geometry.as_ref() }.map_or(0, |geometry| geometry.readings.len())
+}
+
+fn reading_string(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+    read: fn(&GeometryReadingView) -> &CString,
+) -> *const c_char {
+    unsafe { geometry.as_ref() }
+        .and_then(|geometry| geometry.readings.get(index))
+        .map_or(ptr::null(), |reading| read(reading).as_ptr())
+}
+
+/// Reading `index`'s source, by its stable spelling —
+/// `format-declaration`, `boot-record`, `partition-table` or
+/// `extent-arithmetic`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_source(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+) -> *const c_char {
+    reading_string(geometry, index, |reading| &reading.source)
+}
+
+/// Where in the artifact reading `index` was taken.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_at(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+) -> *const c_char {
+    reading_string(geometry, index, |reading| &reading.at)
+}
+
+/// What reading `index`'s source states, in its own terms.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_detail(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+) -> *const c_char {
+    reading_string(geometry, index, |reading| &reading.detail)
+}
+
+fn reading_part(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+    read: fn(&GeometryReadingView) -> Option<u32>,
+) -> Option<u32> {
+    unsafe { geometry.as_ref() }
+        .and_then(|geometry| geometry.readings.get(index))
+        .and_then(read)
+}
+
+/// The cylinder count reading `index` states. False where that source
+/// states none, which is ordinary: a boot record states no cylinder
+/// count at all.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_cylinders(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+    out: *mut u32,
+) -> bool {
+    unsafe {
+        write_opt_u32(
+            reading_part(geometry, index, |reading| reading.cylinders),
+            out,
+        )
+    }
+}
+
+/// The head count reading `index` states. False where it states none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_heads(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+    out: *mut u32,
+) -> bool {
+    unsafe { write_opt_u32(reading_part(geometry, index, |reading| reading.heads), out) }
+}
+
+/// The sectors-per-track reading `index` states. False where it states
+/// none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_sectors_per_track(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+    out: *mut u32,
+) -> bool {
+    unsafe {
+        write_opt_u32(
+            reading_part(geometry, index, |reading| reading.sectors_per_track),
+            out,
+        )
+    }
+}
+
+/// The sector size reading `index` states. False where it states none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_geometry_reading_sector_bytes(
+    geometry: *const RemanenceGeometry,
+    index: usize,
+    out: *mut u64,
+) -> bool {
+    unsafe {
+        write_opt_u64(
+            geometry
+                .as_ref()
+                .and_then(|geometry| geometry.readings.get(index))
+                .and_then(|reading| reading.sector_bytes),
+            out,
+        )
+    }
+}
+
+/// How many geometry sources this release reads.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_geometry_source_count() -> usize {
+    remanence::GeometrySource::ALL.len()
+}
+
+/// One claimed source's stable identity, or null when the index is out
+/// of range. The set is enumerated (P3), so a caller can hold every
+/// identity it may meet without waiting to meet one.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_geometry_source_name(index: usize) -> *const c_char {
+    static NAMES: std::sync::OnceLock<Vec<CString>> = std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            remanence::GeometrySource::ALL
+                .iter()
+                .map(|source| to_cstring(source.as_str()))
+                .collect()
+        })
+        .get(index)
+        .map_or(ptr::null(), |name| name.as_ptr())
+}
+
+/// Reads one whole sector in the recording's own coordinates into
+/// `buffer_out`, which is exactly one sector of this recording.
+///
+/// Cylinders and heads number from zero and sectors from one. It answers
+/// on a sector-addressed recording whose geometry the evidence
+/// established and refuses by name otherwise, the rule identity in
+/// `error_rule_out` naming which: `not-sector-addressed`,
+/// `geometry-unstated`, `geometry-undetermined`, `outside-geometry` or
+/// `partial-sector`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_get_sector(
+    medium: *mut RemanenceMedium,
+    cylinder: u32,
+    head: u32,
+    sector: u32,
+    buffer_out: *mut u8,
+    length: usize,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { medium.as_ref() }) else {
+        let error = remanence::Error::io("null medium");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    if buffer_out.is_null() {
+        let error = remanence::Error::io("null buffer");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    }
+    let Some(medium) = handle.medium() else {
+        let error = remanence::Error::io("this medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
+    match medium.get_sector(cylinder, head, sector, buffer) {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// Writes one whole sector in the recording's own coordinates,
+/// **buffered until `remanence_medium_commit`** like every other write
+/// (P2), under the same rules `remanence_medium_get_sector` answers by.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_put_sector(
+    medium: *mut RemanenceMedium,
+    cylinder: u32,
+    head: u32,
+    sector: u32,
+    data: *const u8,
+    length: usize,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { medium.as_ref() }) else {
+        let error = remanence::Error::io("null medium");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    if data.is_null() {
+        let error = remanence::Error::io("null buffer");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    }
+    let Some(medium) = handle.medium() else {
+        let error = remanence::Error::io("this medium was released");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let data = unsafe { std::slice::from_raw_parts(data, length) };
+    match medium.put_sector(cylinder, head, sector, data) {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

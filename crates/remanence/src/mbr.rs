@@ -15,6 +15,22 @@ use crate::error::{Error, Result};
 const SECTOR: u64 = 512;
 const BOOT_SIGNATURE: [u8; 2] = [0x55, 0xaa];
 
+/// The block size this release's reading of the scheme is written
+/// against, which is what its extents are numbered in.
+///
+/// It is stated as a geometry reading of its own rather than assumed
+/// silently: every offset in this module is computed in these blocks, so
+/// a medium whose load declared some other addressable unit disagrees
+/// with the table it was read under, and the disagreement is reported
+/// rather than resolved.
+pub(crate) const TABLE_BLOCK_BYTES: u64 = SECTOR;
+
+/// What the tuple's own fields can hold: six bits of sector number and
+/// eight bits of head number, so a geometry solved out of one is bounded
+/// by the form it was written in.
+const SECTORS_PER_TRACK_CEILING: u32 = 0x3f;
+const HEADS_CEILING: u64 = 256;
+
 /// Where a partition row sits: an MBR slot, or the extended chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PartitionKind {
@@ -165,8 +181,133 @@ struct RawEntry {
     /// every other value is not.
     active: bool,
     type_byte: u8,
+    /// The last block of this entry in cylinder-head-sector form, exactly
+    /// as the slot records it. A table written by a machine that
+    /// addressed the drive by CHS states here what geometry it used, and
+    /// that is the only place the drive's own coordinates survive.
+    end_chs: [u8; 3],
     start_lba: u32,
     sectors: u32,
+}
+
+/// One entry's end tuple read as a track geometry, where the tuple and
+/// the extent the same entry declares agree about which block it names.
+pub(crate) struct ImpliedGeometry {
+    /// The entry the tuple was read from, in the table's own numbering.
+    pub(crate) entry: u32,
+    pub(crate) heads: u32,
+    pub(crate) sectors_per_track: u32,
+    /// What was read and what it was checked against (P4).
+    pub(crate) detail: String,
+}
+
+impl RawEntry {
+    /// The cylinder, head and sector the end tuple names, in the packed
+    /// form the slot records: the cylinder's top two bits ride in the
+    /// sector byte.
+    fn end_tuple(&self) -> (u32, u32, u32) {
+        let cylinder = (u32::from(self.end_chs[1] & 0xc0) << 2) | u32::from(self.end_chs[2]);
+        (
+            cylinder,
+            u32::from(self.end_chs[0]),
+            u32::from(self.end_chs[1] & 0x3f),
+        )
+    }
+
+    /// The track geometry this entry's end tuple implies, **solved
+    /// against the extent the same entry declares**.
+    ///
+    /// A tuple on its own states no geometry: it names one block in
+    /// coordinates, and how many heads and sectors those coordinates run
+    /// to is exactly what is missing. What makes it a reading is that
+    /// the same entry declares the same block a second way — as the last
+    /// block of its own LBA extent — so the geometry is whatever puts
+    /// the one where the other says it is. Where the two ways agree on
+    /// exactly one geometry within the field widths, that is the
+    /// reading; where they agree on several, or on none, the tuple
+    /// states nothing and nothing is inferred from it. A drive past what
+    /// CHS can address writes a saturated tuple, and this is what makes
+    /// its numbers state nothing rather than a geometry nobody used.
+    fn implied_geometry(&self, entry: u32) -> Option<ImpliedGeometry> {
+        let (cylinder, head, sector) = self.end_tuple();
+        // A cylinder of zero leaves the head count out of the arithmetic
+        // altogether: every head count above the one named puts the
+        // block in the same place, so the tuple determines none of them.
+        if sector == 0 || self.sectors == 0 || cylinder == 0 {
+            return None;
+        }
+        let last = u64::from(self.start_lba) + u64::from(self.sectors) - 1;
+        let base = last.checked_sub(u64::from(sector - 1))?;
+
+        let mut solved: Option<(u32, u32)> = None;
+        for sectors_per_track in sector..=SECTORS_PER_TRACK_CEILING {
+            if base % u64::from(sectors_per_track) != 0 {
+                continue;
+            }
+            let track = base / u64::from(sectors_per_track);
+            let Some(cylinders_worth) = track.checked_sub(u64::from(head)) else {
+                continue;
+            };
+            if cylinders_worth % u64::from(cylinder) != 0 {
+                continue;
+            }
+            let heads = cylinders_worth / u64::from(cylinder);
+            if heads <= u64::from(head) || heads > HEADS_CEILING {
+                continue;
+            }
+            if solved.is_some() {
+                // Two geometries put the block where the extent says it
+                // is, and the tuple says nothing about which was used.
+                return None;
+            }
+            solved = Some((heads as u32, sectors_per_track));
+        }
+
+        let (heads, sectors_per_track) = solved?;
+        Some(ImpliedGeometry {
+            entry,
+            heads,
+            sectors_per_track,
+            detail: format!(
+                "the entry's end tuple names cylinder {cylinder}, head {head}, \
+                 sector {sector}, and the extent the same entry declares ends \
+                 at block {last}: {heads} heads of {sectors_per_track} sectors \
+                 is the one geometry within the field widths that puts the \
+                 first where the second is"
+            ),
+        })
+    }
+}
+
+/// What the partition table's own end tuples state about the recording's
+/// coordinates.
+///
+/// Every primary entry that carries a checkable tuple contributes one
+/// reading. Two entries written under different geometries therefore
+/// disagree here and settle nothing, which is the honest answer about a
+/// table two machines wrote.
+pub(crate) fn implied_geometry(device: &mut dyn Device) -> Vec<ImpliedGeometry> {
+    if device.len() < SECTOR {
+        return Vec::new();
+    }
+    let Ok(sector) = read_sector(device, 0) else {
+        return Vec::new();
+    };
+    if sector[510..512] != BOOT_SIGNATURE || looks_like_bpb(&sector) {
+        return Vec::new();
+    }
+    let mut readings = Vec::new();
+    let mut number = 0;
+    for entry in parse_entries(&sector) {
+        if entry.type_byte == 0x00 {
+            continue;
+        }
+        number += 1;
+        if let Some(implied) = entry.implied_geometry(number) {
+            readings.push(implied);
+        }
+    }
+    readings
 }
 
 fn read_sector(device: &mut dyn Device, lba: u64) -> Result<[u8; 512]> {
@@ -181,6 +322,7 @@ fn parse_entries(sector: &[u8; 512]) -> [RawEntry; 4] {
         RawEntry {
             active: sector[at] == 0x80,
             type_byte: sector[at + 4],
+            end_chs: [sector[at + 5], sector[at + 6], sector[at + 7]],
             start_lba: u32::from_le_bytes(sector[at + 8..at + 12].try_into().unwrap()),
             sectors: u32::from_le_bytes(sector[at + 12..at + 16].try_into().unwrap()),
         }
@@ -393,6 +535,132 @@ pub(crate) fn discover(device: &mut dyn Device) -> Result<Discovery> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Bytes(Vec<u8>);
+
+    impl Device for Bytes {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+            let at = offset as usize;
+            let end = at + buf.len();
+            if end > self.0.len() {
+                return Err(Error::io("past the end"));
+            }
+            buf.copy_from_slice(&self.0[at..end]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, _offset: u64, _data: &[u8]) -> Result<()> {
+            unreachable!("these tests only read")
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A block in the packed CHS form a slot records, under a stated
+    /// geometry — what the machine that formatted the disk wrote down.
+    fn chs(block: u64, heads: u32, sectors_per_track: u32) -> [u8; 3] {
+        let per_cylinder = u64::from(heads) * u64::from(sectors_per_track);
+        let cylinder = block / per_cylinder;
+        let head = (block % per_cylinder) / u64::from(sectors_per_track);
+        let sector = block % u64::from(sectors_per_track) + 1;
+        [
+            head as u8,
+            (sector as u8 & 0x3f) | (((cylinder >> 2) as u8) & 0xc0),
+            (cylinder & 0xff) as u8,
+        ]
+    }
+
+    /// One primary entry, its end tuple written under `heads` and
+    /// `sectors_per_track` unless `end_chs` overrides it.
+    fn table(entries: &[(u8, u32, u32, [u8; 3])]) -> Bytes {
+        let mut sector = vec![0u8; 512];
+        for (slot, &(type_byte, start_lba, sectors, end_chs)) in entries.iter().enumerate() {
+            let at = 446 + slot * 16;
+            sector[at + 4] = type_byte;
+            sector[at + 5..at + 8].copy_from_slice(&end_chs);
+            sector[at + 8..at + 12].copy_from_slice(&start_lba.to_le_bytes());
+            sector[at + 12..at + 16].copy_from_slice(&sectors.to_le_bytes());
+        }
+        sector[510..512].copy_from_slice(&BOOT_SIGNATURE);
+        Bytes(sector)
+    }
+
+    #[test]
+    fn an_end_tuple_states_a_geometry_where_it_solves_against_its_own_extent() {
+        // A partition of 8,001 blocks starting at 63, written by a
+        // machine addressing 16 heads of 63 sectors.
+        let last = 63 + 8_001 - 1;
+        let mut device = table(&[(0x06, 63, 8_001, chs(last, 16, 63))]);
+        let readings = implied_geometry(&mut device);
+        assert_eq!(readings.len(), 1);
+        assert_eq!(readings[0].entry, 1);
+        assert_eq!(readings[0].heads, 16);
+        assert_eq!(readings[0].sectors_per_track, 63);
+        assert!(
+            readings[0].detail.contains("ends at block 8063"),
+            "the reading states what it was solved against: {}",
+            readings[0].detail
+        );
+    }
+
+    #[test]
+    fn an_extent_ending_mid_cylinder_still_states_the_whole_head_count() {
+        // The head the last block falls on is a floor and not the count:
+        // this extent ends on head 11 of 15, and taking the tuple at face
+        // value would state twelve heads for a disk that had fifteen.
+        // Solving it against the extent recovers what was actually used.
+        let last = 8_064 + 4_032 - 1;
+        let mut device = table(&[(0x06, 8_064, 4_032, chs(last, 15, 63))]);
+        let readings = implied_geometry(&mut device);
+        assert_eq!(readings.len(), 1);
+        assert_eq!(readings[0].heads, 15);
+        assert_eq!(readings[0].sectors_per_track, 63);
+    }
+
+    #[test]
+    fn a_saturated_tuple_states_nothing_rather_than_a_geometry_nobody_wrote() {
+        // The tuple a machine writes when the extent is past what CHS can
+        // address: 1023/254/63, which implies 255 heads of 63 and names a
+        // block nowhere near the extent's own last one.
+        let mut device = table(&[(0x06, 63, 20_000_000, [0xfe, 0xff, 0xff])]);
+        assert!(
+            implied_geometry(&mut device).is_empty(),
+            "the arithmetic does not check out, so nothing is read from it"
+        );
+    }
+
+    #[test]
+    fn two_entries_written_under_different_geometries_each_state_their_own() {
+        // Both check out against their own extents, so both are read —
+        // and the disagreement is settled by nobody, which is the
+        // geometry seam's business rather than this one's.
+        let first_last = 63 + 8_001 - 1;
+        let second_start = 8_064u64;
+        let second_last = second_start + 4_032 - 1;
+        let mut device = table(&[
+            (0x06, 63, 8_001, chs(first_last, 16, 63)),
+            (0x06, second_start as u32, 4_032, chs(second_last, 15, 63)),
+        ]);
+        let readings = implied_geometry(&mut device);
+        assert_eq!(readings.len(), 2);
+        assert_eq!(readings[0].heads, 16);
+        assert_eq!(readings[1].heads, 15);
+        assert_eq!(readings[1].entry, 2, "the table's own numbering");
+    }
+
+    #[test]
+    fn a_sector_that_is_no_table_states_no_geometry() {
+        let mut blank = Bytes(vec![0u8; 512]);
+        assert!(implied_geometry(&mut blank).is_empty());
+        let mut short = Bytes(vec![0u8; 16]);
+        assert!(implied_geometry(&mut short).is_empty());
+    }
 
     /// The type-byte table is a machine-input surface where one byte flips
     /// the meaning of a partition and the library acts on that meaning, so

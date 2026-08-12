@@ -217,7 +217,12 @@ impl Session {
         // checked against the content, and what the check answers is what
         // the pool bears for the session's life (F56, F57).
         let partitions = state.establish_partitions()?;
-        let id = self.media.admit(state, partitions);
+        // The geometry is established in the same act and for the same
+        // reason: it is discovered evidence about the artifact, read
+        // once, before anyone holds the medium, and never declared onto
+        // it afterwards (F58).
+        let geometry = state.establish_geometry(&partitions);
+        let id = self.media.admit(state, partitions, geometry);
         Ok(self.media.get_mut(id).expect("just admitted"))
     }
 
@@ -667,7 +672,8 @@ impl<'a> MachineView<'a> {
                 return Err(error);
             }
         };
-        let media = self.pool.admit(state, partitions);
+        let geometry = state.establish_geometry(&partitions);
+        let media = self.pool.admit(state, partitions, geometry);
         let mut device = self.device_mut(attachment).expect("just placed");
         match device.insert(media) {
             Ok(()) => Ok(self.device_mut(attachment).expect("just placed")),

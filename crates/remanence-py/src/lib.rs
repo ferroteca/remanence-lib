@@ -25,6 +25,20 @@
 //! nothing determines one. **Both doors hand out the same
 //! `StorageSpace`**, so which one was opened changes nothing about what
 //! comes back, and the file verbs live on that node and nowhere else.
+//!
+//! **Geometry is discovered, and the sector verbs address in it.**
+//! `Medium.geometry` is what the sources beneath the medium stated about
+//! the recording's coordinates — the format's own declaration, a FAT boot
+//! record's recorded heads and sectors-per-track, the partition table's
+//! end tuples, arithmetic over the content's extent — each reading kept
+//! with where it came from, and `"undetermined"` where two of them
+//! disagree. `Medium.get_sector(cylinder, head, sector)` and
+//! `Medium.put_sector(...)` address in what that established, on the
+//! device types whose `addressing` is `"sector"`, and raise by name
+//! everywhere else; a write buffers until `Medium.commit()` like every
+//! other write, and **nothing is ever declared onto a medium that
+//! exists**.
+//!
 //! Failures raise `RemanenceError`, which carries a stable `category`
 //! saying how to behave and, where the refusal came from an enumerated rule
 //! set such as the DOS 8.3 namespace's, a stable `rule` naming which rule
@@ -559,8 +573,11 @@ pub struct DeviceSlot {
     /// under — the hard-drive specs carry it. `None` for the schemeless
     /// types, whose media bear the direct partition.
     pub scheme: Option<String>,
-    /// `"sector"` or `"block"` — how a hard-drive type addresses its
-    /// recording. `None` outside that class.
+    /// `"sector"` or `"block"` — how this device type addresses its
+    /// recording. Every device type declares one; `None` for the archive
+    /// receiver, which is no device type at all. A `"sector"` type is one
+    /// whose medium answers `get_sector` and `put_sector`, in the
+    /// coordinates that medium's own geometry established.
     pub addressing: Option<String>,
 }
 
@@ -625,8 +642,7 @@ fn device_slots() -> Vec<DeviceSlot> {
                 .map(str::to_owned),
             addressing: slot
                 .device_type()
-                .and_then(remanence::DeviceType::addressing)
-                .map(str::to_owned),
+                .map(|device| device.addressing().to_owned()),
         })
         .collect()
 }
@@ -1103,6 +1119,131 @@ impl Assurance {
             self.outcome, self.condition
         )
     }
+}
+
+/// One source's own statement about a recording's coordinates.
+///
+/// A reading states the parts its source actually carries and leaves the
+/// rest `None` — a boot record records heads and sectors-per-track and
+/// says nothing about how many cylinders the drive had. Nothing is
+/// filled in from a neighbour.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct GeometryReading {
+    /// `"format-declaration"`, `"boot-record"`, `"partition-table"` or
+    /// `"extent-arithmetic"`.
+    pub source: String,
+    /// Where in the artifact it was taken, in words fit to show a user.
+    pub at: String,
+    pub cylinders: Option<u32>,
+    pub heads: Option<u32>,
+    pub sectors_per_track: Option<u32>,
+    pub sector_bytes: Option<u64>,
+    /// What the source states, in its own terms.
+    pub detail: String,
+}
+
+#[pymethods]
+impl GeometryReading {
+    fn __repr__(&self) -> String {
+        format!(
+            "GeometryReading(source={:?}, at={:?})",
+            self.source, self.at
+        )
+    }
+}
+
+/// A medium's geometry as the evidence left it: what was settled, what
+/// the sources contradict each other about, and every reading taken.
+///
+/// `state` is `"determined"`, `"undetermined"` or `"unstated"`. The
+/// coordinates are present only in the first — cylinders and heads
+/// number from zero and sectors from one, which is the recording's own
+/// convention — and the other two are different facts kept apart:
+/// `"undetermined"` means two sources state different values and neither
+/// settles it, `"unstated"` that nothing states one at all.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct Geometry {
+    pub state: String,
+    pub cylinders: Option<u32>,
+    pub heads: Option<u32>,
+    pub sectors_per_track: Option<u32>,
+    pub sector_bytes: Option<u64>,
+    /// One sentence per part of the coordinates the sources contradict
+    /// each other about, each naming both readings.
+    pub conflicts: Vec<String>,
+    /// Which parts no source settled, named the way the refusals name
+    /// them. Empty for a determined geometry.
+    pub unsettled: Vec<String>,
+    /// Every reading taken, in the order the sources were read, whether
+    /// or not they agreed.
+    pub readings: Vec<GeometryReading>,
+}
+
+impl Geometry {
+    fn new(geometry: &remanence::Geometry) -> Self {
+        let determined = geometry.determined();
+        Self {
+            state: geometry.state().as_str().to_owned(),
+            cylinders: determined.map(|coordinates| coordinates.cylinders),
+            heads: determined.map(|coordinates| coordinates.heads),
+            sectors_per_track: determined.map(|coordinates| coordinates.sectors_per_track),
+            sector_bytes: determined.map(|coordinates| coordinates.sector_bytes),
+            conflicts: geometry.conflicts().to_vec(),
+            unsettled: geometry
+                .unsettled()
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect(),
+            readings: geometry
+                .readings()
+                .iter()
+                .map(|reading| GeometryReading {
+                    source: reading.source.as_str().to_owned(),
+                    at: reading.at.clone(),
+                    cylinders: reading.cylinders,
+                    heads: reading.heads,
+                    sectors_per_track: reading.sectors_per_track,
+                    sector_bytes: reading.sector_bytes,
+                    detail: reading.detail.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[pymethods]
+impl Geometry {
+    fn __repr__(&self) -> String {
+        match (
+            self.cylinders,
+            self.heads,
+            self.sectors_per_track,
+            self.sector_bytes,
+        ) {
+            (Some(cylinders), Some(heads), Some(sectors_per_track), Some(sector_bytes)) => format!(
+                "Geometry(state={:?}, cylinders={cylinders}, heads={heads}, \
+                 sectors_per_track={sectors_per_track}, \
+                 sector_bytes={sector_bytes})",
+                self.state
+            ),
+            _ => format!(
+                "Geometry(state={:?}, unsettled={:?})",
+                self.state, self.unsettled
+            ),
+        }
+    }
+}
+
+/// Every source this release reads a geometry out of (P3), so a caller
+/// can hold every identity it may meet without waiting to meet one.
+#[pyfunction]
+fn geometry_sources() -> Vec<String> {
+    remanence::GeometrySource::ALL
+        .iter()
+        .map(|source| source.as_str().to_owned())
+        .collect()
 }
 
 /// Every assurance condition this release claims (P3), so a caller can
@@ -2260,6 +2401,59 @@ impl Medium {
     fn inspect(&self) -> PyResult<DiskReport> {
         let report = self.get()?.inspect().map_err(to_py_err)?;
         Ok(disk_report(report))
+    }
+
+    /// The recording's coordinates as the evidence beneath this medium
+    /// left them: what was settled, what the sources contradict each
+    /// other about, and every reading taken.
+    ///
+    /// It was established when the medium was loaded and is evidence from
+    /// then on — nothing re-reads a boot record behind a caller, and
+    /// **nothing is ever declared onto it**.
+    #[getter]
+    fn geometry(&self) -> PyResult<Geometry> {
+        Ok(Geometry::new(self.get()?.geometry()))
+    }
+
+    /// Reads one whole sector in the recording's own coordinates.
+    ///
+    /// Cylinders and heads number from zero and **sectors from one**,
+    /// which is the recording's convention rather than this library's.
+    ///
+    /// It answers on a sector-addressed recording whose geometry the
+    /// evidence established and raises by name otherwise, the `rule` on
+    /// the error naming which: `"not-sector-addressed"`,
+    /// `"geometry-unstated"`, `"geometry-undetermined"`,
+    /// `"outside-geometry"` or `"partial-sector"`.
+    fn get_sector<'py>(
+        &self,
+        py: Python<'py>,
+        cylinder: u32,
+        head: u32,
+        sector: u32,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let mut medium = self.get()?;
+        let length = medium
+            .geometry()
+            .determined()
+            .map_or(0, |coordinates| coordinates.sector_bytes);
+        // A zero-length buffer is what a medium with no settled sector
+        // size gets, and the refusal it earns is the one that says so —
+        // never a short read dressed up as an answer.
+        let mut buffer = vec![0u8; length as usize];
+        medium
+            .get_sector(cylinder, head, sector, &mut buffer)
+            .map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &buffer))
+    }
+
+    /// Writes one whole sector in the recording's own coordinates,
+    /// **buffered until `commit`** like every other write, under the same
+    /// rules `get_sector` answers by.
+    fn put_sector(&self, cylinder: u32, head: u32, sector: u32, data: &[u8]) -> PyResult<()> {
+        self.get()?
+            .put_sector(cylinder, head, sector, data)
+            .map_err(to_py_err)
     }
 
     /// The scheme this medium's content is laid out under — `"mbr"` — or
@@ -5724,6 +5918,8 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Partition>()?;
     m.add_class::<DeviceSlot>()?;
     m.add_class::<Assurance>()?;
+    m.add_class::<Geometry>()?;
+    m.add_class::<GeometryReading>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;
     m.add_class::<PartitionSchemaInfo>()?;
@@ -5745,6 +5941,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(discover_media, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
     m.add_function(wrap_pyfunction!(formats, m)?)?;
+    m.add_function(wrap_pyfunction!(geometry_sources, m)?)?;
     m.add_function(wrap_pyfunction!(partition_schemes, m)?)?;
     m.add_function(wrap_pyfunction!(partition_types, m)?)?;
     Ok(())

@@ -230,6 +230,80 @@ static void print_assurance(const RemanenceMedium *medium) {
     remanence_assurance_free(assurance);
 }
 
+/* The recording's coordinates as the evidence left them, and one sector
+ * read in them.
+ *
+ * Nothing here declares a geometry: the medium's was read when it loaded,
+ * and every reading below says where it came from. Where two sources
+ * disagree the answer is `undetermined` -- both readings stand, neither
+ * settles it, and the sector verbs refuse toward that state rather than
+ * picking one to act on. */
+static void print_geometry(RemanenceMedium *medium) {
+    RemanenceGeometry *geometry = remanence_medium_geometry(medium);
+    if (geometry == NULL) {
+        return;
+    }
+
+    uint32_t cylinders = 0;
+    uint32_t heads = 0;
+    uint32_t sectors = 0;
+    uint64_t sector_bytes = 0;
+    int determined = remanence_geometry_coordinates(geometry, &cylinders, &heads, &sectors,
+                                                    &sector_bytes);
+    printf("Geometry: ");
+    switch (remanence_geometry_state(geometry)) {
+        case REMANENCE_GEOMETRY_STATE_DETERMINED:
+            printf("%" PRIu32 " cylinders of %" PRIu32 " heads at %" PRIu32
+                   " sectors of %" PRIu64 " bytes\n",
+                   cylinders, heads, sectors, sector_bytes);
+            break;
+        case REMANENCE_GEOMETRY_STATE_UNDETERMINED:
+            printf("undetermined\n");
+            break;
+        case REMANENCE_GEOMETRY_STATE_UNSTATED:
+            printf("unstated");
+            for (size_t i = 0; i < remanence_geometry_unsettled_count(geometry); ++i) {
+                printf("%s %s", i == 0 ? " --" : ",", remanence_geometry_unsettled(geometry, i));
+            }
+            printf("\n");
+            break;
+    }
+    for (size_t i = 0; i < remanence_geometry_conflict_count(geometry); ++i) {
+        printf("  ! %s\n", remanence_geometry_conflict(geometry, i));
+    }
+    for (size_t i = 0; i < remanence_geometry_reading_count(geometry); ++i) {
+        printf("  * [%s] %s: %s\n", remanence_geometry_reading_source(geometry, i),
+               remanence_geometry_reading_at(geometry, i),
+               remanence_geometry_reading_detail(geometry, i));
+    }
+
+    /* One sector, in the recording's own coordinates: cylinders and heads
+     * number from zero and sectors from one. A recording addressed by
+     * block, or one whose geometry nothing settled, refuses here by name
+     * -- which is the answer, not a failure of this example. */
+    if (determined) {
+        unsigned char *sector = malloc((size_t)sector_bytes);
+        if (sector != NULL) {
+            RemanenceErrorCategory category;
+            char *error = NULL;
+            char *rule = NULL;
+            if (remanence_medium_get_sector(medium, 0, 0, 1, sector, (size_t)sector_bytes,
+                                            &category, &error, &rule)) {
+                printf("  sector 0/0/1:");
+                for (size_t i = 0; i < 16 && i < (size_t)sector_bytes; ++i) {
+                    printf(" %02x", sector[i]);
+                }
+                printf("\n");
+            } else {
+                report_error("  sector 0/0/1", category, error, rule);
+            }
+            free(sector);
+        }
+    }
+
+    remanence_geometry_free(geometry);
+}
+
 /* The medium's own partition pool -- what its content is reached through.
  *
  * The scheme is evidence: a medium that recorded no table says so, and
@@ -571,14 +645,20 @@ static void list_devices(void) {
     for (size_t i = 0; i < count; ++i) {
         const char *class_of = remanence_device_slot_class(i);
         const char *scheme = remanence_device_slot_scheme(i);
-        printf("  %-16s %-38s slot %s%s%s%s%s\n",
+        /* How a type addresses its recording is what decides whether its
+         * media answer the sector verbs at all; how many cylinders,
+         * heads and sectors is the medium's own discovered geometry. */
+        const char *addressing = remanence_device_slot_addressing(i);
+        printf("  %-16s %-38s slot %s%s%s%s%s%s%s\n",
                remanence_device_slot_id(i),
                remanence_device_slot_name(i),
                remanence_device_slot_prefix(i),
                class_of == NULL ? "" : ", class ",
                class_of == NULL ? "" : class_of,
                scheme == NULL ? "" : ", scheme ",
-               scheme == NULL ? "" : scheme);
+               scheme == NULL ? "" : scheme,
+               addressing == NULL ? "" : ", addressed by ",
+               addressing == NULL ? "" : addressing);
     }
 }
 
@@ -1115,6 +1195,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    print_geometry(medium);
     print_partitions(medium);
 
     /* File access lives on one node, and the node is reached through the

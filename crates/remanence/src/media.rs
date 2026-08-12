@@ -35,13 +35,14 @@ use crate::adapters::RECORDED_HARD_DRIVES;
 use crate::archive::ArchiveMedium;
 use crate::assurance::Assurance;
 use crate::device::AccessMode;
-use crate::device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive};
+use crate::device_type::{Addressing, DeviceSlot, DeviceType, FloppyDrive, HardDrive};
 use crate::discovery::Discovery;
 use crate::disk::{DiskFormat, MediumState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
 use crate::filesystem::Catalog;
 use crate::filesystem_catalog::FilesystemAdapter;
+use crate::geometry::{self, Geometry, GeometryRule, RecordingGeometry};
 use crate::partition::{Partition, PartitionPool, PartitionScheme, PartitionView};
 use crate::report::DiskReport;
 use crate::session::Identification;
@@ -474,15 +475,26 @@ pub struct Medium {
     /// The evidence pool, established at the load and immutable for as
     /// long as the session holds the medium (F56).
     partitions: PartitionPool,
+    /// The recording's coordinates as the evidence left them,
+    /// established in the same act and immutable for the same reason:
+    /// geometry is discovered, and nothing is declared onto a medium
+    /// that already exists.
+    geometry: Geometry,
 }
 
 impl Medium {
-    pub(crate) fn new(id: MediaId, state: MediumState, partitions: PartitionPool) -> Self {
+    pub(crate) fn new(
+        id: MediaId,
+        state: MediumState,
+        partitions: PartitionPool,
+        geometry: Geometry,
+    ) -> Self {
         Self {
             id,
             state,
             link: None,
             partitions,
+            geometry,
         }
     }
 
@@ -633,6 +645,137 @@ impl Medium {
     pub fn inspect(&mut self) -> Result<DiskReport> {
         let pool = self.partitions.clone();
         self.state.space_mut("inspect")?.inspect(&pool)
+    }
+
+    // -------------------------------------- geometry and its coordinates
+
+    /// The recording's coordinates as the evidence beneath this medium
+    /// left them: what was settled, what the sources contradict each
+    /// other about, and every reading taken (P4).
+    ///
+    /// It was established when the medium was loaded and is evidence
+    /// from then on — nothing re-reads a boot record behind a caller,
+    /// and **nothing is ever declared onto it**. Where the readings
+    /// disagree the answer is
+    /// [`Undetermined`](crate::GeometryState::Undetermined), reported
+    /// with both readings and settled by neither; where nothing states
+    /// one it is [`Unstated`](crate::GeometryState::Unstated), which is
+    /// a different fact and kept as one.
+    pub fn geometry(&self) -> &Geometry {
+        &self.geometry
+    }
+
+    /// Reads one whole sector in the recording's own coordinates.
+    ///
+    /// Cylinders and heads number from zero and **sectors from one**,
+    /// which is the recording's convention rather than this library's,
+    /// and `buf` is exactly one sector of this recording — a sector is
+    /// answered whole or not at all.
+    ///
+    /// **It answers on a sector-addressed recording whose geometry the
+    /// evidence established, and refuses by name otherwise**, its own
+    /// [`GeometryRule`](crate::GeometryRule) set naming which: a
+    /// block-addressed drive or a medium no device recorded has no such
+    /// coordinates at all; a medium whose sources state no geometry, or
+    /// state contradicting ones, has none to address in and the refusal
+    /// points at [`geometry`](Self::geometry), where the readings are.
+    /// A coordinate the geometry does not cover — or one it covers and
+    /// the content does not hold — is refused rather than answered with
+    /// zeros.
+    pub fn get_sector(
+        &mut self,
+        cylinder: u32,
+        head: u32,
+        sector: u32,
+        buf: &mut [u8],
+    ) -> Result<()> {
+        let offset = self.sector_offset("get_sector", cylinder, head, sector, buf.len())?;
+        self.read_space_at(offset, buf)
+    }
+
+    /// Writes one whole sector in the recording's own coordinates,
+    /// **buffered until [`commit`](Self::commit)** like every other
+    /// write (P2), under the same rules
+    /// [`get_sector`](Self::get_sector) answers by.
+    pub fn put_sector(&mut self, cylinder: u32, head: u32, sector: u32, data: &[u8]) -> Result<()> {
+        let offset = self.sector_offset("put_sector", cylinder, head, sector, data.len())?;
+        self.write_space_at(offset, data)
+    }
+
+    /// Where one coordinate sits in the presented content, or the
+    /// refusal naming why this medium has no such coordinate.
+    ///
+    /// The checks run outermost-first, so a caller is told the largest
+    /// true thing: that the recording is not addressed this way at all,
+    /// before that its geometry is unsettled, before that the coordinate
+    /// is outside it.
+    fn sector_offset(
+        &self,
+        verb: &str,
+        cylinder: u32,
+        head: u32,
+        sector: u32,
+        length: usize,
+    ) -> Result<u64> {
+        let geometry = self.sector_coordinates()?;
+        if length as u64 != geometry.sector_bytes {
+            return Err(geometry::refuse(
+                GeometryRule::PartialSector,
+                format!(
+                    "one sector of this recording is {} bytes and {length} \
+                     were offered: a sector is read and written whole or not \
+                     at all",
+                    geometry.sector_bytes
+                ),
+            ));
+        }
+        let offset = geometry.offset_of(cylinder, head, sector)?;
+        let held = self.state.space(verb)?.size();
+        if offset + geometry.sector_bytes > held {
+            return Err(geometry::refuse(
+                GeometryRule::OutsideGeometry,
+                format!(
+                    "cylinder {cylinder}, head {head}, sector {sector} is \
+                     inside this recording's coordinates ({geometry}) and past \
+                     the content, which holds {held} bytes: the last cylinder \
+                     is not wholly present",
+                ),
+            ));
+        }
+        Ok(offset)
+    }
+
+    /// The coordinates this medium's sector verbs address in, or the
+    /// refusal naming what it has instead.
+    fn sector_coordinates(&self) -> Result<RecordingGeometry> {
+        let Some(device) = self.device_type() else {
+            return Err(geometry::refuse(
+                GeometryRule::NotSectorAddressed,
+                format!(
+                    "{} was recorded by no device — an archive's content is \
+                     reached by the names it holds — so there is no cylinder, \
+                     head or sector of it to address",
+                    self.state.named()
+                ),
+            ));
+        };
+        // The declaration is the type's own attribute, matched rather
+        // than compared as text: a string-named rule in orchestration is
+        // exactly what P12 keeps out of the middle of the library.
+        if device.addressing_kind() != Addressing::Sector {
+            return Err(geometry::refuse(
+                GeometryRule::NotSectorAddressed,
+                format!(
+                    "a {} ({}) addresses its recording by {}, so it has no \
+                     cylinder, head and sector to be told: read it through the \
+                     partition that composes it",
+                    device.name(),
+                    device.id(),
+                    device.addressing()
+                ),
+            ));
+        }
+        self.geometry.require(&self.state.named())
     }
 
     // ------------------------------------------------ the partition pool
@@ -833,10 +976,16 @@ pub(crate) struct MediaPool {
 impl MediaPool {
     /// Takes an opened medium into the pool, unlinked, and answers with
     /// the identity it was issued.
-    pub(crate) fn admit(&mut self, state: MediumState, partitions: PartitionPool) -> MediaId {
+    pub(crate) fn admit(
+        &mut self,
+        state: MediumState,
+        partitions: PartitionPool,
+        geometry: Geometry,
+    ) -> MediaId {
         let id = MediaId::new(self.next);
         self.next += 1;
-        self.media.push(Medium::new(id, state, partitions));
+        self.media
+            .push(Medium::new(id, state, partitions, geometry));
         id
     }
 

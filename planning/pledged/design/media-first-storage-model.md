@@ -117,7 +117,16 @@ Medium                                         pool-owned, holdable — ALL cont
    Nothing crosses. A medium's geometry is discovered (format
    declaration, BPB, MBR end-tuples — with provenance, `Undetermined`
    on conflict) or authored at creation — never declared onto an
-   existing medium.
+   existing medium. *Delivered for the discovered half: `geometry()` is
+   read at the load from the enumerated sources and is evidence from
+   then on, each reading carrying where it was taken, with
+   `Undetermined` where two disagree and `Unstated` where nothing
+   spoke — a third state, because "no source spoke" and "the sources
+   contradict each other" are different facts (D34). The load's own
+   declaration of a raw block size enters as one source among the
+   others rather than as an override, which is this rule holding rather
+   than an exception to it. Authorship arrives with the feature that
+   creates media whole.*
 5. **Creation grammar.** Every creation verb declares a **concrete
    catalog entry by its enumerated identifier** and the check is that
    entry's own: `load_media` a format (`Format::Zip`,
@@ -200,7 +209,13 @@ Medium                                         pool-owned, holdable — ALL cont
    convention can make refuses by name, and the answer goes into the
    `load_media` declaration. *The type carries its declarations
    today; the trait surfaces that read them arrive with the families
-   that need them.*
+   that need them. The first action to take this shape is the sector
+   pair: `get_sector`/`put_sector` answer where the type's own
+   `addressing` declaration says the recording is addressed by
+   cylinder, head and sector — every floppy and the CHS hard drive —
+   and refuse by name where it says block, with the coordinates
+   themselves coming from the medium's discovered geometry rather than
+   from the type (D34).*
 9. **Vantage doors — specified, never probed.** A partition composes
    at most one `StorageSpace` (an identity rule: both doors hand out
    the same node). `.volume()` answers iff the addressable vantage

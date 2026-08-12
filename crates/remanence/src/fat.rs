@@ -296,6 +296,40 @@ pub(crate) fn declared_volume(sector: &[u8]) -> VolumeDeclaration {
     }
 }
 
+/// What a boot record records about the geometry of the drive it was
+/// written on, where it records anything.
+///
+/// The boot record is a *source* about the recording's coordinates and
+/// not the answer: DOS wrote down the sectors-per-track and heads it was
+/// formatting under, and both fields are zero on media formatted where
+/// nothing knew them. What it never states is a cylinder count — its own
+/// sector total describes the volume it sits at the front of, not the
+/// drive that held it.
+pub(crate) struct BootRecordGeometry {
+    pub(crate) bytes_per_sector: u64,
+    /// `None` where the field is zero, which is the format's own way of
+    /// recording that nothing stated one.
+    pub(crate) sectors_per_track: Option<u32>,
+    pub(crate) heads: Option<u32>,
+}
+
+/// Reads what a boot record states about the drive's geometry, under the
+/// same gate [`declared_volume`] uses: this is a reading of a
+/// declaration, not a recognition, so it answers for nothing the
+/// discovery seam would not also call a boot record.
+pub(crate) fn declared_geometry(sector: &[u8]) -> Option<BootRecordGeometry> {
+    if sector.len() < 512 || sector[510..512] != [0x55, 0xaa] || !crate::mbr::looks_like_bpb(sector)
+    {
+        return None;
+    }
+    let bpb = Bpb::parse(sector).ok()?;
+    Some(BootRecordGeometry {
+        bytes_per_sector: bpb.bytes_per_sector,
+        sectors_per_track: (bpb.sectors_per_track != 0).then_some(bpb.sectors_per_track.into()),
+        heads: (bpb.heads != 0).then_some(bpb.heads.into()),
+    })
+}
+
 /// What recognizing FAT on one volume established (P18). These are the
 /// filesystem's own declarations: the geometry here is what the boot
 /// record states, and it manufactures no physical drive.

@@ -18,7 +18,10 @@ One core, two bindings:
   two classes — the library's own deny-write open, and the caller's
   handle honoured as it was afforded — the native qcow2 and VDI drivers with
   their backing and differencing chains, MBR partition discovery,
-  FAT12/FAT16 volume read/write, the assurance gate that meets a
+  FAT12/FAT16 volume read/write, the discovered geometry a medium's
+  sector verbs address in — read from the sources that state one, with
+  disagreement reported rather than settled — the assurance gate that
+  meets a
   short source with a bounded read-only reading, and the commit-point
   session cache that keeps every write revocable until committed. The
   **namespace composer** above that stack, which derives a DOS

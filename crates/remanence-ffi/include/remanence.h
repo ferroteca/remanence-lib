@@ -107,6 +107,18 @@ typedef enum {
   REMANENCE_ASSURANCE_OUTCOME_REFUSED = 2,
 } RemanenceAssuranceOutcome;
 
+// What the evidence established about a medium's geometry.
+typedef enum {
+  // No source beneath the medium states a whole geometry — an
+  // archive's answer, and a block image whose sources stayed silent.
+  REMANENCE_GEOMETRY_STATE_UNSTATED = 0,
+  // Every part is established and the readings agree.
+  REMANENCE_GEOMETRY_STATE_DETERMINED = 1,
+  // Two sources state different values for the same part. Both
+  // readings stand and neither settles it.
+  REMANENCE_GEOMETRY_STATE_UNDETERMINED = 2,
+} RemanenceGeometryState;
+
 // How a schema declares a region: data, which composition may consume, or
 // structure, which it may not.
 typedef enum {
@@ -286,6 +298,10 @@ typedef struct RemanenceFileData RemanenceFileData;
 
 // What a g64 rendition carried, or will carry, of one image.
 typedef struct RemanenceG64Report RemanenceG64Report;
+
+// One medium's geometry as the evidence left it. Free it with
+// `remanence_geometry_free`; every string it returns is owned by it.
+typedef struct RemanenceGeometry RemanenceGeometry;
 
 // The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
@@ -731,7 +747,12 @@ const char *remanence_device_slot_flux_path(size_t index);
 const char *remanence_device_slot_scheme(size_t index);
 
 // How slot `index`'s device type addresses its recording — `sector` or
-// `block`. Null outside the hard-drive class.
+// `block`. Every device type declares one; null for the archive
+// receiver, which is no device type at all.
+//
+// A `sector` type is one whose medium answers
+// `remanence_medium_get_sector` and `remanence_medium_put_sector`, in
+// the coordinates that medium's own geometry established.
 const char *remanence_device_slot_addressing(size_t index);
 
 // Identifies the artifact at `path` (UTF-8) — a disk image, or
@@ -1451,6 +1472,127 @@ uint64_t remanence_medium_size(const RemanenceMedium *medium);
 
 // Whether uncommitted changes exist.
 bool remanence_medium_is_modified(const RemanenceMedium *medium);
+
+// The geometry the sources beneath this medium stated: what was
+// settled, what they contradict each other about, and every reading
+// taken.
+//
+// It was established when the medium was loaded and is evidence from
+// then on — nothing re-reads a boot record behind a caller. Null only
+// once the medium itself has been released.
+RemanenceGeometry *remanence_medium_geometry(const RemanenceMedium *medium);
+
+// Frees a geometry record and everything borrowed from it.
+void remanence_geometry_free(RemanenceGeometry *geometry);
+
+// What the evidence established.
+RemanenceGeometryState remanence_geometry_state(const RemanenceGeometry *geometry);
+
+// The coordinates, where the evidence settled them: cylinders, heads,
+// sectors per track and bytes per sector, written to whichever outputs
+// are non-null. False where nothing settled them, leaving every output
+// untouched — the state says which of the two absences it is.
+//
+// Cylinders and heads number from zero and sectors from one, which is
+// the recording's own convention.
+bool remanence_geometry_coordinates(const RemanenceGeometry *geometry,
+                                    uint32_t *cylinders_out,
+                                    uint32_t *heads_out,
+                                    uint32_t *sectors_per_track_out,
+                                    uint64_t *sector_bytes_out);
+
+// How many parts of the coordinates the sources contradict each other
+// about.
+size_t remanence_geometry_conflict_count(const RemanenceGeometry *geometry);
+
+// One conflict, naming both readings, or null when the index is out of
+// range.
+const char *remanence_geometry_conflict(const RemanenceGeometry *geometry, size_t index);
+
+// How many parts of the coordinates no source settled. Zero for a
+// determined geometry.
+size_t remanence_geometry_unsettled_count(const RemanenceGeometry *geometry);
+
+// One unsettled part, named the way the refusals name it, or null when
+// the index is out of range.
+const char *remanence_geometry_unsettled(const RemanenceGeometry *geometry, size_t index);
+
+// How many readings were taken, in the order the sources were read.
+size_t remanence_geometry_reading_count(const RemanenceGeometry *geometry);
+
+// Reading `index`'s source, by its stable spelling —
+// `format-declaration`, `boot-record`, `partition-table` or
+// `extent-arithmetic`.
+const char *remanence_geometry_reading_source(const RemanenceGeometry *geometry, size_t index);
+
+// Where in the artifact reading `index` was taken.
+const char *remanence_geometry_reading_at(const RemanenceGeometry *geometry, size_t index);
+
+// What reading `index`'s source states, in its own terms.
+const char *remanence_geometry_reading_detail(const RemanenceGeometry *geometry, size_t index);
+
+// The cylinder count reading `index` states. False where that source
+// states none, which is ordinary: a boot record states no cylinder
+// count at all.
+bool remanence_geometry_reading_cylinders(const RemanenceGeometry *geometry,
+                                          size_t index,
+                                          uint32_t *out);
+
+// The head count reading `index` states. False where it states none.
+bool remanence_geometry_reading_heads(const RemanenceGeometry *geometry,
+                                      size_t index,
+                                      uint32_t *out);
+
+// The sectors-per-track reading `index` states. False where it states
+// none.
+bool remanence_geometry_reading_sectors_per_track(const RemanenceGeometry *geometry,
+                                                  size_t index,
+                                                  uint32_t *out);
+
+// The sector size reading `index` states. False where it states none.
+bool remanence_geometry_reading_sector_bytes(const RemanenceGeometry *geometry,
+                                             size_t index,
+                                             uint64_t *out);
+
+// How many geometry sources this release reads.
+size_t remanence_geometry_source_count(void);
+
+// One claimed source's stable identity, or null when the index is out
+// of range. The set is enumerated (P3), so a caller can hold every
+// identity it may meet without waiting to meet one.
+const char *remanence_geometry_source_name(size_t index);
+
+// Reads one whole sector in the recording's own coordinates into
+// `buffer_out`, which is exactly one sector of this recording.
+//
+// Cylinders and heads number from zero and sectors from one. It answers
+// on a sector-addressed recording whose geometry the evidence
+// established and refuses by name otherwise, the rule identity in
+// `error_rule_out` naming which: `not-sector-addressed`,
+// `geometry-unstated`, `geometry-undetermined`, `outside-geometry` or
+// `partial-sector`.
+bool remanence_medium_get_sector(RemanenceMedium *medium,
+                                 uint32_t cylinder,
+                                 uint32_t head,
+                                 uint32_t sector,
+                                 uint8_t *buffer_out,
+                                 size_t length,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
+
+// Writes one whole sector in the recording's own coordinates,
+// **buffered until `remanence_medium_commit`** like every other write
+// (P2), under the same rules `remanence_medium_get_sector` answers by.
+bool remanence_medium_put_sector(RemanenceMedium *medium,
+                                 uint32_t cylinder,
+                                 uint32_t head,
+                                 uint32_t sector,
+                                 const uint8_t *data,
+                                 size_t length,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
 
 // How many partition schemes this release reads (P16).
 size_t remanence_partition_scheme_count(void);

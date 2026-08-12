@@ -20,6 +20,55 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **Discovered geometry: the recording's own coordinates, read as
+  evidence and never declared.** `Medium::geometry()` answers a
+  `Geometry` — what the sources beneath the medium stated about its
+  coordinates, established when the medium was loaded and evidence from
+  then on. The sources are enumerated (`GeometrySource`): the image
+  format's own declaration where it makes one (`h8d` records 40
+  cylinders of one side at ten 256-byte sectors) or the block size a raw
+  load declared, a FAT boot record's recorded sectors-per-track, heads
+  and bytes-per-sector, the partition table's addressing unit and its
+  **end tuples** where one solves against the extent the same entry
+  declares, and arithmetic over the content's own extent for the
+  cylinder count. Every `GeometryReading` keeps the parts its source
+  actually states, where in the artifact it was taken, and what it says
+  in its own terms (P4).
+
+  **Sources that disagree settle nothing.** Where two readings state
+  different values for one part of the coordinates, the state is
+  `Undetermined`, both readings stand, and `conflicts()` names what
+  disagrees with what — nothing ranks sources or breaks ties. Where
+  nothing states one at all the state is `Unstated`, kept distinct
+  because "no source spoke" and "the sources contradict each other" are
+  different facts about an artifact; `unsettled()` names which parts are
+  missing either way. A geometry is whole or it is nothing: a record
+  with holes in it would address nothing.
+
+  **`Medium::get_sector` and `Medium::put_sector`** address in what that
+  established — cylinders and heads numbering from zero and **sectors
+  from one**, which is the recording's convention rather than this
+  library's — on the device types whose `addressing()` says `sector`. A
+  write buffers until `commit()` like every other write (P2). Everything
+  else refuses by name, its own `GeometryRule` set saying which:
+  `not-sector-addressed` for a block-addressed drive or a medium no
+  device recorded, `geometry-unstated` and `geometry-undetermined` for
+  the two evidence states with no coordinates to offer,
+  `outside-geometry` for a coordinate the geometry does not cover — or
+  one it covers and the content does not hold — and `partial-sector` for
+  a buffer that is not one whole sector.
+
+  In C: `remanence_medium_geometry` and `remanence_geometry_free`, with
+  `remanence_geometry_state`, `_coordinates`, `_conflict_count`/
+  `_conflict`, `_unsettled_count`/`_unsettled`, `_reading_count` and the
+  `remanence_geometry_reading_*` readers (source, at, detail, cylinders,
+  heads, sectors per track, sector bytes), plus
+  `remanence_geometry_source_count`/`_source_name` and
+  `remanence_medium_get_sector`/`_put_sector`. In Python: the
+  `Medium.geometry` property answering a `Geometry` of `GeometryReading`
+  records, `Medium.get_sector(cylinder, head, sector)` answering
+  `bytes`, `Medium.put_sector(…, data)`, and `geometry_sources()`.
+
 - **Device types: one identity per medium naming the device its content
   was recorded by.** The catalog is enumerated in two levels — the
   **class** (`DeviceType::Floppy`, `DeviceType::HardDrive`, with optical
@@ -204,6 +253,18 @@ rather than bridged. Read every entry below in that light.
   one does.
 
 ### Changed
+
+- **Every device type declares how it addresses its recording.**
+  `DeviceType::addressing()` answers `"sector"` or `"block"` rather than
+  `Option`: the floppy class was left unanswered when the attribute
+  landed, and it is `sector` — a floppy drive steps to a track and reads
+  records around it, whatever geometry the disk in it was recorded
+  under. It is the type's half of the sector verbs and the medium's
+  discovered geometry is the other: the type declares *that* there are
+  coordinates, the evidence says how many of each. The C and Python
+  slot catalogs are unchanged in shape (`remanence_device_slot_addressing`
+  and `DeviceSlot.addressing` are null only for the archive receiver,
+  which is no device type at all).
 
 - **In-force P14 is amended: the recording side is the device type.**
   The principle gains the device-type catalog and its granularity rule

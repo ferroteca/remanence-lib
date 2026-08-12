@@ -110,6 +110,51 @@ let mut volume = medium
 volume.read_at(0, &mut boot_record)?;
 ```
 
+**Geometry is discovered, and the sector verbs address in it.** What a
+drive fixes lives in its type; how one disk was laid out varies disk to
+disk, so `medium.geometry()` is *read* off the artifact when the medium
+loads and is evidence from then on — nothing declares a geometry onto a
+medium that exists. Four sources may speak, and each reading keeps where
+it came from: the image format's own declaration (an `.h8d` records 40
+cylinders of one side at ten 256-byte sectors) or the block size a raw
+load declared, a FAT boot record's recorded sectors-per-track and heads,
+the partition table's end tuples where one solves against the extent the
+same entry declares, and arithmetic over the content's extent for the
+cylinder count. **Sources that disagree settle nothing**: the state is
+`Undetermined`, both readings come back, and neither is preferred.
+Nothing states one at all is `Unstated`, which is a different fact and
+kept as one.
+
+`get_sector` and `put_sector` address in what that established — on the
+device types whose `addressing()` says `sector`, which is every floppy
+and the CHS hard drive. Cylinders and heads number from zero and
+**sectors from one**, because that is the recording's convention rather
+than this library's. Everything else refuses by name, its own rule set
+saying which: a block-addressed drive or a medium no device recorded has
+no such coordinates at all, an unsettled geometry has none to address in
+and points at the readings, and a coordinate the geometry does not cover
+— or one it covers and the content does not hold — is refused rather
+than answered with zeros. A write buffers until `commit()` like every
+other write.
+
+```rust
+// What the artifact said about its own coordinates, and who said it.
+let geometry = medium.geometry();
+match geometry.determined() {
+    Some(coordinates) => println!("{coordinates}"),   // 131 cylinders of 16 heads…
+    None => println!("{}: {:?}", geometry.state(), geometry.conflicts()),
+}
+for reading in geometry.readings() {
+    println!("  [{}] {}: {}", reading.source, reading.at, reading.detail);
+}
+
+// One sector in those coordinates: cylinder 0, head 0, sector 1 is the
+// first record of the recording, wherever the image format puts it.
+let mut sector = [0u8; 512];
+medium.get_sector(0, 0, 1, &mut sector)?;
+medium.put_sector(0, 0, 1, &sector)?;     // buffered until commit
+```
+
 **An archive is a medium like any other.** A `.zip` or `.7z` is loaded
 by its declared grammar and may be seated in an archive-family device,
 and its content **is** its namespace — the same node a disk's filesystem
@@ -517,6 +562,14 @@ with open("disk.h8d", "rb") as source:
 print(medium.assurance.outcome, medium.assurance.claim, medium.mode)
 for layer in medium.identify().layers:
     print(layer.kind, layer.id, layer.confidence)
+
+# What the artifact said about its own coordinates, and who said it.
+geometry = medium.geometry
+print(geometry.state, geometry.cylinders, geometry.heads,
+      geometry.sectors_per_track, geometry.sector_bytes)
+for reading in geometry.readings:            # `conflicts` where they disagree
+    print(" ", reading.source, reading.at, reading.detail)
+first = medium.get_sector(0, 0, 1)           # sectors number from one
 
 # Content is reached through the partition that composes it: this image
 # records no scheme, so the direct partition is the whole of it, and the

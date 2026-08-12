@@ -23,6 +23,12 @@
 //! the scheme is part of what the machine's controller and firmware fix
 //! — and why the generic sector floppy carries no geometry, which is
 //! per-media and arrives as discovered evidence, never as a type fact.
+//! The two halves of that cut meet at the sector verbs: a type declares
+//! **that** it is addressed by cylinder, head and sector
+//! ([`DeviceType::addressing`]), and the medium's own
+//! [`Geometry`](crate::Geometry) is what says how many of each — one
+//! declared, the other discovered, and neither standing in for the
+//! other.
 //!
 //! **The definition has one home: one spec shape per class, one instance
 //! per concrete type.** The enumeration is the instantiation — each
@@ -95,10 +101,16 @@ pub enum DeviceType {
     HardDrive(HardDrive),
 }
 
-/// How a hard-drive type addresses its recording — the half of the
-/// addressing surface its scheme does not already imply.
+/// How a type addresses its recording: by the recording's own cylinder,
+/// head and sector, or by logical block number.
+///
+/// It is part of the addressing surface the granularity rule says a
+/// device type fixes, and it is what decides whether a medium answers
+/// the sector verbs at all — the geometry those verbs address *in* is
+/// discovered evidence, and this is the type's own declaration that
+/// there are coordinates to discover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Addressing {
+pub(crate) enum Addressing {
     Sector,
     Block,
 }
@@ -142,6 +154,12 @@ struct FloppySpec {
     /// The article this type is served (P14). Composed, never restated:
     /// the article's own facts stay in the article catalog.
     article: &'static MediaProfile,
+    /// How this type addresses its recording. Every floppy in the
+    /// catalog is sector-addressed — a floppy drive steps to a track and
+    /// reads records around it, which is what a cylinder, head and
+    /// sector name — and *what* geometry each disk was recorded under
+    /// stays per-media, discovered rather than declared here.
+    addressing: Addressing,
     /// The family half of every attachment identity a device of this
     /// type answers to. Types may share one — two Heathkit controllers
     /// fill the same kind of slot — because a slot names a place, not a
@@ -175,6 +193,7 @@ static C1541_SPEC: FloppySpec = FloppySpec {
                  5.25-inch media, with a claimed physical recording path",
     article: &FLEXIBLE_5_25_SOFT,
     slot_prefix: "cbmfloppy",
+    addressing: Addressing::Sector,
     flux_path: Some(&drive_profile::C1541),
 };
 
@@ -187,6 +206,7 @@ static H17_SPEC: FloppySpec = FloppySpec {
                  holes dividing the revolution",
     article: &FLEXIBLE_5_25_HARD_10,
     slot_prefix: "heathfloppy",
+    addressing: Addressing::Sector,
     flux_path: None,
 };
 
@@ -200,6 +220,7 @@ static H37_SPEC: FloppySpec = FloppySpec {
                  hold but never serve",
     article: &FLEXIBLE_5_25_SOFT,
     slot_prefix: "heathfloppy",
+    addressing: Addressing::Sector,
     flux_path: None,
 };
 
@@ -212,6 +233,7 @@ static SECTOR_FLOPPY_SPEC: FloppySpec = FloppySpec {
                  evidence rather than as a fact of the type",
     article: &FLEXIBLE_5_25_SOFT,
     slot_prefix: "floppy",
+    addressing: Addressing::Sector,
     flux_path: None,
 };
 
@@ -377,14 +399,23 @@ impl DeviceType {
         }
     }
 
-    /// How a hard-drive type addresses its recording — `sector` or
-    /// `block` — and `None` for the floppy class, whose addressing is
-    /// the recording's own coordinates (F58's surface, not a spec
-    /// string).
-    pub fn addressing(self) -> Option<&'static str> {
+    /// How this type addresses its recording — `sector` or `block`.
+    ///
+    /// Every type declares one: it is part of the addressing surface the
+    /// granularity rule says a device type fixes. A sector-addressed
+    /// type is one whose medium answers
+    /// [`get_sector`](crate::Medium::get_sector) and
+    /// [`put_sector`](crate::Medium::put_sector), in the coordinates the
+    /// medium's own geometry establishes; a block-addressed one refuses
+    /// them by name, having no cylinder or head to be told about.
+    pub fn addressing(self) -> &'static str {
+        self.addressing_kind().name()
+    }
+
+    pub(crate) fn addressing_kind(self) -> Addressing {
         match self {
-            Self::Floppy(_) => None,
-            Self::HardDrive(drive) => Some(drive.spec().addressing.name()),
+            Self::Floppy(floppy) => floppy.spec().addressing,
+            Self::HardDrive(drive) => drive.spec().addressing,
         }
     }
 
@@ -675,13 +706,26 @@ mod tests {
 
         assert_eq!(
             DeviceType::HardDrive(HardDrive::MbrSector).addressing(),
-            Some("sector")
+            "sector"
         );
         assert_eq!(
             DeviceType::HardDrive(HardDrive::Gpt).addressing(),
-            Some("block"),
+            "block",
             "GPT implies block addressing by its own definition"
         );
+        for floppy in [
+            FloppyDrive::Commodore1541,
+            FloppyDrive::HeathH17,
+            FloppyDrive::HeathH37,
+            FloppyDrive::Sector,
+        ] {
+            assert_eq!(
+                DeviceType::Floppy(floppy).addressing(),
+                "sector",
+                "a floppy drive steps to a track and reads records around it, \
+                 whatever geometry the disk in it was recorded under"
+            );
+        }
 
         // The declared scheme and the readable one are different claims:
         // MBR reads, and GPT refuses by name rather than pretending.

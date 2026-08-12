@@ -39,6 +39,7 @@ use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::filesystem::Catalog;
 use crate::filesystem_catalog::FilesystemAdapter;
+use crate::geometry::{self, Geometry, GeometrySources};
 use crate::journal;
 use crate::mbr::{self, Discovery};
 use crate::media::Format;
@@ -248,6 +249,12 @@ pub(crate) struct MediaState {
     /// which answers what an artifact *is* without asserting which drive
     /// wrote it. The media pool refuses to admit such a medium (P3).
     device: Option<DeviceType>,
+    /// The addressable unit the load declared, where the format records
+    /// none of its own — the raw reading's block size, and nothing else.
+    /// It is a declaration about the reading being made rather than one
+    /// laid onto an existing medium, and it enters the geometry as one
+    /// source among the others.
+    declared_sector_bytes: Option<u64>,
     device_identity: DeviceIdentity,
     active_layer: ActiveLayer,
     /// The session's **effective** access (P28): the declared intent's
@@ -583,6 +590,27 @@ impl MediumState {
             }
         }
     }
+
+    /// The geometry this medium bears, established here and nowhere
+    /// else — in the same act as the partition pool, before the medium
+    /// is handed to anyone, and immutable from then on.
+    ///
+    /// **It is read, never declared.** Every source that speaks about
+    /// the recording's coordinates is read once (P4), what they agree on
+    /// is settled, and what they contradict each other about is reported
+    /// as contradicted. Nothing here fails the load: a geometry is
+    /// evidence about the artifact, so a source that cannot be read
+    /// states nothing and the medium answers with whatever the others
+    /// left.
+    ///
+    /// An archive has no coordinates at all — its content is reached by
+    /// name — so it answers unstated without reading anything.
+    pub(crate) fn establish_geometry(&mut self, partitions: &PartitionPool) -> Geometry {
+        match self {
+            Self::Archive(_) => Geometry::unstated(),
+            Self::Space(space) => space.establish_geometry(partitions),
+        }
+    }
 }
 
 /// The refusal a space verb makes on a namespace-native medium.
@@ -778,6 +806,7 @@ impl MediaState {
             descriptor,
             media: descriptor.media,
             device,
+            declared_sector_bytes: declared.and_then(Format::block_bytes),
             device_identity: DeviceIdentity::first(),
             active_layer: descriptor.initial_active_layer,
             mode,
@@ -846,6 +875,37 @@ impl MediaState {
         self.require_usable()?;
         let mut composed = self.composed();
         mbr::classify(&mut composed)
+    }
+
+    /// Reads every source that states part of the recording's
+    /// coordinates and settles what they agree on.
+    ///
+    /// The positions the boot records could be at are the partition
+    /// pool's own — the pool was established first, so nothing here
+    /// hunts for a volume — and the table's end tuples are read only
+    /// where a scheme was actually read. A medium whose state is
+    /// unusable states nothing rather than refusing: the load is not
+    /// conditional on establishing a geometry.
+    pub(crate) fn establish_geometry(&mut self, partitions: &PartitionPool) -> Geometry {
+        if self.require_usable().is_err() {
+            return Geometry::unstated();
+        }
+        let boot_records: Vec<(u32, u64)> = partitions
+            .partitions()
+            .iter()
+            .filter(|partition| partition.is_addressable())
+            .filter_map(|partition| Some((partition.ordinal(), partition.start_bytes()?)))
+            .collect();
+        let sources = GeometrySources {
+            format_id: self.descriptor.id,
+            format_disk: self.descriptor.disk,
+            declared_sector_bytes: self.declared_sector_bytes,
+            reads_table: partitions.scheme().is_some(),
+            boot_records: &boot_records,
+            extent_bytes: self.size(),
+        };
+        let mut composed = self.composed();
+        geometry::establish(&mut composed, sources)
     }
 
     /// Opens the namespace `adapter` reads, over one partition's extent
