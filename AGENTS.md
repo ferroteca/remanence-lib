@@ -473,11 +473,18 @@ compiled into the wheel.
   the owner's own private, unpublished flux-capture research
   implementation — owner-authored throughout, so title to every line
   is already the project's. `deflate.rs` is an original RFC 1951/1950
-  encoder written for this port. The golden fixtures those modules'
-  tests compare against (`pinball-construction-set-c64.*` under
-  `tests/fixtures/`) are that research implementation's own rendered
-  outputs, copied in by hand, never fetched, and never tracked — the
-  tests skip with a note when they are absent.
+  encoder written for this port. **Nothing in the suite compares against
+  that implementation's own rendered output.** It did once — the port was
+  validated against its d64, g64 and `.remanence` renderings of the same
+  capture, which was the right check while porting and the wrong one to
+  leave standing. Those artifacts were reduced from a pooled pair of
+  captures this repository does not hold, so equality was never possible
+  and the thresholds were chosen to fit rather than derived from
+  anything; a prior program by the same author in the same lineage is no
+  independent oracle in any case; and the comparisons skipped silently
+  when the untracked artifacts were absent, so a suite that had stopped
+  checking still reported green. The flux tests now assert what the
+  formats and the model fix.
 - `crates/remanence/tests/fixtures/` holds the test fixtures.
   `test-fixture-prep/prep_fixtures.py` (run with `uv run --directory
   test-fixture-prep`; testing-prep/test-rigs/README.md) prepares them: it downloads the

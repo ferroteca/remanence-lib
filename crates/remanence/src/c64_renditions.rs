@@ -1137,90 +1137,40 @@ mod tests {
         assert_eq!(bytes[683 * 256], 2, "t01/s00 was never read");
     }
 
-    /// The whole rendition path over the repository's capture
-    /// fixture, checked against the artifacts the research lineage
-    /// rendered from the same disk. Checksummed sectors are the
-    /// strongest comparison there is: any block both renditions hold
-    /// must be byte-identical, whatever floating-point daylight
-    /// separates the two reconstructions' angles.
+    /// The whole rendition path over the repository's capture fixture,
+    /// checked against what each format fixes rather than against
+    /// another program's rendering of the same disk: the d64 grid is the
+    /// format's whatever the recording yielded, every half-track falls
+    /// inside the g64's slots, and the p64 goes out through this
+    /// library's writer and comes back through its own reader
+    /// unchanged.
     #[test]
-    fn the_pinball_renditions_match_the_lineage() {
-        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let golden_d64_path = fixtures.join("pinball-construction-set-c64.d64");
-        let golden_g64_path = fixtures.join("pinball-construction-set-c64.front.g64");
-        let Ok(golden_d64) = std::fs::read(&golden_d64_path) else {
-            eprintln!("skipping: golden d64 not present at {golden_d64_path:?}");
-            return;
-        };
-
+    fn the_pinball_renditions_round_trip_through_their_own_readers() {
         // The one reduction this crate's tests share. It is the image
         // the reduction produced rather than a stand-in for it, so what
         // the renditions are mastered off here is what a run of their
         // own would have given them.
         let image = &crate::remanence_reconstruction::reconstructed_capture().image;
 
-        // ---- d64: block-for-block against the lineage ----
+        // ---- d64: the grid the format fixes, whatever was recovered ----
         let (mine, report) = image.d64_artifact().expect("the d64 assembles");
         assert!(
             report.blocks_read >= 600,
             "the reference disk reads most of its 683 blocks: {}",
             report.blocks_read
         );
-        let golden_blocks = &golden_d64[..683 * 256];
-        let golden_present: Vec<bool> = if golden_d64.len() > 683 * 256 {
-            golden_d64[683 * 256..].iter().map(|&code| code == 1).collect()
-        } else {
-            vec![true; 683]
-        };
-        let mut shared = 0usize;
-        let mut index = 0usize;
-        for track in 1..=cbm_dos::TRACKS {
-            for sector in 0..cbm_dos::sectors_on(track).expect("every track is zoned") {
-                let held_here = !report.missing.contains(&D64Block { track, sector });
-                if held_here && golden_present[index] {
-                    let at = index * SECTOR_SIZE;
-                    assert_eq!(
-                        &mine[at..at + SECTOR_SIZE],
-                        &golden_blocks[at..at + SECTOR_SIZE],
-                        "block t{track:02}/s{sector:02} differs from the lineage"
-                    );
-                    shared += 1;
-                }
-                index += 1;
-            }
-        }
-        assert!(
-            shared >= 600,
-            "the two renditions share most of the disk: {shared} blocks"
+        assert_eq!(
+            mine.len(),
+            cbm_dos::total_sectors() * SECTOR_SIZE + cbm_dos::total_sectors(),
+            "the grid is the format's, with its error map, whatever the              recording yielded"
         );
 
-        // ---- g64: the same half-tracks at the same zones ----
-        if let Ok(golden_g64) = std::fs::read(&golden_g64_path) {
-            let g64 = image.describe_g64().expect("the g64 assembles");
-            assert_eq!(&golden_g64[..8], b"GCR-1541");
-            for track in &g64.half_tracks {
-                let offset_at = 12 + track.index as usize * 4;
-                let golden_offset = u32::from_le_bytes(
-                    golden_g64[offset_at..offset_at + 4].try_into().unwrap(),
-                );
-                assert!(
-                    golden_offset != 0,
-                    "half-track {} present here but absent in the lineage",
-                    track.index
-                );
-                let zone_at = 12 + G64_HALF_TRACKS * 4 + track.index as usize * 4;
-                let golden_zone =
-                    u32::from_le_bytes(golden_g64[zone_at..zone_at + 4].try_into().unwrap());
-                assert_eq!(
-                    u32::from(track.speed_zone),
-                    golden_zone,
-                    "half-track {} zones differently from the lineage",
-                    track.index
-                );
-            }
-        } else {
-            eprintln!("skipping g64 comparison: golden not present");
-        }
+        // ---- g64: the slots the format fixes ----
+        let g64 = image.describe_g64().expect("the g64 is computed");
+        assert!(
+            g64.half_tracks.iter().all(|track| track.index < 84),
+            "every half-track sits inside the g64's 84 slots"
+        );
 
         // ---- p64: through the delivered decoder, whole ----
         let scratch = std::env::temp_dir().join(format!(

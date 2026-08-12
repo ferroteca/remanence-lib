@@ -689,47 +689,4 @@ mod tests {
         assert_eq!(decoded.points(&orbit).expect("points decode"), points);
     }
 
-    #[test]
-    fn the_research_lineage_artifact_reads_whole() {
-        // The golden fixture is an artifact the research
-        // implementation wrote from the same capture the repository's
-        // flux tests key off. It is not downloadable, so its absence
-        // skips rather than fails; prep_fixtures.py names where it
-        // comes from.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/pinball-construction-set-c64.pooled.remanence");
-        let Ok(bytes) = std::fs::read(&path) else {
-            eprintln!("skipping: golden remanence fixture not present at {path:?}");
-            return;
-        };
-
-        let image = from_bytes(&bytes).expect("the lineage artifact decodes");
-        assert_eq!(image.form_factor(), MediaFormFactor::Inch525);
-        assert!(
-            image.orbit_count() > 30,
-            "a whole side reconstructs tens of orbits: {}",
-            image.orbit_count()
-        );
-        let total_points: u64 = image.orbits().map(|orbit| orbit.points()).sum();
-        assert!(
-            total_points > 1_000_000,
-            "a whole side carries over a million transitions: {total_points}"
-        );
-        // Every orbit decodes and validates under the model's own
-        // rules — the file and a constructed image are held to one
-        // standard.
-        for orbit in image.orbits() {
-            let points = image.points(orbit).expect("every orbit decodes");
-            validate_orbit_points(&points).expect("every orbit validates");
-        }
-
-        // Re-encoded by this library and decoded again, the model is
-        // unchanged — cross-implementation byte identity is not
-        // claimed, model identity is.
-        let encoded = to_bytes(&image).expect("the image re-encodes");
-        let again = from_bytes(&encoded).expect("our own artifact decodes");
-        assert_eq!(again.orbit_count(), image.orbit_count());
-        let restored: u64 = again.orbits().map(|orbit| orbit.points()).sum();
-        assert_eq!(restored, total_points);
-    }
 }
