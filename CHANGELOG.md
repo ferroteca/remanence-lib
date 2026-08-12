@@ -20,6 +20,44 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **Lookups answer with absence, and the lifecycle is create, lookup,
+  release.** Every in-memory lookup in the storage model — `machine`,
+  `device`, `medium`, and their `_mut` forms — answers with an `Option`:
+  a question about what a session holds has an honest negative answer,
+  and nothing is manufactured to report it. **The `require_*` forms are
+  gone** — `Session::require_machine`, `Session::require_device`,
+  `MachineView::require_device`, `MachineView::into_required_device` and
+  `DeviceView::require_medium` — because a demand belongs where the
+  caller knows what an absence means; the code that wanted one now
+  writes it. Creation refusals are untouched: a duplicate machine
+  identity, a slot already taken and the empty identity are still
+  refused by name, being the world saying no rather than a lookup
+  finding nothing.
+
+  **The removal verbs unify as `release_*`.** `MachineView::remove_device`
+  and `Session::remove_device` become `release_device`, joining
+  `release_machine` and `release_media` — so the three pools read the
+  same way and each says what it takes: `release_machine` cascades
+  (every device ejected, severing, so each medium stays pooled with its
+  claim and its buffered changes, then the devices, then the machine),
+  `release_device` ejects first and frees the slot, and `release_media`
+  severs its own link and then ends the claim. A release names an
+  identity that resolves to nothing, unlike a lookup, which answers it.
+
+  In C: `remanence_session_remove_device` and
+  `remanence_machine_remove_device` become
+  `remanence_session_release_device` and
+  `remanence_machine_release_device`, and the lookups —
+  `remanence_session_machine`, `remanence_session_device`,
+  `remanence_machine_device`, `remanence_session_medium`,
+  `remanence_device_medium` — return null for an absence without
+  touching the error outs, which is why they take none. In Python:
+  `Session.machine`, `Session.device` and `Machine.device` return `None`
+  where nothing answers, and `Session.remove_device` /
+  `Machine.remove_device` become `release_device`. An attachment
+  identity that names no claimed slot at all still raises there: that is
+  a refusal, not an empty slot.
+
 - **The medium becomes the content handle, and the session grows a media
   pool.** The structural heart of the media-first storage model. A
   `Session` now owns two pools — machines, which are configuration, and

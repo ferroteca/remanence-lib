@@ -48,7 +48,8 @@ fn load_entry(
     let disk = session.load_discovery(discovery)?.id();
     session.add_machine("h89")?;
     session
-        .require_machine("h89")?
+        .machine_mut("h89")
+        .expect("just added")
         .add_device(DeviceFamily::HEATHKIT_H17)?
         .insert(disk)?;
     Ok((session, disk))

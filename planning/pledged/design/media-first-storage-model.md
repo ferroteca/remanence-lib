@@ -101,13 +101,17 @@ Medium                                         pool-owned, holdable — ALL cont
    error manufactured. Creation, linking, and everything touching
    evidence → `Result`: the world can refuse, and refusals are named
    (P10). `stat` keeps `Result<Option<…>>` — failure to read and
-   honest absence are different answers (U3).
+   honest absence are different answers (U3). *Delivered for the
+   machine, device and media pools; the partition pool and the vantage
+   doors carry it in with F56.*
 3. **Lifecycle.** Create / lookup / release at every pool. No
    get-or-create, no auto-creation, no `require_*` forms — a caller
    who wants a demand writes it. Releasing configuration cascades
    through configuration and severs links; state is destroyed only by
    `release_media` and session drop. Destruction order is construction
-   order reversed, every step spoken.
+   order reversed, every step spoken. *Delivered for the three pools
+   that exist: the `require_*` forms are gone, and `release_machine` /
+   `release_device` / `release_media` are the removal vocabulary.*
 4. **Fact classes.** *Evidence is discovered onto media; declarations
    are configured onto machines; authorship creates media whole.*
    Nothing crosses. A medium's geometry is discovered (format
@@ -344,7 +348,11 @@ the features that make each real.
 - The spelling of the declared partition reading (`as_type`) and of
   `Location` addressing.
 - Whether `release_media` of a linked medium severs (uniform with the
-  cascade) or refuses; the cascade argument says sever.
+  cascade) or refuses; the cascade argument says sever. *Settled: it
+  severs.*
 - The C and Python spellings of the vantage doors and the pool
   lookups (`Option` maps to null/None cleanly; the doors should not
-  multiply handle types).
+  multiply handle types). *Settled for the pool lookups: C answers
+  null without touching the error outs — which is why those entry
+  points take none — and Python answers `None`. The vantage doors are
+  still open, and stay with F56.*

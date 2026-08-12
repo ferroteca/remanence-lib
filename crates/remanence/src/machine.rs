@@ -29,14 +29,18 @@
 //! meaningful than any other's. It serves the caller who is opening
 //! artifacts rather than reconstructing a machine.
 //!
-//! **Every pool here runs the same verbs: create, look up, remove.** A
-//! lookup answers with an `Option` — absence is an answer — and each
-//! carries a `require_*` companion for the caller who means a demand,
-//! which refuses by name and says which identity it could not find.
-//! Removal names what it takes with it: [`Session::release_machine`]
-//! cascades through the configuration below it and severs every link
-//! naming it, [`MachineView::remove_device`] ejects first, and
-//! [`Session::release_media`] is the one verb that destroys state.
+//! **Every pool here runs the same three verbs: create, look up,
+//! release.** A lookup answers with an `Option` — absence is an answer,
+//! and nothing is manufactured to report it — so there is no `require_*`
+//! form and a caller who wants a demand writes it, at the place that
+//! knows what the demand means. Creation still refuses by name (a
+//! duplicate identity, a taken slot, an empty identity), because those
+//! are the world saying no rather than a lookup finding nothing. And the
+//! removals are all spelled `release_*`: [`Session::release_machine`]
+//! cascades through the configuration below it,
+//! [`MachineView::release_device`] ejects first, and
+//! [`Session::release_media`] severs its own link and then ends the
+//! claim.
 
 use std::fs::File;
 use std::path::Path;
@@ -254,18 +258,6 @@ impl Session {
         })
     }
 
-    /// The machine identified `identity`, or the refusal naming it —
-    /// the demand beside the lookup, for the caller who knows the
-    /// absence is an error where they stand.
-    pub fn require_machine(&mut self, identity: &str) -> Result<MachineView<'_>> {
-        if self.machine(identity).is_none() {
-            return Err(Error::not_found(format!(
-                "this session holds no machine identified '{identity}'"
-            )));
-        }
-        Ok(self.machine_mut(identity).expect("just looked it up"))
-    }
-
     /// Releases a machine and everything it configures, **taking no
     /// state with it**: every device is ejected first — severing, so each
     /// medium stays pooled with its claim and its buffered changes — then
@@ -359,9 +351,9 @@ impl Session {
     }
 
     /// Releases the device at `attachment` from the anonymous machine,
-    /// ejecting first, as [`MachineView::remove_device`] does there.
-    pub fn remove_device(&mut self, attachment: AttachmentId) -> Result<()> {
-        self.anonymous_mut().remove_device(attachment)
+    /// ejecting first, as [`MachineView::release_device`] does there.
+    pub fn release_device(&mut self, attachment: AttachmentId) -> Result<()> {
+        self.anonymous_mut().release_device(attachment)
     }
 
     /// The anonymous machine's devices, in the order its slots were
@@ -385,12 +377,6 @@ impl Session {
     /// `eject` and the medium answer on.
     pub fn device_mut(&mut self, attachment: AttachmentId) -> Option<DeviceView<'_>> {
         self.anonymous_mut().into_device(attachment)
-    }
-
-    /// The anonymous machine's device at `attachment`, or a refusal
-    /// naming the empty slot.
-    pub fn require_device(&mut self, attachment: AttachmentId) -> Result<DeviceView<'_>> {
-        self.anonymous_mut().into_required_device(attachment)
     }
 }
 
@@ -548,7 +534,7 @@ impl<'a> MachineView<'a> {
     /// The caller chooses the **slot**, never the name: an attachment
     /// identity is always its family's slot prefix plus its index. A slot
     /// already taken is refused by name rather than displacing what is
-    /// there — releasing a device is [`MachineView::remove_device`], and
+    /// there — releasing a device is [`MachineView::release_device`], and
     /// it is a separate act.
     pub fn add_device_at(
         &mut self,
@@ -627,7 +613,7 @@ impl<'a> MachineView<'a> {
     /// An empty slot is refused by name: this is a removal rather than a
     /// lookup, and a caller told the device is gone learns something a
     /// silent success would hide.
-    pub fn remove_device(&mut self, attachment: AttachmentId) -> Result<()> {
+    pub fn release_device(&mut self, attachment: AttachmentId) -> Result<()> {
         let mut device = self
             .device_mut(attachment)
             .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))?;
@@ -666,20 +652,6 @@ impl<'a> MachineView<'a> {
         })
     }
 
-    /// The device at `attachment`, or a refusal naming the empty slot.
-    pub fn require_device(&mut self, attachment: AttachmentId) -> Result<DeviceView<'_>> {
-        let machine = self.machine.identity().map(ToOwned::to_owned);
-        let device = self
-            .machine
-            .device_mut(attachment)
-            .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))?;
-        Ok(DeviceView {
-            device,
-            pool: self.pool,
-            machine,
-        })
-    }
-
     /// Adds a device and answers with it, consuming this view — the
     /// spelling a session-level convenience needs, where the machine
     /// borrow and the device borrow have the same life.
@@ -705,14 +677,6 @@ impl<'a> MachineView<'a> {
             pool: self.pool,
             machine,
         })
-    }
-
-    /// The same as [`MachineView::into_device`], refusing by name where
-    /// the slot is empty — the spelling a session-level demand needs,
-    /// where the machine borrow and the device borrow have one life.
-    pub fn into_required_device(self, attachment: AttachmentId) -> Result<DeviceView<'a>> {
-        self.into_device(attachment)
-            .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))
     }
 
     /// Puts a fresh device in a slot of `family` — the caller's, or the

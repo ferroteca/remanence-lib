@@ -36,7 +36,7 @@ fn seat(session: &mut Session, machine: Option<&str>, path: &PathBuf) {
         .expect("the image loads")
         .id();
     let mut view = match machine {
-        Some(identity) => session.require_machine(identity).expect("is there"),
+        Some(identity) => session.machine_mut(identity).expect("is there"),
         None => session.anonymous_mut(),
     };
     view.add_device(DeviceFamily::HARD_DISK)
@@ -662,7 +662,7 @@ fn a_machine_letters_its_own_device_set_in_attachment_order() {
     }
 
     let map = session
-        .require_machine("pc")
+        .machine_mut("pc")
         .expect("is there")
         .compose_dos_letters(Some(DosAssignmentRule::MsDos5), &[])
         .expect("composes");

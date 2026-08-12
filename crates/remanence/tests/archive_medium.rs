@@ -405,7 +405,7 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
         .id();
     session.add_machine("h89").expect("the machine is added");
     session
-        .require_machine("h89")
+        .machine_mut("h89")
         .expect("is there")
         .add_device(DeviceFamily::HEATHKIT_H17)
         .expect("added")
@@ -474,7 +474,7 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
 
     // Out comes the archive; the disk keeps reading.
     session
-        .require_device(arc0())
+        .device_mut(arc0())
         .expect("the archive device")
         .eject()
         .expect("ejects");
@@ -486,9 +486,9 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
         .expect("the disk still reads");
     assert_eq!(&tail[..], &bytes[IMAGE_LEN - 32..]);
 
-    // And so does removing the archive's device altogether, and
+    // And so does releasing the archive's device altogether, and
     // releasing the archive itself — the disk is free-standing state.
-    session.remove_device(arc0()).expect("removed");
+    session.release_device(arc0()).expect("released");
     session.release_media(arc).expect("the archive leaves");
     session
         .medium_mut(disk)

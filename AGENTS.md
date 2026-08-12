@@ -246,24 +246,32 @@ ABI, or Python module.
   scope, owning the **media pool** (state) and the machines
   (configuration) independently of each other, a machine being one device
   set with its own attachment identities and attachment order, and the
-  anonymous machine being the one whose identity is null; `load_media`
-  and `load_discovery` fill the media pool and `release_media` empties
-  it, with `MachineView`/`DeviceView` the borrows that hold a node and
-  the pool at once, since linking is the one act that crosses — with
-  `storage_device.rs` the **slot**: its attachment identity
-  (`hdd0`), the acts that fill it (`add_device` on the machine view, then
-  `insert`/`eject`, with an empty device first-class configuration, a
-  medium in the wrong drive refused naming both sides, and **eject
-  severing only** so the claim and buffered writes survive pooled), and
-  the one convenience over discovery that composes them
-  (`add_device_for`, adding a device of the format-declared default
-  family and refusing by name where a format declares none) — **and
-  nothing else: every content verb lives on the medium**, file access
-  included, because a device holding a partitionable medium and bearing
-  `get_file` would be a category error in the type rather than a refusal
-  waiting to happen; `disk.rs` the private
-  `MediaState` a medium homes, with `report.rs` the layered inspection report its
-  records are returned in — device, content outcome, partition schema,
+  anonymous machine being the one whose identity is null; **every pool
+  runs the same three verbs — create, look up, release** — where a
+  lookup (`machine`, `device`, `medium`) answers with an `Option` and
+  nothing is manufactured to report absence, there is no `require_*`
+  form at all (a caller who wants a demand writes it, where they know
+  what the absence means), creation still refuses by name (duplicate
+  identity, taken slot, empty identity), and the removals are all
+  spelled `release_*`: `release_machine` cascades through the
+  configuration below it, `release_device` ejects first, and
+  `release_media` severs its own link then ends the claim; `load_media`
+  and `load_discovery` fill the media pool, and `MachineView`/`DeviceView`
+  are the borrows that hold a node and the pool at once, since linking is
+  the one act that crosses — with `storage_device.rs` the **slot**: its
+  attachment identity (`hdd0`), the acts that fill it (`add_device` on
+  the machine view, then `insert`/`eject`, with an empty device
+  first-class configuration, a medium in the wrong drive refused naming
+  both sides, and **eject severing only** so the claim and buffered
+  writes survive pooled), and the one convenience over discovery that
+  composes the acts (`add_device_for`, adding a device of the
+  format-declared default family and refusing by name where a format
+  declares none) — **and nothing else: every content verb lives on the
+  medium**, file access included, because a device holding a
+  partitionable medium and bearing `get_file` would be a category error
+  in the type rather than a refusal waiting to happen; `disk.rs` the
+  private `MediaState` a medium homes, with `report.rs` the layered
+  inspection report its records are returned in — device, content outcome, partition schema,
   regions, volumes, filesystems, joined by opaque layout-derived
   identities. Unit tests live in their modules; integration tests in `tests/` — synthetic FAT/MBR/qcow2/VDI
   images built in-test, including the truncated floppy the degraded

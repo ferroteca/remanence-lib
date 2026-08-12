@@ -60,8 +60,12 @@ fn load(
         Afford::Write => open_write(path),
     };
     let media = session.load_media(source, Format::Raw)?.id();
+    // A lookup answers with absence; the demand is the caller's to
+    // write, and every call site here added the machine first.
     let mut view = match machine {
-        Some(identity) => session.require_machine(identity).expect("the machine is there"),
+        Some(identity) => session
+            .machine_mut(identity)
+            .expect("the machine was added first"),
         None => session.anonymous_mut(),
     };
     let mut device = view.add_device(DeviceFamily::HARD_DISK)?;
@@ -181,7 +185,7 @@ fn a_machine_reaches_only_its_own_devices() {
     let host = load(&mut session, None, &a, Afford::Read).expect("host loads");
     session.add_machine("h89").expect("the machine is added");
     {
-        let h89 = session.require_machine("h89").expect("is there");
+        let h89 = session.machine_mut("h89").expect("is there");
         assert!(
             h89.device(host).is_none(),
             "the anonymous machine's hdd0 is not this machine's"
@@ -194,14 +198,14 @@ fn a_machine_reaches_only_its_own_devices() {
     let inner = load(&mut session, Some("h89"), &b, Afford::Read).expect("loads its own");
 
     session
-        .require_machine("h89")
+        .machine_mut("h89")
         .expect("is there")
-        .remove_device(inner)
-        .expect("removes its own");
+        .release_device(inner)
+        .expect("releases its own");
 
     assert!(
         session
-            .require_machine("h89")
+            .machine("h89")
             .expect("is there")
             .devices()
             .is_empty(),
@@ -212,13 +216,13 @@ fn a_machine_reaches_only_its_own_devices() {
         "and the anonymous machine's device is untouched"
     );
 
-    // Removing what belongs to another machine is refused, not honored
+    // Releasing what belongs to another machine is refused, not honored
     // across the boundary.
     let error = session
-        .require_machine("h89")
+        .machine_mut("h89")
         .expect("is there")
-        .remove_device(host)
-        .expect_err("a device of another machine is not this one's to remove");
+        .release_device(host)
+        .expect_err("a device of another machine is not this one's to release");
     assert_eq!(error.category(), ErrorCategory::NotFound);
 
     drop(session);
@@ -312,22 +316,32 @@ fn a_machine_identity_is_unique_and_never_empty() {
 }
 
 #[test]
-fn an_unknown_machine_is_refused_by_name_rather_than_created() {
+fn an_unknown_machine_answers_with_absence_rather_than_being_created() {
+    // Every in-memory lookup answers with absence: nothing is
+    // manufactured to report it, and asking never creates what was
+    // asked for. A caller who wants a demand writes it.
     let mut session = Session::new();
 
-    assert!(session.machine("h89").is_none());
-    let error = session
-        .require_machine("h89")
-        .expect_err("a machine that was never added is refused");
-    assert_eq!(error.category(), ErrorCategory::NotFound);
+    assert!(session.machine("h89").is_none(), "absence is the answer");
     assert!(
-        error.to_string().contains("h89"),
-        "names what was asked for: {error}"
+        session.machine_mut("h89").is_none(),
+        "and the working form agrees"
     );
     assert_eq!(
         session.machines().len(),
         1,
         "asking for a machine never creates one"
+    );
+
+    // Releasing is a different act, and it names what resolves to
+    // nothing.
+    let error = session
+        .release_machine("h89")
+        .expect_err("a machine that was never added cannot be released");
+    assert_eq!(error.category(), ErrorCategory::NotFound);
+    assert!(
+        error.to_string().contains("h89"),
+        "names what was asked for: {error}"
     );
 }
 
@@ -360,17 +374,17 @@ fn a_medium_in_a_named_machine_is_read_and_claimed_like_any_other() {
     // Tearing the machine's configuration down takes nothing with it:
     // the device goes, the medium stays, and its claim with it.
     session
-        .require_machine("h89")
+        .machine_mut("h89")
         .expect("is there")
-        .remove_device(id)
-        .expect("removes the device");
+        .release_device(id)
+        .expect("releases the device");
     assert!(
         session
             .medium(media)
             .expect("still pooled")
             .is_linked()
             .eq(&false),
-        "removing the device severed the link and destroyed nothing"
+        "releasing the device severed the link and destroyed nothing"
     );
     assert_eq!(
         session.medium_mut(media).expect("pooled").image_size_bytes(),
@@ -382,6 +396,55 @@ fn a_medium_in_a_named_machine_is_read_and_claimed_like_any_other() {
 
     drop(session);
     std::fs::remove_file(&a).ok();
+}
+
+#[test]
+fn releasing_a_machine_cascades_through_configuration_and_takes_no_state() {
+    // The cascade in full: every device is ejected first — severing, so
+    // each medium stays pooled with its claim and everything buffered —
+    // then the devices go, then the machine. Configuration falls with
+    // its owner; state never does.
+    let a = write_image("cascade-a");
+    let b = write_image("cascade-b");
+    let mut session = Session::new();
+
+    session.add_machine("h89").expect("the machine is added");
+    let first = load(&mut session, Some("h89"), &a, Afford::Read).expect("first seats");
+    let second = load(&mut session, Some("h89"), &b, Afford::Read).expect("second seats");
+
+    let mut media: Vec<MediaId> = Vec::new();
+    for attachment in [first, second] {
+        media.push(
+            session
+                .machine("h89")
+                .expect("is there")
+                .device(attachment)
+                .expect("the device is there")
+                .media_id()
+                .expect("occupied"),
+        );
+    }
+    assert_ne!(first, second, "two slots, two devices");
+
+    session.release_machine("h89").expect("released");
+    assert!(session.machine("h89").is_none(), "the machine is gone");
+
+    assert_eq!(session.media().len(), 2, "and it destroyed nothing");
+    for id in media {
+        assert!(
+            !session.medium(id).expect("the pool kept it").is_linked(),
+            "each link was severed rather than followed"
+        );
+        assert_eq!(
+            session.medium_mut(id).expect("pooled").image_size_bytes(),
+            1024 * 1024,
+            "and each medium still answers"
+        );
+    }
+
+    drop(session);
+    std::fs::remove_file(&a).ok();
+    std::fs::remove_file(&b).ok();
 }
 
 #[test]

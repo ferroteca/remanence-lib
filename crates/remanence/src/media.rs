@@ -571,12 +571,6 @@ impl MediaPool {
         self.media.iter_mut().find(|medium| medium.id == id)
     }
 
-    /// The medium `id` names, or the refusal naming the absence.
-    pub(crate) fn require(&mut self, id: MediaId) -> Result<&mut Medium> {
-        self.get_mut(id)
-            .ok_or_else(|| Error::not_found(format!("this session holds no {id}")))
-    }
-
     /// Takes a medium out of the pool — the one state-destroying act.
     pub(crate) fn take(&mut self, id: MediaId) -> Result<Medium> {
         let at = self

@@ -84,7 +84,12 @@ fn a_device_is_added_empty_and_the_medium_is_inserted_into_it() {
     let id = device.attachment();
     assert_eq!(id.to_string(), "hdd0");
     assert!(!device.is_occupied(), "a fresh device holds nothing");
+
+    // The content verbs are on the medium, and an empty slot holds none:
+    // the lookup answers with absence rather than a manufactured error,
+    // and a caller who wants a demand writes it.
     assert!(device.medium().is_none(), "absence is an answer");
+    assert!(device.medium_mut().is_none(), "and the working form agrees");
 
     device.insert(media).expect("the disk goes in");
     assert!(device.is_occupied());
@@ -158,6 +163,7 @@ fn a_taken_slot_is_refused_by_name_rather_than_displaced() {
 
     let message = error.to_string();
     assert!(message.contains("hdd0"), "names the slot: {message}");
+    assert!(message.contains("release"), "names the remedy: {message}");
 }
 
 #[test]
@@ -173,7 +179,7 @@ fn an_occupied_device_is_refused_a_second_medium() {
         .id();
 
     let error = session
-        .require_device(attachment)
+        .device_mut(attachment)
         .expect("device")
         .insert(second)
         .expect_err("the occupied device is refused");
@@ -221,7 +227,7 @@ fn ejecting_severs_and_the_medium_stays_in_the_pool() {
     let (media, attachment) = seat(&mut session, &a).expect("seats");
 
     let ejected = session
-        .require_device(attachment)
+        .device_mut(attachment)
         .expect("device")
         .eject()
         .expect("ejects");
@@ -240,7 +246,7 @@ fn ejecting_severs_and_the_medium_stays_in_the_pool() {
     assert_eq!(medium.image_size_bytes(), 1024 * 1024);
 
     let again = session
-        .require_device(attachment)
+        .device_mut(attachment)
         .expect("device")
         .eject()
         .expect_err("there is nothing to eject twice");
@@ -252,7 +258,7 @@ fn ejecting_severs_and_the_medium_stays_in_the_pool() {
         .expect("loads")
         .id();
     session
-        .require_device(attachment)
+        .device_mut(attachment)
         .expect("device")
         .insert(second)
         .expect("reseats");
@@ -273,14 +279,14 @@ fn ejecting_severs_and_the_medium_stays_in_the_pool() {
 
 #[test]
 fn releasing_a_device_ejects_first_and_destroys_nothing() {
-    let a = write_image("remove-a");
-    let b = write_image("remove-b");
+    let a = write_image("release-device-a");
+    let b = write_image("release-device-b");
     let mut session = Session::new();
 
     let (media, first) = seat(&mut session, &a).expect("seats");
     assert!(session.device(first).is_some());
 
-    session.remove_device(first).expect("released");
+    session.release_device(first).expect("released");
     assert!(
         session.device(first).is_none(),
         "a released identity resolves to nothing"
@@ -297,6 +303,13 @@ fn releasing_a_device_ejects_first_and_destroys_nothing() {
     // configuration rather than evidence.
     let (_, reused) = seat(&mut session, &b).expect("re-adds");
     assert_eq!(reused.to_string(), "hdd0", "the freed slot is reused");
+
+    // A release is not a lookup: an identity that resolves to nothing is
+    // refused by name rather than answered with success.
+    let missing = session
+        .release_device(AttachmentId::parse("hdd7").expect("parses"))
+        .expect_err("releasing nothing is refused");
+    assert_eq!(missing.category(), ErrorCategory::NotFound);
 
     drop(session);
     std::fs::remove_file(&a).ok();
@@ -319,6 +332,10 @@ fn release_media_is_the_one_state_destroying_verb() {
             .expect("the device stays")
             .is_occupied(),
         "the release severed its own link"
+    );
+    assert!(
+        session.release_media(media).is_err(),
+        "the second release names an identity that resolves to nothing"
     );
 
     // The claim went with it: the artifact is free again.

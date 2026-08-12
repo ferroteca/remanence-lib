@@ -1328,12 +1328,17 @@ impl Session {
     /// The machine carrying `identity`, or the anonymous machine when
     /// `identity` is `None` — the anonymous machine being exactly the
     /// one whose identity is null.
+    ///
+    /// **`None` where the session holds no machine of that identity** —
+    /// absence is an answer, not a manufactured error, and asking never
+    /// creates one. The anonymous machine always answers, a session
+    /// having exactly one of it.
     #[pyo3(signature = (identity = None))]
-    fn machine(&self, identity: Option<&str>) -> PyResult<Machine> {
+    fn machine(&self, identity: Option<&str>) -> Option<Machine> {
         if let Some(identity) = identity {
-            self.lock().require_machine(identity).map_err(to_py_err)?;
+            self.lock().machine(identity)?;
         }
-        Ok(Machine {
+        Some(Machine {
             session: Arc::clone(&self.inner),
             identity: identity.map(str::to_owned),
         })
@@ -1498,12 +1503,11 @@ impl Session {
         })
     }
 
-    /// Removes the device at `attachment` from the anonymous machine,
-    /// **ejecting first**: the link is severed and the medium stays in
-    /// the pool, claim and buffered changes intact.
-    fn remove_device(&self, attachment: &str) -> PyResult<()> {
+    /// Releases the device at `attachment` from the anonymous machine,
+    /// as `Machine.release_device` does there.
+    fn release_device(&self, attachment: &str) -> PyResult<()> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
-        self.lock().remove_device(attachment).map_err(to_py_err)
+        self.lock().release_device(attachment).map_err(to_py_err)
     }
 
     /// The anonymous machine's attachment identities, in slot-fill
@@ -1519,15 +1523,22 @@ impl Session {
 
     /// The device at `attachment` in the session's anonymous machine —
     /// `Machine.device` reaches a named machine's. The session owns it;
-    /// the returned object stays valid until that device is removed.
-    fn device(&self, attachment: &str) -> PyResult<StorageDevice> {
+    /// the returned object stays valid until that device is released.
+    ///
+    /// **`None` where nothing is attached there** — absence is an
+    /// answer. An `attachment` that names no claimed slot at all is a
+    /// different matter and raises, because that is a refusal rather
+    /// than an empty slot.
+    fn device(&self, attachment: &str) -> PyResult<Option<StorageDevice>> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
-        self.lock().require_device(attachment).map_err(to_py_err)?;
-        Ok(StorageDevice {
+        if self.lock().device(attachment).is_none() {
+            return Ok(None);
+        }
+        Ok(Some(StorageDevice {
             session: Arc::clone(&self.inner),
             machine: None,
             attachment,
-        })
+        }))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -1568,12 +1579,21 @@ pub struct Machine {
 impl Machine {
     /// The machine this handle names, or a refusal where the session no
     /// longer holds it.
+    ///
+    /// The lookup answers with absence; this is the demand written over
+    /// it, because a handle whose machine was released is a stale handle
+    /// rather than a question about an identity.
     fn get<'a>(
         &self,
         session: &'a mut MutexGuard<'_, remanence::Session>,
     ) -> PyResult<remanence::MachineView<'a>> {
         match &self.identity {
-            Some(identity) => session.require_machine(identity).map_err(to_py_err),
+            Some(identity) => session.machine_mut(identity).ok_or_else(|| {
+                categorized_py_err(
+                    remanence::ErrorCategory::NotFound,
+                    format!("this session holds no machine identified '{identity}'"),
+                )
+            }),
             None => Ok(session.anonymous_mut()),
         }
     }
@@ -1652,14 +1672,19 @@ impl Machine {
         })
     }
 
-    /// Removes the device at `attachment` from this machine, **ejecting
+    /// Releases the device at `attachment` from this machine, **ejecting
     /// first**: the link is severed and the medium stays in the session's
-    /// pool, claim and buffered changes intact.
-    fn remove_device(&self, attachment: &str) -> PyResult<()> {
+    /// pool, claim and buffered changes intact. The slot is freed.
+    ///
+    /// Destroying a medium's state is `Session.release_media`, and it is
+    /// the one verb that does. An `attachment` this machine holds no
+    /// device at raises — a release names what resolves to nothing,
+    /// unlike `device`, which answers `None`.
+    fn release_device(&self, attachment: &str) -> PyResult<()> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         let mut session = self.lock();
         self.get(&mut session)?
-            .remove_device(attachment)
+            .release_device(attachment)
             .map_err(to_py_err)
     }
 
@@ -1698,19 +1723,21 @@ impl Machine {
             .collect())
     }
 
-    /// The device at `attachment` in this machine. The session owns it;
-    /// the returned object stays valid until that device is removed.
-    fn device(&self, attachment: &str) -> PyResult<StorageDevice> {
+    /// The device at `attachment` in this machine, or **`None` where
+    /// this machine has no device there** — another machine's `"hdd0"`
+    /// is not this one's. The session owns it; the returned object stays
+    /// valid until that device is released.
+    fn device(&self, attachment: &str) -> PyResult<Option<StorageDevice>> {
         let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
         let mut session = self.lock();
-        self.get(&mut session)?
-            .require_device(attachment)
-            .map_err(to_py_err)?;
-        Ok(StorageDevice {
+        if self.get(&mut session)?.device(attachment).is_none() {
+            return Ok(None);
+        }
+        Ok(Some(StorageDevice {
             session: Arc::clone(&self.session),
             machine: self.identity.clone(),
             attachment,
-        })
+        }))
     }
 }
 
@@ -1790,7 +1817,7 @@ impl StorageDevice {
         if !present {
             return Err(categorized_py_err(
                 remanence::ErrorCategory::NotFound,
-                "this device was removed",
+                "this device was released",
             ));
         }
         Ok(session)

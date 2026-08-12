@@ -27,6 +27,20 @@ drive it sat in and a machine can be torn down without touching one.
 `session.release_media(id)` is the one verb that destroys state. An
 empty drive is configuration in its own right.
 
+**Every pool runs the same three verbs — create, look up, release.** A
+lookup answers with absence: `session.machine("pc")`,
+`session.device(hdd0)` and `session.medium(id)` hand back an `Option` in
+Rust, null in C without touching the error outs, and `None` in Python,
+because a question about what a session holds has an honest negative
+answer and nothing is manufactured to report it. Creation still refuses
+by name — a duplicate machine identity, a slot already taken, the empty
+identity — and so do the removals, which are all spelled `release_*`:
+`release_machine` cascades (each device ejected, so the media stay
+pooled, then the devices, then the machine), `release_device` ejects
+first, and `release_media` severs its own link and then ends the claim.
+There is no `require_*` form anywhere: a caller who wants a demand
+writes it, where they know what the absence means.
+
 `discover_media` answers the other question — *what is this?* — before
 any of that: the exact medium, the drives served it, and the drive the
 image format declares for the disks it records. It opens the artifact by

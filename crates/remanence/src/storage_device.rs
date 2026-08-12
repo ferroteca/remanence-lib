@@ -290,20 +290,6 @@ impl DeviceView<'_> {
         let media = self.device.media_id()?;
         self.pool.get_mut(media)
     }
-
-    /// The medium in this slot, or the refusal naming the empty one —
-    /// the demand beside the lookup, where a caller means to work the
-    /// content and an empty slot is an error rather than an answer.
-    pub fn require_medium(&mut self) -> Result<&mut Medium> {
-        let attachment = self.device.attachment();
-        let media = self.device.media_id().ok_or_else(|| {
-            Error::not_found(format!(
-                "no medium is in {attachment}; the content verbs answer on \
-                 the medium, and there is none here"
-            ))
-        })?;
-        self.pool.require(media)
-    }
 }
 
 #[cfg(test)]

@@ -433,7 +433,7 @@ pub unsafe extern "C" fn remanence_device_insert(
         return false;
     };
     let Some(mut target) = handle.view() else {
-        let error = remanence::Error::io("this device was removed from its machine");
+        let error = remanence::Error::io("this device was released from its machine");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -467,7 +467,7 @@ pub unsafe extern "C" fn remanence_device_eject(
         return false;
     };
     let Some(mut target) = handle.view() else {
-        let error = remanence::Error::io("this device was removed from its machine");
+        let error = remanence::Error::io("this device was released from its machine");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
@@ -1614,7 +1614,7 @@ impl RemanenceMachine {
 /// state of the medium in it.
 ///
 /// **The session owns this; never free it.** It stays valid until the
-/// device is removed or the session is freed.
+/// device is released or the session is freed.
 ///
 /// It names the device by session, machine and attachment identity
 /// rather than by pointer, and re-resolves on every call. That is
@@ -2140,11 +2140,11 @@ pub unsafe extern "C" fn remanence_session_add_device_for(
     }
 }
 
-/// Removes the device at `attachment` from the session's anonymous
-/// machine, releasing any medium's P7 claim with it and freeing the slot.
-/// Borrowed device views for that device become invalid.
+/// Releases the device at `attachment` from the session's anonymous
+/// machine, as `remanence_machine_release_device` does in a named
+/// machine.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_remove_device(
+pub unsafe extern "C" fn remanence_session_release_device(
     session: *mut RemanenceSession,
     attachment: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
@@ -2152,7 +2152,7 @@ pub unsafe extern "C" fn remanence_session_remove_device(
     error_rule_out: *mut *mut c_char,
 ) -> bool {
     unsafe {
-        remove_device(
+        release_device(
             session,
             None,
             attachment,
@@ -2265,8 +2265,9 @@ pub unsafe extern "C" fn remanence_session_machine_identity(
 /// the session's **anonymous machine** when `identity` is null — the
 /// anonymous machine being exactly the one whose identity is null.
 ///
-/// The session owns it; never free it. Returns null when the session
-/// holds no machine of that identity.
+/// The session owns it; never free it. **Null where the session holds no
+/// machine of that identity** — absence is an answer, so this takes no
+/// error outs to leave untouched, and asking never creates a machine.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_machine(
     session: *mut RemanenceSession,
@@ -2405,11 +2406,17 @@ pub unsafe extern "C" fn remanence_machine_add_device_for(
     }
 }
 
-/// Removes the device at `attachment` from this machine, releasing any
-/// medium's P7 claim with it and freeing the slot. Borrowed device views
-/// for that device become invalid.
+/// Releases the device at `attachment` from this machine, **ejecting
+/// first**: the link is severed and the medium stays in the session's
+/// pool, its claim and everything buffered intact. The slot is freed and
+/// borrowed device views for that device become invalid.
+///
+/// Destroying a medium's state is `remanence_session_release_media`, and
+/// it is the one verb that does. Returns false when this machine has no
+/// device at `attachment` — a release names what resolves to nothing,
+/// unlike the lookups, which answer null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_remove_device(
+pub unsafe extern "C" fn remanence_machine_release_device(
     machine: *mut RemanenceMachine,
     attachment: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
@@ -2423,7 +2430,7 @@ pub unsafe extern "C" fn remanence_machine_remove_device(
     };
     let (session, identity) = (handle.session, handle.identity.clone());
     unsafe {
-        remove_device(
+        release_device(
             session,
             identity,
             attachment,
@@ -2516,8 +2523,9 @@ pub unsafe extern "C" fn remanence_machine_device_attachment(
 /// A **borrowed** view of the device at `attachment` in this machine.
 ///
 /// The session owns it; never free it. It stays valid until that device
-/// is removed or the session is freed. Returns null when this machine
-/// has no device there.
+/// is released or the session is freed. **Null where this machine has no
+/// device there** — absence is an answer, and this takes no error outs to
+/// leave untouched.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_machine_device(
     machine: *mut RemanenceMachine,
@@ -2536,8 +2544,9 @@ pub unsafe extern "C" fn remanence_machine_device(
 /// machine's.
 ///
 /// The session owns it; never free it. It stays valid until that device
-/// is removed or the session is freed. Returns null when nothing is
-/// attached there.
+/// is released or the session is freed. **Null where nothing is attached
+/// there** — absence is an answer, and this takes no error outs to leave
+/// untouched.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_device(
     session: *mut RemanenceSession,
@@ -2646,9 +2655,9 @@ unsafe fn add_device_for(
     unsafe { device_view(session, machine, attachment.as_ptr()) }
 }
 
-/// Removes a device from one machine of one session and invalidates every
-/// borrowed view of it.
-unsafe fn remove_device(
+/// Releases a device from one machine of one session and invalidates
+/// every borrowed view of it.
+unsafe fn release_device(
     session: *mut RemanenceSession,
     machine: Option<String>,
     attachment: *const c_char,
@@ -2683,7 +2692,7 @@ unsafe fn remove_device(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return false;
     };
-    match target.remove_device(attachment) {
+    match target.release_device(attachment) {
         Ok(()) => {
             handle
                 .views
@@ -2815,7 +2824,7 @@ pub struct RemanenceAssurance {
 ///
 /// It is available before anything is read, so a caller meets a deficiency
 /// by being told rather than by an operation failing halfway. Null only
-/// when the device holding this medium was removed.
+/// when the device holding this medium was released.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_medium_assurance(
     medium: *const RemanenceMedium,

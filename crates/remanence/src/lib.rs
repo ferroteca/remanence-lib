@@ -26,14 +26,15 @@
 //! the claim and everything buffered surviving in the pool.
 //! [`Session::release_media`] is the one state-destroying verb.
 //!
-//! **Every pool runs the same verbs: create, look up, remove.** A
-//! lookup — [`Session::machine`], [`Session::device`],
+//! **Every pool runs the same three verbs: create, look up, release.**
+//! A lookup — [`Session::machine`], [`Session::device`],
 //! [`Session::medium`] and their `_mut` forms — answers with an
-//! `Option`, absence being an answer rather than an error; each carries
-//! a `require_*` companion for the caller who means a demand, and that
-//! one refuses by name. Removal names what it takes with it —
+//! `Option`, absence being an answer rather than a manufactured error,
+//! and there is no `require_*` form: a caller who wants a demand writes
+//! it, where they know what the absence means. Creation still refuses by
+//! name, and so do the removals, which are all spelled `release_*` —
 //! [`Session::release_machine`] cascading through the configuration
-//! below it, [`MachineView::remove_device`] ejecting first, and
+//! below it, [`MachineView::release_device`] ejecting first, and
 //! [`Session::release_media`] severing its own link before it ends the
 //! claim.
 //!

@@ -49,22 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F54 — Lookups answer with absence; lifecycle is create, lookup, release
-
-In-memory lookups — `machine`, `device`, `medium` — answer `Option`,
-absence being an answer rather than a manufactured error; the
-`require_*` forms are deleted, a caller who wants a demand writing it.
-The removal verbs unify as `release_*`: `release_machine` cascades
-(eject each device — sever, media stay pooled — then release the
-devices, then the machine), `release_device` ejects first,
-`release_media` severs its own link then ends the claim. Creation
-refusals stand (duplicate identity, taken slot, empty identity). C
-lookups return null without touching the error outs; Python returns
-`None`.
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P5, P10;
-U3's absence discipline generalized; U30, U33.
-
 ## F56 — The partition pool and the vantage doors
 
 Partitions become the medium's evidence pool: `partition(n)` by the
