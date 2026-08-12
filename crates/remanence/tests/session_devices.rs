@@ -10,7 +10,10 @@
 
 use std::path::PathBuf;
 
-use remanence::{AttachmentId, DeviceFamily, ErrorCategory, Format, MediaId, Session};
+use remanence::{
+    AttachmentId, DeviceSlot, DeviceType, ErrorCategory, FloppyDrive, Format, HardDrive, MediaId,
+    Session,
+};
 
 mod common;
 use common::{open_read, open_write};
@@ -36,8 +39,16 @@ fn write_image(tag: &str) -> PathBuf {
 /// The three acts, where a test cares about the result rather than the
 /// sequence: pool the disk, add the drive, and link them.
 fn seat(session: &mut Session, path: &PathBuf) -> remanence::Result<(MediaId, AttachmentId)> {
-    let media = session.load_media(open_read(path), Format::Raw)?.id();
-    let mut device = session.add_device(DeviceFamily::HARD_DISK)?;
+    let media = session
+        .load_media(
+            open_read(path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )?
+        .id();
+    let mut device = session.add_device(HardDrive::MbrSector)?;
     let attachment = device.attachment();
     device.insert(media)?;
     Ok((media, attachment))
@@ -51,11 +62,17 @@ fn a_medium_is_loaded_unlinked_and_answers_before_any_device_exists() {
     let mut session = Session::new();
 
     let medium = session
-        .load_media(open_read(&a), Format::Raw)
+        .load_media(
+            open_read(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the declaration is borne out");
     assert!(!medium.is_linked(), "a load links nothing");
     assert_eq!(medium.image_size_bytes(), 1024 * 1024);
-    assert_eq!(medium.media_type(), "logical-block-512");
+    assert_eq!(medium.article(), "logical-block-512");
     let id = medium.id();
 
     assert_eq!(session.media(), vec![id]);
@@ -74,12 +91,18 @@ fn a_device_is_added_empty_and_the_medium_is_inserted_into_it() {
     let mut session = Session::new();
 
     let media = session
-        .load_media(open_read(&a), Format::Raw)
+        .load_media(
+            open_read(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("loads")
         .id();
 
     let mut device = session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(HardDrive::MbrSector)
         .expect("the drive is added");
     let id = device.attachment();
     assert_eq!(id.to_string(), "hdd0");
@@ -124,7 +147,7 @@ fn an_added_device_takes_the_lowest_free_slot_in_its_family() {
     // The identity is composed and predictable — deliberately unlike the
     // opaque region and volume identities a report issues, because a
     // device is machine configuration the caller supplied (P21).
-    assert_eq!(first.family(), DeviceFamily::HARD_DISK);
+    assert_eq!(first.prefix(), "hdd");
     assert_eq!(first.index(), 0);
 
     drop(session);
@@ -137,14 +160,14 @@ fn a_caller_may_choose_the_slot_and_leave_a_gap() {
     let mut session = Session::new();
 
     let named = session
-        .add_device_at(DeviceFamily::HARD_DISK, 3)
+        .add_device_at(HardDrive::MbrSector, 3)
         .expect("the named slot takes a device")
         .attachment();
     assert_eq!(named.to_string(), "hdd3");
 
     // The gap is real: the next added device fills slot 0, not slot 4.
     let auto = session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(HardDrive::MbrSector)
         .expect("added")
         .attachment();
     assert_eq!(auto.to_string(), "hdd0");
@@ -155,10 +178,10 @@ fn a_taken_slot_is_refused_by_name_rather_than_displaced() {
     let mut session = Session::new();
 
     session
-        .add_device_at(DeviceFamily::HARD_DISK, 0)
+        .add_device_at(HardDrive::MbrSector, 0)
         .expect("first is added");
     let error = session
-        .add_device_at(DeviceFamily::HARD_DISK, 0)
+        .add_device_at(HardDrive::MbrSector, 0)
         .expect_err("the taken slot is refused");
 
     let message = error.to_string();
@@ -174,7 +197,13 @@ fn an_occupied_device_is_refused_a_second_medium() {
 
     let (_, attachment) = seat(&mut session, &a).expect("first seats");
     let second = session
-        .load_media(open_read(&b), Format::Raw)
+        .load_media(
+            open_read(&b),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("loads")
         .id();
 
@@ -202,7 +231,7 @@ fn one_medium_is_in_one_drive_at_a_time() {
 
     let (media, _) = seat(&mut session, &a).expect("seats");
     let error = session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(HardDrive::MbrSector)
         .expect("second drive")
         .insert(media)
         .expect_err("the medium is already in a drive");
@@ -254,7 +283,13 @@ fn ejecting_severs_and_the_medium_stays_in_the_pool() {
 
     // The same slot takes the next disk, and answers for that one.
     let second = session
-        .load_media(open_read(&b), Format::Raw)
+        .load_media(
+            open_read(&b),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("loads")
         .id();
     session
@@ -341,7 +376,13 @@ fn release_media_is_the_one_state_destroying_verb() {
     // The claim went with it: the artifact is free again.
     let mut after = Session::new();
     after
-        .load_media(open_write(&a), Format::Raw)
+        .load_media(
+            open_write(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the claim was released with the medium");
 
     drop(after);
@@ -349,55 +390,53 @@ fn release_media_is_the_one_state_destroying_verb() {
 }
 
 #[test]
-fn only_a_concrete_family_instantiates() {
-    // The P32 amendment's rule, and the reason for it: a device added as
-    // "some floppy" declares nothing an insert could be checked against
-    // and no drive a machine ever had.
+fn every_claimed_device_instantiates_and_nothing_vaguer_exists() {
+    // A device is as concrete as the machine fact it asserts. There is
+    // no "some floppy" to refuse any more: the catalog is an enumerated
+    // two-level type, so a name the library does not know fails to
+    // compile rather than being spelled and turned away (P3).
     let mut session = Session::new();
 
-    for interior in [
-        DeviceFamily::STORAGE_DEVICE,
-        DeviceFamily::FLOPPY_DRIVE,
-        DeviceFamily::CBM_FLOPPY_DRIVE,
-    ] {
-        let error = session
-            .add_device(interior)
-            .expect_err("an interior name instantiates nothing");
-        let message = error.to_string();
-        assert!(
-            message.contains(interior.id()),
-            "names what was asked: {message}"
-        );
-        assert!(
-            message.contains("classifies"),
-            "says what such a name is for: {message}"
-        );
-    }
-
-    // And the concrete entries below them do, each in its own slot.
-    for concrete in DeviceFamily::concrete() {
-        let device = session.add_device(concrete).expect("a concrete family");
-        assert_eq!(device.family(), concrete);
+    for slot in DeviceSlot::claimed() {
+        let device = session.add_device(slot).expect("a claimed device");
+        assert_eq!(device.slot(), slot);
+        assert_eq!(device.device_type(), slot.device_type());
         assert!(!device.is_occupied());
     }
-    assert_eq!(session.devices().len(), DeviceFamily::concrete().len());
+    assert_eq!(session.devices().len(), DeviceSlot::claimed().len());
+
+    // The bays are shared where the machine shares them: three
+    // hard-drive types took hdd0, hdd1 and hdd2 rather than three
+    // drives all claiming hdd0.
+    let hdds: Vec<String> = session
+        .attachments()
+        .iter()
+        .filter(|attachment| attachment.prefix() == "hdd")
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(hdds, vec!["hdd0", "hdd1", "hdd2"]);
 }
 
 #[test]
 fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
-    // P14: a device accepts only the media its family is served, and this
-    // is the check a concrete family exists to make possible. A raw image
-    // holds logical-block media, which a hard disk takes and a Commodore
-    // 1541 — served soft-sectored 5.25-inch disks — does not.
+    // The insert check is device-type equality, and this is what it is
+    // for: a raw image declared as a hard-drive recording is not what a
+    // Commodore 1541 wrote, and the refusal names both recordings.
     let a = write_image("wrong-drive");
     let mut session = Session::new();
 
     let media = session
-        .load_media(open_read(&a), Format::Raw)
+        .load_media(
+            open_read(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("loads")
         .id();
     let mut drive = session
-        .add_device(DeviceFamily::COMMODORE_1541)
+        .add_device(FloppyDrive::Commodore1541)
         .expect("the drive is added");
     let error = drive
         .insert(media)
@@ -410,15 +449,15 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
     );
     assert!(
         message.contains("Commodore 1541"),
-        "names the family: {message}"
+        "names the drive: {message}"
     );
     assert!(
-        message.contains("logical-block"),
-        "names what the medium is: {message}"
+        message.contains("hard drive"),
+        "names what recorded the medium: {message}"
     );
     assert!(
         message.contains("5.25-inch"),
-        "names what the family is served: {message}"
+        "names what the drive is served: {message}"
     );
     assert!(
         !drive.is_occupied(),
@@ -429,6 +468,97 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
     // configuration and the medium is the session's state.
     assert_eq!(session.devices().len(), 1);
     assert!(session.medium(media).is_some());
+
+    drop(session);
+    std::fs::remove_file(&a).ok();
+}
+
+#[test]
+fn one_article_bears_two_recordings_and_the_type_is_what_tells_them_apart() {
+    // The rule the device type exists for, and the one the article
+    // cannot state: an H-37 and a 1541 are served the *same*
+    // soft-sectored 5.25-inch disk, and neither drive can read what the
+    // other wrote. Insert compares the recording, so a 1541 refuses an
+    // H-37 disk it could physically hold — a check no article-side rule
+    // could make, because on that side the two are one disk.
+    let h37 = DeviceType::Floppy(FloppyDrive::HeathH37);
+    let c1541 = DeviceType::Floppy(FloppyDrive::Commodore1541);
+
+    assert_eq!(
+        h37.article(),
+        c1541.article(),
+        "one article: the same disk goes in either drive"
+    );
+    assert_ne!(h37, c1541, "and two recordings, which is the whole point");
+    assert_eq!(
+        DeviceSlot::from(h37),
+        DeviceSlot::Recorded(h37),
+        "a slot typed by one refuses a medium recorded by the other"
+    );
+    assert_ne!(DeviceSlot::from(h37), DeviceSlot::from(c1541));
+
+    // And the flux path is the 1541's alone, which is the other half of
+    // what the type carries that the article cannot.
+    assert_eq!(c1541.flux_path(), Some("c1541"));
+    assert_eq!(h37.flux_path(), None);
+}
+
+#[test]
+fn a_pairing_no_adapter_records_is_refused_at_the_load() {
+    // GPT is in the device catalog because the hard-drive specs carry
+    // the scheme, and no adapter in this release reads one — so
+    // declaring it refuses by name rather than reading the wrong table.
+    let a = write_image("gpt");
+    let mut session = Session::new();
+
+    let error = session
+        .load_media(
+            open_read(&a),
+            Format::Qcow2 {
+                device: HardDrive::Gpt,
+            },
+        )
+        .expect_err("no adapter records a GPT drive");
+    let message = error.to_string();
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
+    assert!(message.contains("gpt-hd"), "names the pairing: {message}");
+    assert!(
+        message.contains("mbr-block-hd"),
+        "names what it does record: {message}"
+    );
+
+    drop(session);
+    std::fs::remove_file(&a).ok();
+}
+
+#[test]
+fn the_partition_pool_populates_under_the_device_types_spec() {
+    // The scheme is the hard-drive spec's own, so a blank block image
+    // declared as one is checked against it and bears the direct
+    // partition where it records no table (D32, kept). A floppy-class
+    // recording never reads the table at all.
+    let a = write_image("scheme");
+    let mut session = Session::new();
+
+    let medium = session
+        .load_media(
+            open_read(&a),
+            Format::Raw {
+                device: HardDrive::MbrBlock,
+                block_bytes: 512,
+            },
+        )
+        .expect("loads");
+    assert_eq!(
+        medium.device_type(),
+        Some(DeviceType::HardDrive(HardDrive::MbrBlock))
+    );
+    assert_eq!(
+        medium.partition_scheme(),
+        None,
+        "a blank disk records no table, and the direct partition stands"
+    );
+    assert_eq!(medium.partitions().len(), 1);
 
     drop(session);
     std::fs::remove_file(&a).ok();
@@ -517,7 +647,13 @@ fn a_medium_is_claimed_by_the_callers_own_open() {
     let mut session = Session::new();
 
     let media = session
-        .load_media(open_write(&a), Format::Raw)
+        .load_media(
+            open_write(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("loads")
         .id();
     assert_eq!(
@@ -534,7 +670,13 @@ fn a_medium_is_claimed_by_the_callers_own_open() {
     // escalates one it was handed.
     let mut reader = Session::new();
     let read_only = reader
-        .load_media(open_read(&a), Format::Raw)
+        .load_media(
+            open_read(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("a second reader is the caller's business, not ours");
     assert_eq!(read_only.mode(), remanence::AccessMode::ReadOnly);
 
@@ -567,7 +709,13 @@ fn a_declaration_the_evidence_cannot_bear_is_refused_by_name() {
 
     // The same artifact under a declaration it can bear loads.
     session
-        .load_media(open_read(&a), Format::Raw)
+        .load_media(
+            open_read(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("bytes are always bytes");
 
     drop(session);
@@ -588,7 +736,13 @@ fn a_flux_family_artifact_is_refused_whatever_was_declared() {
 
     let mut session = Session::new();
     let error = session
-        .load_media(open_read(&path), Format::Raw)
+        .load_media(
+            open_read(&path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect_err("a flux artifact is no block medium");
 
     let message = error.to_string();

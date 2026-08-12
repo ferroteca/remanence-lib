@@ -58,6 +58,142 @@ removes it is the record either way.
 
 ## Decisions
 
+### D33 — Rulings made delivering the device types and the articles they compose
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-12. **Supports** S1, S2, S3; the pledged media-first design and
+the pledged P32 with its amendments; in-force P3, P5, P6, P10, P12, P14
+(amended here to carry the device-type catalog), P16, P19; in-force U4,
+and pledged U23, U25–U28, U32, U34.
+
+Rulings made in F57's course. The delivery itself is recorded by the
+commit; these are the calls made along the way.
+
+**The archive receiver is a slot and not a device type, so `DeviceSlot`
+is a second enum beside the catalog.** F57 says a device type names the
+device a medium's content is *assumed recorded by*, and that archives
+were recorded by none — `device_type()` answering `None` is the feature's
+own sentence. An `Archive` variant inside `DeviceType` would contradict
+it at the first call, since an archive medium would then answer `Some`.
+But D27 keeps `arc0` visible in its machine's attachment namespace and
+an archive still has to be seated somewhere, so what a device is typed by
+is **either** a recording device or the receiver: `DeviceSlot::Recorded(t)
+| DeviceSlot::Archive`, with `From<DeviceType>` so the ordinary call
+reads `add_device(HardDrive::MbrBlock)`. The receiver's own `device_type()`
+answers `None`, which is the same word meaning the same thing on both
+sides of the insert check.
+
+**An attachment identity names a place, so it carries the bay and not the
+type.** Three hard-drive types take `hdd` and both Heathkit controllers
+take `heathfloppy` — the granularity rule cuts the *recording*, and a
+machine's bays are not cut the same way — so a slot prefix no longer
+resolves to one device. `AttachmentId` became prefix-and-index, the type
+moved onto `StorageDevice` where it already belonged, and the lowest free
+slot counts by bay: two hard drives of different types cannot both be
+`hdd0`, which is a fact about machines rather than about the catalog.
+The delivered identity duplicated the device's own family; nothing is
+lost by removing the duplicate.
+
+**The interior-name refusal disappears rather than being reworded.** The
+delivered catalog classified with interior entries and refused them at
+`add_device` (P32's amendment). A two-level enum *is* that hierarchy, and
+"some floppy" is no longer a value that can be spelled — F57's "a type
+the library does not know fails to compile" covers the vague name as
+well as the unknown one. The `is_a` query, the lineage and
+`accepted_media` go with it; asking whether a device is a floppy is now
+a `match` on the class.
+
+**Where the declared scheme does not check out the answer stays the
+direct partition, and D32's reason for that is only half removed.** D32
+deferred the refusal to this feature on the ground that nothing then
+distinguished a partitioned hard disk from a floppy image. The device
+type now distinguishes them, and the floppy class is genuinely exempt
+from the table read. But `Format::Raw` is typed to the hard-drive class
+by F57's own text, so a bare FAT floppy image arrives declared as a
+hard-drive recording — and refusing an unpartitioned one would refuse
+every image this release reads that way. The check reads the table where
+one is there and composes the direct partition where the content records
+none, which is what F56 delivered and what F57 keeps.
+
+**A schemeless medium is still classified, and a table it might hold is
+content nothing claims.** Skipping the scheme step entirely would have
+cost the floppy class its content outcome — blank, one bare volume, or
+content nothing claims — which is evidence about the recording rather
+than about a layout, and which is what decides whether the direct
+partition composes a volume at all. So `mbr::classify` answers the three
+no-scheme answers and never the fourth: a sector 0 carrying a boot
+signature on a medium whose device type declares no scheme is reported
+as content nothing claims, with a reason of its own saying the table was
+not read because nobody declared one.
+
+**A discovery over a format that records several device types asserts
+none, and the pool refuses to take it.** The alternative was pooling such
+a medium with `device_type()` answering `None` — but `None` means
+*recorded by no device*, and a qcow2 was written by some hard drive.
+Using it for "we do not know which" would corrupt the one word the model
+spends on the honest absence, and the medium would in any case be
+seatable in nothing and layoutable under nothing. So the refusal is at
+the pool's plain door and at `add_device_for`, naming the types a
+declaration may state, and `Discovery::device_type()` answers only where
+the format records exactly one.
+
+**The declaration a discovery cannot make is taken by
+`load_discovery_as`, and the vantage doors are the precedent.** The
+refusal above nearly cost a delivered capability: an artifact *inside an
+archive* is reached only through `File::discover`, so a member no adapter
+identifies — a KryoFlux stream, which is bytes to every enrolled
+adapter — would have become unloadable, there being no file for
+`load_media` to take. The library already has the shape for this:
+`filesystem()` opens where the declared type determines a namespace and
+`filesystem_as(id)` takes the caller's reading where nothing does. So
+`load_discovery` is the plain door and `load_discovery_as(discovery,
+device)` the declared one, the second checking the type against what the
+recognizing format records. The claim is held across both, so the nested
+journey keeps its one open. F67 is where discovery's shape is next
+argued.
+
+**`Discovery::default_device` collapses into `device_type` because the
+two facts became one.** The delivered surface distinguished "the family
+the format declares" from "the medium's own type", the medium having
+none to carry. A medium now carries the device type, and where a format
+records exactly one there is nothing left to distinguish: what the format
+declares *is* what the medium will carry. `accepting_devices()` remains
+the other question — where could this go — and `device_types()` is the
+adapter's list, which is what the refusals name.
+
+**The identity crosses C as its stable spelling rather than as an
+integer constant.** F57 says "integer constants in C, enums in Python".
+The catalog ships as strings on both, because every other enumerated
+claim this ABI carries already does — formats, partition schemes,
+partition types, drive profiles, the families this replaces — and the
+generated header is derived from the Rust signatures, so one catalog
+crossing as an integer would be the only one a C caller has to hold a
+second table for. The stable spelling *is* the cross-language identity
+the surface is built on, and P5's "same semantics" is served by using
+it. Python takes the same spelling for the same reason; a Python enum
+over it remains available later without moving anything.
+
+**Three enumerated types are declared by no format in this release, and
+that is the catalog working.** `HardDrive::Gpt` is enumerated because the
+scheme is part of the hard-drive spec and GPT implies block addressing by
+its own definition; no adapter records it, because none reads a GPT, so
+declaring it is a named refusal rather than a silent reading of the wrong
+table. `FloppyDrive::HeathH37` and `FloppyDrive::Sector` are the same
+shape: named by the granularity rule, reachable when a format records
+them. The catalog is the claim; what a format admits is a separate
+declaration, and F57 asks for exactly that gap.
+
+**Weighed and declined:** an `Archive` variant in `DeviceType` (above —
+it makes the model's own sentence false); keeping the attachment identity
+type-bearing by giving each device type its own slot prefix (`mbrsector0`
+beside `mbrblock0` is a bay no machine has); refusing a declared scheme
+that does not check out (above — it refuses every bare FAT image);
+skipping content classification for schemeless media (above — it costs
+the floppy class its volume); pooling a device-typeless medium
+(above — it spends `None` on two meanings); and leaving the refusal
+without the `_as` door (above — it makes an archived raw member
+unloadable, there being no file to declare over).
+
 ### D32 — Rulings made delivering the partition pool and the vantage doors
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -67,6 +203,11 @@ P19 amendment; in-force P3, P4, P10, P16, P17, P18, P21, P27; U4.
 Rulings made in F56's course. The delivery itself is recorded by the
 commit; these are the calls made along the way, and the first is the one
 a later reader most needs.
+
+*Annotation (D33, 2026-08-12): F57 has landed. The scheme moved from the
+media type to the device spec as the first ruling below anticipated; the
+refusal the second ruling deferred is **not** reinstated, and D33 records
+why.*
 
 **The pool populates under the medium's kind, because the device spec it
 is owed does not exist yet.** F56 says the pool populates "under the

@@ -387,7 +387,7 @@ pub(crate) struct DriveProfile {
     /// The medium this family is served (P14). A drive declaring which
     /// article it accepts is a compatibility fact of the family, the
     /// same class as every other declaration here; the medium's own
-    /// facts stay in the media-type catalog, which knows nothing about
+    /// facts stay in the article catalog, which knows nothing about
     /// this drive and holds no behavior of its own.
     pub(crate) media: &'static MediaProfile,
     pub(crate) stepping: Stepping,
@@ -1633,7 +1633,7 @@ mod tests {
     fn the_family_declares_the_medium_it_is_served_without_absorbing_it() {
         // P14 and P30 are two declarations about one disk. The family
         // names the article it accepts; the article's own facts stay in
-        // the media-type catalog, which knows nothing about this drive.
+        // the article catalog, which knows nothing about this drive.
         assert_eq!(C1541.media.id, "flexible-5.25-soft");
         let medium = C1541
             .media

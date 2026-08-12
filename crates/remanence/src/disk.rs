@@ -34,7 +34,7 @@ use crate::archive::ArchiveMedium;
 use crate::assurance::{self, Assurance, ReadBound, Shortfall};
 use crate::cache::SessionCache;
 use crate::device::{AccessIntent, AccessMode, Claim, Device};
-use crate::device_family::DeviceFamily;
+use crate::device_type::{DeviceSlot, DeviceType};
 use crate::error::{Error, Result};
 use crate::fat::{FatEntry, FatVolume, VolumeDeclaration};
 use crate::filesystem::Catalog;
@@ -43,7 +43,7 @@ use crate::journal;
 use crate::mbr::{self, Discovery};
 use crate::media::Format;
 use crate::media_profile::MediaProfile;
-use crate::partition::{PartitionPool, PartitionScheme};
+use crate::partition::PartitionPool;
 use crate::session::{self, Identification, Layer};
 use crate::source::{self, ImageSource, ResolvedImage};
 
@@ -233,12 +233,21 @@ pub(crate) struct MediaState {
     cache_bytes: u64,
     format: DiskFormat,
     descriptor: &'static ImageFormatDescriptor,
-    /// The media type this medium is (P14). The adapter named it when it
+    /// The article this medium is (P14). The adapter named it when it
     /// loaded the state — an image format loads and saves media state,
     /// so it is what establishes which medium the state belongs to — and
     /// the medium carries it from there, immutably, for as long as the
     /// session holds it.
     media: &'static MediaProfile,
+    /// The device this medium's content is assumed recorded by: the
+    /// load's own declaration, or the one type the recognizing format
+    /// admits where a discovery reached it.
+    ///
+    /// Absent where an artifact was reached without a declaration and
+    /// its format records several device types — the discovery journey,
+    /// which answers what an artifact *is* without asserting which drive
+    /// wrote it. The media pool refuses to admit such a medium (P3).
+    device: Option<DeviceType>,
     device_identity: DeviceIdentity,
     active_layer: ActiveLayer,
     /// The session's **effective** access (P28): the declared intent's
@@ -319,7 +328,16 @@ impl MediumState {
     /// declared and what was found. Nothing here probes for a second
     /// answer — a caller who does not know what an artifact is asks
     /// [`discover_media`](crate::discover_media) instead.
+    ///
+    /// **The declaration is checked against itself first.** A format
+    /// paired with a device type its adapter does not record is refused
+    /// before a byte is read, because that refusal is about the
+    /// declaration rather than about the artifact: reading the evidence
+    /// first would answer a question nobody could act on, and would
+    /// report a blank image as an invalid qcow2 when what was wrong was
+    /// the pairing (P3, P6).
     pub(crate) fn load(file: std::fs::File, format: Format, cache_bytes: u64) -> Result<Self> {
+        format.check_pairing()?;
         if let Some(grammar) = format.archive_grammar() {
             return Ok(Self::Archive(ArchiveMedium::load(
                 file,
@@ -387,6 +405,46 @@ impl MediumState {
         }
     }
 
+    /// The device this medium's content is assumed recorded by, where a
+    /// declaration named one.
+    ///
+    /// `None` has two readings and they are the same reading: an archive
+    /// was recorded by no device, and a space-native medium reached
+    /// without a declaration — a discovery over a format that records
+    /// several device types — carries none until a load names it. The
+    /// pool refuses to admit the second (P3): a medium that cannot say
+    /// what recorded it cannot be seated or laid out.
+    pub(crate) fn device_type(&self) -> Option<DeviceType> {
+        match self {
+            Self::Space(space) => space.device_type(),
+            Self::Archive(_) => None,
+        }
+    }
+
+    /// What slot this medium goes in, where it can say — the recording
+    /// side of the insert check.
+    pub(crate) fn slot(&self) -> Option<DeviceSlot> {
+        match self {
+            Self::Space(space) => space.device_type().map(DeviceSlot::Recorded),
+            Self::Archive(_) => Some(DeviceSlot::Archive),
+        }
+    }
+
+    /// Takes the caller's declaration of what recorded this artifact,
+    /// for the discovery a format left device-typeless.
+    ///
+    /// It is a **declaration onto a reading, not onto a medium** (rule
+    /// 4): the state has not been pooled yet, so nothing about an
+    /// existing medium changes — the load that is being made is the one
+    /// being declared. An archive ignores it, having been recorded by
+    /// nothing, and the caller who tried is refused before reaching
+    /// here.
+    pub(crate) fn declare_device(&mut self, device: DeviceType) {
+        if let Self::Space(space) = self {
+            space.declare_device(device);
+        }
+    }
+
     pub(crate) fn mode(&self) -> AccessMode {
         match self {
             Self::Space(space) => space.mode(),
@@ -433,16 +491,13 @@ impl MediumState {
         }
     }
 
-    /// The device family the recognizing format declares for what it
-    /// records (P12), or `None` where it declares none.
-    ///
-    /// An archive grammar declares the archive slot, and does so with
-    /// certainty no image format has about a disk: a zip belongs in
-    /// nothing else.
-    pub(crate) fn default_device(&self) -> Option<DeviceFamily> {
+    /// Every device type the recognizing format's adapter records
+    /// (P12) — one where the format admits one, several where the
+    /// caller declares which, and none for an archive grammar.
+    pub(crate) fn recorded_devices(&self) -> &'static [DeviceType] {
         match self {
-            Self::Space(space) => space.descriptor().default_device,
-            Self::Archive(_) => Some(DeviceFamily::ARCHIVE_DEVICE),
+            Self::Space(space) => space.descriptor().devices,
+            Self::Archive(_) => &[],
         }
     }
 
@@ -488,24 +543,43 @@ impl MediumState {
     /// nowhere else — at the load, before the medium is handed to
     /// anyone (F56's "checked at load").
     ///
-    /// **The pool populates under the medium's own kind, never by
-    /// probing for a layout.** A medium whose native vantage is a space
-    /// has the scheme its family is laid out under checked against its
-    /// content, and bears the direct partition where the content does
-    /// not carry that scheme; a medium whose native vantage is a
-    /// namespace bears the direct partition with no extent at all,
-    /// because there is no position for one to be within.
+    /// **The pool populates under the device type's own spec, never by
+    /// probing for a layout.** The hard-drive specs carry the scheme
+    /// itself, so a medium recorded by one has that scheme's table
+    /// checked against its content; the schemeless types — the floppy
+    /// class, and the archive whose vantage is a namespace — bear the
+    /// direct partition with no step at all, the table never read
+    /// because no spec declared one.
+    ///
+    /// **Where the specified scheme does not check out, the answer is
+    /// the direct partition rather than a refusal** (D32, kept): a
+    /// hard-drive recording that carries no table is an unpartitioned
+    /// disk, which is an ordinary disk this release reads, and refusing
+    /// it would refuse every bare FAT image.
     pub(crate) fn establish_partitions(&mut self) -> Result<PartitionPool> {
         match self {
             Self::Archive(_) => Ok(PartitionPool::native_namespace()),
             Self::Space(space) => {
+                let device = space.device_type().ok_or_else(|| {
+                    Error::unsupported(format!(
+                        "{} carries no device type, and a medium's content is \
+                         laid out under the spec of the device that recorded \
+                         it",
+                        space.named()
+                    ))
+                })?;
                 let length = space.size();
-                let discovery = space.check_scheme()?;
-                Ok(PartitionPool::over_space(
-                    PartitionScheme::Mbr,
-                    &discovery,
-                    length,
-                ))
+                match device.readable_scheme() {
+                    Some(scheme) => {
+                        let scheme = scheme?;
+                        let discovery = space.check_scheme()?;
+                        Ok(PartitionPool::over_space(scheme, &discovery, length))
+                    }
+                    None => {
+                        let content = space.classify_content()?;
+                        Ok(PartitionPool::over_schemeless(&content, length))
+                    }
+                }
             }
         }
     }
@@ -663,6 +737,17 @@ impl MediaState {
             Some(declared) => adapters::open_declared(declared, host, image_path, &named)?,
             None => adapters::image_catalog().open_disk(host, image_path)?,
         };
+        // The declaration's own device type where a caller made one, and
+        // the format's where it admits exactly one — a discovery over a
+        // format that records several asserts nothing, and says so by
+        // carrying none.
+        let device = match declared {
+            Some(declared) => declared.device_type(),
+            None => match descriptor.devices {
+                [only] => Some(*only),
+                _ => None,
+            },
+        };
         let format = virtual_disk.format();
 
         // The assurance gate (P28), settled before the medium is exposed:
@@ -692,6 +777,7 @@ impl MediaState {
             format,
             descriptor,
             media: descriptor.media,
+            device,
             device_identity: DeviceIdentity::first(),
             active_layer: descriptor.initial_active_layer,
             mode,
@@ -752,6 +838,16 @@ impl MediaState {
         mbr::discover(&mut composed)
     }
 
+    /// What the leading content is, where the device type declares no
+    /// scheme for a table to be checked against: blank, one bare
+    /// volume, or content nothing claims — and never a layout, which
+    /// nobody declared.
+    pub(crate) fn classify_content(&mut self) -> Result<Discovery> {
+        self.require_usable()?;
+        let mut composed = self.composed();
+        mbr::classify(&mut composed)
+    }
+
     /// Opens the namespace `adapter` reads, over one partition's extent
     /// and nothing wider.
     ///
@@ -796,11 +892,23 @@ impl MediaState {
         &self.assurance
     }
 
-    /// The media type this medium is (P14) — named by the image-format
-    /// adapter that loaded its state, and what a device's family is
-    /// checked against when the medium is loaded into it.
+    /// The article this medium is (P14) — named by the image-format
+    /// adapter that loaded its state.
     pub(crate) fn media(&self) -> &'static MediaProfile {
         self.media
+    }
+
+    /// The device this medium's content is assumed recorded by, where a
+    /// declaration or a single-device format named one.
+    pub(crate) fn device_type(&self) -> Option<DeviceType> {
+        self.device
+    }
+
+    /// Takes the declaration a discovery could not make, before the
+    /// state is pooled. The caller's type has already been checked
+    /// against what the recognizing format records.
+    pub(crate) fn declare_device(&mut self, device: DeviceType) {
+        self.device = Some(device);
     }
 
     /// The image format that loaded this state, as the catalog declares
@@ -895,7 +1003,8 @@ impl MediaState {
         let device = DeviceInfo {
             id: device_identity.value(),
             image_format: self.descriptor.id.to_owned(),
-            media_type: self.media.id.to_owned(),
+            article: self.media.id.to_owned(),
+            device_type: self.device.map(|device| device.id().to_owned()),
             length_bytes: 0,
             authoritative_layer: self.descriptor.authoritative_layer.name().to_owned(),
             active_layer: self.active_layer.name().to_owned(),
@@ -1323,7 +1432,7 @@ mod tests {
     /// tier, so they run the same act `Session::admit` runs.
     fn pool_of(disk: &mut MediaState) -> PartitionPool {
         let discovery = disk.check_scheme().expect("the scheme is checked");
-        PartitionPool::over_space(PartitionScheme::Mbr, &discovery, disk.size())
+        PartitionPool::over_space(crate::PartitionScheme::Mbr, &discovery, disk.size())
     }
 
     /// The extent the one partition of a partitionless test image

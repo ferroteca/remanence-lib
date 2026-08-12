@@ -13,7 +13,8 @@
 //! hand, so they run without fixtures.
 
 use remanence::{
-    DeviceFamily, EntryKind, ErrorCategory, Format, LayerKind, MediaId, Session, SpaceRule,
+    EntryKind, ErrorCategory, FloppyDrive, Format, HardDrive, LayerKind, MediaId, Session,
+    SpaceRule,
 };
 
 mod common;
@@ -51,7 +52,7 @@ fn load_entry(
     session
         .machine_mut("h89")
         .expect("just added")
-        .add_device(DeviceFamily::HEATHKIT_H17)?
+        .add_device(FloppyDrive::HeathH17)?
         .insert(disk)?;
     Ok((session, disk))
 }
@@ -332,7 +333,13 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
 
     let mut session = Session::new();
     let medium = session
-        .load_media(open_read(&path), Format::Raw)
+        .load_media(
+            open_read(&path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the image itself opens; only the HDOS reader is bounded");
 
     // The medium records no scheme, so the direct partition addresses

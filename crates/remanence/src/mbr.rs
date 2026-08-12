@@ -205,6 +205,39 @@ pub(crate) fn looks_like_bpb(sector: &[u8]) -> bool {
     jump_ok && bps_ok && spc_ok && fats_ok
 }
 
+/// What the leading content is where **no scheme was declared** — the
+/// reading a medium recorded by a schemeless device type gets.
+///
+/// It answers the three no-scheme answers and never the fourth: a table
+/// nobody declared is not read, because reading it would be the probe
+/// the declared tier exists to keep out. Sector 0 that looks like a
+/// table is therefore content nothing claims, and says so.
+pub(crate) fn classify(device: &mut dyn Device) -> Result<Discovery> {
+    if device.len() < SECTOR {
+        return Err(invalid("device too small for a boot sector"));
+    }
+    let leading = read_sector(device, 0)?;
+    if leading.iter().all(|&byte| byte == 0) {
+        return Ok(Discovery::Blank);
+    }
+    if looks_like_bpb(&leading) {
+        return Ok(Discovery::BareVolume);
+    }
+    Ok(Discovery::UnknownNonblank {
+        evidence: match leading[510..512] == BOOT_SIGNATURE {
+            true => UNDECLARED_TABLE.to_owned(),
+            false => UNKNOWN_NONBLANK.to_owned(),
+        },
+    })
+}
+
+/// Why a boot signature is not a partition table here. Stated once, for
+/// the medium whose device type declares no scheme: what sector 0 holds
+/// is not read as a layout nobody declared.
+pub(crate) const UNDECLARED_TABLE: &str = "sector 0 carries a boot signature and no filesystem boot record, and the \
+     device that recorded this medium declares no partition scheme: whatever \
+     the sector is, it is not read as a table nobody declared";
+
 /// Reads sector 0 and answers what the device is (U4): a blank
 /// disk, one bare volume, or an MBR with every declared row reported —
 /// rows outside the pinned claim included, each carrying its issue.

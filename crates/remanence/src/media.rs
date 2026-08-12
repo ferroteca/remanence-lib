@@ -31,16 +31,17 @@
 use std::fmt;
 use std::path::Path;
 
+use crate::adapters::RECORDED_HARD_DRIVES;
 use crate::archive::ArchiveMedium;
 use crate::assurance::Assurance;
 use crate::device::AccessMode;
+use crate::device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive};
 use crate::discovery::Discovery;
 use crate::disk::{DiskFormat, MediumState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
 use crate::filesystem::Catalog;
 use crate::filesystem_catalog::FilesystemAdapter;
-use crate::media_profile::MediaProfile;
 use crate::partition::{Partition, PartitionPool, PartitionScheme, PartitionView};
 use crate::report::DiskReport;
 use crate::session::Identification;
@@ -54,7 +55,8 @@ pub(crate) fn named(path: Option<&str>) -> String {
     }
 }
 
-/// One concrete artifact format, declared at the load.
+/// One concrete artifact format, declared at the load, carrying the
+/// device its content was recorded by.
 ///
 /// **A declaration names a concrete catalog entry, never a
 /// classification** (P3): "an archive" or "some floppy image" could
@@ -62,6 +64,15 @@ pub(crate) fn named(path: Option<&str>) -> String {
 /// reads, each checked by its own adapter. A format this release does
 /// not claim fails to compile rather than being spelled and refused at
 /// run time.
+///
+/// **A format that admits one device type carries it bare; one that
+/// records many declares it, the field typed by the class its adapter
+/// records.** [`Format::H8d`] is a Heathkit H-17 recording and says so
+/// by having nothing to say; a qcow2 records some hard drive and the
+/// caller states which, so a flux capture of a hard drive fails to
+/// compile and a pairing no adapter declares within the class — a
+/// `gpt-hd` today — is a named refusal at the load
+/// ([`Format::declared`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Format {
     /// Bytes, and nothing else — the geometry-opaque reading. It records
@@ -70,37 +81,126 @@ pub enum Format {
     /// device holds is still refused, because a raw reading of it would
     /// declare the block layer authoritative where its own adapter
     /// declares otherwise (P13).
-    Raw,
+    ///
+    /// The block size is the caller's too: a raw image records no
+    /// addressable unit, and bytes have no block meaning without one.
+    Raw { device: HardDrive, block_bytes: u64 },
     /// QEMU copy-on-write, versions 2 and 3, backing chains composed.
-    Qcow2,
+    Qcow2 { device: HardDrive },
     /// VirtualBox disk image, differencing chains composed.
-    Vdi,
-    /// Heathkit H8/H17 disk image.
+    Vdi { device: HardDrive },
+    /// Heathkit H8/H17 disk image — a Heathkit H-17 recording, and the
+    /// format admits no other.
     H8d,
-    /// ZIP, whose content is a namespace.
+    /// ZIP, whose content is a namespace. An archive was recorded by no
+    /// device, so there is nothing to declare.
     Zip,
     /// 7z, whose content is a namespace.
     SevenZip,
 }
 
+/// What one declarable format admits: its identity, the device types its
+/// adapter records, and whether its declaration carries a block size.
+///
+/// It is the enumerated claim read the other way round — the same
+/// declarations the [`Format`] variants above spell, in a shape the text
+/// boundaries (C, Python) can enumerate and refuse against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatClaim {
+    id: &'static str,
+    name: &'static str,
+    devices: &'static [DeviceType],
+    block_bytes: bool,
+}
+
+impl FormatClaim {
+    /// The stable cross-language spelling.
+    pub const fn id(&self) -> &'static str {
+        self.id
+    }
+
+    /// The format's name, fit to show a user.
+    pub const fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// Every device type this format's adapter records. Empty for an
+    /// archive grammar, which records no device at all.
+    pub const fn devices(&self) -> &'static [DeviceType] {
+        self.devices
+    }
+
+    /// Whether a declaration of this format carries the block size —
+    /// true for the raw reading alone, which records no addressable
+    /// unit of its own.
+    pub const fn takes_block_bytes(&self) -> bool {
+        self.block_bytes
+    }
+
+    /// The device type this format declares where it admits exactly one,
+    /// and `None` where the caller states it.
+    pub fn declared_device(&self) -> Option<DeviceType> {
+        match self.devices {
+            [only] => Some(*only),
+            _ => None,
+        }
+    }
+}
+
+/// Every format a load may declare, and what each admits. The catalog is
+/// the claim: a pairing absent from it is refused by name.
+static CLAIMED: [FormatClaim; 6] = [
+    FormatClaim {
+        id: "raw",
+        name: "Raw disk image",
+        devices: &RECORDED_HARD_DRIVES,
+        block_bytes: true,
+    },
+    FormatClaim {
+        id: "qcow2",
+        name: "QEMU copy-on-write disk image",
+        devices: &RECORDED_HARD_DRIVES,
+        block_bytes: false,
+    },
+    FormatClaim {
+        id: "vdi",
+        name: "VirtualBox disk image",
+        devices: &RECORDED_HARD_DRIVES,
+        block_bytes: false,
+    },
+    FormatClaim {
+        id: "h8d",
+        name: "Heathkit H8 H17 disk image",
+        devices: &[DeviceType::Floppy(FloppyDrive::HeathH17)],
+        block_bytes: false,
+    },
+    FormatClaim {
+        id: "zip",
+        name: "ZIP archive",
+        devices: &[],
+        block_bytes: false,
+    },
+    FormatClaim {
+        id: "7z",
+        name: "7z archive",
+        devices: &[],
+        block_bytes: false,
+    },
+];
+
 impl Format {
-    /// Every format a load may declare.
-    pub const ALL: [Self; 6] = [
-        Self::Raw,
-        Self::Qcow2,
-        Self::Vdi,
-        Self::H8d,
-        Self::Zip,
-        Self::SevenZip,
-    ];
+    /// Every format a load may declare, with what each admits.
+    pub fn claimed() -> &'static [FormatClaim] {
+        &CLAIMED
+    }
 
     /// The stable cross-language spelling, which is what the C and
     /// Python surfaces carry and what a refusal quotes back.
     pub const fn id(self) -> &'static str {
         match self {
-            Self::Raw => "raw",
-            Self::Qcow2 => "qcow2",
-            Self::Vdi => "vdi",
+            Self::Raw { .. } => "raw",
+            Self::Qcow2 { .. } => "qcow2",
+            Self::Vdi { .. } => "vdi",
             Self::H8d => "h8d",
             Self::Zip => "zip",
             Self::SevenZip => "7z",
@@ -110,31 +210,183 @@ impl Format {
     /// The format's name, fit to show a user.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Raw => "Raw disk image",
-            Self::Qcow2 => "QEMU copy-on-write disk image",
-            Self::Vdi => "VirtualBox disk image",
+            Self::Raw { .. } => "Raw disk image",
+            Self::Qcow2 { .. } => "QEMU copy-on-write disk image",
+            Self::Vdi { .. } => "VirtualBox disk image",
             Self::H8d => "Heathkit H8 H17 disk image",
             Self::Zip => "ZIP archive",
             Self::SevenZip => "7z archive",
         }
     }
 
-    /// Reads a format back from its stable spelling, for the C and
-    /// Python surfaces where a declaration arrives as text. A spelling
-    /// this release does not claim is refused naming what is claimed
-    /// (P3).
-    pub fn from_id(id: &str) -> Result<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|format| format.id() == id)
+    /// What this format admits — its own entry in the catalog above.
+    pub fn claim(self) -> &'static FormatClaim {
+        CLAIMED
+            .iter()
+            .find(|claim| claim.id == self.id())
+            .expect("every variant has a catalog entry")
+    }
+
+    /// The device type this declaration names, or `None` for an archive
+    /// grammar — an archive was recorded by no device.
+    pub fn device_type(self) -> Option<DeviceType> {
+        match self {
+            Self::Raw { device, .. } | Self::Qcow2 { device } | Self::Vdi { device } => {
+                Some(DeviceType::HardDrive(device))
+            }
+            Self::H8d => Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
+            Self::Zip | Self::SevenZip => None,
+        }
+    }
+
+    /// The block size this declaration carries, where the format takes
+    /// one.
+    pub fn block_bytes(self) -> Option<u64> {
+        match self {
+            Self::Raw { block_bytes, .. } => Some(block_bytes),
+            _ => None,
+        }
+    }
+
+    /// Checks that the adapter this declaration names records the device
+    /// type it names (P3), refusing the pairing by name where it does
+    /// not.
+    ///
+    /// The class is checked by the compiler — a flux capture of a hard
+    /// drive cannot be spelled — and this is the check within the class,
+    /// where the catalog is narrower than the class is.
+    pub(crate) fn check_pairing(self) -> Result<()> {
+        let claim = self.claim();
+        let Some(device) = self.device_type() else {
+            return Ok(());
+        };
+        if claim.devices.contains(&device) {
+            return Ok(());
+        }
+        let recorded: Vec<&str> = claim.devices.iter().map(|device| device.id()).collect();
+        Err(Error::unsupported(format!(
+            "no adapter in this release records a {} ({}) as a {}; the \
+             {} records {}",
+            device.name(),
+            device.id(),
+            claim.name,
+            claim.id,
+            match recorded.len() {
+                0 => "no device at all".to_owned(),
+                _ => recorded.join(" and "),
+            }
+        )))
+    }
+
+    /// Builds a declaration from the stable spellings, for the C and
+    /// Python surfaces where one arrives as text (P5).
+    ///
+    /// Each half is refused by name on its own terms: a format spelling
+    /// this release does not claim, a device type it does not claim, a
+    /// device of the wrong class for the format, a missing device where
+    /// the format needs one, and a block size where the format records
+    /// its own.
+    pub fn declared(
+        format: &str,
+        device: Option<DeviceType>,
+        block_bytes: Option<u64>,
+    ) -> Result<Self> {
+        let claim = CLAIMED
+            .iter()
+            .find(|claim| claim.id == format)
             .ok_or_else(|| {
-                let claimed: Vec<&str> = Self::ALL.iter().map(|format| format.id()).collect();
+                let claimed: Vec<&str> = CLAIMED.iter().map(|claim| claim.id).collect();
                 Error::unsupported(format!(
-                    "'{id}' names no format this release loads; the declarations \
-                 it claims are {}",
+                    "'{format}' names no format this release loads; the \
+                 declarations it claims are {}",
                     claimed.join(", ")
                 ))
-            })
+            })?;
+
+        // A format admitting exactly one device type carries it bare, so
+        // stating it is allowed and stating a different one is refused —
+        // the same rule the pairing check makes, at the boundary where
+        // the declaration is text rather than a variant.
+        let device = match (device, claim.declared_device()) {
+            (None, Some(bare)) => Some(bare),
+            (given, _) => given,
+        };
+        let hard_drive = |device: Option<DeviceType>| -> Result<HardDrive> {
+            match device {
+                Some(DeviceType::HardDrive(drive)) => Ok(drive),
+                Some(other) => Err(Error::unsupported(format!(
+                    "the {} records a hard drive, and '{}' is a {} device",
+                    claim.name,
+                    other.id(),
+                    other.class()
+                ))),
+                None => Err(Error::unsupported(format!(
+                    "the {} records more than one device type, so a load \
+                     declares which: it records {}",
+                    claim.name,
+                    claim
+                        .devices
+                        .iter()
+                        .map(|device| device.id())
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                ))),
+            }
+        };
+
+        if device.is_some() && claim.devices.is_empty() {
+            return Err(Error::unsupported(format!(
+                "the {} records no device at all — an archive was written by \
+                 none — so a declaration naming one names a recording that \
+                 never happened",
+                claim.name
+            )));
+        }
+
+        let declaration = match claim.id {
+            "raw" => Self::Raw {
+                device: hard_drive(device)?,
+                block_bytes: block_bytes.ok_or_else(|| {
+                    Error::unsupported(
+                        "a raw image records no addressable unit, so its \
+                         declaration carries the block size"
+                            .to_owned(),
+                    )
+                })?,
+            },
+            "qcow2" => Self::Qcow2 {
+                device: hard_drive(device)?,
+            },
+            "vdi" => Self::Vdi {
+                device: hard_drive(device)?,
+            },
+            "h8d" => Self::H8d,
+            "zip" => Self::Zip,
+            "7z" => Self::SevenZip,
+            other => unreachable!("'{other}' is not a claimed format id"),
+        };
+
+        if block_bytes.is_some() && !claim.block_bytes {
+            return Err(Error::unsupported(format!(
+                "the {} records its own addressable unit, so a declared \
+                 block size would be a second answer about one disk",
+                claim.name
+            )));
+        }
+        if let (Some(stated), Some(bare)) = (device, claim.declared_device()) {
+            if stated != bare {
+                return Err(Error::unsupported(format!(
+                    "the {} records a {} ({}) and nothing else, so a \
+                     declaration naming '{}' names a recording it never made",
+                    claim.name,
+                    bare.name(),
+                    bare.id(),
+                    stated.id()
+                )));
+            }
+        }
+        declaration.check_pairing()?;
+        Ok(declaration)
     }
 
     /// The archive grammar this format is, where it is one.
@@ -145,7 +397,7 @@ impl Format {
     pub(crate) fn archive_grammar(self) -> Option<&'static str> {
         match self {
             Self::Zip | Self::SevenZip => Some(self.id()),
-            Self::Raw | Self::Qcow2 | Self::Vdi | Self::H8d => None,
+            Self::Raw { .. } | Self::Qcow2 { .. } | Self::Vdi { .. } | Self::H8d => None,
         }
     }
 }
@@ -332,21 +584,35 @@ impl Medium {
         self.state.is_modified()
     }
 
-    /// The media type this medium is (P14), by the catalog's stable
-    /// spelling — the fact a device's family is checked against when the
-    /// medium is inserted.
-    pub fn media_type(&self) -> &'static str {
+    /// The device this medium's content is assumed recorded by — the
+    /// declaration the load carried — or `None` where no device
+    /// recorded it.
+    ///
+    /// `None` is the honest answer rather than a gap: an archive was
+    /// recorded by no device, and neither is an authored blank.
+    pub fn device_type(&self) -> Option<DeviceType> {
+        self.state.device_type()
+    }
+
+    /// The article this medium is (P14), by the catalog's stable
+    /// spelling — the physical substrate, which is a different fact from
+    /// the recording above.
+    pub fn article(&self) -> &'static str {
         self.state.media().id
     }
 
-    /// The medium's name, fit to show a user beside the drive it goes in.
-    pub fn media_type_name(&self) -> &'static str {
+    /// The article's name, fit to show a user beside the drive it goes
+    /// in.
+    pub fn article_name(&self) -> &'static str {
         self.state.media().name
     }
 
-    /// The media profile itself, for the insert check.
-    pub(crate) fn media(&self) -> &'static MediaProfile {
-        self.state.media()
+    /// What slot this medium goes in — the recording side of the insert
+    /// check, and the whole of it.
+    pub(crate) fn slot(&self) -> DeviceSlot {
+        self.state
+            .slot()
+            .expect("the pool admits no medium that cannot say what recorded it")
     }
 
     /// The layered inspection of this medium: the block-active device,
@@ -615,11 +881,21 @@ impl MediaPool {
 mod tests {
     use super::*;
 
+    /// A hard-drive declaration, spelled once for the tests below.
+    fn hd() -> HardDrive {
+        HardDrive::MbrBlock
+    }
+
     #[test]
-    fn every_declared_format_round_trips_through_its_spelling() {
-        for format in Format::ALL {
-            assert_eq!(Format::from_id(format.id()).expect("claimed"), format);
-            assert!(!format.name().is_empty());
+    fn every_claimed_format_round_trips_through_its_spelling() {
+        for claim in Format::claimed() {
+            let device = claim.devices().first().copied();
+            let block_bytes = claim.takes_block_bytes().then_some(512);
+            let format = Format::declared(claim.id(), device, block_bytes).expect("claimed");
+            assert_eq!(format.id(), claim.id());
+            assert_eq!(format.name(), claim.name());
+            assert_eq!(format.device_type(), device);
+            assert_eq!(format.block_bytes(), block_bytes);
         }
     }
 
@@ -627,7 +903,7 @@ mod tests {
     fn a_classification_is_not_a_declaration() {
         // P3: the set is enumerated, so a word that names a kind rather
         // than one catalog entry is refused naming what is claimed.
-        let error = Format::from_id("archive").expect_err("refused");
+        let error = Format::declared("archive", None, None).expect_err("refused");
         let message = error.to_string();
         assert!(
             message.contains("archive"),
@@ -637,10 +913,120 @@ mod tests {
     }
 
     #[test]
+    fn a_format_recording_many_devices_is_declared_with_one() {
+        // The class is the compiler's check; which type within it is the
+        // caller's declaration, and leaving it out is a refusal naming
+        // the types the adapter records.
+        let error = Format::declared("qcow2", None, None).expect_err("refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("mbr-sector-hd") && message.contains("mbr-block-hd"),
+            "names what it records: {message}"
+        );
+
+        // A device of the wrong class is refused at the text boundary,
+        // where the compiler cannot make the check.
+        let error = Format::declared(
+            "qcow2",
+            Some(DeviceType::Floppy(FloppyDrive::Commodore1541)),
+            None,
+        )
+        .expect_err("refused");
+        assert!(
+            error.to_string().contains("floppy"),
+            "names the class found: {error}"
+        );
+    }
+
+    #[test]
+    fn a_bare_format_carries_its_one_device_and_admits_no_other() {
+        assert_eq!(
+            Format::H8d.device_type(),
+            Some(DeviceType::Floppy(FloppyDrive::HeathH17))
+        );
+        assert_eq!(
+            Format::declared("h8d", None, None).expect("bare"),
+            Format::H8d,
+            "the format admits one type, so the declaration needs no second word"
+        );
+        let error = Format::declared("h8d", Some(DeviceType::Floppy(FloppyDrive::HeathH37)), None)
+            .expect_err("refused");
+        assert!(
+            error.to_string().contains("h17"),
+            "names the recording it does make: {error}"
+        );
+    }
+
+    #[test]
+    fn a_pairing_no_adapter_declares_is_refused_by_name() {
+        // GPT is in the device catalog and read by no adapter, so
+        // declaring it is refused rather than read as the wrong table.
+        let error = Format::Qcow2 {
+            device: HardDrive::Gpt,
+        }
+        .check_pairing()
+        .expect_err("refused");
+        let message = error.to_string();
+        assert!(message.contains("gpt-hd"), "names the pairing: {message}");
+        assert!(
+            message.contains("mbr-block-hd"),
+            "names what it does record: {message}"
+        );
+        assert!(Format::Qcow2 { device: hd() }.check_pairing().is_ok());
+    }
+
+    #[test]
+    fn the_block_size_is_declared_where_and_only_where_it_is_recorded() {
+        assert_eq!(
+            Format::Raw {
+                device: hd(),
+                block_bytes: 512
+            }
+            .block_bytes(),
+            Some(512)
+        );
+        assert!(
+            Format::declared("raw", Some(DeviceType::HardDrive(hd())), None).is_err(),
+            "a raw image records no addressable unit"
+        );
+        assert!(
+            Format::declared("qcow2", Some(DeviceType::HardDrive(hd())), Some(512)).is_err(),
+            "a qcow2 records its own, and two answers about one disk is one too many"
+        );
+    }
+
+    #[test]
+    fn an_archive_grammar_takes_no_device_at_all() {
+        assert_eq!(
+            Format::declared("zip", None, None).expect("claimed"),
+            Format::Zip
+        );
+        let error =
+            Format::declared("zip", Some(DeviceType::HardDrive(hd())), None).expect_err("refused");
+        assert!(
+            error.to_string().contains("no device at all"),
+            "names why an archive takes none: {error}"
+        );
+    }
+
+    #[test]
     fn only_the_archive_grammars_declare_one() {
         assert_eq!(Format::Zip.archive_grammar(), Some("zip"));
         assert_eq!(Format::SevenZip.archive_grammar(), Some("7z"));
-        for format in [Format::Raw, Format::Qcow2, Format::Vdi, Format::H8d] {
+        assert_eq!(
+            Format::Zip.device_type(),
+            None,
+            "an archive was recorded by no device"
+        );
+        for format in [
+            Format::Raw {
+                device: hd(),
+                block_bytes: 512,
+            },
+            Format::Qcow2 { device: hd() },
+            Format::Vdi { device: hd() },
+            Format::H8d,
+        ] {
             assert_eq!(format.archive_grammar(), None);
         }
     }

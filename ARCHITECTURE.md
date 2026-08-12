@@ -53,8 +53,10 @@ never reused.
   medium being the pool-owned content handle, created by a declared
   reading over the caller's own opened file and carrying every content
   verb — `Machine`, `MachineView`, `StorageDevice`, `DeviceView`,
-  `AttachmentId` and `DeviceFamily` — the device being the slot, with
-  `insert`/`eject` the one edge between configuration and state —
+  `AttachmentId`, `DeviceSlot`, `DeviceType`, `FloppyDrive` and
+  `HardDrive` — the device being the slot, typed by the device that
+  fills it, with `insert`/`eject` the one edge between configuration and
+  state and device-type equality the check it makes —
   `Claim` beside the access mode,
   `Partition`, `PartitionView`, `PartitionScheme` and `PartitionType` —
   the partition pool being the medium's evidence, reached by the
@@ -95,7 +97,7 @@ why.** Three things it does not carry, because each has a home that will
 not drift: the *argument* that settled it, which is a decision entry
 ([planning/DECISIONS.md](planning/DECISIONS.md), cited by D-number where
 it is worth finding); the *enumerated sets* a claim ranges over — error
-categories, media types, armed conditions — which the code owns, the code
+categories, articles, device types, armed conditions — which the code owns, the code
 being the norm; and a *restatement* of a neighbouring principle, which is
 a cross-reference. Planning prose argues at whatever length the argument
 takes; a principle in force is the settled rule. **A principle that
@@ -338,28 +340,58 @@ loading, attaching, or saving the original.
 ### P14 — Media is independent recorded state
 
 A media instance is the independent mutable state between image formats
-and drives. It names an immutable, family-specific **profile** containing
+and drives. It names an immutable, family-specific **article** containing
 passive compatibility facts; the recorded contents belong to the instance.
 Magnetic flexible, optical, and logical-block media are families whose
 state and compatibility facts differ too much for one schema, so a family
-owns its own representation and small interface. The media-type catalog
-may be declarative precisely because profiles are passive; it is not a
-language for behavior, and a type outside it is refused by name (P3).
+owns its own representation and small interface. The article catalog
+may be declarative precisely because articles are passive; it is not a
+language for behavior, and an article outside it is refused by name (P3).
 
-Three facts stay apart. What the medium **is** belongs to the profile;
+Three facts stay apart. What the medium **is** belongs to the article;
 what was **recorded** on it belongs to the instance; what a **drive does**
 to it belongs to a P30 drive profile. The same disk carries different
 recordings and is served by different drives, so any statement collapsing
-two of the three makes one article answer twice. The test for a profile
+two of the three makes one article answer twice. The test for an article
 fact is whether it holds of a blank disk in its sleeve (D19).
 
 Image-format adapters load and save media state; hardware and CHS
-presentations operate on that state through their own seams. A media
-profile contains neither image recognition nor hardware behavior and
+presentations operate on that state through their own seams. An article
+contains neither image recognition nor hardware behavior and
 cannot implicitly choose how far hardware emulation descends. Every medium
-the library holds names one enrolled type: a block medium is named by
+the library holds names one enrolled article: a block medium is named by
 the image-format adapter that loaded its state, and a flux medium by the
 family declaration of the drive profile it was mastered under.
+
+**The recording side is the device type, and it is a catalog of its
+own.** A medium carries one — the device its content is assumed recorded
+by — enumerated in two levels: the **class** (`Floppy`, `HardDrive`, with
+`Optical` and `Tape` reserved for the coming families), then the
+**concrete type** within it. A type the library does not know fails to
+compile; its display string survives in provenance, refusals and the
+cross-language spellings. Archives were recorded by no device, and
+`None` is the honest answer rather than a gap.
+
+The **granularity rule** cuts that catalog: a device type is the coarsest
+name fixing the whole addressing surface and recording discipline without
+per-media parameters. What the device fixes lives in the type — which is
+why the hard-drive specs carry the partition scheme itself, and why every
+partition pool populates under the spec of the device that recorded the
+medium, with the schemeless types bearing the direct partition. What
+varies disk to disk lives on the medium. A device type **composes** an
+article and restates none of its facts, so D19's three homes hold: the
+substrate in the article, the recording in the device type, the drive's
+behavior in the P30 profile.
+
+A device type's definition has **one home**: one spec shape per class,
+one instance per concrete type — the enumeration is the instantiation,
+its disciplines flat attributes of the spec — while the traits live on
+the medium, each surface answering only where the spec's attribute
+holds, with P30 declarations reached through the type rather than passed
+as arguments. An image-format adapter declares the device types it
+records: one means the format carries it bare, several mean the load
+declares which, and a pairing no adapter declares is a named refusal at
+the load (P3) even where the class is right.
 
 ### P16 — Partition layouts are an independent seam
 

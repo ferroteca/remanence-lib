@@ -20,8 +20,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AttachmentId, DeviceFamily, DosAssignmentRule, EntryKind, ErrorCategory, Format, MediaId,
-    Session,
+    AttachmentId, DeviceSlot, DeviceType, DosAssignmentRule, EntryKind, ErrorCategory, FloppyDrive,
+    Format, HardDrive, MediaId, Session,
 };
 
 mod common;
@@ -135,7 +135,7 @@ fn an_archive_loads_into_its_own_device_and_answers_for_the_medium() {
 
     let arc = zip_medium(&mut session, &path);
     let mut device = session
-        .add_device(DeviceFamily::ARCHIVE_DEVICE)
+        .add_device(DeviceSlot::Archive)
         .expect("the slot is added");
     assert_eq!(device.attachment().to_string(), "arc0");
     assert!(!device.is_occupied(), "a slot with no archive in it");
@@ -175,16 +175,22 @@ fn the_archive_slot_is_a_device_like_any_other() {
 
     let arc = zip_medium(&mut session, &path);
     session
-        .add_device(DeviceFamily::ARCHIVE_DEVICE)
+        .add_device(DeviceSlot::Archive)
         .expect("added")
         .insert(arc)
         .expect("the archive goes in");
     let disk = session
-        .load_media(open_read(&image), Format::Raw)
+        .load_media(
+            open_read(&image),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the disk loads")
         .id();
     session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(HardDrive::MbrSector)
         .expect("added")
         .insert(disk)
         .expect("the disk goes in");
@@ -223,34 +229,40 @@ fn a_medium_in_the_wrong_device_is_refused_naming_both_sides() {
     let image = write_image("mismatch");
     let mut session = Session::new();
 
-    // A block image is not what an archive slot is served.
+    // A block image is not what an archive receiver holds.
     let block = session
-        .load_media(open_read(&image), Format::Raw)
+        .load_media(
+            open_read(&image),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the disk loads")
         .id();
     let error = session
-        .add_device(DeviceFamily::ARCHIVE_DEVICE)
+        .add_device(DeviceSlot::Archive)
         .expect("added")
         .insert(block)
         .expect_err("a disk image is no archive");
     let message = error.to_string();
     assert!(message.contains("arc0"), "names the device: {message}");
     assert!(
-        message.contains("archive medium"),
-        "names the family's media: {message}"
+        message.contains("archives, which no device recorded"),
+        "names what the receiver holds: {message}"
     );
 
-    // And an archive is not what a hard disk is served.
+    // And an archive is not what a hard drive recorded.
     let arc = zip_medium(&mut session, &archive);
     let error = session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(HardDrive::MbrSector)
         .expect("added")
         .insert(arc)
-        .expect_err("an archive is no logical-block medium");
+        .expect_err("an archive is no hard-drive recording");
     let message = error.to_string();
     assert!(message.contains("hdd0"), "names the device: {message}");
     assert!(
-        message.contains("archive medium") && message.contains("logical-block"),
+        message.contains("no device") && message.contains("mbr-sector-hd"),
         "names both sides: {message}"
     );
 
@@ -440,7 +452,7 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
 
     let arc = zip_medium(&mut session, &path);
     session
-        .add_device(DeviceFamily::ARCHIVE_DEVICE)
+        .add_device(DeviceSlot::Archive)
         .expect("added")
         .insert(arc)
         .expect("the archive goes in");
@@ -460,12 +472,12 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
     // The discovery answers for the artifact inside, not for the archive
     // holding it: the medium is the disk, and the drive it belongs in is
     // the one the format records.
-    assert_eq!(discovery.media_type(), "flexible-5.25-hard-10");
+    assert_eq!(discovery.article(), "flexible-5.25-hard-10");
     assert_eq!(discovery.image_format(), "h8d");
     assert_eq!(
-        discovery.default_device(),
-        Some(DeviceFamily::HEATHKIT_H17),
-        "the format declares the drive it records"
+        discovery.device_type(),
+        Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
+        "the format records one device and carries it bare"
     );
     assert_eq!(
         discovery.image_path(),
@@ -480,7 +492,7 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
     session
         .machine_mut("h89")
         .expect("is there")
-        .add_device(DeviceFamily::HEATHKIT_H17)
+        .add_device(FloppyDrive::HeathH17)
         .expect("added")
         .insert(disk)
         .expect("the disk goes in");
@@ -521,7 +533,7 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
 
     let arc = zip_medium(&mut session, &path);
     session
-        .add_device(DeviceFamily::ARCHIVE_DEVICE)
+        .add_device(DeviceSlot::Archive)
         .expect("added")
         .insert(arc)
         .expect("the archive goes in");
@@ -542,7 +554,7 @@ fn a_disk_loaded_from_an_archive_outlives_the_archive_being_ejected() {
         .expect("the disk pools")
         .id();
     session
-        .add_device(DeviceFamily::HEATHKIT_H17)
+        .add_device(FloppyDrive::HeathH17)
         .expect("added")
         .insert(disk)
         .expect("the disk goes in");
@@ -583,7 +595,13 @@ fn a_file_on_a_volume_is_refused_as_an_artifact_by_name() {
     let path = crate_fat_floppy("volume-file");
     let mut session = Session::new();
     let device = session
-        .load_media(open_write(&path), Format::Raw)
+        .load_media(
+            open_write(&path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the floppy loads");
 
     // The floppy records no partition scheme, so its content is reached

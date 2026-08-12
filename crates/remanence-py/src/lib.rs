@@ -132,7 +132,9 @@ pub struct TrackSectorLayout {
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct DiskLayout {
-    pub media_type: String,
+    /// The article the image format names for the medium it holds state
+    /// for — the physical substrate (P14).
+    pub article: String,
     pub sector_size: Option<u64>,
     pub cylinders: Option<u32>,
     pub sides: Option<u32>,
@@ -165,7 +167,7 @@ impl DiskLayout {
         };
 
         Self {
-            media_type: layout.media_type.clone(),
+            article: layout.article.clone(),
             sector_size: layout.sector_size,
             cylinders: layout.cylinders,
             sides: layout.sides,
@@ -290,7 +292,11 @@ pub struct Identification {
 pub struct DeviceInfo {
     pub id: u64,
     pub image_format: String,
-    pub media_type: String,
+    /// The article of the medium attached here (P14) — the substrate.
+    pub article: String,
+    /// The device its content was recorded by, or `None` where no device
+    /// recorded it.
+    pub device_type: Option<String>,
     pub length_bytes: u64,
     pub authoritative_layer: String,
     pub active_layer: String,
@@ -516,72 +522,111 @@ impl DosAssignmentRule {
     }
 }
 
-/// One entry in the device-family catalog: what a machine's slots can be
-/// (P32).
+/// One device a machine's slot may hold: a device type from the catalog
+/// (P14), or the archive receiver.
 ///
-/// A family entry is as concrete as the machine fact it asserts, and
-/// states what it is a kind of. **Interior names classify; only concrete
-/// entries instantiate** — `Session.add_device` refuses the rest by name.
+/// A device type names the device a medium's content is assumed recorded
+/// by, enumerated in two levels — the class, then the concrete type
+/// within it. **The receiver is no device type**: an archive was
+/// recorded by no device, so its `device_type`, `class` and `article`
+/// are all `None`, exactly as a medium recorded by nothing answers.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
-pub struct DeviceFamily {
-    /// The stable spelling, and what `Session.add_device` takes.
+pub struct DeviceSlot {
+    /// The stable spelling, and what `Session.add_device` takes —
+    /// `"c1541"`, `"mbr-block-hd"`, or `"archive"`.
     pub id: String,
     /// The name, fit to show a user beside the slot it fills.
     pub name: String,
-    /// Where this entry's declaration came from.
-    pub provenance: String,
-    /// What this family is a kind of; `None` for the root of the lineage.
-    pub kind_of: Option<String>,
-    /// Whether a device of this family can exist in a machine.
-    pub is_concrete: bool,
-    /// The family half of every attachment identity in it — `"hdd"` for
-    /// `"hdd0"`. `None` for an interior name, which names no slot.
-    pub slot_prefix: Option<String>,
-    /// The media types a device of this family accepts.
-    pub accepted_media: Vec<String>,
-    /// The drive profile this family claims as its recording path, or
+    /// The recording device type, or `None` for the archive receiver.
+    pub device_type: Option<String>,
+    /// `"floppy"` or `"hard-drive"` — the catalog's first level. `None`
+    /// for the receiver. Spelled `device_class` because `class` is a
+    /// Python keyword and would be unreachable as an attribute.
+    pub device_class: Option<String>,
+    /// Where this device type's declaration came from. `None` for the
+    /// receiver, which declares no recording.
+    pub provenance: Option<String>,
+    /// The article this device is served (P14), by stable spelling.
+    pub article: Option<String>,
+    /// The bay half of every attachment identity in it — `"hdd"` for
+    /// `"hdd0"`. Several device types share one where the machine does.
+    pub slot_prefix: String,
+    /// The drive profile this device claims as its recording path, or
     /// `None` where it claims none — ordinary, not deficient.
     pub flux_path: Option<String>,
+    /// The partition scheme this device's spec lays its content out
+    /// under — the hard-drive specs carry it. `None` for the schemeless
+    /// types, whose media bear the direct partition.
+    pub scheme: Option<String>,
+    /// `"sector"` or `"block"` — how a hard-drive type addresses its
+    /// recording. `None` outside that class.
+    pub addressing: Option<String>,
 }
 
 #[pymethods]
-impl DeviceFamily {
+impl DeviceSlot {
     fn __repr__(&self) -> String {
-        format!("DeviceFamily(id={:?})", self.id)
+        format!("DeviceSlot(id={:?})", self.id)
     }
 }
 
-/// Every format a load may declare, by its stable spelling — the set a
-/// declaration is checked against (P3). A word that names a kind rather
-/// than one catalog entry is not among them and is refused by name.
+/// Every format a load may declare (P3): its stable spelling, its name,
+/// the device types its adapter records, and whether its declaration
+/// carries a block size.
+///
+/// A format that records exactly one device type carries it bare, so a
+/// load of it needs no `device` argument; one that records several needs
+/// the caller to name which, and a type absent from its list is refused
+/// by name even where the class is right. A word that names a kind
+/// rather than one catalog entry is not among these at all.
 #[pyfunction]
-fn formats() -> Vec<(String, String)> {
-    remanence::Format::ALL
+fn formats() -> Vec<(String, String, Vec<String>, bool)> {
+    remanence::Format::claimed()
         .iter()
-        .map(|format| (format.id().to_owned(), format.name().to_owned()))
+        .map(|claim| {
+            (
+                claim.id().to_owned(),
+                claim.name().to_owned(),
+                claim
+                    .devices()
+                    .iter()
+                    .map(|device| device.id().to_owned())
+                    .collect(),
+                claim.takes_block_bytes(),
+            )
+        })
         .collect()
 }
 
-/// Every storage-device family this release enrols, interior names of the
-/// lineage among them.
+/// Every device a machine's slot may hold: one per device type this
+/// release claims (P14), plus the archive receiver.
 #[pyfunction]
-fn device_families() -> Vec<DeviceFamily> {
-    remanence::DeviceFamily::enrolled()
+fn device_slots() -> Vec<DeviceSlot> {
+    remanence::DeviceSlot::claimed()
         .into_iter()
-        .map(|family| DeviceFamily {
-            id: family.id().to_owned(),
-            name: family.name().to_owned(),
-            provenance: family.provenance().to_owned(),
-            kind_of: family.kind_of().map(|parent| parent.id().to_owned()),
-            is_concrete: family.is_concrete(),
-            slot_prefix: family.slot_prefix().map(str::to_owned),
-            accepted_media: family
-                .accepted_media()
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            flux_path: family.flux_path().map(str::to_owned),
+        .map(|slot| DeviceSlot {
+            id: slot.id().to_owned(),
+            name: slot.name().to_owned(),
+            device_type: slot.device_type().map(|device| device.id().to_owned()),
+            device_class: slot.device_type().map(|device| device.class().to_owned()),
+            provenance: slot
+                .device_type()
+                .map(|device| device.provenance().to_owned()),
+            article: slot.device_type().map(|device| device.article().to_owned()),
+            slot_prefix: slot.slot_prefix().to_owned(),
+            flux_path: slot
+                .device_type()
+                .and_then(remanence::DeviceType::flux_path)
+                .map(str::to_owned),
+            scheme: slot
+                .device_type()
+                .and_then(remanence::DeviceType::scheme)
+                .map(str::to_owned),
+            addressing: slot
+                .device_type()
+                .and_then(remanence::DeviceType::addressing)
+                .map(str::to_owned),
         })
         .collect()
 }
@@ -1200,49 +1245,59 @@ impl Discovery {
         })
     }
 
-    /// The **exact medium**, by the media-type catalog's stable
-    /// spelling. The image-format adapter that loaded the state named
-    /// it; nothing here guessed.
+    /// The **exact article**, by the catalog's stable spelling. The
+    /// image-format adapter that loaded the state named it; nothing here
+    /// guessed.
     #[getter]
-    fn media_type(&self) -> PyResult<String> {
-        self.read(|discovery| discovery.media_type().to_owned())
+    fn article(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.article().to_owned())
     }
 
-    /// The medium's name, fit to show a user beside the drive it goes
+    /// The article's name, fit to show a user beside the drive it goes
     /// in.
     #[getter]
-    fn media_type_name(&self) -> PyResult<String> {
-        self.read(|discovery| discovery.media_type_name().to_owned())
+    fn article_name(&self) -> PyResult<String> {
+        self.read(|discovery| discovery.article_name().to_owned())
     }
 
-    /// Every concrete device family served this medium, by stable
-    /// spelling — the answer to "where could this go?", derived from the
-    /// families' own declarations. Empty means no drive this release
-    /// claims takes it.
+    /// Every device served this article, by stable spelling — the answer
+    /// to "where could this go?", derived from the device catalog's own
+    /// declarations. Empty means no device this release claims takes it,
+    /// which is an archive's honest answer.
     #[getter]
-    fn device_families(&self) -> PyResult<Vec<String>> {
+    fn accepting_devices(&self) -> PyResult<Vec<String>> {
         self.read(|discovery| {
             discovery
-                .accepting_families()
+                .accepting_devices()
                 .iter()
-                .map(|family| family.id().to_owned())
+                .map(|device| device.id().to_owned())
                 .collect()
         })
     }
 
-    /// The device family the **image format** declares for the disks it
-    /// records — the answer to "where did this come from?" — or `None`
-    /// where it declares none.
+    /// The device this artifact's content was recorded by — the answer
+    /// to "what wrote it?" — or `None` where the format records several
+    /// types and nothing in the artifact says which.
     ///
-    /// `None` is ordinary: a raw image says nothing about its machine,
-    /// and the caller then states the drive itself, adding the device
-    /// and inserting the medium.
+    /// `None` is honest rather than deficient, and it is also where a
+    /// load of the discovery refuses: the caller declares the type at
+    /// `Session.load_media` instead, choosing from `device_types`.
     #[getter]
-    fn default_device(&self) -> PyResult<Option<String>> {
+    fn device_type(&self) -> PyResult<Option<String>> {
+        self.read(|discovery| discovery.device_type().map(|device| device.id().to_owned()))
+    }
+
+    /// Every device type the recognizing format records — one where it
+    /// carries the type bare, several where a load declares which, and
+    /// none for an archive grammar.
+    #[getter]
+    fn device_types(&self) -> PyResult<Vec<String>> {
         self.read(|discovery| {
             discovery
-                .default_device()
-                .map(|family| family.id().to_owned())
+                .device_types()
+                .iter()
+                .map(|device| device.id().to_owned())
+                .collect()
         })
     }
 
@@ -1298,11 +1353,11 @@ impl Discovery {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match inner.as_ref() {
             Some(discovery) => format!(
-                "Discovery(path={:?}, media_type={:?}, default_device={})",
+                "Discovery(path={:?}, article={:?}, device_type={})",
                 discovery.path(),
-                discovery.media_type(),
-                match discovery.default_device() {
-                    Some(family) => format!("{:?}", family.id()),
+                discovery.article(),
+                match discovery.device_type() {
+                    Some(device) => format!("{:?}", device.id()),
                     None => "None".to_owned(),
                 }
             ),
@@ -1378,22 +1433,22 @@ impl Session {
         })
     }
 
-    /// Adds a device of `family` (a family's stable spelling, such as
-    /// `"hard-disk"`) to the session's anonymous machine, taking the
-    /// lowest free slot of that family, and returns it — empty, until
+    /// Adds a device of `device` (a stable spelling from
+    /// `device_slots()` — a device type such as `"mbr-block-hd"`, or
+    /// `"archive"`) to the session's anonymous machine, taking the
+    /// lowest free slot of that bay, and returns it — empty, until
     /// `StorageDevice.insert` puts a medium in it.
     ///
     /// `slot` chooses the slot, never the name; a slot already taken is
-    /// refused rather than displaced. A family this release does not
-    /// claim, and an interior name of the lineage which classifies rather
-    /// than instantiates, are both refused by name.
-    #[pyo3(signature = (family, *, slot = None))]
-    fn add_device(&self, family: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
-        let family = remanence::DeviceFamily::from_id(family).map_err(to_py_err)?;
+    /// refused rather than displaced, whatever device would fill it. A
+    /// device this release does not claim is refused by name.
+    #[pyo3(signature = (device, *, slot = None))]
+    fn add_device(&self, device: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
+        let device = remanence::DeviceSlot::from_id(device).map_err(to_py_err)?;
         let mut session = self.lock();
         let added = match slot {
-            Some(slot) => session.add_device_at(family, slot),
-            None => session.add_device(family),
+            Some(slot) => session.add_device_at(device, slot),
+            None => session.add_device(device),
         };
         let attachment = added.map_err(to_py_err)?.attachment();
         drop(session);
@@ -1424,14 +1479,27 @@ impl Session {
     /// The declaration is checked by that one format's own adapter and
     /// refused by name where the evidence cannot bear it. `format` is a
     /// stable spelling from `formats()`.
-    #[pyo3(signature = (source, format, *, cache_bytes = None))]
+    ///
+    /// **The declaration carries the device that recorded the content.**
+    /// `device` is a stable spelling from that format's own recorded
+    /// list, and may be left out where the format records exactly one
+    /// type and so carries it bare. `block_bytes` is the raw reading's
+    /// declared addressable unit, which every format recording its own
+    /// refuses as a second answer about one disk.
+    #[pyo3(signature = (source, format, *, device = None, block_bytes = None, cache_bytes = None))]
     fn load_media(
         &self,
         source: &Bound<'_, PyAny>,
         format: &str,
+        device: Option<&str>,
+        block_bytes: Option<u64>,
         cache_bytes: Option<u64>,
     ) -> PyResult<Medium> {
-        let format = remanence::Format::from_id(format).map_err(to_py_err)?;
+        let device = match device {
+            Some(device) => Some(remanence::DeviceType::from_id(device).map_err(to_py_err)?),
+            None => None,
+        };
+        let format = remanence::Format::declared(format, device, block_bytes).map_err(to_py_err)?;
         let file = duplicated_file(source)?;
         let mut session = self.lock();
         let loaded = match cache_bytes {
@@ -1462,6 +1530,28 @@ impl Session {
         let discovered = discovery.take()?;
         let mut session = self.lock();
         let id = session.load_discovery(discovered).map_err(to_py_err)?.id();
+        drop(session);
+        Ok(Medium {
+            session: Arc::clone(&self.inner),
+            id,
+        })
+    }
+
+    /// `Session.load_discovery` under the caller's own declaration of
+    /// the device that recorded the artifact — the `_as` door, for a
+    /// format that records several device types and so asserts none.
+    ///
+    /// `device` is a stable spelling from `Discovery.device_types`, and
+    /// one the recognizing format's adapter records; anything else
+    /// raises by name. The discovery is consumed either way.
+    fn load_discovery_as(&self, discovery: &Discovery, device: &str) -> PyResult<Medium> {
+        let device = remanence::DeviceType::from_id(device).map_err(to_py_err)?;
+        let taken = discovery.take()?;
+        let mut session = self.lock();
+        let id = session
+            .load_discovery_as(taken, device)
+            .map_err(to_py_err)?
+            .id();
         drop(session);
         Ok(Medium {
             session: Arc::clone(&self.inner),
@@ -1641,17 +1731,17 @@ impl Machine {
         self.identity.clone()
     }
 
-    /// Adds a device of `family` to this machine, taking the lowest free
-    /// slot of that family — or `slot`, where the caller chooses one —
-    /// and returns it, empty.
-    #[pyo3(signature = (family, *, slot = None))]
-    fn add_device(&self, family: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
-        let family = remanence::DeviceFamily::from_id(family).map_err(to_py_err)?;
+    /// Adds a device of `device` to this machine, taking the lowest free
+    /// slot of its bay — or `slot`, where the caller chooses one — and
+    /// returns it, empty.
+    #[pyo3(signature = (device, *, slot = None))]
+    fn add_device(&self, device: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
+        let device = remanence::DeviceSlot::from_id(device).map_err(to_py_err)?;
         let mut session = self.lock();
         let mut machine = self.get(&mut session)?;
         let added = match slot {
-            Some(slot) => machine.add_device_at(family, slot),
-            None => machine.add_device(family),
+            Some(slot) => machine.add_device_at(device, slot),
+            None => machine.add_device(device),
         };
         let attachment = added.map_err(to_py_err)?.attachment();
         drop(session);
@@ -1662,8 +1752,8 @@ impl Machine {
         })
     }
 
-    /// Adds a device of the artifact's **format-declared default
-    /// family**, loads the medium at `path` into it, and returns that
+    /// Adds a device of the **device type the artifact's format
+    /// records**, loads the medium at `path` into it, and returns that
     /// device.
     ///
     /// It is the one convenience over discovery, and it composes the two
@@ -1672,11 +1762,10 @@ impl Machine {
     /// ordinary device in this machine's own set — a fresh one, never a
     /// slot already there.
     ///
-    /// **A format that declares no default raises by name**, toward the
-    /// explicit acts (`Session.load_media` then `add_device` and
-    /// `StorageDevice.insert`),
-    /// naming the families the medium could go in. A refused call leaves
-    /// no device behind.
+    /// **A format that records several device types raises by name**,
+    /// toward the explicit acts (`Session.load_media` then `add_device`
+    /// and `StorageDevice.insert`), naming the types a declaration may
+    /// state. A refused call leaves no device behind.
     #[pyo3(signature = (path, *, writable, cache_bytes = None))]
     fn add_device_for(
         &self,
@@ -1876,10 +1965,29 @@ impl StorageDevice {
         self.attachment.to_string()
     }
 
-    /// The device family this slot belongs to, by its stable spelling.
+    /// The bay this slot belongs to, by its prefix — `"hdd"` for
+    /// `"hdd0"`.
     #[getter]
-    fn family(&self) -> String {
-        self.attachment.family().id().to_owned()
+    fn slot_prefix(&self) -> String {
+        self.attachment.prefix().to_owned()
+    }
+
+    /// What this device is, by stable spelling — a device type's own, or
+    /// `"archive"` for the receiver.
+    #[getter]
+    fn slot(&mut self) -> PyResult<String> {
+        Ok(self.get()?.slot().id().to_owned())
+    }
+
+    /// The recording device type this slot is typed by, or `None` for
+    /// the archive receiver — which records nothing, as the archive it
+    /// holds was recorded by nothing.
+    #[getter]
+    fn device_type(&mut self) -> PyResult<Option<String>> {
+        Ok(self
+            .get()?
+            .device_type()
+            .map(|device| device.id().to_owned()))
     }
 
     /// Whether a medium currently occupies the slot.
@@ -1907,8 +2015,10 @@ impl StorageDevice {
 
     /// Links the pooled medium `media_id` into this slot.
     ///
-    /// **A device accepts only the media its family is served**, and a
-    /// medium belonging in another drive is refused naming both sides. An
+    /// **The check is device-type equality**: a medium carries the
+    /// device its content was recorded by, a slot is typed by the device
+    /// that fills it, and a medium belonging in another drive is refused
+    /// naming both sides. An
     /// identity the pool does not hold, a slot already occupied, and a
     /// medium another slot already holds are each refused by name.
     fn insert(&mut self, media_id: u64) -> PyResult<()> {
@@ -2004,10 +2114,22 @@ impl Medium {
         Ok(self.get()?.is_linked())
     }
 
-    /// The media type this medium is, by the catalog's stable spelling.
+    /// The article this medium is, by the catalog's stable spelling —
+    /// the physical substrate.
     #[getter]
-    fn media_type(&self) -> PyResult<&'static str> {
-        Ok(self.get()?.media_type())
+    fn article(&self) -> PyResult<&'static str> {
+        Ok(self.get()?.article())
+    }
+
+    /// The device this medium's content was recorded by, by the device
+    /// catalog's stable spelling — or `None` where no device recorded
+    /// it, which is an archive's honest answer rather than a gap.
+    #[getter]
+    fn device_type(&self) -> PyResult<Option<String>> {
+        Ok(self
+            .get()?
+            .device_type()
+            .map(|device| device.id().to_owned()))
     }
 
     /// The artifact the medium was loaded from (the archive itself for an
@@ -2505,7 +2627,8 @@ fn disk_report(report: remanence::DiskReport) -> DiskReport {
         device: DeviceInfo {
             id: report.device.id,
             image_format: report.device.image_format.clone(),
-            media_type: report.device.media_type.clone(),
+            article: report.device.article.clone(),
+            device_type: report.device.device_type.clone(),
             length_bytes: report.device.length_bytes,
             authoritative_layer: report.device.authoritative_layer.clone(),
             active_layer: report.device.active_layer.clone(),
@@ -5599,7 +5722,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StorageDevice>()?;
     m.add_class::<Medium>()?;
     m.add_class::<Partition>()?;
-    m.add_class::<DeviceFamily>()?;
+    m.add_class::<DeviceSlot>()?;
     m.add_class::<Assurance>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;
@@ -5618,7 +5741,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DriveMapping>()?;
     m.add_class::<DosAssignmentRule>()?;
     m.add_function(wrap_pyfunction!(assurance_conditions, m)?)?;
-    m.add_function(wrap_pyfunction!(device_families, m)?)?;
+    m.add_function(wrap_pyfunction!(device_slots, m)?)?;
     m.add_function(wrap_pyfunction!(discover_media, m)?)?;
     m.add_function(wrap_pyfunction!(dos_assignment_rules, m)?)?;
     m.add_function(wrap_pyfunction!(formats, m)?)?;

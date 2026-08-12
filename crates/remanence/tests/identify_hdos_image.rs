@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    ArchiveLayout, DeviceFamily, Format, Identification, ImageLayout, LayerKind, LayerLayout,
+    ArchiveLayout, FloppyDrive, Format, Identification, ImageLayout, LayerKind, LayerLayout,
     MediaId, PhysicalMediaLayout, SectorLayout, Session,
 };
 
@@ -41,9 +41,7 @@ fn attach_entry(
         .get_file(entry)?
         .discover()?;
     let disk = session.load_discovery(discovery)?.id();
-    session
-        .add_device(DeviceFamily::HEATHKIT_H17)?
-        .insert(disk)?;
+    session.add_device(FloppyDrive::HeathH17)?.insert(disk)?;
     Ok((session, disk))
 }
 
@@ -96,7 +94,7 @@ fn assert_hdos_identification(identification: &Identification) {
             sectors_per_track: 10
         }
     );
-    assert_eq!(disk.media_type, "flexible-5.25-hard-10");
+    assert_eq!(disk.article, "flexible-5.25-hard-10");
 
     let filesystem = identification.layers.last().expect("filesystem layer");
     assert_eq!(filesystem.kind, LayerKind::Filesystem);

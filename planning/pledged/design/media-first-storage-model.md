@@ -178,7 +178,11 @@ Medium                                         pool-owned, holdable — ALL cont
    — a flux capture of a hard drive fails to compile — and a pairing
    no adapter declares within the class is a named refusal (P14's
    rule, sharpened). `PartitionType` follows the same enumerated
-   rule, declared and checked per partition.
+   rule, declared and checked per partition. *Delivered, for the
+   families that exist: the catalog, the articles it composes, the
+   declarations the block formats carry, and the P14 amendment in
+   force. What a slot is typed by is a device type **or the archive
+   receiver**, which is no device type at all (D33).*
 8. **Kind-declared rules need no arguments.** Being a `Commodore1541`
    medium *means* reading through the c1541 channel and codec:
    `disk.bytestream()?` takes no policy because the device type carries
@@ -194,7 +198,9 @@ Medium                                         pool-owned, holdable — ALL cont
    are deferred. Likewise the reduction that creates a mastered medium
    runs under the profile's declared defaults; a choice no family
    convention can make refuses by name, and the answer goes into the
-   `load_media` declaration.
+   `load_media` declaration. *The type carries its declarations
+   today; the trait surfaces that read them arrive with the families
+   that need them.*
 9. **Vantage doors — specified, never probed.** A partition composes
    at most one `StorageSpace` (an identity rule: both doors hand out
    the same node). `.volume()` answers iff the addressable vantage
@@ -210,14 +216,18 @@ Medium                                         pool-owned, holdable — ALL cont
    values* under it; it never picks a reading — probing belongs to the
    question tier. No phantom vantage is ever invented (D26); the
    **direct partition** is the library's own composition act, carried
-   as provenance, never as evidence. *Delivered, with the scheme named
-   by the medium's kind until device specs arrive to name it (D32).*
+   as provenance, never as evidence. *Delivered: the scheme is the
+   device type's own spec, and the schemeless types bear the direct
+   partition with no step — the content still classified, because that
+   is evidence about the recording rather than about a layout (D33).*
 10. **The edge.** `insert` / `eject` are the one crossing between
-    configuration and state: insert checks the device family against
-    the media type and refuses naming both sides; eject severs only —
-    claim, geometry, and buffered writes survive in the pool. An empty
-    device is first-class configuration (U22 letters it; P15 will
-    answer not-ready through it).
+    configuration and state: insert is **device-type equality**,
+    refusing naming both sides — so a 1541 refuses an H-37 disk it
+    could physically hold but never serve, which the article alone
+    cannot catch; eject severs only — claim, geometry, and buffered
+    writes survive in the pool. An empty device is first-class
+    configuration (U22 letters it; P15 will answer not-ready through
+    it). *Delivered.*
 
 ## Reserved seats (structure now, plumbing later)
 
@@ -262,6 +272,13 @@ caller who does not yet know what an artifact is has no format to
 declare. The surface stays, under the constraint that distinguishes it —
 **discovery holds the claim and builds no cache** — which F67 makes
 real, the delivered verb materializing a whole medium today.
+
+*The `default_device` declaration is delivered as the format's recorded
+device types: where an adapter records exactly one, the discovery
+carries it and a load of the discovery pools a medium that knows what
+wrote it; where it records several, the discovery asserts none and both
+the load and the convenience refuse by name toward the declared
+`load_media`, which is where the caller states one (D33).*
 
 Nothing pledged here depends on discovery either way, and nothing here
 reinstates what the question tier still *proposes*: ranked verdicts,
@@ -316,7 +333,9 @@ the features that make each real.
   `load_discovery`, `add_device_for`, `default_device` — because
   discovery and loading answer different questions. What it owes is the
   constraint, not the exit: discovery holds the claim and builds no
-  cache (F67).
+  cache (F67). *Delivered, with `default_device` spelled
+  `device_type()` and its list `device_types()`: the fact the format
+  declares and the fact the medium carries became one fact (D33).*
 - **The delivered "zero partitions, not one trivial one" ruling is
   reversed** by the direct partition — the evidence answer
   (`partition_scheme: None`) is unchanged; the navigation answer gains
@@ -334,6 +353,10 @@ the features that make each real.
   partition pool populates under its device spec, checked at load.
   P14 gains the device-type catalog and its granularity rule; the P32
   nature amendment is untouched, exercised at the P15 seat.
+  *Delivered: `article()` and `device_type()` are the surface, the
+  archive's article is spelled `virtual`, and the device-family
+  catalog with its lineage is gone — an attachment identity names a
+  bay, since several device types share one (D33).*
 - **In-force P7 is amended**: "denying write permission to every other
   process is mandatory in all scenarios" becomes *mandatory where the
   library opens; caller-owned where the caller opened*. Local artifacts

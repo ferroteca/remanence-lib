@@ -684,7 +684,7 @@ impl std::fmt::Debug for MediumBacking {
 #[derive(Debug)]
 pub(crate) struct FluxMedium {
     profile: &'static str,
-    /// The medium this is (P14): an immutable media type naming the
+    /// The medium this is (P14): an immutable article naming the
     /// article's passive facts, named here because a medium is state
     /// between image formats and drives and has to say what it is
     /// independently of either. The recorded content below belongs to
@@ -704,7 +704,7 @@ impl FluxMedium {
         self.profile
     }
 
-    /// The media type this medium is. Distinct from the drive profile
+    /// The article this medium is. Distinct from the drive profile
     /// above it in exactly the way P14 and P30 are distinct: that one
     /// declares what a family does to media, and this one what the
     /// article itself is.

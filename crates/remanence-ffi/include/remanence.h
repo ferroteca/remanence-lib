@@ -240,8 +240,8 @@ typedef struct RemanenceCaptureSet RemanenceCaptureSet;
 // What a d64 rendition carried, or will carry, of one image.
 typedef struct RemanenceD64Report RemanenceD64Report;
 
-// A borrowed view of one storage device — the slot, its family, and the
-// state of the medium in it.
+// A borrowed view of one storage device — the slot, what it is, and
+// the state of the medium in it.
 //
 // **The session owns this; never free it.** It stays valid until the
 // device is released or the session is freed.
@@ -642,9 +642,14 @@ void remanence_string_free(char *string);
 // view; do not free.
 const char *remanence_device_attachment(const RemanenceDevice *device);
 
-// This device's family, by its stable spelling (`hard-disk`). Owned by
-// the view; do not free.
-const char *remanence_device_family(const RemanenceDevice *device);
+// What this device is, by its stable spelling — a device type's own
+// (`mbr-block-hd`) or `archive`. Owned by the view; do not free.
+const char *remanence_device_slot(const RemanenceDevice *device);
+
+// The recording device type this slot is typed by, or null for the
+// archive receiver — which records nothing, as the archive it holds was
+// recorded by nothing.
+const char *remanence_device_type(const RemanenceDevice *device);
 
 // Whether a medium currently occupies this device's slot.
 bool remanence_device_is_occupied(const RemanenceDevice *device);
@@ -661,8 +666,10 @@ RemanenceMedium *remanence_device_medium(RemanenceDevice *device);
 
 // Links the pooled medium `media_id` into this device's slot.
 //
-// **A device accepts only the media its family is served** (P14), and a
-// medium belonging in another drive is refused naming both sides. An
+// **The check is device-type equality** (P14): a medium carries the
+// device its content was recorded by, a slot is typed by the device
+// that fills it, and a medium belonging in another drive is refused
+// naming both sides. An
 // identity the pool does not hold, a slot already occupied, and a medium
 // another slot already holds are each refused by name. Returns false on
 // failure.
@@ -684,45 +691,48 @@ bool remanence_device_eject(RemanenceDevice *device,
                             char **error_out,
                             char **error_rule_out);
 
-// How many device families this release enrols, interior names of the
-// lineage among them (P32).
-size_t remanence_device_family_count(void);
+// How many slots this release claims: one per device type in the
+// catalog (P14), plus the archive receiver.
+size_t remanence_device_slot_count(void);
 
-// The stable spelling of family `index` — the value
+// The stable spelling of slot `index` — a device type's own (`c1541`,
+// `mbr-block-hd`) or `archive`, and the value
 // `remanence_session_add_device` takes. Null when out of range; owned by
 // the library and never freed.
-const char *remanence_device_family_id(size_t index);
+const char *remanence_device_slot_id(size_t index);
 
-// Family `index`'s name, fit to show a user beside the slot it fills.
-const char *remanence_device_family_name(size_t index);
+// Slot `index`'s name, fit to show a user beside the bay it fills.
+const char *remanence_device_slot_name(size_t index);
 
-// Where family `index`'s declaration came from.
-const char *remanence_device_family_provenance(size_t index);
+// Where slot `index`'s device-type declaration came from. Null for the
+// archive receiver, which declares no recording.
+const char *remanence_device_slot_provenance(size_t index);
 
-// What family `index` is a kind of, by stable spelling — null for the
-// root of the lineage.
-const char *remanence_device_family_kind_of(size_t index);
+// The class of slot `index`'s device type — `floppy` or `hard-drive`,
+// the first of the catalog's two levels. Null for the archive receiver.
+const char *remanence_device_slot_class(size_t index);
 
-// Whether family `index` can be added to a machine. An interior name of
-// the lineage classifies and instantiates nothing.
-bool remanence_device_family_is_concrete(size_t index);
+// The article slot `index`'s device type is served (P14), by stable
+// spelling. Null for the archive receiver.
+const char *remanence_device_slot_article(size_t index);
 
-// The family half of every attachment identity in family `index` —
-// `hdd` for `hdd0`. Null for an interior name, which names no slot.
-const char *remanence_device_family_slot_prefix(size_t index);
+// The bay half of every attachment identity in slot `index` — `hdd` for
+// `hdd0`. Several device types share one where the machine does.
+const char *remanence_device_slot_prefix(size_t index);
 
-// How many media types family `index` accepts (P14). Zero for an
-// interior name.
-size_t remanence_device_family_media_count(size_t index);
-
-// The stable spelling of the `media`th media type family `index`
-// accepts. Null when either index is out of range.
-const char *remanence_device_family_media(size_t index, size_t media);
-
-// The drive profile family `index` claims as its recording path (P22),
-// by stable spelling. Null where the family claims none, which is
+// The drive profile slot `index`'s device type claims as its recording
+// path (P22), by stable spelling. Null where it claims none, which is
 // ordinary rather than deficient.
-const char *remanence_device_family_flux_path(size_t index);
+const char *remanence_device_slot_flux_path(size_t index);
+
+// The partition scheme slot `index`'s device type lays its content out
+// under, by stable spelling — the hard-drive specs carry it. Null for
+// the schemeless types, whose media bear the direct partition.
+const char *remanence_device_slot_scheme(size_t index);
+
+// How slot `index`'s device type addresses its recording — `sector` or
+// `block`. Null outside the hard-drive class.
+const char *remanence_device_slot_addressing(size_t index);
 
 // Identifies the artifact at `path` (UTF-8) — a disk image, or
 // an archive — under the caller's declared intent, and answers
@@ -774,30 +784,41 @@ const char *remanence_discovery_image_format_name(const RemanenceDiscovery *disc
 bool remanence_discovery_format(const RemanenceDiscovery *discovery,
                                 RemanenceDiskFormat *format_out);
 
-// The **exact medium**, by the media-type catalog's stable spelling
-// (P14). The image-format adapter that loaded the state named it.
-const char *remanence_discovery_media_type(const RemanenceDiscovery *discovery);
+// The **exact article**, by the catalog's stable spelling (P14). The
+// image-format adapter that loaded the state named it.
+const char *remanence_discovery_article(const RemanenceDiscovery *discovery);
 
-// The medium's name, fit to show a user beside the drive it goes in.
-const char *remanence_discovery_media_type_name(const RemanenceDiscovery *discovery);
+// The article's name, fit to show a user beside the drive it goes in.
+const char *remanence_discovery_article_name(const RemanenceDiscovery *discovery);
 
-// How many concrete device families are served this medium — the
-// answer to "where could this go?", derived from the families' own
-// declarations. Zero means no drive this release claims takes it.
-size_t remanence_discovery_device_family_count(const RemanenceDiscovery *discovery);
+// How many devices are served this article — the answer to "where
+// could this go?", derived from the device catalog's own declarations.
+// Zero means no device this release claims takes it, which is an
+// archive's honest answer.
+size_t remanence_discovery_accepting_device_count(const RemanenceDiscovery *discovery);
 
-// The stable spelling of the `index`th family served this medium. Null
+// The stable spelling of the `index`th device served this article. Null
 // when out of range; owned by the discovery.
-const char *remanence_discovery_device_family(const RemanenceDiscovery *discovery, size_t index);
+const char *remanence_discovery_accepting_device(const RemanenceDiscovery *discovery, size_t index);
 
-// The device family the **image format** declares for the disks it
-// records — the answer to "where did this come from?" — or null where
-// the format declares none.
+// How many device types the recognizing format records — one where it
+// carries the type bare, several where a load declares which, and zero
+// for an archive grammar, which records no device at all.
+size_t remanence_discovery_recorded_device_count(const RemanenceDiscovery *discovery);
+
+// The stable spelling of the `index`th device type the format records —
+// the set a declaration may name. Null when out of range.
+const char *remanence_discovery_recorded_device(const RemanenceDiscovery *discovery, size_t index);
+
+// The device this artifact's content was recorded by — the answer to
+// "what wrote it?" — or null where the format records several types
+// and nothing in the artifact says which.
 //
-// Null is ordinary: a raw image says nothing about its machine, and the
-// caller then states the drive itself, adding the device and
-// inserting the medium.
-const char *remanence_discovery_default_device(const RemanenceDiscovery *discovery);
+// Null is honest rather than deficient, and it is also a refusal
+// waiting to happen: a load takes the discovery only where this
+// answers, so a caller who meets null declares the type at
+// `remanence_session_load_media` instead.
+const char *remanence_discovery_device_type(const RemanenceDiscovery *discovery);
 
 // The resolved image's own size in bytes — the raw plane.
 uint64_t remanence_discovery_image_size_bytes(const RemanenceDiscovery *discovery);
@@ -828,9 +849,14 @@ uint64_t remanence_medium_id(const RemanenceMedium *medium);
 // ordinary rather than idle: it is loaded, claimed, and answering.
 bool remanence_medium_is_linked(const RemanenceMedium *medium);
 
-// The media type this medium is (P14), by the catalog's stable spelling.
-// Owned by the library; do not free.
-const char *remanence_medium_media_type(const RemanenceMedium *medium);
+// The article this medium is (P14), by the catalog's stable spelling —
+// the physical substrate. Owned by the library; do not free.
+const char *remanence_medium_article(const RemanenceMedium *medium);
+
+// The device this medium's content was recorded by, by the device
+// catalog's stable spelling — or null where no device recorded it,
+// which is an archive's honest answer rather than a gap.
+const char *remanence_medium_device_type(const RemanenceMedium *medium);
 
 // The artifact the medium was loaded from (the archive itself for an
 // image loaded out of one).
@@ -940,11 +966,11 @@ bool remanence_layer_image_payload_length(const RemanenceIdentification *identif
 // Physical media layout: whether disk geometry is known.
 bool remanence_layer_has_disk_layout(const RemanenceIdentification *identification, size_t index);
 
-// Disk layout: the media type the image format names for its medium
+// Disk layout: the article the image format names for its medium
 // (e.g. "logical-block-512"); null when the layer has no disk
 // layout.
-const char *remanence_layer_disk_media_type(const RemanenceIdentification *identification,
-                                            size_t index);
+const char *remanence_layer_disk_article(const RemanenceIdentification *identification,
+                                         size_t index);
 
 // Disk layout: sector size in bytes; returns false when unknown.
 bool remanence_layer_disk_sector_size(const RemanenceIdentification *identification,
@@ -1013,6 +1039,21 @@ const char *remanence_format_id(size_t index);
 // That format's name, fit to show a user, or null out of range.
 const char *remanence_format_name(size_t index);
 
+// How many device types format `index` records: one where the format
+// carries it bare, several where the load declares which, and zero for
+// an archive grammar, which records no device at all.
+size_t remanence_format_device_count(size_t index);
+
+// The stable spelling of the `device`th device type format `index`
+// records — a value `remanence_session_load_media` accepts for it.
+// Null when either index is out of range.
+const char *remanence_format_device(size_t index, size_t device);
+
+// Whether a declaration of format `index` carries the block size —
+// true for the raw reading alone, which records no addressable unit of
+// its own.
+bool remanence_format_takes_block_bytes(size_t index);
+
 // Loads the caller's own opened artifact as the format they **declare**
 // it to be, and answers with the medium — linked to nothing. The session
 // owns the view; never free it. Null on failure.
@@ -1032,9 +1073,18 @@ const char *remanence_format_name(size_t index);
 // The declaration is checked by that one format's own adapter and
 // refused by name where the evidence cannot bear it. `format` is a
 // stable spelling from `remanence_format_id`.
+//
+// **The declaration carries the device the content was recorded by.**
+// `device_type` is a stable spelling from `remanence_format_device`,
+// and may be null where the format records exactly one type and so
+// carries it bare. `block_bytes` is the raw reading's declared
+// addressable unit and is ignored — passed as zero — by every format
+// that records its own.
 RemanenceMedium *remanence_session_load_media(RemanenceSession *session,
                                               ptrdiff_t source,
                                               const char *format,
+                                              const char *device_type,
+                                              uint64_t block_bytes,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
                                               char **error_rule_out);
@@ -1052,11 +1102,32 @@ RemanenceMedium *remanence_session_load_media(RemanenceSession *session,
 // **The discovery is freed either way** — a refused load releases its
 // claim with it — so the pointer must never be used or freed again
 // after this call, whatever it returns. Null on failure.
+//
+// **This is the plain door, and it opens where the recognizing format
+// records exactly one device type.** Where it records several, nothing
+// in the artifact says which wrote it, and the refusal names them and
+// points at `remanence_session_load_discovery_as`.
 RemanenceMedium *remanence_session_load_discovery(RemanenceSession *session,
                                                   RemanenceDiscovery *discovery,
                                                   RemanenceErrorCategory *error_category_out,
                                                   char **error_out,
                                                   char **error_rule_out);
+
+// Loads the medium a discovery already opened under the caller's own
+// declaration of the device that recorded it — the `_as` door, for a
+// format that records several device types and so asserts none.
+//
+// `device_type` is a stable spelling from
+// `remanence_discovery_recorded_device`, and one the recognizing
+// format's adapter records; anything else is refused by name. The
+// discovery is consumed and freed exactly as the plain door consumes
+// it, whatever this returns. Null on failure.
+RemanenceMedium *remanence_session_load_discovery_as(RemanenceSession *session,
+                                                     RemanenceDiscovery *discovery,
+                                                     const char *device_type,
+                                                     RemanenceErrorCategory *error_category_out,
+                                                     char **error_out,
+                                                     char **error_rule_out);
 
 // How many media this session holds.
 size_t remanence_session_media_count(const RemanenceSession *session);
@@ -1105,28 +1176,28 @@ RemanenceSession *remanence_session_new(void);
 // invalid.
 void remanence_session_free(RemanenceSession *session);
 
-// Adds a device of `family` (UTF-8, a family's stable spelling such as
-// `hard-disk`) to the session's **anonymous machine**, taking the lowest
-// free slot of that family, and returns a **borrowed** view of it —
-// empty, until `remanence_device_insert` puts a medium in it.
+// Adds a device of `slot` (UTF-8, a stable spelling from
+// `remanence_device_slot_id` — a device type such as `mbr-block-hd`, or
+// `archive`) to the session's **anonymous machine**, taking the lowest
+// free slot of that bay, and returns a **borrowed** view of it — empty,
+// until `remanence_device_insert` puts a medium in it.
 //
 // The session owns the view; never free it.
 // `remanence_machine_add_device` does the same in a named machine. A
-// family this release does not claim, and an interior name of the
-// lineage which classifies rather than instantiates, are both refused by
-// name (P3). Returns null on failure.
+// device this release does not claim is refused by name (P3). Returns
+// null on failure.
 RemanenceDevice *remanence_session_add_device(RemanenceSession *session,
-                                              const char *family,
+                                              const char *slot,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
                                               char **error_rule_out);
 
-// Adds a device of `family` at slot `index` of the session's anonymous
-// machine — `hdd1` being family `hard-disk` at index 1. The caller
-// chooses the slot, never the name; a slot already taken is refused
-// rather than displaced.
+// Adds a device of `slot` at index `index` of the session's anonymous
+// machine — `hdd1` being a hard drive at index 1. The caller chooses
+// the slot, never the name; a slot already taken is refused rather than
+// displaced, whatever device would fill it.
 RemanenceDevice *remanence_session_add_device_at(RemanenceSession *session,
-                                                 const char *family,
+                                                 const char *slot,
                                                  uint32_t index,
                                                  RemanenceErrorCategory *error_category_out,
                                                  char **error_out,
@@ -1198,26 +1269,26 @@ RemanenceMachine *remanence_session_machine(RemanenceSession *session, const cha
 // machine. Owned by the view; do not free.
 const char *remanence_machine_identity(const RemanenceMachine *machine);
 
-// Adds a device of `family` (UTF-8) to this machine, taking the lowest
-// free slot of that family, and returns a **borrowed** view of it. The
+// Adds a device of `slot` (UTF-8) to this machine, taking the lowest
+// free slot of that bay, and returns a **borrowed** view of it. The
 // session owns the view; never free it. Returns null on failure.
 RemanenceDevice *remanence_machine_add_device(RemanenceMachine *machine,
-                                              const char *family,
+                                              const char *slot,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
                                               char **error_rule_out);
 
-// Adds a device of `family` at slot `index` in this machine. The caller
+// Adds a device of `slot` at index `index` in this machine. The caller
 // chooses the slot, never the name; a slot already taken is refused
 // rather than displaced.
 RemanenceDevice *remanence_machine_add_device_at(RemanenceMachine *machine,
-                                                 const char *family,
+                                                 const char *slot,
                                                  uint32_t index,
                                                  RemanenceErrorCategory *error_category_out,
                                                  char **error_out,
                                                  char **error_rule_out);
 
-// Adds a device of the artifact's **format-declared default family** to
+// Adds a device of the **device type the artifact's format records** to
 // this machine, loads the medium at `path` (UTF-8) into it, and returns
 // a **borrowed** view of that device. The session owns the view; never
 // free it.
@@ -1228,12 +1299,11 @@ RemanenceDevice *remanence_machine_add_device_at(RemanenceMachine *machine,
 // ordinary device in this machine's own set — a fresh one, never a slot
 // already there.
 //
-// **A format that declares no default is refused by name**, toward the
-// two explicit acts (`remanence_machine_add_device` then
+// **A format that records several device types is refused by name**,
+// toward the explicit acts (`remanence_machine_add_device` then
 // `remanence_session_load_media` then `remanence_device_insert`), with
-// the refusal naming the families
-// the medium could go in. A refused call leaves no device behind.
-// Returns null on failure.
+// the refusal naming the types a declaration may state. A refused call
+// leaves no device behind. Returns null on failure.
 RemanenceDevice *remanence_machine_add_device_for(RemanenceMachine *machine,
                                                   const char *path,
                                                   RemanenceAccessIntent intent,
@@ -1262,7 +1332,7 @@ bool remanence_machine_release_device(RemanenceMachine *machine,
 //
 // `rule` is a claimed rule's name, or null to apply every claimed rule
 // and leave a letter they disagree on undetermined. Families no claimed
-// rule letters are passed over by family, and the mapping's provenance
+// rule letters are passed over by device type, and the mapping's provenance
 // says which. Free the result with `remanence_drive_map_free`; returns
 // null on failure.
 RemanenceDriveMap *remanence_machine_compose_dos_letters(RemanenceMachine *machine,
@@ -2508,9 +2578,13 @@ const char *remanence_report_device_image_format(const RemanenceDiskReport *repo
 // The device's addressable length in bytes.
 uint64_t remanence_report_device_length_bytes(const RemanenceDiskReport *report);
 
-// The media type of the medium attached to the device (P14) — what
-// the medium is, said in the media-type catalog's own name for it.
-const char *remanence_report_device_media_type(const RemanenceDiskReport *report);
+// The article of the medium attached to the device (P14) — the
+// substrate, said in the article catalog's own name for it.
+const char *remanence_report_device_article(const RemanenceDiskReport *report);
+
+// The device the medium's content was recorded by, by the device
+// catalog's stable spelling — null where no device recorded it.
+const char *remanence_report_device_type(const RemanenceDiskReport *report);
 
 // The layer the image is authoritative at (P13).
 const char *remanence_report_device_authoritative_layer(const RemanenceDiskReport *report);

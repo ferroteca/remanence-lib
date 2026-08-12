@@ -42,7 +42,7 @@ use crate::device::{AccessIntent, AccessMode, Claim, open_locked, read_exact_at}
 use crate::error::{Error, ErrorCategory, Result};
 use crate::filesystem::{Catalog, Entry, EntryFact, EntryKind};
 use crate::handle;
-use crate::media_profile::{ARCHIVE, MediaProfile};
+use crate::media_profile::{MediaProfile, VIRTUAL};
 use crate::session::{Identification, Layer, LayerKind, LayerLayout, SizeInformation};
 use crate::sevenzip::SEVENZIP_ADAPTER;
 use crate::source::{self, ArchiveLayer, ImageSource, ResolvedImage};
@@ -424,10 +424,10 @@ impl ArchiveMedium {
         self.cache_bytes
     }
 
-    /// The media type this medium is (P14) — the archive, whose one
+    /// The article this medium is (P14) — the virtual one, whose sole
     /// family fact is that its vantage is a namespace.
     pub(crate) fn media(&self) -> &'static MediaProfile {
-        &ARCHIVE
+        &VIRTUAL
     }
 
     pub(crate) fn format_id(&self) -> &'static str {

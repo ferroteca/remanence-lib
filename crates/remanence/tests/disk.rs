@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 use remanence::{
     AccessMode, DiskContent, DiskFormat, DosNameRule, EntryKind, ErrorCategory, FatKind, Format,
-    MediaId, Medium, PartitionRule, PartitionScheme, PartitionType, RegionRole, Session, SpaceRule,
-    StorageSpace, VolumeOrigin,
+    HardDrive, MediaId, Medium, PartitionRule, PartitionScheme, PartitionType, RegionRole, Session,
+    SpaceRule, StorageSpace, VolumeOrigin,
 };
 
 mod common;
@@ -65,7 +65,15 @@ fn attach(
         Afford::Write => open_write(path),
     };
     let mut session = Session::new();
-    let id = session.load_media(source, Format::Raw)?.id();
+    let id = session
+        .load_media(
+            source,
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )?
+        .id();
     Ok((session, id))
 }
 
@@ -281,7 +289,7 @@ fn fat16_roundtrip_on_a_bare_raw_image() {
     // The device reports the medium attached to it (P14): a raw image is
     // logical-block media, named from the media-type catalog and stated
     // apart from what turned out to be recorded on it.
-    assert_eq!(report.device.media_type, "logical-block-512");
+    assert_eq!(report.device.article, "logical-block-512");
     assert_eq!(report.content, DiskContent::DirectVolume);
     assert!(report.regions.is_empty());
     assert_eq!(report.volumes.len(), 1);
@@ -992,7 +1000,12 @@ fn p8_refuses_a_future_qcow2_version_by_name() {
     // claim is refused before anything else is read (P8).
     let mut session = Session::new();
     let error = session
-        .load_media(open_read(&path), Format::Qcow2)
+        .load_media(
+            open_read(&path),
+            Format::Qcow2 {
+                device: HardDrive::MbrBlock,
+            },
+        )
         .expect_err("future version refused");
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     let message = error.to_string();

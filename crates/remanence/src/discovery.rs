@@ -8,8 +8,8 @@
 //! at all**. It needs no session and no machine because it consults
 //! catalogs and evidence rather than configuration: it claims the
 //! artifact for the read (P7), identifies it, and answers with the exact
-//! medium, the concrete device families that would accept it, and the
-//! image format's declared default device. It mutates nothing (P2).
+//! article, the device types the recognizing format records, and the
+//! devices that would accept the article. It mutates nothing (P2).
 //!
 //! **The discovery it answers with is a consumable handle — a claim
 //! scope holding the work already done.** Recognizing an artifact is not
@@ -26,20 +26,26 @@
 //! the claim is the library's own. That is the other half of the amended
 //! rule whose first half [`crate::Session::load_media`] carries.
 //!
-//! **The default device is the image format's declaration, not the
-//! medium's** (P12). A medium cannot honestly carry it — a ten-sector
-//! hard-sectored 5.25-inch disk is the article of more than one machine's
-//! drive — while the format that records one ecosystem's disk can say so.
-//! The families that *accept* the medium are the other direction entirely,
-//! derived by asking the families themselves (P14, D19). A format
-//! declaring no default is ordinary rather than deficient, and the
-//! convenience over it refuses by name toward the two explicit acts (P3).
+//! **The device type is the image format's declaration, not the
+//! article's** (P12). An article cannot honestly carry it — a ten-sector
+//! hard-sectored 5.25-inch disk is the substrate of more than one
+//! machine's drive — while the format that records one ecosystem's disk
+//! can say so, and does, by admitting exactly one type. The devices that
+//! *accept* the article are the other direction entirely, derived by
+//! asking the device catalog (P14, D19).
+//!
+//! **A format that records several device types asserts none here**, and
+//! that is the honest answer rather than a deficiency: a qcow2 was
+//! written by some hard drive and nothing in the artifact says which. A
+//! discovery still reports what it is; loading it into the pool, and the
+//! convenience over it, refuse by name toward the declared load, which
+//! is where the caller states the type (P3).
 
 use std::path::Path;
 
 use crate::assurance::Assurance;
 use crate::device::{AccessIntent, AccessMode};
-use crate::device_family::DeviceFamily;
+use crate::device_type::{DeviceSlot, DeviceType};
 use crate::disk::{DiskFormat, MediumState};
 use crate::error::{Error, Result};
 use crate::session::Identification;
@@ -156,38 +162,56 @@ impl Discovery {
         self.medium.format_name()
     }
 
-    /// The **exact medium**, by the media-type catalog's stable spelling
-    /// (P14). The image-format adapter that loaded the state named it;
-    /// nothing here guessed.
-    pub fn media_type(&self) -> &'static str {
+    /// The **exact article**, by the catalog's stable spelling (P14).
+    /// The image-format adapter that loaded the state named it; nothing
+    /// here guessed.
+    pub fn article(&self) -> &'static str {
         self.medium.media().id
     }
 
-    /// The medium's name, fit to show a user beside the drive it goes in.
-    pub fn media_type_name(&self) -> &'static str {
+    /// The article's name, fit to show a user beside the drive it goes
+    /// in.
+    pub fn article_name(&self) -> &'static str {
         self.medium.media().name
     }
 
-    /// Every concrete device family a device could hold this medium in,
-    /// derived from the families' own declarations rather than from a
+    /// The device this artifact's content was recorded by, where the
+    /// recognizing format admits exactly one — and `None` where it
+    /// records several and nothing in the artifact says which.
+    ///
+    /// A load takes this answer as it stands: with a type, the discovery
+    /// pools as a medium that knows what wrote it; without one, the pool
+    /// refuses by name toward the declared load
+    /// ([`crate::Session::load_media`]).
+    pub fn device_type(&self) -> Option<DeviceType> {
+        self.medium.device_type()
+    }
+
+    /// Every device type the recognizing format records — one where it
+    /// carries it bare, several where a load declares which, and none
+    /// for an archive grammar, which records no device at all.
+    pub fn device_types(&self) -> &'static [DeviceType] {
+        self.medium.recorded_devices()
+    }
+
+    /// Every device an artifact of this article could go in, derived
+    /// from the device catalog's own declarations rather than from a
     /// second list.
     ///
     /// It is the answer to "where could this go?", which is a different
-    /// question from [`Discovery::default_device`]'s "where did this come
-    /// from?". An empty answer means no drive this release claims is
-    /// served the article.
-    pub fn accepting_families(&self) -> Vec<DeviceFamily> {
-        DeviceFamily::accepting(self.medium.media())
+    /// question from [`Discovery::device_type`]'s "what wrote it?". An
+    /// empty answer means no device this release claims is served the
+    /// article — an archive's case, and the honest one.
+    pub fn accepting_devices(&self) -> Vec<DeviceType> {
+        DeviceType::accepting(self.medium.media())
     }
 
-    /// The device family the **image format** declares for the disks it
-    /// records, or `None` where it declares none.
-    ///
-    /// `None` is ordinary: a raw image says nothing about its machine.
-    /// The caller then states the drive itself, which is the two-act path
-    /// and always available.
-    pub fn default_device(&self) -> Option<DeviceFamily> {
-        self.medium.default_device()
+    /// What slot a load of this artifact would go into: the recording
+    /// device where one is known, the archive receiver for an archive,
+    /// and `None` where the format records several types and the load
+    /// must declare which.
+    pub fn device_slot(&self) -> Option<DeviceSlot> {
+        self.medium.slot()
     }
 
     /// The **effective** access mode this discovery established: the
@@ -210,6 +234,12 @@ impl Discovery {
     /// [`crate::Medium::identify`] gives once a medium is loaded.
     pub fn identify(&self) -> Identification {
         self.medium.identify()
+    }
+
+    /// The state behind this discovery, for the refusals a load makes
+    /// about it before taking it.
+    pub(crate) fn state(&self) -> &MediumState {
+        &self.medium
     }
 
     /// The medium, taken out of the discovery by the load that consumes

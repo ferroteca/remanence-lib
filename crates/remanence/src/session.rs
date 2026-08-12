@@ -61,11 +61,11 @@ pub enum SectorLayout {
 /// Physical disk geometry derived from an image format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskLayout {
-    /// The media type the image format names for the medium it holds
-    /// state for — an entry in the media-type catalog (P14), not a
-    /// free-form word. What the recording is sits in the fields below
-    /// it; what the medium is stays with the type.
-    pub media_type: String,
+    /// The article the image format names for the medium it holds state
+    /// for — an entry in the article catalog (P14), not a free-form
+    /// word. What the recording is sits in the fields below it; what the
+    /// medium is stays with the article.
+    pub article: String,
     pub sector_size: Option<u64>,
     pub cylinders: Option<u32>,
     pub sides: Option<u32>,
@@ -77,7 +77,7 @@ impl DiskLayout {
     fn from_descriptor(descriptor: &ImageFormatDescriptor) -> Self {
         let Some(disk) = descriptor.disk else {
             return Self {
-                media_type: descriptor.media.id.to_owned(),
+                article: descriptor.media.id.to_owned(),
                 sector_size: None,
                 cylinders: None,
                 sides: None,
@@ -86,7 +86,7 @@ impl DiskLayout {
             };
         };
         Self {
-            media_type: descriptor.media.id.to_owned(),
+            article: descriptor.media.id.to_owned(),
             sector_size: Some(disk.sector_size),
             cylinders: Some(disk.cylinders),
             sides: Some(disk.sides),
@@ -195,7 +195,7 @@ fn unknown_filesystem() -> Layer {
     }
 }
 
-/// The medium layer of an identification: the media type the recognized
+/// The medium layer of an identification: the article the recognized
 /// image format names, said in the catalog's own words.
 ///
 /// Central code reads an id and a name off the profile and interprets

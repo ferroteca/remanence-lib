@@ -374,6 +374,10 @@ with build instructions in its header comment.
 // media, which are state. The medium is the content handle. The source
 // is your own open file — whoever opens owns the lock — and the format
 // is your declaration, checked by that format's own adapter.
+// The declaration carries the device the content was recorded by: an
+// h8d records a Heathkit H-17 and so carries the type bare, while a
+// format that records several — `Format::Qcow2 { device:
+// HardDrive::MbrBlock }` — takes the caller's word for which.
 let mut session = remanence::Session::new();
 let medium = session.load_media(
     std::fs::File::open("disk.h8d")?,
@@ -387,7 +391,7 @@ let disk = medium.id();
 
 // Seating it in a drive is a separate act, and the drive is the slot
 // rather than the disk: ejecting severs and takes nothing away.
-let mut device = session.add_device(remanence::DeviceFamily::HEATHKIT_H17)?;
+let mut device = session.add_device(remanence::FloppyDrive::HeathH17)?;
 println!("{}", device.attachment());      // heathfloppy0
 device.insert(disk)?;
 
@@ -446,25 +450,31 @@ let member = session
     .expect("an archive's content is its namespace")
     .get_file("track00.raw")?
     .discover()?;
-let inner = session.load_discovery(member)?.id();
+// A KryoFlux stream is bytes to every adapter here, so the discovery
+// says "a raw image" and asserts no device — the declaration is yours,
+// through the `_as` door the plain one points at.
+let inner = session
+    .load_discovery_as(member, remanence::DeviceType::HardDrive(
+        remanence::HardDrive::MbrSector))?
+    .id();
 session.release_media(archive)?;          // the disk keeps answering
 
 // Asking what an artifact is, before a machine has been configured for
 // it. The discovery holds the claim under which that was established;
 // a load consumes it, so nothing is opened twice.
 let discovery = remanence::discover_media("disk.h8d", remanence::AccessIntent::Read)?;
-println!("{} in {:?}", discovery.media_type(), discovery.accepting_families());
-match discovery.default_device() {
-    Some(family) => println!("the format records a {}", family),
-    None => println!("the format declares no drive"),
+println!("{} in {:?}", discovery.article(), discovery.accepting_devices());
+match discovery.device_type() {
+    Some(device) => println!("the format records a {}", device),
+    None => println!("declare one of {:?}", discovery.device_types()),
 }
 let found = session.load_discovery(discovery)?.id();
 session
-    .add_device(remanence::DeviceFamily::HEATHKIT_H17)?
+    .add_device(remanence::FloppyDrive::HeathH17)?
     .insert(found)?;
 
-// Or the acts at once, where the format declares the drive it
-// records — refused by name where it declares none.
+// Or the acts at once, where the format records one device type —
+// refused by name where it records several and named none.
 let drive = session.add_device_for("disk.h8d", remanence::AccessIntent::Read)?;
 
 // The drive letters a DOS machine would have presented: the machine
@@ -492,8 +502,9 @@ for member in &capture.inspect().members {
 
 ```python
 import remanence
-for family in remanence.device_families():
-    print(family.id, family.name, family.is_concrete, family.accepted_media)
+for device in remanence.device_slots():
+    print(device.id, device.name, device.device_class, device.article,
+          device.scheme)
 
 print(remanence.formats())          # what a declaration may name
 
@@ -501,7 +512,8 @@ session = remanence.Session()
 # Your own open, and your declaration of what it is. The descriptor is
 # duplicated, so closing the Python file leaves the claim intact.
 with open("disk.h8d", "rb") as source:
-    medium = session.load_media(source, "h8d")
+    medium = session.load_media(source, "h8d")   # one device recorded it,
+                                                 # so it needs no `device=`
 print(medium.assurance.outcome, medium.assurance.claim, medium.mode)
 for layer in medium.identify().layers:
     print(layer.kind, layer.id, layer.confidence)
@@ -517,7 +529,7 @@ data = filesystem.get_file("HDOS.SYS").bytes()
 
 # Seating and unseating are configuration; nothing about them is
 # destructive. `release_media` is the one verb that ends state.
-device = session.add_device("heathkit-h17")
+device = session.add_device("h17")
 print(device.attachment)            # heathfloppy0
 device.insert(medium.id)
 device.eject()                      # the drive stays; the disk stays too
@@ -525,11 +537,11 @@ session.release_media(medium.id)
 
 # What an artifact is, before a machine has been configured for it.
 discovery = remanence.discover_media("disk.h8d", writable=False)
-print(discovery.media_type, discovery.device_families, discovery.default_device)
+print(discovery.article, discovery.accepting_devices, discovery.device_type)
 found = session.load_discovery(discovery)   # consumed: one claim, one open
-session.add_device("heathkit-h17").insert(found.id)
+session.add_device("h17").insert(found.id)
 
-# Or the acts at once, where the format declares the drive it records.
+# Or the acts at once, where the format records one device type.
 drive = session.add_device_for("disk.h8d", writable=False)
 
 # The letters, from the machine's own device set — or from asserted

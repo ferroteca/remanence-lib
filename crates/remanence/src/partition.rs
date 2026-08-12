@@ -850,6 +850,43 @@ impl PartitionPool {
         }
     }
 
+    /// The pool a medium bears whose **device type declares no scheme**:
+    /// the direct partition over the whole content, with no table read
+    /// and none looked for.
+    ///
+    /// The content is still classified — blank, one bare volume, or
+    /// content nothing claims — because that is a fact about what was
+    /// recorded rather than about a layout, and the direct partition
+    /// composes a volume exactly where a volume is there to compose.
+    pub(crate) fn over_schemeless(content: &mbr::Discovery, length_bytes: u64) -> Self {
+        match content {
+            mbr::Discovery::BareVolume => Self::direct(
+                DiskContent::DirectVolume,
+                length_bytes,
+                Some(VolumeId::whole_device()),
+            ),
+            mbr::Discovery::Blank => Self::direct(DiskContent::Blank, length_bytes, None),
+            mbr::Discovery::UnknownNonblank { evidence } => Self::direct(
+                DiskContent::UnknownNonblank {
+                    evidence: evidence.clone(),
+                },
+                length_bytes,
+                None,
+            ),
+            // Unreachable by construction: the schemeless classifier
+            // never reads a table. Spelled as the same absence rather
+            // than as a panic, because a medium whose type declares no
+            // scheme has no partitioned answer to give.
+            mbr::Discovery::Partitioned(_) => Self::direct(
+                DiskContent::UnknownNonblank {
+                    evidence: mbr::UNDECLARED_TABLE.to_owned(),
+                },
+                length_bytes,
+                None,
+            ),
+        }
+    }
+
     /// The pool a medium whose content is a space bears: the scheme's own
     /// entries where its table checks out, and the direct partition where
     /// the medium records no scheme at all.
@@ -872,20 +909,10 @@ impl PartitionPool {
             // A filesystem boot record, a blank disk, and content nothing
             // claims are three different answers about the same absence:
             // this medium records no scheme, and the direct partition is
-            // what its content is reached through.
-            mbr::Discovery::BareVolume => Self::direct(
-                DiskContent::DirectVolume,
-                length_bytes,
-                Some(VolumeId::whole_device()),
-            ),
-            mbr::Discovery::Blank => Self::direct(DiskContent::Blank, length_bytes, None),
-            mbr::Discovery::UnknownNonblank { evidence } => Self::direct(
-                DiskContent::UnknownNonblank {
-                    evidence: evidence.clone(),
-                },
-                length_bytes,
-                None,
-            ),
+            // what its content is reached through. They are the same
+            // three answers a medium whose type declares no scheme gets,
+            // which is why the reading is the one below.
+            content => Self::over_schemeless(content, length_bytes),
         }
     }
 

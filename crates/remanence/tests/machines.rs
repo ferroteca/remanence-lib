@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use remanence::{AttachmentId, DeviceFamily, ErrorCategory, Format, MediaId, Session};
+use remanence::{AttachmentId, ErrorCategory, Format, HardDrive, MediaId, Session};
 
 mod common;
 use common::{open_read, open_write};
@@ -59,7 +59,15 @@ fn load(
         Afford::Read => open_read(path),
         Afford::Write => open_write(path),
     };
-    let media = session.load_media(source, Format::Raw)?.id();
+    let media = session
+        .load_media(
+            source,
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )?
+        .id();
     // A lookup answers with absence; the demand is the caller's to
     // write, and every call site here added the machine first.
     let mut view = match machine {
@@ -68,7 +76,7 @@ fn load(
             .expect("the machine was added first"),
         None => session.anonymous_mut(),
     };
-    let mut device = view.add_device(DeviceFamily::HARD_DISK)?;
+    let mut device = view.add_device(HardDrive::MbrSector)?;
     let attachment = device.attachment();
     device.insert(media)?;
     Ok(attachment)
@@ -245,11 +253,17 @@ fn attachment_order_is_each_machines_own_fact() {
     let mut session = Session::new();
 
     let first = session
-        .load_media(open_read(&a), Format::Raw)
+        .load_media(
+            open_read(&a),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("loads")
         .id();
     session
-        .add_device_at(DeviceFamily::HARD_DISK, 2)
+        .add_device_at(HardDrive::MbrSector, 2)
         .expect("the anonymous machine takes hdd2 first")
         .insert(first)
         .expect("the disk goes in");

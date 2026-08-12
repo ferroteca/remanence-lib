@@ -46,7 +46,7 @@ use std::fs::File;
 use std::path::Path;
 
 use crate::device::AccessIntent;
-use crate::device_family::DeviceFamily;
+use crate::device_type::{DeviceSlot, DeviceType};
 use crate::discovery::{Discovery, discover_media_with_cache};
 use crate::disk::MediumState;
 use crate::error::{Error, Result};
@@ -135,13 +135,67 @@ impl Session {
     /// artifact could have changed (P7 continuity), and the intent, the
     /// cache bound and the assurance are the ones the discovery
     /// established rather than a second open's.
+    ///
+    /// **This is the plain door, and it opens where the recognizing
+    /// format records exactly one device type** — an H8D is a Heathkit
+    /// H-17 recording, an archive was recorded by nothing. Where the
+    /// format records several, nothing in the artifact says which wrote
+    /// it, and the refusal names them and points at
+    /// [`Session::load_discovery_as`], where the caller declares one.
+    /// It is the same pair the vantage doors make: the plain door where
+    /// the evidence determines the answer, the `_as` form where the
+    /// caller's reading does.
     pub fn load_discovery(&mut self, discovery: Discovery) -> Result<&mut Medium> {
         self.admit(discovery.into_medium())
+    }
+
+    /// [`Session::load_discovery`] under the caller's own declaration of
+    /// the device that recorded the artifact.
+    ///
+    /// It is the declared reading of a discovery, and the library checks
+    /// it: the type must be one the recognizing format's adapter records,
+    /// so a raw member of an archive may be declared a hard-drive
+    /// recording and never a 1541's. Declaring where the format already
+    /// carries the type is allowed and must agree; the plain door is
+    /// what a caller with nothing to add uses.
+    pub fn load_discovery_as(
+        &mut self,
+        discovery: Discovery,
+        device: DeviceType,
+    ) -> Result<&mut Medium> {
+        let recorded = discovery.device_types();
+        if !recorded.contains(&device) {
+            return Err(Error::unsupported(format!(
+                "{} is a {} and that format records {}, so a declaration \
+                 naming '{}' names a recording it never made",
+                crate::media::named(discovery.path()),
+                discovery.image_format_name(),
+                match recorded.len() {
+                    0 => "no device at all".to_owned(),
+                    _ => recorded
+                        .iter()
+                        .map(|device| device.id())
+                        .collect::<Vec<_>>()
+                        .join(" and "),
+                },
+                device.id()
+            )));
+        }
+        let mut state = discovery.into_medium();
+        state.declare_device(device);
+        self.admit(state)
     }
 
     /// Takes an opened medium into the pool, refusing an artifact this
     /// release holds in no device before it is pooled at all, and
     /// establishing its partition pool in the same act.
+    ///
+    /// **A pooled medium can always say what recorded it.** A discovery
+    /// over a format that records several device types asserts none, and
+    /// it is refused here rather than pooled as a medium that could be
+    /// neither seated nor laid out — the caller declares the type at
+    /// [`Session::load_discovery_as`], or at
+    /// [`Session::load_media`] where they hold the file (P3).
     fn admit(&mut self, mut state: MediumState) -> Result<&mut Medium> {
         // A flux artifact is refused whatever was declared: the block
         // reading opens anything at the raw adapter, and letting that
@@ -155,10 +209,13 @@ impl Session {
                 state.named()
             )));
         }
+        if state.slot().is_none() {
+            return Err(undeclared_device(&state));
+        }
         // The evidence pool is established here, once, before anyone holds
-        // the medium: the scheme its kind names is checked against the
-        // content, and what the check answers is what the pool bears for
-        // the session's life (F56).
+        // the medium: the scheme its device type's spec declares is
+        // checked against the content, and what the check answers is what
+        // the pool bears for the session's life (F56, F57).
         let partitions = state.establish_partitions()?;
         let id = self.media.admit(state, partitions);
         Ok(self.media.get_mut(id).expect("just admitted"))
@@ -315,16 +372,21 @@ impl Session {
 
     // ------------------------- the anonymous machine's device set, in reach
 
-    /// Adds a device of `family` to the session's anonymous machine, as
+    /// Adds a device to the session's anonymous machine, as
     /// [`MachineView::add_device`] does there.
-    pub fn add_device(&mut self, family: DeviceFamily) -> Result<DeviceView<'_>> {
-        self.anonymous_mut().into_added_device(family, None)
+    pub fn add_device(&mut self, slot: impl Into<DeviceSlot>) -> Result<DeviceView<'_>> {
+        self.anonymous_mut().into_added_device(slot.into(), None)
     }
 
-    /// Adds a device of `family` at the named slot of the anonymous
-    /// machine, as [`MachineView::add_device_at`] does there.
-    pub fn add_device_at(&mut self, family: DeviceFamily, index: u32) -> Result<DeviceView<'_>> {
-        self.anonymous_mut().into_added_device(family, Some(index))
+    /// Adds a device at the named slot of the anonymous machine, as
+    /// [`MachineView::add_device_at`] does there.
+    pub fn add_device_at(
+        &mut self,
+        slot: impl Into<DeviceSlot>,
+        index: u32,
+    ) -> Result<DeviceView<'_>> {
+        self.anonymous_mut()
+            .into_added_device(slot.into(), Some(index))
     }
 
     /// Adds a device for the artifact at `path` to the session's
@@ -386,41 +448,44 @@ impl Session {
     }
 }
 
-/// The device family a discovery's format declares, or the refusal that
-/// says no format declared one.
+/// The refusal a medium that cannot say what recorded it meets, at the
+/// pool's door and at the convenience alike.
 ///
-/// The refusal names three things, because a caller who meets it has to
-/// choose a drive: what the artifact is, what the medium is, and which
-/// claimed families are served that medium. The last is derived from the
-/// families' own declarations, so it is a list of drives the explicit
-/// path will actually accept rather than a suggestion.
-fn default_family(discovery: &Discovery) -> Result<DeviceFamily> {
-    if let Some(family) = discovery.default_device() {
-        return Ok(family);
-    }
-    let accepting: Vec<&str> = discovery
-        .accepting_families()
+/// It names three things, because a caller who meets it has to make a
+/// declaration: what the artifact turned out to be, which device types
+/// its format records, and that the declared load is where one of them
+/// is stated. The list is the adapter's own, so it is exactly what a
+/// declaration will be accepted for rather than a suggestion.
+fn undeclared_device(state: &MediumState) -> Error {
+    let recorded: Vec<&str> = state
+        .recorded_devices()
         .iter()
-        .map(|family| family.id())
+        .map(|device| device.id())
         .collect();
-    let drives = match accepting.len() {
-        0 => "no drive family this release claims is served that medium".to_owned(),
-        _ => format!(
-            "add the drive the machine had — {} — and insert the medium into it",
-            accepting.join(", ")
-        ),
-    };
-    Err(Error::unsupported(format!(
-        "{} is a {} and that format declares no default device; it holds \
-         {}, so {drives}",
-        crate::media::named(discovery.path()),
-        discovery.image_format_name(),
-        discovery.media_type_name()
-    )))
+    Error::unsupported(format!(
+        "{} is a {} and that format records {} — nothing in the artifact \
+         says which wrote it. Declare one at the load: \
+         `load_discovery_as` over this discovery, or `load_media` where \
+         the artifact is a file you hold.",
+        crate::media::named(state.path()),
+        state.format_name(),
+        match recorded.len() {
+            0 => "no device at all".to_owned(),
+            _ => recorded.join(" and "),
+        }
+    ))
 }
 
-/// One machine within a session: a set of family-typed storage devices,
-/// their attachment identities, and the order they were attached in.
+/// The slot a discovery's artifact goes in, or the refusal that says the
+/// format records several device types and named none.
+fn discovered_slot(discovery: &Discovery) -> Result<DeviceSlot> {
+    discovery
+        .device_slot()
+        .ok_or_else(|| undeclared_device(discovery.state()))
+}
+
+/// One machine within a session: a set of storage devices, their
+/// attachment identities, and the order they were attached in.
 ///
 /// The device set is the machine's own. Two machines in one session may
 /// each hold an `hdd0`, and neither can reach the other's.
@@ -477,11 +542,16 @@ impl Machine {
             .position(|device| device.attachment() == attachment)
     }
 
-    fn lowest_free_index(&self, family: DeviceFamily) -> u32 {
+    /// The lowest free slot in the bay `slot` fills.
+    ///
+    /// It counts by **bay, not by device type**: two hard drives of
+    /// different types cannot both be `hdd0`, because a slot is a place
+    /// in the machine and only one drive sits in it.
+    fn lowest_free_index(&self, slot: DeviceSlot) -> u32 {
         let mut used: Vec<u32> = self
             .devices
             .iter()
-            .filter(|device| device.family() == family)
+            .filter(|device| device.attachment().prefix() == slot.slot_prefix())
             .map(|device| device.attachment().index())
             .collect();
         used.sort_unstable();
@@ -522,33 +592,38 @@ impl<'a> MachineView<'a> {
         self.machine
     }
 
-    /// Adds a device of `family` in the lowest free slot of that family,
-    /// and answers with the device — empty, until a medium is inserted
-    /// into it.
+    /// Adds a device in the lowest free slot of its bay, and answers
+    /// with it — empty, until a medium is inserted into it.
     ///
-    /// **The family must be concrete.** An interior name of the lineage
-    /// classifies and never instantiates: a device added as "some floppy"
-    /// declares no media an insert could be checked against and no
-    /// mechanism a machine ever had, so it is refused by name (P3).
-    pub fn add_device(&mut self, family: DeviceFamily) -> Result<DeviceView<'_>> {
-        let index = self.machine.lowest_free_index(family);
-        self.add_device_at(family, index)
+    /// **A device is as concrete as the machine fact it asserts**: one
+    /// device type, or the archive receiver. There is no vaguer thing to
+    /// pass — "some floppy" is not a value, because a device type the
+    /// library does not know fails to compile — and the type is what the
+    /// insert check weighs a medium's recording against (P3).
+    pub fn add_device(&mut self, slot: impl Into<DeviceSlot>) -> Result<DeviceView<'_>> {
+        let slot = slot.into();
+        let index = self.machine.lowest_free_index(slot);
+        self.add_device_at(slot, index)
     }
 
-    /// Adds a device of `family` at the named slot.
+    /// Adds a device at the named slot.
     ///
     /// The caller chooses the **slot**, never the name: an attachment
-    /// identity is always its family's slot prefix plus its index. A slot
-    /// already taken is refused by name rather than displacing what is
-    /// there — releasing a device is [`MachineView::release_device`], and
-    /// it is a separate act.
-    pub fn add_device_at(&mut self, family: DeviceFamily, index: u32) -> Result<DeviceView<'_>> {
-        let attachment = self.place(family, Some(index))?;
+    /// identity is always its bay's prefix plus its index. A slot already
+    /// taken is refused by name rather than displacing what is there —
+    /// releasing a device is [`MachineView::release_device`], and it is a
+    /// separate act.
+    pub fn add_device_at(
+        &mut self,
+        slot: impl Into<DeviceSlot>,
+        index: u32,
+    ) -> Result<DeviceView<'_>> {
+        let attachment = self.place(slot.into(), Some(index))?;
         Ok(self.device_mut(attachment).expect("just placed"))
     }
 
-    /// Adds a fresh device of the artifact's **format-declared default
-    /// family**, loads the medium into the session's pool, inserts it,
+    /// Adds a fresh device of the **device type the artifact's format
+    /// records**, loads the medium into the session's pool, inserts it,
     /// and answers with that device.
     ///
     /// This is the one convenience over discovery, and it composes the
@@ -558,12 +633,12 @@ impl<'a> MachineView<'a> {
     /// one claim is held from the question to the load (P7) and nothing
     /// expensive runs twice.
     ///
-    /// **A format that declares no default refuses by name**, toward the
-    /// explicit acts: a raw image says nothing about the machine it came
-    /// from, and a default guessed from a media type would be the library
-    /// asserting a drive nobody stated (P3). The refusal names the
-    /// families the medium *could* go in, which are derived from the
-    /// families' own declarations.
+    /// **A format that records several device types refuses by name**,
+    /// toward the declared load: nothing in a qcow2 says which hard
+    /// drive wrote it, and a type guessed from the article would be the
+    /// library asserting a drive nobody stated (P3). The refusal names
+    /// the types the adapter records, which is exactly what a
+    /// declaration may say.
     pub fn add_device_for(
         &mut self,
         path: impl AsRef<Path>,
@@ -582,8 +657,8 @@ impl<'a> MachineView<'a> {
         cache_bytes: u64,
     ) -> Result<DeviceView<'_>> {
         let discovery = discover_media_with_cache(path, intent, cache_bytes)?;
-        let family = default_family(&discovery)?;
-        let attachment = self.place(family, None)?;
+        let slot = discovered_slot(&discovery)?;
+        let attachment = self.place(slot, None)?;
         let mut state = discovery.into_medium();
         let partitions = match state.establish_partitions() {
             Ok(partitions) => partitions,
@@ -665,12 +740,8 @@ impl<'a> MachineView<'a> {
     /// Adds a device and answers with it, consuming this view — the
     /// spelling a session-level convenience needs, where the machine
     /// borrow and the device borrow have the same life.
-    fn into_added_device(
-        mut self,
-        family: DeviceFamily,
-        index: Option<u32>,
-    ) -> Result<DeviceView<'a>> {
-        let attachment = self.place(family, index)?;
+    fn into_added_device(mut self, slot: DeviceSlot, index: Option<u32>) -> Result<DeviceView<'a>> {
+        let attachment = self.place(slot, index)?;
         Ok(self.into_device(attachment).expect("just placed"))
     }
 
@@ -689,27 +760,20 @@ impl<'a> MachineView<'a> {
         })
     }
 
-    /// Puts a fresh device in a slot of `family` — the caller's, or the
-    /// lowest free one — and answers with its attachment identity.
-    fn place(&mut self, family: DeviceFamily, index: Option<u32>) -> Result<AttachmentId> {
-        if !family.is_concrete() {
-            return Err(Error::unsupported(format!(
-                "'{}' classifies device families and instantiates none; a \
-                 machine holds a drive it actually had, and {} names a kind \
-                 rather than one",
-                family.id(),
-                family.name()
-            )));
-        }
-        let index = index.unwrap_or_else(|| self.machine.lowest_free_index(family));
-        let attachment = AttachmentId::new(family, index);
+    /// Puts a fresh device in a slot — the caller's, or the lowest free
+    /// one in its bay — and answers with its attachment identity.
+    fn place(&mut self, slot: DeviceSlot, index: Option<u32>) -> Result<AttachmentId> {
+        let index = index.unwrap_or_else(|| self.machine.lowest_free_index(slot));
+        let attachment = AttachmentId::new(slot, index);
         if self.machine.device(attachment).is_some() {
             return Err(Error::unsupported(format!(
                 "{attachment} is already taken; release that device before \
                  adding another there"
             )));
         }
-        self.machine.devices.push(StorageDevice::new(attachment));
+        self.machine
+            .devices
+            .push(StorageDevice::new(slot, attachment));
         Ok(attachment)
     }
 
@@ -725,6 +789,7 @@ impl<'a> MachineView<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device_type::HardDrive;
 
     #[test]
     fn a_session_starts_with_its_anonymous_machine_and_no_media() {
@@ -752,7 +817,7 @@ mod tests {
         let mut session = Session::new();
         {
             let mut pc = session.add_machine("pc").expect("added");
-            pc.add_device(DeviceFamily::HARD_DISK).expect("added");
+            pc.add_device(HardDrive::MbrBlock).expect("added");
         }
         session.release_machine("pc").expect("released");
         assert!(session.machine("pc").is_none());
@@ -763,15 +828,39 @@ mod tests {
     }
 
     #[test]
-    fn an_interior_family_name_instantiates_no_device() {
-        // P3, one rung up the lineage: a machine holds a drive it had.
+    fn one_bay_holds_one_drive_whatever_type_it_is() {
+        // A slot is a place in the machine, so the lowest free one counts
+        // by bay: two hard drives of different types cannot both be
+        // hdd0, and the second takes hdd1.
         let mut session = Session::new();
-        let error = session
-            .add_device(DeviceFamily::FLOPPY_DRIVE)
-            .expect_err("refused");
+        assert_eq!(
+            session
+                .add_device(HardDrive::MbrSector)
+                .expect("added")
+                .attachment()
+                .to_string(),
+            "hdd0"
+        );
+        assert_eq!(
+            session
+                .add_device(HardDrive::MbrBlock)
+                .expect("added")
+                .attachment()
+                .to_string(),
+            "hdd1"
+        );
         assert!(
-            error.to_string().contains("classifies"),
-            "names why: {error}"
+            session.add_device_at(HardDrive::Gpt, 0).is_err(),
+            "the bay is taken, whatever drive would go in it"
+        );
+        assert_eq!(
+            session
+                .add_device(DeviceSlot::Archive)
+                .expect("added")
+                .attachment()
+                .to_string(),
+            "arc0",
+            "a receiver fills its own bay, not the drives'"
         );
     }
 }

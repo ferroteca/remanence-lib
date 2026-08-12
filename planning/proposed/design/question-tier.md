@@ -8,7 +8,8 @@ SPDX-License-Identifier: GPL-3.0-only
 **Status: proposed — argued but not pledged. Nothing is worked from
 here.** This is the *extension* above the delivered discovery surface,
 not its successor. That surface — `discover_media`, the consumable
-`Discovery`, `load_discovery`, `add_device_for`, `default_device` — was
+`Discovery`, `load_discovery`, `add_device_for`, the format's recorded
+device types — was
 once to be removed from S1–S3 by the media-first storage model
 ([../../pledged/design/media-first-storage-model.md](../../pledged/design/media-first-storage-model.md));
 D30 reversed that, because discovery and loading answer different
@@ -24,8 +25,8 @@ rather than shipped piecemeal.
 is this?"** — and the tier answers it the same way everywhere: with
 **ranked verdicts**, never with a creation.
 
-- A verdict names a concrete catalog entry (a media type, a drive
-  profile), carries its confidence and the evidence that produced it
+- A verdict names a concrete catalog entry (an article, a device type,
+  a drive profile), carries its confidence and the evidence that produced it
   (P4), and is ranked against its competitors — never resolved by
   catalog order, never auto-picked on margin.
 - A verdict carries a **policy template**: the entry's family-declared
@@ -59,6 +60,7 @@ would guess.*
 
 `discover_media` / `discover_media_with_cache`, the consumable
 `Discovery` handle, `load_discovery`, `add_device_for`, and the
-image-format `default_device` declaration — the ask-first journey
+image-format's recorded-device declaration (`device_type`,
+`device_types`) — the ask-first journey
 whole. Their claim-continuity idea (one open, no window between the
 question and the load) is kept as a requirement on this tier's design.

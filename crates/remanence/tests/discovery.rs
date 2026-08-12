@@ -14,8 +14,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, AttachmentId, DeviceFamily, ErrorCategory, Format, Session,
-    discover_media,
+    AccessIntent, AccessMode, AttachmentId, DeviceType, ErrorCategory, FloppyDrive, Format,
+    HardDrive, Session, discover_media,
 };
 
 mod common;
@@ -55,19 +55,23 @@ fn a_discovery_says_what_the_artifact_is_and_where_it_could_go() {
     let discovery = discover_media(&disk, AccessIntent::Read).expect("the artifact identifies");
 
     assert_eq!(discovery.image_format(), "h8d");
-    assert_eq!(discovery.media_type(), "flexible-5.25-hard-10");
+    assert_eq!(discovery.article(), "flexible-5.25-hard-10");
     assert_eq!(discovery.image_path(), Some(disk.as_path()));
 
     // Two different questions with two different answers. Where the
-    // medium *could* go is derived by asking the families what they
-    // accept; where it came *from* is the image format's declaration.
+    // medium *could* go is derived by asking the device catalog what is
+    // served the article; what wrote it is the image format's own
+    // declaration, and an H8D records one device and no other.
     let accepting: Vec<&str> = discovery
-        .accepting_families()
+        .accepting_devices()
         .iter()
-        .map(|family| family.id())
+        .map(|device| device.id())
         .collect();
-    assert_eq!(accepting, vec!["heathkit-h17"]);
-    assert_eq!(discovery.default_device(), Some(DeviceFamily::HEATHKIT_H17));
+    assert_eq!(accepting, vec!["h17"]);
+    assert_eq!(
+        discovery.device_type(),
+        Some(DeviceType::Floppy(FloppyDrive::HeathH17))
+    );
 
     // And it mutates nothing: the artifact is byte-for-byte what it was.
     drop(discovery);
@@ -89,7 +93,10 @@ fn the_convenience_adds_the_declared_drive_and_loads_the_medium() {
         .add_device_for(&disk, AccessIntent::Read)
         .expect("the format declares the drive it records");
     assert_eq!(device.attachment().to_string(), "heathfloppy0");
-    assert_eq!(device.family(), DeviceFamily::HEATHKIT_H17);
+    assert_eq!(
+        device.device_type(),
+        Some(DeviceType::Floppy(FloppyDrive::HeathH17))
+    );
     assert!(
         device.is_occupied(),
         "the medium was loaded, not just found"
@@ -122,29 +129,45 @@ fn the_convenience_adds_the_declared_drive_and_loads_the_medium() {
 }
 
 #[test]
-fn a_format_declaring_no_default_refuses_by_name_toward_the_two_acts() {
-    // P3: a declaration nobody makes is a refusal, not a guess. A raw
-    // image says nothing about its machine, so the caller states the
-    // drive — and the refusal says which drives would take the medium.
-    let image = write_raw("no-default");
+fn a_format_recording_several_devices_refuses_by_name_toward_the_declaration() {
+    // P3: a declaration nobody makes is a refusal, not a guess. Nothing
+    // in a raw image says which hard drive wrote it, so discovery
+    // reports what the artifact is and asserts no device — and every
+    // path that would need one refuses, naming the types a declaration
+    // may state.
+    let image = write_raw("no-declaration");
     let mut session = Session::new();
 
     let discovery = discover_media(&image, AccessIntent::Read).expect("it is still a medium");
-    assert_eq!(discovery.default_device(), None, "raw declares no drive");
+    assert_eq!(
+        discovery.device_type(),
+        None,
+        "the artifact says which format it is, never which drive wrote it"
+    );
     assert_eq!(
         discovery
-            .accepting_families()
+            .device_types()
             .iter()
-            .map(|family| family.id())
+            .map(|device| device.id())
             .collect::<Vec<_>>(),
-        vec!["hard-disk"],
-        "which is a different question, and it has an answer"
+        vec!["mbr-sector-hd", "mbr-block-hd"],
+        "and the format says which declarations it accepts"
+    );
+    assert_eq!(
+        discovery
+            .accepting_devices()
+            .iter()
+            .map(|device| device.id())
+            .collect::<Vec<_>>(),
+        vec!["mbr-sector-hd", "mbr-block-hd", "gpt-hd"],
+        "which is the other question entirely: every device served the \
+         article, the one no adapter records included"
     );
     drop(discovery);
 
     let error = session
         .add_device_for(&image, AccessIntent::Read)
-        .expect_err("no default is a refusal");
+        .expect_err("an undeclared device is a refusal");
     let message = error.to_string();
     assert_eq!(error.category(), ErrorCategory::Unsupported);
     assert!(
@@ -152,12 +175,12 @@ fn a_format_declaring_no_default_refuses_by_name_toward_the_two_acts() {
         "names what was found: {message}"
     );
     assert!(
-        message.contains("no default device"),
-        "names what is missing: {message}"
+        message.contains("mbr-block-hd"),
+        "names what may be declared: {message}"
     );
     assert!(
-        message.contains("hard-disk"),
-        "names the drive to state instead: {message}"
+        message.contains("load_media"),
+        "names where to declare it: {message}"
     );
 
     // And it left nothing behind: the refusal is one act's refusal, not
@@ -167,14 +190,64 @@ fn a_format_declaring_no_default_refuses_by_name_toward_the_two_acts() {
         "a refused convenience adds no device"
     );
 
-    // The explicit acts remain available and are what the refusal points
-    // at: declare the format, then state the drive.
+    // The same refusal guards the pool's plain door, so no medium is
+    // ever seated or laid out without knowing what recorded it — and it
+    // points at the door that takes the declaration.
+    let discovery = discover_media(&image, AccessIntent::Read).expect("identifies");
+    let error = session
+        .load_discovery(discovery)
+        .expect_err("the pool takes no medium that cannot say what recorded it");
+    assert!(
+        error.to_string().contains("load_discovery_as"),
+        "names the door that takes the declaration: {error}"
+    );
+
+    // Which is the `_as` door, and it checks the declaration: the type
+    // must be one the recognizing format records.
+    let discovery = discover_media(&image, AccessIntent::Read).expect("identifies");
+    let error = session
+        .load_discovery_as(discovery, DeviceType::Floppy(FloppyDrive::Commodore1541))
+        .expect_err("a raw image is no 1541 recording");
+    assert!(
+        error.to_string().contains("mbr-sector-hd"),
+        "names what the format does record: {error}"
+    );
+
+    let discovery = discover_media(&image, AccessIntent::Read).expect("identifies");
+    let declared = session
+        .load_discovery_as(discovery, DeviceType::HardDrive(HardDrive::MbrBlock))
+        .expect("the caller declares what the artifact could not");
+    assert_eq!(
+        declared.device_type(),
+        Some(DeviceType::HardDrive(HardDrive::MbrBlock)),
+        "and the medium carries the declaration, claim unbroken"
+    );
+    let declared = declared.id();
+    session.release_media(declared).expect("released");
+
+    // The explicit act remains available and is what the refusal points
+    // at: declare the format and the device together, then state the
+    // slot.
     let media = session
-        .load_media(open_read(&image), Format::Raw)
-        .expect("the caller declares the format")
+        .load_media(
+            open_read(&image),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
+        .expect("the caller declares the format and the device")
         .id();
+    assert_eq!(
+        session
+            .medium(media)
+            .expect("pooled")
+            .device_type()
+            .expect("declared"),
+        DeviceType::HardDrive(HardDrive::MbrSector)
+    );
     session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(HardDrive::MbrSector)
         .expect("the caller states the drive")
         .insert(media)
         .expect("and the medium goes into it");
@@ -188,7 +261,9 @@ fn a_discovery_is_consumed_by_the_load_and_the_claim_never_lapses() {
     // The discovery holds the claim taken when the artifact was
     // identified, so nothing can change the file between the question
     // and the load (P7 continuity) — and the load runs no second open.
-    let image = write_raw("consumed");
+    // The artifact is an H8D because the pool takes a medium that can
+    // say what recorded it, and that format records one device.
+    let image = write_h8d("consumed");
     let mut session = Session::new();
 
     let discovery =
@@ -216,7 +291,7 @@ fn a_discovery_is_consumed_by_the_load_and_the_claim_never_lapses() {
     );
     let media = medium.id();
     session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(FloppyDrive::HeathH17)
         .expect("a drive to seat it in")
         .insert(media)
         .expect("the medium goes in");
@@ -245,7 +320,7 @@ fn a_discovered_medium_in_the_wrong_drive_is_refused_naming_both_sides() {
         .expect("the state pools whatever drive it belongs in")
         .id();
     let mut device = session
-        .add_device(DeviceFamily::HARD_DISK)
+        .add_device(HardDrive::MbrSector)
         .expect("the wrong drive for it");
     let error = device
         .insert(media)
@@ -253,8 +328,8 @@ fn a_discovered_medium_in_the_wrong_drive_is_refused_naming_both_sides() {
 
     let message = error.to_string();
     assert!(
-        message.contains("hard-sectored"),
-        "names the medium: {message}"
+        message.contains("h17"),
+        "names what recorded the medium: {message}"
     );
     assert!(message.contains("hdd0"), "names the slot: {message}");
     assert!(

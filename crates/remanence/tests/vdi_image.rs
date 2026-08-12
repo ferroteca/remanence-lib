@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessMode, DiskFormat, ErrorCategory, Format, LayerKind, MediaId, Medium, Session,
+    AccessMode, DiskFormat, ErrorCategory, Format, HardDrive, LayerKind, MediaId, Medium, Session,
 };
 
 /// The space one partition of `medium` composes, reached through the
@@ -46,7 +46,14 @@ fn attach(
         Afford::Write => open_write(path),
     };
     let mut session = Session::new();
-    let id = session.load_media(source, Format::Vdi)?.id();
+    let id = session
+        .load_media(
+            source,
+            Format::Vdi {
+                device: HardDrive::MbrBlock,
+            },
+        )?
+        .id();
     Ok((session, id))
 }
 

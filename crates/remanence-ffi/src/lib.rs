@@ -172,7 +172,7 @@ struct TrackView {
 }
 
 struct DiskView {
-    media_type: CString,
+    article: CString,
     sector_size: Option<u64>,
     cylinders: Option<u32>,
     sides: Option<u32>,
@@ -207,7 +207,7 @@ impl DiskView {
         };
 
         Self {
-            media_type: to_cstring(&layout.media_type),
+            article: to_cstring(&layout.article),
             sector_size: layout.sector_size,
             cylinders: layout.cylinders,
             sides: layout.sides,
@@ -361,12 +361,26 @@ pub unsafe extern "C" fn remanence_device_attachment(
     }
 }
 
-/// This device's family, by its stable spelling (`hard-disk`). Owned by
-/// the view; do not free.
+/// What this device is, by its stable spelling — a device type's own
+/// (`mbr-block-hd`) or `archive`. Owned by the view; do not free.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_device_family(device: *const RemanenceDevice) -> *const c_char {
+pub unsafe extern "C" fn remanence_device_slot(device: *const RemanenceDevice) -> *const c_char {
     match unsafe { device.as_ref() } {
-        Some(handle) => handle.family_c.as_ptr(),
+        Some(handle) => handle.slot_c.as_ptr(),
+        None => ptr::null(),
+    }
+}
+
+/// The recording device type this slot is typed by, or null for the
+/// archive receiver — which records nothing, as the archive it holds was
+/// recorded by nothing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_device_type(device: *const RemanenceDevice) -> *const c_char {
+    match unsafe { device.as_ref() } {
+        Some(handle) => handle
+            .device_type_c
+            .as_ref()
+            .map_or(ptr::null(), |device| device.as_ptr()),
         None => ptr::null(),
     }
 }
@@ -412,8 +426,10 @@ pub unsafe extern "C" fn remanence_device_medium(
 
 /// Links the pooled medium `media_id` into this device's slot.
 ///
-/// **A device accepts only the media its family is served** (P14), and a
-/// medium belonging in another drive is refused naming both sides. An
+/// **The check is device-type equality** (P14): a medium carries the
+/// device its content was recorded by, a slot is typed by the device
+/// that fills it, and a medium belonging in another drive is refused
+/// naming both sides. An
 /// identity the pool does not hold, a slot already occupied, and a medium
 /// another slot already holds are each refused by name. Returns false on
 /// failure.
@@ -479,120 +495,134 @@ pub unsafe extern "C" fn remanence_device_eject(
     }
 }
 
-/// One family's strings, built once so every reader below answers with a
+/// One slot's strings, built once so every reader below answers with a
 /// pointer the library owns and the caller never frees.
-struct FamilyView {
+struct SlotView {
     id: CString,
     name: CString,
-    provenance: CString,
-    kind_of: Option<CString>,
-    slot_prefix: Option<CString>,
-    media: Vec<CString>,
+    provenance: Option<CString>,
+    class: Option<CString>,
+    article: Option<CString>,
+    slot_prefix: CString,
     flux_path: Option<CString>,
+    scheme: Option<CString>,
+    addressing: Option<CString>,
 }
 
-fn families() -> &'static [FamilyView] {
-    static FAMILIES: std::sync::OnceLock<Vec<FamilyView>> = std::sync::OnceLock::new();
-    FAMILIES.get_or_init(|| {
-        DeviceFamily::enrolled()
+/// Every slot a machine may hold a device in: one per device type, and
+/// the archive receiver, which is no device type at all — its device
+/// fields read null, exactly as a medium recorded by no device answers.
+fn slots() -> &'static [SlotView] {
+    static SLOTS: std::sync::OnceLock<Vec<SlotView>> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        DeviceSlot::claimed()
             .into_iter()
-            .map(|family| FamilyView {
-                id: to_cstring(family.id()),
-                name: to_cstring(family.name()),
-                provenance: to_cstring(family.provenance()),
-                kind_of: family.kind_of().map(|parent| to_cstring(parent.id())),
-                slot_prefix: family.slot_prefix().map(to_cstring),
-                media: family
-                    .accepted_media()
-                    .into_iter()
-                    .map(to_cstring)
-                    .collect(),
-                flux_path: family.flux_path().map(to_cstring),
+            .map(|slot| SlotView {
+                id: to_cstring(slot.id()),
+                name: to_cstring(slot.name()),
+                provenance: slot
+                    .device_type()
+                    .map(|device| to_cstring(device.provenance())),
+                class: slot.device_type().map(|device| to_cstring(device.class())),
+                article: slot
+                    .device_type()
+                    .map(|device| to_cstring(device.article())),
+                slot_prefix: to_cstring(slot.slot_prefix()),
+                flux_path: slot
+                    .device_type()
+                    .and_then(DeviceType::flux_path)
+                    .map(to_cstring),
+                scheme: slot
+                    .device_type()
+                    .and_then(DeviceType::scheme)
+                    .map(to_cstring),
+                addressing: slot
+                    .device_type()
+                    .and_then(DeviceType::addressing)
+                    .map(to_cstring),
             })
             .collect()
     })
 }
 
-fn family_string(index: usize, read: fn(&FamilyView) -> Option<&CString>) -> *const c_char {
-    families()
+fn slot_string(index: usize, read: fn(&SlotView) -> Option<&CString>) -> *const c_char {
+    slots()
         .get(index)
         .and_then(read)
         .map_or(ptr::null(), |value| value.as_ptr())
 }
 
-/// How many device families this release enrols, interior names of the
-/// lineage among them (P32).
+/// How many slots this release claims: one per device type in the
+/// catalog (P14), plus the archive receiver.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_count() -> usize {
-    families().len()
+pub extern "C" fn remanence_device_slot_count() -> usize {
+    slots().len()
 }
 
-/// The stable spelling of family `index` — the value
+/// The stable spelling of slot `index` — a device type's own (`c1541`,
+/// `mbr-block-hd`) or `archive`, and the value
 /// `remanence_session_add_device` takes. Null when out of range; owned by
 /// the library and never freed.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_id(index: usize) -> *const c_char {
-    family_string(index, |family| Some(&family.id))
+pub extern "C" fn remanence_device_slot_id(index: usize) -> *const c_char {
+    slot_string(index, |slot| Some(&slot.id))
 }
 
-/// Family `index`'s name, fit to show a user beside the slot it fills.
+/// Slot `index`'s name, fit to show a user beside the bay it fills.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_name(index: usize) -> *const c_char {
-    family_string(index, |family| Some(&family.name))
+pub extern "C" fn remanence_device_slot_name(index: usize) -> *const c_char {
+    slot_string(index, |slot| Some(&slot.name))
 }
 
-/// Where family `index`'s declaration came from.
+/// Where slot `index`'s device-type declaration came from. Null for the
+/// archive receiver, which declares no recording.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_provenance(index: usize) -> *const c_char {
-    family_string(index, |family| Some(&family.provenance))
+pub extern "C" fn remanence_device_slot_provenance(index: usize) -> *const c_char {
+    slot_string(index, |slot| slot.provenance.as_ref())
 }
 
-/// What family `index` is a kind of, by stable spelling — null for the
-/// root of the lineage.
+/// The class of slot `index`'s device type — `floppy` or `hard-drive`,
+/// the first of the catalog's two levels. Null for the archive receiver.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_kind_of(index: usize) -> *const c_char {
-    family_string(index, |family| family.kind_of.as_ref())
+pub extern "C" fn remanence_device_slot_class(index: usize) -> *const c_char {
+    slot_string(index, |slot| slot.class.as_ref())
 }
 
-/// Whether family `index` can be added to a machine. An interior name of
-/// the lineage classifies and instantiates nothing.
+/// The article slot `index`'s device type is served (P14), by stable
+/// spelling. Null for the archive receiver.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_is_concrete(index: usize) -> bool {
-    families()
-        .get(index)
-        .is_some_and(|family| family.slot_prefix.is_some())
+pub extern "C" fn remanence_device_slot_article(index: usize) -> *const c_char {
+    slot_string(index, |slot| slot.article.as_ref())
 }
 
-/// The family half of every attachment identity in family `index` —
-/// `hdd` for `hdd0`. Null for an interior name, which names no slot.
+/// The bay half of every attachment identity in slot `index` — `hdd` for
+/// `hdd0`. Several device types share one where the machine does.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_slot_prefix(index: usize) -> *const c_char {
-    family_string(index, |family| family.slot_prefix.as_ref())
+pub extern "C" fn remanence_device_slot_prefix(index: usize) -> *const c_char {
+    slot_string(index, |slot| Some(&slot.slot_prefix))
 }
 
-/// How many media types family `index` accepts (P14). Zero for an
-/// interior name.
-#[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_media_count(index: usize) -> usize {
-    families().get(index).map_or(0, |family| family.media.len())
-}
-
-/// The stable spelling of the `media`th media type family `index`
-/// accepts. Null when either index is out of range.
-#[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_media(index: usize, media: usize) -> *const c_char {
-    families()
-        .get(index)
-        .and_then(|family| family.media.get(media))
-        .map_or(ptr::null(), |id| id.as_ptr())
-}
-
-/// The drive profile family `index` claims as its recording path (P22),
-/// by stable spelling. Null where the family claims none, which is
+/// The drive profile slot `index`'s device type claims as its recording
+/// path (P22), by stable spelling. Null where it claims none, which is
 /// ordinary rather than deficient.
 #[unsafe(no_mangle)]
-pub extern "C" fn remanence_device_family_flux_path(index: usize) -> *const c_char {
-    family_string(index, |family| family.flux_path.as_ref())
+pub extern "C" fn remanence_device_slot_flux_path(index: usize) -> *const c_char {
+    slot_string(index, |slot| slot.flux_path.as_ref())
+}
+
+/// The partition scheme slot `index`'s device type lays its content out
+/// under, by stable spelling — the hard-drive specs carry it. Null for
+/// the schemeless types, whose media bear the direct partition.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_slot_scheme(index: usize) -> *const c_char {
+    slot_string(index, |slot| slot.scheme.as_ref())
+}
+
+/// How slot `index`'s device type addresses its recording — `sector` or
+/// `block`. Null outside the hard-drive class.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_device_slot_addressing(index: usize) -> *const c_char {
+    slot_string(index, |slot| slot.addressing.as_ref())
 }
 
 /// What one artifact turned out to be, and the claim under which that was
@@ -608,14 +638,17 @@ pub struct RemanenceDiscovery {
     image_path: Option<CString>,
     image_format: CString,
     image_format_name: CString,
-    media_type: CString,
-    media_type_name: CString,
-    /// Every concrete family served this medium, derived from the
-    /// families' own declarations.
-    families: Vec<CString>,
-    /// The family the image format declares — null where it declares
-    /// none, which is ordinary rather than deficient.
-    default_device: Option<CString>,
+    article: CString,
+    article_name: CString,
+    /// Every device served this article, derived from the device
+    /// catalog's own declarations.
+    accepting: Vec<CString>,
+    /// Every device type the recognizing format records.
+    recorded: Vec<CString>,
+    /// What recorded this artifact — null where the format records
+    /// several types and nothing says which, which is the honest answer
+    /// rather than a deficiency.
+    device_type: Option<CString>,
 }
 
 impl RemanenceDiscovery {
@@ -627,16 +660,21 @@ impl RemanenceDiscovery {
                 .map(|path| to_cstring(&path.display().to_string())),
             image_format: to_cstring(discovery.image_format()),
             image_format_name: to_cstring(discovery.image_format_name()),
-            media_type: to_cstring(discovery.media_type()),
-            media_type_name: to_cstring(discovery.media_type_name()),
-            families: discovery
-                .accepting_families()
+            article: to_cstring(discovery.article()),
+            article_name: to_cstring(discovery.article_name()),
+            accepting: discovery
+                .accepting_devices()
                 .iter()
-                .map(|family| to_cstring(family.id()))
+                .map(|device| to_cstring(device.id()))
                 .collect(),
-            default_device: discovery
-                .default_device()
-                .map(|family| to_cstring(family.id())),
+            recorded: discovery
+                .device_types()
+                .iter()
+                .map(|device| to_cstring(device.id()))
+                .collect(),
+            device_type: discovery
+                .device_type()
+                .map(|device| to_cstring(device.id())),
             discovery,
         }
     }
@@ -800,60 +838,83 @@ pub unsafe extern "C" fn remanence_discovery_format(
     true
 }
 
-/// The **exact medium**, by the media-type catalog's stable spelling
-/// (P14). The image-format adapter that loaded the state named it.
+/// The **exact article**, by the catalog's stable spelling (P14). The
+/// image-format adapter that loaded the state named it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_discovery_media_type(
+pub unsafe extern "C" fn remanence_discovery_article(
     discovery: *const RemanenceDiscovery,
 ) -> *const c_char {
-    unsafe { discovery.as_ref() }.map_or(ptr::null(), |discovery| discovery.media_type.as_ptr())
+    unsafe { discovery.as_ref() }.map_or(ptr::null(), |discovery| discovery.article.as_ptr())
 }
 
-/// The medium's name, fit to show a user beside the drive it goes in.
+/// The article's name, fit to show a user beside the drive it goes in.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_discovery_media_type_name(
+pub unsafe extern "C" fn remanence_discovery_article_name(
     discovery: *const RemanenceDiscovery,
 ) -> *const c_char {
-    unsafe { discovery.as_ref() }
-        .map_or(ptr::null(), |discovery| discovery.media_type_name.as_ptr())
+    unsafe { discovery.as_ref() }.map_or(ptr::null(), |discovery| discovery.article_name.as_ptr())
 }
 
-/// How many concrete device families are served this medium — the
-/// answer to "where could this go?", derived from the families' own
-/// declarations. Zero means no drive this release claims takes it.
+/// How many devices are served this article — the answer to "where
+/// could this go?", derived from the device catalog's own declarations.
+/// Zero means no device this release claims takes it, which is an
+/// archive's honest answer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_discovery_device_family_count(
+pub unsafe extern "C" fn remanence_discovery_accepting_device_count(
     discovery: *const RemanenceDiscovery,
 ) -> usize {
-    unsafe { discovery.as_ref() }.map_or(0, |discovery| discovery.families.len())
+    unsafe { discovery.as_ref() }.map_or(0, |discovery| discovery.accepting.len())
 }
 
-/// The stable spelling of the `index`th family served this medium. Null
+/// The stable spelling of the `index`th device served this article. Null
 /// when out of range; owned by the discovery.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_discovery_device_family(
+pub unsafe extern "C" fn remanence_discovery_accepting_device(
     discovery: *const RemanenceDiscovery,
     index: usize,
 ) -> *const c_char {
     unsafe { discovery.as_ref() }
-        .and_then(|discovery| discovery.families.get(index))
-        .map_or(ptr::null(), |family| family.as_ptr())
+        .and_then(|discovery| discovery.accepting.get(index))
+        .map_or(ptr::null(), |device| device.as_ptr())
 }
 
-/// The device family the **image format** declares for the disks it
-/// records — the answer to "where did this come from?" — or null where
-/// the format declares none.
-///
-/// Null is ordinary: a raw image says nothing about its machine, and the
-/// caller then states the drive itself, adding the device and
-/// inserting the medium.
+/// How many device types the recognizing format records — one where it
+/// carries the type bare, several where a load declares which, and zero
+/// for an archive grammar, which records no device at all.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_discovery_default_device(
+pub unsafe extern "C" fn remanence_discovery_recorded_device_count(
+    discovery: *const RemanenceDiscovery,
+) -> usize {
+    unsafe { discovery.as_ref() }.map_or(0, |discovery| discovery.recorded.len())
+}
+
+/// The stable spelling of the `index`th device type the format records —
+/// the set a declaration may name. Null when out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_discovery_recorded_device(
+    discovery: *const RemanenceDiscovery,
+    index: usize,
+) -> *const c_char {
+    unsafe { discovery.as_ref() }
+        .and_then(|discovery| discovery.recorded.get(index))
+        .map_or(ptr::null(), |device| device.as_ptr())
+}
+
+/// The device this artifact's content was recorded by — the answer to
+/// "what wrote it?" — or null where the format records several types
+/// and nothing in the artifact says which.
+///
+/// Null is honest rather than deficient, and it is also a refusal
+/// waiting to happen: a load takes the discovery only where this
+/// answers, so a caller who meets null declares the type at
+/// `remanence_session_load_media` instead.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_discovery_device_type(
     discovery: *const RemanenceDiscovery,
 ) -> *const c_char {
     unsafe { discovery.as_ref() }
-        .and_then(|discovery| discovery.default_device.as_ref())
-        .map_or(ptr::null(), |family| family.as_ptr())
+        .and_then(|discovery| discovery.device_type.as_ref())
+        .map_or(ptr::null(), |device| device.as_ptr())
 }
 
 /// The resolved image's own size in bytes — the raw plane.
@@ -940,17 +1001,31 @@ pub unsafe extern "C" fn remanence_medium_is_linked(medium: *const RemanenceMedi
     }
 }
 
-/// The media type this medium is (P14), by the catalog's stable spelling.
-/// Owned by the library; do not free.
+/// The article this medium is (P14), by the catalog's stable spelling —
+/// the physical substrate. Owned by the library; do not free.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_medium_media_type(
+pub unsafe extern "C" fn remanence_medium_article(medium: *const RemanenceMedium) -> *const c_char {
+    match unsafe { medium.as_ref() } {
+        Some(handle) => handle
+            .article
+            .as_ref()
+            .map_or(ptr::null(), |article| article.as_ptr()),
+        None => ptr::null(),
+    }
+}
+
+/// The device this medium's content was recorded by, by the device
+/// catalog's stable spelling — or null where no device recorded it,
+/// which is an archive's honest answer rather than a gap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_medium_device_type(
     medium: *const RemanenceMedium,
 ) -> *const c_char {
     match unsafe { medium.as_ref() } {
         Some(handle) => handle
-            .media_type
+            .device_type
             .as_ref()
-            .map_or(ptr::null(), |media_type| media_type.as_ptr()),
+            .map_or(ptr::null(), |device| device.as_ptr()),
         None => ptr::null(),
     }
 }
@@ -1305,15 +1380,15 @@ pub unsafe extern "C" fn remanence_layer_has_disk_layout(
     unsafe { disk_view(identification, index) }.is_some()
 }
 
-/// Disk layout: the media type the image format names for its medium
+/// Disk layout: the article the image format names for its medium
 /// (e.g. "logical-block-512"); null when the layer has no disk
 /// layout.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_layer_disk_media_type(
+pub unsafe extern "C" fn remanence_layer_disk_article(
     identification: *const RemanenceIdentification,
     index: usize,
 ) -> *const c_char {
-    unsafe { disk_view(identification, index) }.map_or(ptr::null(), |disk| disk.media_type.as_ptr())
+    unsafe { disk_view(identification, index) }.map_or(ptr::null(), |disk| disk.article.as_ptr())
 }
 
 /// Disk layout: sector size in bytes; returns false when unknown.
@@ -1463,8 +1538,8 @@ pub unsafe extern "C" fn remanence_layer_fs_length_bytes(
 // files with a commit point.
 
 use remanence::{
-    AccessIntent, AccessMode, DeviceFamily, DiskContent, DiskFormat, Entry, EntryKind, RegionRole,
-    StorageDevice, VolumeId, VolumeOrigin,
+    AccessIntent, AccessMode, DeviceSlot, DeviceType, DiskContent, DiskFormat, Entry, EntryKind,
+    RegionRole, StorageDevice, VolumeId, VolumeOrigin,
 };
 
 /// The caller's declared intent when opening a disk (P7).
@@ -1544,8 +1619,10 @@ pub struct RemanenceMedium {
     /// The artifact's names, absent where the caller's handle has none.
     path: Option<CString>,
     image_path: Option<CString>,
-    /// The media type, settled at the load like the names.
-    media_type: Option<CString>,
+    /// The article and the device that recorded it, settled at the load
+    /// like the names.
+    article: Option<CString>,
+    device_type: Option<CString>,
 }
 
 impl RemanenceMedium {
@@ -1559,19 +1636,21 @@ impl RemanenceMedium {
     /// Restates the artifact's names. They are settled at the load and
     /// never change after it, so this runs once when the view is minted.
     fn refresh(&mut self) {
-        let (path, image_path, media_type) = match self.medium() {
+        let (path, image_path, article, device_type) = match self.medium() {
             Some(medium) => (
                 medium.path().map(to_cstring),
                 medium
                     .image_path()
                     .map(|path| to_cstring(&path.display().to_string())),
-                Some(to_cstring(medium.media_type())),
+                Some(to_cstring(medium.article())),
+                medium.device_type().map(|device| to_cstring(device.id())),
             ),
-            None => (None, None, None),
+            None => (None, None, None, None),
         };
         self.path = path;
         self.image_path = image_path;
-        self.media_type = media_type;
+        self.article = article;
+        self.device_type = device_type;
     }
 }
 
@@ -1587,7 +1666,8 @@ unsafe fn medium_view(session: *mut RemanenceSession, id: MediaId) -> *mut Reman
         id,
         path: None,
         image_path: None,
-        media_type: None,
+        article: None,
+        device_type: None,
     });
     view.refresh();
     handle.media.push(view);
@@ -1618,8 +1698,8 @@ impl RemanenceMachine {
     }
 }
 
-/// A borrowed view of one storage device — the slot, its family, and the
-/// state of the medium in it.
+/// A borrowed view of one storage device — the slot, what it is, and
+/// the state of the medium in it.
 ///
 /// **The session owns this; never free it.** It stays valid until the
 /// device is released or the session is freed.
@@ -1638,7 +1718,8 @@ pub struct RemanenceDevice {
     /// **They are all a device has**: every content-side fact answers on
     /// the medium, which the pool holds and this slot merely links.
     attachment_c: CString,
-    family_c: CString,
+    slot_c: CString,
+    device_type_c: Option<CString>,
 }
 
 impl RemanenceDevice {
@@ -1750,7 +1831,7 @@ pub unsafe extern "C" fn remanence_assurance_claim(
 /// How many concrete formats a load may declare.
 #[unsafe(no_mangle)]
 pub extern "C" fn remanence_format_count() -> usize {
-    Format::ALL.len()
+    format_views().len()
 }
 
 /// One declarable format's stable spelling (`qcow2`, `7z`), by index, or
@@ -1773,19 +1854,76 @@ pub extern "C" fn remanence_format_name(index: usize) -> *const c_char {
 struct FormatView {
     id: CString,
     name: CString,
+    /// The device types this format's adapter records — what a
+    /// declaration may name, and what a refusal quotes back.
+    devices: Vec<CString>,
+    block_bytes: bool,
 }
 
 fn format_views() -> &'static [FormatView] {
     static FORMATS: std::sync::OnceLock<Vec<FormatView>> = std::sync::OnceLock::new();
     FORMATS.get_or_init(|| {
-        Format::ALL
+        Format::claimed()
             .iter()
-            .map(|format| FormatView {
-                id: to_cstring(format.id()),
-                name: to_cstring(format.name()),
+            .map(|claim| FormatView {
+                id: to_cstring(claim.id()),
+                name: to_cstring(claim.name()),
+                devices: claim
+                    .devices()
+                    .iter()
+                    .map(|device| to_cstring(device.id()))
+                    .collect(),
+                block_bytes: claim.takes_block_bytes(),
             })
             .collect()
     })
+}
+
+/// How many device types format `index` records: one where the format
+/// carries it bare, several where the load declares which, and zero for
+/// an archive grammar, which records no device at all.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_format_device_count(index: usize) -> usize {
+    format_views()
+        .get(index)
+        .map_or(0, |view| view.devices.len())
+}
+
+/// The stable spelling of the `device`th device type format `index`
+/// records — a value `remanence_session_load_media` accepts for it.
+/// Null when either index is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_format_device(index: usize, device: usize) -> *const c_char {
+    format_views()
+        .get(index)
+        .and_then(|view| view.devices.get(device))
+        .map_or(ptr::null(), |device| device.as_ptr())
+}
+
+/// Builds a load declaration out of the stable spellings a C caller
+/// has: the format, the device type it records (null where the format
+/// carries one bare), and the block size (zero where the format records
+/// its own). Every half refuses by name on its own terms.
+unsafe fn declared_format(
+    format: &str,
+    device_type: *const c_char,
+    block_bytes: u64,
+) -> Result<Format, remanence::Error> {
+    let device = match unsafe { utf8_arg(device_type) } {
+        Some(device) => Some(DeviceType::from_id(device.as_ref())?),
+        None => None,
+    };
+    Format::declared(format, device, (block_bytes > 0).then_some(block_bytes))
+}
+
+/// Whether a declaration of format `index` carries the block size —
+/// true for the raw reading alone, which records no addressable unit of
+/// its own.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_format_takes_block_bytes(index: usize) -> bool {
+    format_views()
+        .get(index)
+        .is_some_and(|view| view.block_bytes)
 }
 
 /// Takes ownership of a caller-opened OS file handle.
@@ -1825,11 +1963,20 @@ unsafe fn file_from_raw(source: isize) -> std::fs::File {
 /// The declaration is checked by that one format's own adapter and
 /// refused by name where the evidence cannot bear it. `format` is a
 /// stable spelling from `remanence_format_id`.
+///
+/// **The declaration carries the device the content was recorded by.**
+/// `device_type` is a stable spelling from `remanence_format_device`,
+/// and may be null where the format records exactly one type and so
+/// carries it bare. `block_bytes` is the raw reading's declared
+/// addressable unit and is ignored — passed as zero — by every format
+/// that records its own.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_load_media(
     session: *mut RemanenceSession,
     source: isize,
     format: *const c_char,
+    device_type: *const c_char,
+    block_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -1845,7 +1992,7 @@ pub unsafe extern "C" fn remanence_session_load_media(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    let format = match Format::from_id(format.as_ref()) {
+    let format = match unsafe { declared_format(format.as_ref(), device_type, block_bytes) } {
         Ok(format) => format,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -1887,6 +2034,11 @@ pub unsafe extern "C" fn remanence_session_load_media(
 /// **The discovery is freed either way** — a refused load releases its
 /// claim with it — so the pointer must never be used or freed again
 /// after this call, whatever it returns. Null on failure.
+///
+/// **This is the plain door, and it opens where the recognizing format
+/// records exactly one device type.** Where it records several, nothing
+/// in the artifact says which wrote it, and the refusal names them and
+/// points at `remanence_session_load_discovery_as`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_load_discovery(
     session: *mut RemanenceSession,
@@ -1913,6 +2065,66 @@ pub unsafe extern "C" fn remanence_session_load_discovery(
     }
     let handle = unsafe { &mut *session };
     match handle.session.load_discovery(discovery.discovery) {
+        Ok(medium) => {
+            let id = medium.id();
+            unsafe { medium_view(session, id) }
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Loads the medium a discovery already opened under the caller's own
+/// declaration of the device that recorded it — the `_as` door, for a
+/// format that records several device types and so asserts none.
+///
+/// `device_type` is a stable spelling from
+/// `remanence_discovery_recorded_device`, and one the recognizing
+/// format's adapter records; anything else is refused by name. The
+/// discovery is consumed and freed exactly as the plain door consumes
+/// it, whatever this returns. Null on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_load_discovery_as(
+    session: *mut RemanenceSession,
+    discovery: *mut RemanenceDiscovery,
+    device_type: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMedium {
+    unsafe { clear_error(error_out, error_rule_out) };
+    if discovery.is_null() {
+        let error = remanence::Error::io("null discovery");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    // Taken before anything can fail, as the plain door takes it: the
+    // discovery is consumed whatever the outcome.
+    let discovery = unsafe { Box::from_raw(discovery) };
+    if session.is_null() {
+        let error = remanence::Error::io("null session");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    }
+    let Some(device) = (unsafe { utf8_arg(device_type) }) else {
+        let error = remanence::Error::io("null device type");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return ptr::null_mut();
+    };
+    let device = match DeviceType::from_id(device.as_ref()) {
+        Ok(device) => device,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    let handle = unsafe { &mut *session };
+    match handle
+        .session
+        .load_discovery_as(discovery.discovery, device)
+    {
         Ok(medium) => {
             let id = medium.id();
             unsafe { medium_view(session, id) }
@@ -2061,20 +2273,20 @@ pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) 
     }
 }
 
-/// Adds a device of `family` (UTF-8, a family's stable spelling such as
-/// `hard-disk`) to the session's **anonymous machine**, taking the lowest
-/// free slot of that family, and returns a **borrowed** view of it —
-/// empty, until `remanence_device_insert` puts a medium in it.
+/// Adds a device of `slot` (UTF-8, a stable spelling from
+/// `remanence_device_slot_id` — a device type such as `mbr-block-hd`, or
+/// `archive`) to the session's **anonymous machine**, taking the lowest
+/// free slot of that bay, and returns a **borrowed** view of it — empty,
+/// until `remanence_device_insert` puts a medium in it.
 ///
 /// The session owns the view; never free it.
 /// `remanence_machine_add_device` does the same in a named machine. A
-/// family this release does not claim, and an interior name of the
-/// lineage which classifies rather than instantiates, are both refused by
-/// name (P3). Returns null on failure.
+/// device this release does not claim is refused by name (P3). Returns
+/// null on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_add_device(
     session: *mut RemanenceSession,
-    family: *const c_char,
+    slot: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -2083,7 +2295,7 @@ pub unsafe extern "C" fn remanence_session_add_device(
         add_device(
             session,
             None,
-            family,
+            slot,
             None,
             error_category_out,
             error_out,
@@ -2092,14 +2304,14 @@ pub unsafe extern "C" fn remanence_session_add_device(
     }
 }
 
-/// Adds a device of `family` at slot `index` of the session's anonymous
-/// machine — `hdd1` being family `hard-disk` at index 1. The caller
-/// chooses the slot, never the name; a slot already taken is refused
-/// rather than displaced.
+/// Adds a device of `slot` at index `index` of the session's anonymous
+/// machine — `hdd1` being a hard drive at index 1. The caller chooses
+/// the slot, never the name; a slot already taken is refused rather than
+/// displaced, whatever device would fill it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_add_device_at(
     session: *mut RemanenceSession,
-    family: *const c_char,
+    slot: *const c_char,
     index: u32,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
@@ -2109,7 +2321,7 @@ pub unsafe extern "C" fn remanence_session_add_device_at(
         add_device(
             session,
             None,
-            family,
+            slot,
             Some(index),
             error_category_out,
             error_out,
@@ -2301,13 +2513,13 @@ pub unsafe extern "C" fn remanence_machine_identity(
     }
 }
 
-/// Adds a device of `family` (UTF-8) to this machine, taking the lowest
-/// free slot of that family, and returns a **borrowed** view of it. The
+/// Adds a device of `slot` (UTF-8) to this machine, taking the lowest
+/// free slot of that bay, and returns a **borrowed** view of it. The
 /// session owns the view; never free it. Returns null on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_machine_add_device(
     machine: *mut RemanenceMachine,
-    family: *const c_char,
+    slot: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -2322,7 +2534,7 @@ pub unsafe extern "C" fn remanence_machine_add_device(
         add_device(
             session,
             identity,
-            family,
+            slot,
             None,
             error_category_out,
             error_out,
@@ -2331,13 +2543,13 @@ pub unsafe extern "C" fn remanence_machine_add_device(
     }
 }
 
-/// Adds a device of `family` at slot `index` in this machine. The caller
+/// Adds a device of `slot` at index `index` in this machine. The caller
 /// chooses the slot, never the name; a slot already taken is refused
 /// rather than displaced.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_machine_add_device_at(
     machine: *mut RemanenceMachine,
-    family: *const c_char,
+    slot: *const c_char,
     index: u32,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
@@ -2353,7 +2565,7 @@ pub unsafe extern "C" fn remanence_machine_add_device_at(
         add_device(
             session,
             identity,
-            family,
+            slot,
             Some(index),
             error_category_out,
             error_out,
@@ -2362,7 +2574,7 @@ pub unsafe extern "C" fn remanence_machine_add_device_at(
     }
 }
 
-/// Adds a device of the artifact's **format-declared default family** to
+/// Adds a device of the **device type the artifact's format records** to
 /// this machine, loads the medium at `path` (UTF-8) into it, and returns
 /// a **borrowed** view of that device. The session owns the view; never
 /// free it.
@@ -2373,12 +2585,11 @@ pub unsafe extern "C" fn remanence_machine_add_device_at(
 /// ordinary device in this machine's own set — a fresh one, never a slot
 /// already there.
 ///
-/// **A format that declares no default is refused by name**, toward the
-/// two explicit acts (`remanence_machine_add_device` then
+/// **A format that records several device types is refused by name**,
+/// toward the explicit acts (`remanence_machine_add_device` then
 /// `remanence_session_load_media` then `remanence_device_insert`), with
-/// the refusal naming the families
-/// the medium could go in. A refused call leaves no device behind.
-/// Returns null on failure.
+/// the refusal naming the types a declaration may state. A refused call
+/// leaves no device behind. Returns null on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_machine_add_device_for(
     machine: *mut RemanenceMachine,
@@ -2448,7 +2659,7 @@ pub unsafe extern "C" fn remanence_machine_release_device(
 ///
 /// `rule` is a claimed rule's name, or null to apply every claimed rule
 /// and leave a letter they disagree on undetermined. Families no claimed
-/// rule letters are passed over by family, and the mapping's provenance
+/// rule letters are passed over by device type, and the mapping's provenance
 /// says which. Free the result with `remanence_drive_map_free`; returns
 /// null on failure.
 #[unsafe(no_mangle)]
@@ -2562,7 +2773,7 @@ pub unsafe extern "C" fn remanence_session_device(
 unsafe fn add_device(
     session: *mut RemanenceSession,
     machine: Option<String>,
-    family: *const c_char,
+    slot: *const c_char,
     index: Option<u32>,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
@@ -2574,13 +2785,13 @@ unsafe fn add_device(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    let Some(family) = (unsafe { utf8_arg(family) }) else {
-        let error = remanence::Error::io("null device family");
+    let Some(slot) = (unsafe { utf8_arg(slot) }) else {
+        let error = remanence::Error::io("null device type");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    let family = match DeviceFamily::from_id(family.as_ref()) {
-        Ok(family) => family,
+    let slot = match DeviceSlot::from_id(slot.as_ref()) {
+        Ok(slot) => slot,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
             return ptr::null_mut();
@@ -2596,8 +2807,8 @@ unsafe fn add_device(
         return ptr::null_mut();
     };
     let added = match index {
-        Some(index) => target.add_device_at(family, index),
-        None => target.add_device(family),
+        Some(index) => target.add_device_at(slot, index),
+        None => target.add_device(slot),
     };
     let attachment = match added {
         Ok(device) => device.attachment(),
@@ -2753,22 +2964,30 @@ unsafe fn device_view(
     {
         return handle.views[at].as_mut() as *mut RemanenceDevice;
     }
-    let present = match &machine {
+    // The slot the device is typed by comes off the device itself: an
+    // attachment identity names the bay, and several device types share
+    // one, so the identity alone cannot say what is in it.
+    let slot = match &machine {
         Some(identity) => handle
             .session
             .machine(identity)
-            .is_some_and(|machine| machine.device(attachment).is_some()),
-        None => handle.session.anonymous().device(attachment).is_some(),
+            .and_then(|machine| machine.device(attachment).map(|device| device.slot())),
+        None => handle
+            .session
+            .anonymous()
+            .device(attachment)
+            .map(|device| device.slot()),
     };
-    if !present {
+    let Some(slot) = slot else {
         return ptr::null_mut();
-    }
+    };
     handle.views.push(Box::new(RemanenceDevice {
         session,
         machine,
         attachment,
         attachment_c: to_cstring(&attachment.to_string()),
-        family_c: to_cstring(attachment.family().id()),
+        slot_c: to_cstring(slot.id()),
+        device_type_c: slot.device_type().map(|device| to_cstring(device.id())),
     }));
     handle.views.last_mut().expect("just pushed").as_mut() as *mut RemanenceDevice
 }
@@ -7482,7 +7701,8 @@ pub struct RemanenceDiskReport {
     device_id: u64,
     device_image_format: CString,
     device_length_bytes: u64,
-    device_media_type: CString,
+    device_article: CString,
+    device_device_type: Option<CString>,
     device_authoritative_layer: CString,
     device_active_layer: CString,
     content: RemanenceDiskContent,
@@ -7704,7 +7924,8 @@ pub unsafe extern "C" fn remanence_medium_inspect(
                 device_id: report.device.id,
                 device_image_format: to_cstring(&report.device.image_format),
                 device_length_bytes: report.device.length_bytes,
-                device_media_type: to_cstring(&report.device.media_type),
+                device_article: to_cstring(&report.device.article),
+                device_device_type: report.device.device_type.as_deref().map(to_cstring),
                 device_authoritative_layer: to_cstring(&report.device.authoritative_layer),
                 device_active_layer: to_cstring(&report.device.active_layer),
                 content,
@@ -7775,13 +7996,24 @@ pub unsafe extern "C" fn remanence_report_device_length_bytes(
     unsafe { report.as_ref() }.map_or(0, |report| report.device_length_bytes)
 }
 
-/// The media type of the medium attached to the device (P14) — what
-/// the medium is, said in the media-type catalog's own name for it.
+/// The article of the medium attached to the device (P14) — the
+/// substrate, said in the article catalog's own name for it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_report_device_media_type(
+pub unsafe extern "C" fn remanence_report_device_article(
     report: *const RemanenceDiskReport,
 ) -> *const c_char {
-    unsafe { report.as_ref() }.map_or(ptr::null(), |report| report.device_media_type.as_ptr())
+    unsafe { report.as_ref() }.map_or(ptr::null(), |report| report.device_article.as_ptr())
+}
+
+/// The device the medium's content was recorded by, by the device
+/// catalog's stable spelling — null where no device recorded it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_report_device_type(
+    report: *const RemanenceDiskReport,
+) -> *const c_char {
+    unsafe { report.as_ref() }
+        .and_then(|report| report.device_device_type.as_ref())
+        .map_or(ptr::null(), |device| device.as_ptr())
 }
 
 /// The layer the image is authoritative at (P13).
@@ -10433,7 +10665,13 @@ mod tests {
             .open(path)
             .expect("the caller's own writable open");
         let medium = session
-            .load_media(source, Format::Raw)
+            .load_media(
+                source,
+                Format::Raw {
+                    device: remanence::HardDrive::MbrSector,
+                    block_bytes: 512,
+                },
+            )
             .expect("the whole image loads");
         let content: Vec<u8> = (0..1_200_000u32).map(|n| (n % 241) as u8).collect();
         medium
@@ -10466,6 +10704,7 @@ mod tests {
 
         let session = unsafe { remanence_session_new() };
         let format = to_cstring("raw");
+        let device = to_cstring("mbr-sector-hd");
         let mut category = RemanenceErrorCategory::Io;
         let mut message = ptr::null_mut();
         let mut rule = ptr::null_mut();
@@ -10481,6 +10720,8 @@ mod tests {
                 session,
                 raw_source(source),
                 format.as_ptr(),
+                device.as_ptr(),
+                512,
                 &mut category,
                 &mut message,
                 &mut rule,

@@ -169,11 +169,19 @@ pub struct DeviceInfo {
     pub id: u64,
     /// The image format the artifact turned out to be.
     pub image_format: String,
-    /// The media type of the medium attached here, named from the
-    /// media-type catalog (P14). It says what the medium *is* — the
-    /// article a drive would accept — and nothing about what is
-    /// recorded on it, which the records below this one answer.
-    pub media_type: String,
+    /// The article of the medium attached here, named from the article
+    /// catalog (P14). It says what the medium *is* — the substrate a
+    /// drive would accept — and nothing about what is recorded on it,
+    /// which the records below this one answer.
+    pub article: String,
+    /// The device this medium's content was recorded by, by the device
+    /// catalog's stable spelling, or `None` where no device recorded it.
+    ///
+    /// It is the other half of what the article says: the substrate is
+    /// what the disk is, and this is what wrote it — which is why the
+    /// scheme this medium's content is laid out under is the device's
+    /// declaration and not the article's.
+    pub device_type: Option<String>,
     /// The device's addressable length in bytes.
     pub length_bytes: u64,
     /// The layer the image is authoritative at (P13).

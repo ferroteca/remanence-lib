@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! The media-profile seam (P14): where a medium's own passive
-//! compatibility facts are declared, and where the media-type catalog
-//! that holds them lives.
+//! compatibility facts are declared, and where the catalog of
+//! **articles** that holds them lives.
+//!
+//! An article is the physical substrate — what a medium *is* — and it is
+//! one of D19's three facts. The other two live elsewhere: the recording
+//! in the device type ([`crate::device_type`], which composes an article
+//! and restates none of its facts), and the drive's behavior in the P30
+//! drive profile. `article()` is the caller-facing spelling of what this
+//! catalog names.
 //!
 //! A media instance is the independent mutable state between image
 //! formats and drives — the block state a [`crate::StorageDevice`] presents, the
@@ -305,39 +312,40 @@ pub(crate) static LOGICAL_BLOCK_512: MediaProfile = MediaProfile {
     facts: MediaFacts::LogicalBlock(LogicalBlock { block_bytes: 512 }),
 };
 
-/// The archive: independent recorded state with no physical article
-/// behind it, whose content is reached by name and not by position.
+/// The virtual article: independent recorded state with no physical
+/// substrate behind it, whose content is reached by name and not by
+/// position — an archive's.
 ///
 /// A zip's byte extent is its *encoding* (P13), not a model space —
 /// there is no meaningful "sector 5 of a zip" — which is why the one
 /// fact declared here is the vantage.
-pub(crate) static ARCHIVE: MediaProfile = MediaProfile {
-    id: "archive",
-    name: "archive medium",
+pub(crate) static VIRTUAL: MediaProfile = MediaProfile {
+    id: "virtual",
+    name: "virtual medium",
     provenance: "declared from what an archive is rather than from a published                  article: independent recorded state held by no drive, whose                  grammar names its content and whose bytes are its encoding",
     facts: MediaFacts::Virtual(Virtual {
         native_vantage: "namespace",
     }),
 };
 
-/// The enrolled media types. Adding one changes its declaration, its
+/// The enrolled articles. Adding one changes its declaration, its
 /// tests, and this list — nothing else, because there is no behavior
 /// here to wire up.
 static ENROLLED: [&MediaProfile; 4] = [
     &FLEXIBLE_5_25_SOFT,
     &FLEXIBLE_5_25_HARD_10,
     &LOGICAL_BLOCK_512,
-    &ARCHIVE,
+    &VIRTUAL,
 ];
 
 pub(crate) fn enrolled() -> &'static [&'static MediaProfile] {
     &ENROLLED
 }
 
-/// Resolves a media type by name, refusing one the library does not
+/// Resolves an article by name, refusing one the library does not
 /// claim (P3).
 ///
-/// It exists for the boundaries where a media type arrives as text —
+/// It exists for the boundaries where an article arrives as text —
 /// nothing inside the crate names one this way, holding the static
 /// instead.
 pub(crate) fn by_id(id: &str) -> Result<&'static MediaProfile> {
@@ -348,7 +356,7 @@ pub(crate) fn by_id(id: &str) -> Result<&'static MediaProfile> {
         .ok_or_else(|| {
             let claimed: Vec<&str> = ENROLLED.iter().map(|profile| profile.id).collect();
             Error::unsupported(format!(
-                "no media type named '{id}' is claimed; this release claims {}",
+                "no article named '{id}' is claimed; this release claims {}",
                 claimed.join(", ")
             ))
         })
@@ -385,15 +393,15 @@ mod tests {
         // P14's amendment: an archive is a medium, and its one family
         // fact is the native vantage. Asking it a physical question is
         // asking another family's, which is what the accessors refuse.
-        let archive = ARCHIVE.virtual_media().expect("its own family's facts");
+        let archive = VIRTUAL.virtual_media().expect("its own family's facts");
         assert_eq!(archive.native_vantage, "namespace");
-        assert_eq!(ARCHIVE.family(), MediaFamily::Virtual);
+        assert_eq!(VIRTUAL.family(), MediaFamily::Virtual);
         assert!(
-            ARCHIVE.flexible_magnetic().is_none(),
+            VIRTUAL.flexible_magnetic().is_none(),
             "an archive answers no coercivity question"
         );
         assert!(
-            ARCHIVE.logical_block().is_none(),
+            VIRTUAL.logical_block().is_none(),
             "and no addressable-unit question either"
         );
         assert!(
@@ -413,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unclaimed_media_type_is_refused_by_name() {
+    fn an_unclaimed_article_is_refused_by_name() {
         // P3: the catalog is an enumerated claim. 8-inch media is the
         // obvious next flexible entry and naming it must refuse rather
         // than approximate it from the 5.25-inch declaration.

@@ -1126,6 +1126,18 @@ careful one, and a refusal would buy nothing the provenance does not
 already carry while making the anonymous machine behave unlike every
 other.
 
+*Annotation (D33, 2026-08-12): F57 delivered the device tier's catalog
+as the **device type** — two enumerated levels, the class then the
+concrete type — and the paragraph below is superseded by it in three
+places, recorded here rather than rewritten. There is no lineage and no
+interior name to refuse, because a name the library does not know now
+fails to compile; a device is typed by a device type or by the archive
+receiver, which is no device type at all; and several device types share
+one slot prefix, so an attachment identity names a bay rather than a
+family. What the paragraph asserts about vagueness in a machine fact
+stands, and is now enforced by the type system rather than by a
+run-time refusal.*
+
 **Device families form a stated lineage.** A family entry is as
 concrete as the machine fact it asserts — a Commodore 1541, not "some
 floppy" — and the catalog states each entry's lineage: a Commodore 1541
@@ -1155,7 +1167,10 @@ amendment) loads into an archive-family device with no mechanism: the
 receiver `load_media` requires, the attachment identity the machine
 knows it by, and nothing more. Whether that slot is visible in the
 attachment namespace or stays behind the report is an open question the
-storage model design carries.
+storage model design carries. *Delivered and settled: `arc0` is an
+ordinary attachment identity (D27), and the receiver is spelled as the
+one slot that is no device type — an archive was recorded by no device
+(D33).*
 
 ## P35 — The machine namespace composes filesystems under a consumed or derived mapping
 

@@ -23,18 +23,26 @@ ABI, or Python module.
   where the reads happen;
   `adapters.rs` the executable image-format adapters, probe aggregation,
   authoritative/active layer vocabulary, device identity, the built-in
-  image catalog, and each format's **declared default device** — the
-  recording-side fact a media type cannot hold, absent for a format
-  that records no ecosystem's disk;
+  image catalog, and each format's **recorded device types** — the
+  recording-side fact an article cannot hold: one means the format
+  carries the type bare, several mean the load declares which, and none
+  is an archive grammar;
   `discovery.rs` the first-class `discover_media`, on no handle at all:
-  the claim, the identification, the exact medium, the families derived
-  from their own declarations as accepting it, and the format's declared
-  default — answered as a consumable handle a load takes the state out
-  of, so nothing runs twice and no window opens between the question and
-  the load; `media_profile.rs` the P14 seam — the passive
-  compatibility facts of a media type, family-specific by construction
+  the claim, the identification, the exact article, the devices derived
+  from the catalog's own declarations as accepting it, and the device
+  the format records where it records one — answered as a consumable
+  handle a load takes the state out of, so nothing runs twice and no
+  window opens between the question and the load; `device_type.rs` the
+  P14 recording seam — the **device-type catalog** in its two levels
+  (the class, then the concrete type), one spec shape per class and one
+  instance per concrete type, the granularity rule that cuts it, the
+  article each type composes, the flux path it claims, and the partition
+  scheme the hard-drive specs carry — beside `DeviceSlot`, which is a
+  device type or the archive receiver, the receiver being no recording
+  device at all; `media_profile.rs` the P14 substrate seam — the passive
+  compatibility facts of an **article**, family-specific by construction
   (flexible magnetic and logical-block are claimed, with no fact in
-  common), and the declarative media-type catalog they are enrolled in,
+  common), and the declarative article catalog they are enrolled in,
   which holds no recognition, no grammar and no behavior; every medium
   the library holds names one entry, a block medium from the
   image-format adapter that loaded its state and a flux medium from the
@@ -236,12 +244,7 @@ ABI, or Python module.
   or read from a machine's own device set in attachment order, the
   variant-by-variant assignment rules it claims, the conditions it
   refuses to model, and the mapping it answers with, undetermined
-  letters included; `device_family.rs` the device-family catalog (P32) —
-  declarative like the two catalogs above it, each entry stating what it
-  is a kind of, with interior names classifying and only concrete
-  entries instantiating, and a concrete entry declaring its slot prefix,
-  the media types it accepts and the drive profile it claims as its flux
-  path; `machine.rs` the
+  letters included; `machine.rs` the
   session and its two pools (P32) — the session being the claim and cache
   scope, owning the **media pool** (state) and the machines
   (configuration) independently of each other, a machine being one device
@@ -256,7 +259,10 @@ ABI, or Python module.
   spelled `release_*`: `release_machine` cascades through the
   configuration below it, `release_device` ejects first, and
   `release_media` severs its own link then ends the claim; `load_media`
-  and `load_discovery` fill the media pool, and `MachineView`/`DeviceView`
+  and `load_discovery`/`load_discovery_as` — the plain door and the
+  declared one, the second taking the device type a format recording
+  several leaves to the caller — fill the media pool, and
+  `MachineView`/`DeviceView`
   are the borrows that hold a node and the pool at once, since linking is
   the one act that crosses — with `storage_device.rs` the **slot**: its
   attachment identity (`hdd0`), the acts that fill it (`add_device` on
@@ -588,12 +594,12 @@ gcc crates/remanence-ffi/examples/identify.c target/debug/remanence_ffi.dll `
 Then run it beside a copy of `target/debug/remanence_ffi.dll`, against
 both a plain image and one inside an archive — the archive path is a
 distinct composition, not the same code with a longer path. The example
-takes the device family as an optional second argument
-(`identify <path> heathkit-h17`); given one it opens the artifact itself
-and declares its format — whoever opens owns the lock — and given none it
-asks the artifact instead, through the convenience over discovery, so a
-format declaring no default device — a raw image — refuses there and
-names the drives to pass. `identify --list <archive>` walks an archive's
+takes the device type as an optional second argument
+(`identify <path> h17`); given one it opens the artifact itself
+and declares its format and that device — whoever opens owns the lock —
+and given none it asks the artifact instead, through the convenience over
+discovery, so a format recording several device types — a raw image, a
+qcow2 — refuses there and names the types to pass. `identify --list <archive>` walks an archive's
 namespace, `identify --discover <path>` reports what an artifact is
 without loading it, `identify --remanence <path> [write-to]` reads a
 `.remanence` artifact through its own type — there is no device to
@@ -602,8 +608,8 @@ given, and describes the three C64 renditions without writing them,
 `identify --renditions <path> <stem>` writes all three beside each
 other with their accounts, `identify --reconstruct <capture> [side]`
 reduces a KryoFlux capture set to a remanence image and prints the
-plan's whole account before executing it, and `identify --families`
-lists the claimed families.
+plan's whole account before executing it, and `identify --devices`
+lists the claimed devices.
 
 **Without that `PATH` entry gcc exits 1 and prints nothing at all**: it
 is gcc's own runtime DLLs failing to resolve, so the compiler never

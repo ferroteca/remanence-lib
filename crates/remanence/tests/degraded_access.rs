@@ -14,8 +14,8 @@
 use std::path::{Path, PathBuf};
 
 use remanence::{
-    AccessMode, AssuranceCondition, AssuranceOutcome, ByteRange, ErrorCategory, Format, MediaId,
-    Medium, PartitionRule, Session,
+    AccessMode, AssuranceCondition, AssuranceOutcome, ByteRange, ErrorCategory, Format, HardDrive,
+    MediaId, Medium, PartitionRule, Session,
 };
 
 mod common;
@@ -125,7 +125,13 @@ fn build_floppy(path: &Path) {
     std::fs::write(path, floppy_1440()).expect("image writes");
     let mut session = Session::new();
     let medium = session
-        .load_media(open_write(path), Format::Raw)
+        .load_media(
+            open_write(path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the whole image loads");
     let partition = only_partition_of(medium);
     fs(medium, partition)
@@ -185,7 +191,13 @@ fn truncated(tag: &str, afford: Afford) -> (PathBuf, Session, MediaId) {
     };
     let mut session = Session::new();
     let id = session
-        .load_media(source, Format::Raw)
+        .load_media(
+            source,
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("a truncated source still loads, degraded")
         .id();
     (path, session, id)
@@ -207,7 +219,13 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
 
     let mut session = Session::new();
     let medium = session
-        .load_media(open_write(&path), Format::Raw)
+        .load_media(
+            open_write(&path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the whole image loads");
     let assurance = medium.assurance().clone();
 
@@ -451,7 +469,13 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
 
     let mut session = Session::new();
     let medium = session
-        .load_media(open_read(&path), Format::Raw)
+        .load_media(
+            open_read(&path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("what is left still loads");
     let assurance = medium.assurance().clone();
     assert_eq!(assurance.outcome, AssuranceOutcome::Degraded);
@@ -558,7 +582,13 @@ fn contradictory_metadata_beneath_a_shortfall_is_refused_not_degraded() {
 
     let mut session = Session::new();
     let refusal = session
-        .load_media(open_read(&path), Format::Raw)
+        .load_media(
+            open_read(&path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect_err("an unbounded shortfall is refused at the load");
     assert_eq!(refusal.category(), ErrorCategory::InvalidImage);
     assert_eq!(
@@ -586,7 +616,13 @@ fn the_gate_is_narrow_and_claims_no_rule_beyond_the_raw_direct_volume() {
 
     let mut session = Session::new();
     let medium = session
-        .load_media(open_write(&path), Format::Raw)
+        .load_media(
+            open_write(&path),
+            Format::Raw {
+                device: HardDrive::MbrSector,
+                block_bytes: 512,
+            },
+        )
         .expect("the image loads");
     assert_eq!(medium.assurance().outcome, AssuranceOutcome::Verified);
     assert_eq!(medium.assurance().condition, None);

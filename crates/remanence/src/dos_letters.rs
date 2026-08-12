@@ -920,14 +920,14 @@ impl crate::machine::MachineView<'_> {
     /// media already loaded, and what the rules cannot settle comes back
     /// undetermined.
     ///
-    /// **Families a claimed rule does not understand are passed over by
-    /// family**, not refused and not omitted silently: a `cbmfloppy0` in
-    /// this machine legitimately receives no DOS letter, and the
-    /// provenance says so. An empty device contributes no volume for the
-    /// same reason a drive with no disk in it lettered nothing past its
-    /// slot. No PC floppy drive family is claimed by this release, so
-    /// the floppy slots are stated through [`DosMachine::assert_floppy`]
-    /// and nowhere else.
+    /// **Devices a claimed rule does not understand are passed over by
+    /// device type**, not refused and not omitted silently: the rules
+    /// letter the hard-drive class, so a `cbmfloppy0` in this machine
+    /// legitimately receives no DOS letter and the provenance says so.
+    /// An empty device contributes no volume for the same reason a drive
+    /// with no disk in it lettered nothing past its slot. No PC floppy
+    /// drive is claimed by this release, so the floppy slots are stated
+    /// through [`DosMachine::assert_floppy`] and nowhere else.
     pub fn compose_dos_letters(
         &mut self,
         rule: Option<DosAssignmentRule>,
@@ -940,8 +940,8 @@ impl crate::machine::MachineView<'_> {
             let device = self
                 .device(attachment)
                 .expect("an attachment this machine just listed");
-            if !device.family().is_a(crate::DeviceFamily::HARD_DISK) {
-                passed_over.push(format!("{attachment} ({})", device.family().name()));
+            if !matches!(device.device_type(), Some(crate::DeviceType::HardDrive(_))) {
+                passed_over.push(format!("{attachment} ({})", device.slot().name()));
                 continue;
             }
             if !device.is_occupied() {

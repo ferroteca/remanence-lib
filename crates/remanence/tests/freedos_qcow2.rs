@@ -12,7 +12,9 @@
 
 use std::path::PathBuf;
 
-use remanence::{DiskFormat, Format, MediaId, Medium, PartitionScheme, RegionRole, Session};
+use remanence::{
+    DiskFormat, Format, HardDrive, MediaId, Medium, PartitionScheme, RegionRole, Session,
+};
 
 /// The space one partition of `medium` composes, reached through the
 /// door that opens on it. One node, both vantages (D26), and the file
@@ -57,7 +59,14 @@ fn attach(
         Afford::Write => open_write(path),
     };
     let mut session = Session::new();
-    let id = session.load_media(source, Format::Qcow2)?.id();
+    let id = session
+        .load_media(
+            source,
+            Format::Qcow2 {
+                device: HardDrive::MbrBlock,
+            },
+        )?
+        .id();
     Ok((session, id))
 }
 

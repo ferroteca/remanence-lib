@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use remanence::{ErrorCategory, Format, LayerKind, MediaId, Session};
+use remanence::{DeviceType, ErrorCategory, Format, HardDrive, LayerKind, MediaId, Session};
 
 mod common;
 use common::open_read;
@@ -24,6 +24,12 @@ fn archive_session(path: impl AsRef<Path>) -> remanence::Result<(Session, MediaI
 
 /// The nested journey: one member named through the archive's namespace,
 /// pooled as a medium of its own.
+///
+/// A KryoFlux stream is bytes to every adapter this release enrols, so
+/// the discovery answers "a raw image" and asserts no device — nothing
+/// in it says which drive wrote it, and the member is read here as the
+/// bytes it is. The declaration is the caller's, made through the `_as`
+/// door the plain one points at.
 fn load_member(path: impl AsRef<Path>, member: &str) -> remanence::Result<(Session, MediaId)> {
     let (mut session, archive) = archive_session(path)?;
     let discovery = session
@@ -35,7 +41,9 @@ fn load_member(path: impl AsRef<Path>, member: &str) -> remanence::Result<(Sessi
         .expect("an archive's content is its namespace")
         .get_file(member)?
         .discover()?;
-    let id = session.load_discovery(discovery)?.id();
+    let id = session
+        .load_discovery_as(discovery, DeviceType::HardDrive(HardDrive::MbrSector))?
+        .id();
     Ok((session, id))
 }
 

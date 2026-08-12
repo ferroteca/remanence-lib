@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use crate::device::{Device, MediumDevice};
-use crate::device_family::DeviceFamily;
+use crate::device_type::{DeviceType, FloppyDrive, HardDrive};
 use crate::disk::DiskFormat;
 use crate::error::{Error, ErrorCategory, Result};
 use crate::fat::FatVolume;
@@ -92,6 +92,19 @@ impl DiskDescriptor {
     }
 }
 
+/// The hard-drive types a block image is declared to record: the two the
+/// MBR scheme's own adapter reads.
+///
+/// `gpt-hd` is enumerated in the device catalog and absent here, because
+/// no adapter in this release reads a GPT — which is what makes
+/// declaring it a named refusal rather than a silent reading of the
+/// wrong table. The [`Format`] catalog reads this same list, so the
+/// adapter's claim is stated once.
+pub(crate) static RECORDED_HARD_DRIVES: [DeviceType; 2] = [
+    DeviceType::HardDrive(HardDrive::MbrSector),
+    DeviceType::HardDrive(HardDrive::MbrBlock),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImageFormatDescriptor {
     pub(crate) id: &'static str,
@@ -99,29 +112,30 @@ pub(crate) struct ImageFormatDescriptor {
     pub(crate) extensions: &'static [&'static str],
     pub(crate) authoritative_layer: ImageLayer,
     pub(crate) initial_active_layer: ActiveLayer,
-    /// The media type an image of this format holds state for (P14).
+    /// The article an image of this format holds state for (P14).
     /// An adapter loads and saves media state, so it is the adapter
     /// that names the medium; it never restates the medium's own
     /// passive facts inline, which is how one disk comes to be
     /// described two ways by two formats.
     pub(crate) media: &'static MediaProfile,
-    /// The device family this format's images are recorded by, where the
-    /// format records one ecosystem's disk (P12).
+    /// The device types this format's images are recorded by (P12).
     ///
     /// It is a **recording-side** fact and belongs here rather than on
-    /// the media type, which cannot honestly hold it: a ten-sector
+    /// the article, which cannot honestly hold it: a ten-sector
     /// hard-sectored 5.25-inch disk is the article of more than one
-    /// machine's drive, while an H8D records a Heathkit one. The
-    /// families a medium *could* go in are derived from the families'
-    /// own declarations instead ([`DeviceFamily::accepting`]); this is
-    /// the one a caller who names no drive gets.
+    /// machine's drive, while an H8D records a Heathkit one.
     ///
-    /// `None` is ordinary rather than deficient — a raw image says
-    /// nothing about the machine it came from — and a caller who wants
-    /// a device out of such a format states the drive itself, in the
-    /// explicit acts (P3: a declaration nobody makes is a refusal, not
-    /// a guess).
-    pub(crate) default_device: Option<DeviceFamily>,
+    /// **One entry means the format carries it bare** — a declaration
+    /// needs no second word, and a discovery over such an artifact
+    /// knows what recorded it. Several mean the load declares which, and
+    /// a type absent from this list is a named refusal at the load even
+    /// where the class is right. Empty is an archive grammar, which
+    /// records no device at all.
+    ///
+    /// Which devices a medium *could* go in is a different question
+    /// entirely, derived by asking the device catalog what is served the
+    /// article ([`DeviceType::accepting`]).
+    pub(crate) devices: &'static [DeviceType],
     pub(crate) disk: Option<DiskDescriptor>,
 }
 
@@ -521,7 +535,7 @@ static H8D_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     // the drive it records is stated rather than inferred: the same
     // article served a North Star MDS, and the medium cannot tell the
     // two apart.
-    default_device: Some(DeviceFamily::HEATHKIT_H17),
+    devices: &[DeviceType::Floppy(FloppyDrive::HeathH17)],
     disk: Some(DiskDescriptor {
         sector_size: 256,
         cylinders: 40,
@@ -609,7 +623,7 @@ static QCOW2_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     // The format exists to record one machine's hard disk, which is the
     // declaration: a virtual machine's qcow2 is its drive, and the
     // logical-block medium inside it says nothing about that.
-    default_device: Some(DeviceFamily::HARD_DISK),
+    devices: &RECORDED_HARD_DRIVES,
     disk: None,
 };
 
@@ -779,7 +793,7 @@ static VDI_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     initial_active_layer: ActiveLayer::Block,
     media: &LOGICAL_BLOCK_512,
     // As qcow2: the format records a virtual machine's hard disk.
-    default_device: Some(DeviceFamily::HARD_DISK),
+    devices: &RECORDED_HARD_DRIVES,
     disk: None,
 };
 
@@ -887,7 +901,7 @@ static RAW_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     // A raw image is bytes and nothing else: it records no ecosystem, so
     // it declares no drive. This is the ordinary shape of `None`, not a
     // gap waiting to be filled in.
-    default_device: None,
+    devices: &RECORDED_HARD_DRIVES,
     disk: None,
 };
 
@@ -931,9 +945,9 @@ pub(crate) fn image_catalog() -> ImageCatalog<'static> {
 /// opens one.
 fn adapter_for(format: Format) -> &'static dyn ImageFormatAdapter {
     match format {
-        Format::Raw => &RAW_ADAPTER,
-        Format::Qcow2 => &QCOW2_ADAPTER,
-        Format::Vdi => &VDI_ADAPTER,
+        Format::Raw { .. } => &RAW_ADAPTER,
+        Format::Qcow2 { .. } => &QCOW2_ADAPTER,
+        Format::Vdi { .. } => &VDI_ADAPTER,
         Format::H8d => &H8D_ADAPTER,
         Format::Zip | Format::SevenZip => {
             unreachable!("an archive grammar is opened by its own catalog")
@@ -1006,7 +1020,7 @@ mod tests {
         authoritative_layer: ImageLayer::Block,
         initial_active_layer: ActiveLayer::Block,
         media: &LOGICAL_BLOCK_512,
-        default_device: None,
+        devices: &[],
         disk: None,
     };
     static TEST_B_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
@@ -1016,7 +1030,7 @@ mod tests {
         authoritative_layer: ImageLayer::Block,
         initial_active_layer: ActiveLayer::Block,
         media: &LOGICAL_BLOCK_512,
-        default_device: None,
+        devices: &[],
         disk: None,
     };
     static TEST_A: SameProbe = SameProbe(&TEST_A_DESCRIPTOR);
@@ -1042,10 +1056,10 @@ mod tests {
             holes,
         );
 
-        // And the block-active formats name the medium their state
+        // And the block-active formats name the article their state
         // belongs to just as squarely: a virtual disk is logical-block
         // media, which is where "hard disk" stopped being said — that
-        // is the device's family (P32), not the medium's.
+        // is the device type that recorded it, not the article.
         for descriptor in [&QCOW2_DESCRIPTOR, &VDI_DESCRIPTOR, &RAW_DESCRIPTOR] {
             assert_eq!(descriptor.media.id, "logical-block-512");
             assert!(
@@ -1056,49 +1070,56 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_default_device_is_a_drive_the_medium_could_go_in() {
-        // The default is the format's declaration, but it is not free of
-        // the family catalog: a format naming a drive its own medium
-        // would be refused by is describing two different disks, and the
-        // load beneath the convenience would fail on every image.
+    fn a_recorded_device_is_one_the_article_could_go_in() {
+        // A format's recorded types are its own declaration, but they
+        // are not free of the device catalog: a format naming a drive
+        // its own article would never be served is describing two
+        // different disks, and every load of it would be a lie.
         for descriptor in [
             &H8D_DESCRIPTOR,
             &QCOW2_DESCRIPTOR,
             &VDI_DESCRIPTOR,
             &RAW_DESCRIPTOR,
         ] {
-            let Some(default) = descriptor.default_device else {
-                continue;
-            };
             assert!(
-                default.is_concrete(),
-                "{} declares {} as its default, and an interior name \
-                 instantiates nothing",
-                descriptor.id,
-                default.id()
+                !descriptor.devices.is_empty(),
+                "{} records no device, and only an archive grammar does",
+                descriptor.id
             );
-            assert!(
-                default.accepts(descriptor.media),
-                "{} declares {} as its default, which is {}",
-                descriptor.id,
-                default.id(),
-                default.served_reading()
-            );
-            assert!(
-                DeviceFamily::accepting(descriptor.media).contains(&default),
-                "a declared default is one of the families derived from \
-                 the declarations, never a fourth answer"
-            );
+            for device in descriptor.devices {
+                assert_eq!(
+                    device.article_profile().id,
+                    descriptor.media.id,
+                    "{} says it records a {}, which is served {} rather than \
+                     the {} the format loads",
+                    descriptor.id,
+                    device.id(),
+                    device.article_profile().id,
+                    descriptor.media.id
+                );
+                assert!(
+                    DeviceType::accepting(descriptor.media).contains(device),
+                    "a recorded device is one the device catalog derives from \
+                     its own declarations, never a second answer"
+                );
+            }
         }
 
-        // The two examples the feature rests on, checked rather than
-        // described: the format that records an ecosystem's disk names
-        // it, and the format that records only bytes names nothing.
+        // The two shapes the feature rests on, checked rather than
+        // described: the format that records one ecosystem's disk
+        // carries it bare, and the format that records a class leaves
+        // the type to the caller.
         assert_eq!(
-            H8D_DESCRIPTOR.default_device,
-            Some(DeviceFamily::HEATHKIT_H17)
+            H8D_DESCRIPTOR.devices,
+            &[DeviceType::Floppy(FloppyDrive::HeathH17)]
         );
-        assert_eq!(RAW_DESCRIPTOR.default_device, None);
+        assert_eq!(RAW_DESCRIPTOR.devices.len(), 2);
+        assert!(
+            !RAW_DESCRIPTOR
+                .devices
+                .contains(&DeviceType::HardDrive(HardDrive::Gpt)),
+            "no adapter records a GPT drive, so declaring one refuses"
+        );
     }
 
     #[test]

@@ -125,6 +125,39 @@ static const char *archive_format(const char *path) {
     return strcmp(format, "raw") == 0 ? "zip" : format;
 }
 
+/* The device this example declares its artifact was recorded by.
+ *
+ * A format that records one device type carries it bare, and passing
+ * null is how a C caller says so. One that records several needs the
+ * caller to choose, and this example chooses the block-addressed hard
+ * drive for them -- **a real consumer states the drive the disk came
+ * out of**, which is a machine fact it knows and this example does not.
+ */
+static const char *declared_device(const char *format) {
+    for (size_t i = 0; i < remanence_format_count(); ++i) {
+        const char *id = remanence_format_id(i);
+        if (id == NULL || strcmp(id, format) != 0) {
+            continue;
+        }
+        return remanence_format_device_count(i) == 1 ? NULL
+                                                     : remanence_format_device(i, 1);
+    }
+    return NULL;
+}
+
+/* The block size a declaration carries, which only the raw reading
+ * takes: bytes have no block meaning without one, and every other
+ * format records its own. */
+static uint64_t declared_block_bytes(const char *format) {
+    for (size_t i = 0; i < remanence_format_count(); ++i) {
+        const char *id = remanence_format_id(i);
+        if (id != NULL && strcmp(id, format) == 0) {
+            return remanence_format_takes_block_bytes(i) ? 512 : 0;
+        }
+    }
+    return 0;
+}
+
 /* The image container format the adapter recognized, and the version the
  * formats that declare one carry. A version accessor answers 0 for an
  * image of any other format, so each is read only under its own format. */
@@ -444,19 +477,23 @@ static int list_archive(const char *path) {
         remanence_session_free(session);
         return EXIT_FAILURE;
     }
+    const char *format = archive_format(path);
     RemanenceMedium *medium = remanence_session_load_media(
-        session, source, archive_format(path), &error_category, &error, &error_rule);
+        session, source, format, declared_device(format), declared_block_bytes(format),
+        &error_category, &error, &error_rule);
     if (medium == NULL) {
         report_error("error", error_category, error, error_rule);
         remanence_session_free(session);
         return EXIT_FAILURE;
     }
 
-    /* An archive is a medium like any other, and may be seated in a
-     * device of its own family -- which is configuration, not a step the
-     * content verbs wait on. */
+    /* An archive is a medium like any other, and may be seated in the
+     * archive receiver -- which is configuration, not a step the content
+     * verbs wait on. The receiver is no device type: an archive was
+     * recorded by no device, so there is no recording for a type to
+     * name. */
     RemanenceDevice *device = remanence_session_add_device(
-        session, "archive-device", &error_category, &error, &error_rule);
+        session, "archive", &error_category, &error, &error_rule);
     if (device == NULL || !remanence_device_insert(device, remanence_medium_id(medium),
                                                    &error_category, &error, &error_rule)) {
         report_error("error seating the archive", error_category, error, error_rule);
@@ -466,7 +503,7 @@ static int list_archive(const char *path) {
 
     printf("Archive: %s\n", name_or(remanence_medium_path(medium)));
     printf("Device:  %s (%s)\n", remanence_device_attachment(device),
-           remanence_device_family(device));
+           remanence_device_slot(device));
     printf("Size:    %" PRIu64 " bytes\n\n", remanence_medium_image_size_bytes(medium));
 
     /* An archive records no partition scheme, so its pool holds exactly
@@ -525,20 +562,23 @@ static int list_archive(const char *path) {
     return EXIT_SUCCESS;
 }
 
-/* Lists the device families this release claims, so a caller can see what
- * a machine's slots may be. Interior names of the lineage classify and
- * instantiate nothing, and the listing says which is which. */
-static void list_families(void) {
-    size_t count = remanence_device_family_count();
-    printf("Device families (%zu):\n", count);
+/* Lists the devices this release claims, so a caller can see what a
+ * machine's slots may be: one per device type in the catalog, plus the
+ * archive receiver, which is no recording device at all. */
+static void list_devices(void) {
+    size_t count = remanence_device_slot_count();
+    printf("Devices (%zu):\n", count);
     for (size_t i = 0; i < count; ++i) {
-        const char *kind_of = remanence_device_family_kind_of(i);
-        printf("  %-16s %s%s%s%s\n",
-               remanence_device_family_id(i),
-               remanence_device_family_name(i),
-               kind_of == NULL ? "" : ", a kind of ",
-               kind_of == NULL ? "" : kind_of,
-               remanence_device_family_is_concrete(i) ? "" : " [classifies only]");
+        const char *class_of = remanence_device_slot_class(i);
+        const char *scheme = remanence_device_slot_scheme(i);
+        printf("  %-16s %-38s slot %s%s%s%s%s\n",
+               remanence_device_slot_id(i),
+               remanence_device_slot_name(i),
+               remanence_device_slot_prefix(i),
+               class_of == NULL ? "" : ", class ",
+               class_of == NULL ? "" : class_of,
+               scheme == NULL ? "" : ", scheme ",
+               scheme == NULL ? "" : scheme);
     }
 }
 
@@ -562,20 +602,28 @@ static int show_discovery(const char *path) {
     printf("Image:   %s\n", remanence_discovery_image_path(discovery));
     printf("Format:  %s (%s)\n", remanence_discovery_image_format_name(discovery),
            remanence_discovery_image_format(discovery));
-    printf("Medium:  %s (%s)\n", remanence_discovery_media_type_name(discovery),
-           remanence_discovery_media_type(discovery));
+    printf("Article: %s (%s)\n", remanence_discovery_article_name(discovery),
+           remanence_discovery_article(discovery));
     printf("Size:    %" PRIu64 " bytes\n", remanence_discovery_size(discovery));
 
-    size_t families = remanence_discovery_device_family_count(discovery);
-    printf("Drives served it (%zu):\n", families);
-    for (size_t i = 0; i < families; ++i) {
-        printf("  %s\n", remanence_discovery_device_family(discovery, i));
+    size_t accepting = remanence_discovery_accepting_device_count(discovery);
+    printf("Devices served it (%zu):\n", accepting);
+    for (size_t i = 0; i < accepting; ++i) {
+        printf("  %s\n", remanence_discovery_accepting_device(discovery, i));
     }
     /* Two different questions: where the medium could go, above, and
-     * where it came from, here. A format declaring no default is
-     * ordinary -- a raw image says nothing about its machine. */
-    const char *declared = remanence_discovery_default_device(discovery);
-    printf("Declared by the format: %s\n", declared != NULL ? declared : "nothing");
+     * what wrote it, here. A format that records several device types
+     * says which they are and asserts none -- nothing in the artifact
+     * says which hard drive wrote a raw image, and a load declares it. */
+    const char *recorded = remanence_discovery_device_type(discovery);
+    printf("Recorded by: %s\n", recorded != NULL ? recorded : "nothing states which");
+    size_t candidates = remanence_discovery_recorded_device_count(discovery);
+    if (recorded == NULL && candidates > 0) {
+        printf("Declare one of (%zu):\n", candidates);
+        for (size_t i = 0; i < candidates; ++i) {
+            printf("  %s\n", remanence_discovery_recorded_device(discovery, i));
+        }
+    }
 
     remanence_discovery_free(discovery);
     return EXIT_SUCCESS;
@@ -957,25 +1005,25 @@ int main(int argc, char **argv) {
     if ((argc == 3 || argc == 4) && strcmp(argv[1], "--reconstruct") == 0) {
         return reconstruct_capture(argv[2], argc == 4 ? strtoul(argv[3], NULL, 10) : 0);
     }
-    if (argc == 2 && strcmp(argv[1], "--families") == 0) {
-        list_families();
+    if (argc == 2 && strcmp(argv[1], "--devices") == 0) {
+        list_devices();
         return EXIT_SUCCESS;
     }
     if (argc < 2 || argc > 3) {
-        fprintf(stderr, "Usage: %s <path-to-image> [device-family]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <path-to-image> [device-type]\n", argv[0]);
         fprintf(stderr, "       %s --discover <path-to-image>\n", argv[0]);
         fprintf(stderr, "       %s --list <path-to-archive>\n", argv[0]);
         fprintf(stderr, "       %s --remanence <path-to-artifact> [write-to]\n", argv[0]);
         fprintf(stderr, "       %s --renditions <path-to-artifact> <destination-stem>\n",
                 argv[0]);
         fprintf(stderr, "       %s --reconstruct <path-to-capture> [side]\n", argv[0]);
-        fprintf(stderr, "       %s --families\n", argv[0]);
+        fprintf(stderr, "       %s --devices\n", argv[0]);
         return EXIT_FAILURE;
     }
     /* Which drive serves a medium is machine configuration, so it is this
-     * caller's to state -- and an `.h8d` wants `heathkit-h17`. Told none,
-     * this example asks the artifact instead. */
-    const char *family = argc == 3 ? argv[2] : NULL;
+     * caller's to state -- and an `.h8d` wants `h17`. Told none, this
+     * example asks the artifact instead. */
+    const char *device_type = argc == 3 ? argv[2] : NULL;
 
     RemanenceErrorCategory error_category;
     char *error = NULL;
@@ -983,7 +1031,7 @@ int main(int argc, char **argv) {
     RemanenceSession *session = remanence_session_new();
     RemanenceDevice *device = NULL;
     RemanenceMedium *medium = NULL;
-    if (family != NULL) {
+    if (device_type != NULL) {
         /* The acts: declare what the artifact is over this caller's own
          * open file (whoever opens owns the lock), add the drive to the
          * session's anonymous machine, and link them. Both handles are
@@ -994,15 +1042,20 @@ int main(int argc, char **argv) {
             remanence_session_free(session);
             return EXIT_FAILURE;
         }
-        medium = remanence_session_load_media(session, source, declared_format(argv[1]),
+        /* The declaration carries both halves: what the artifact is,
+         * and what recorded it -- which is the drive this caller just
+         * named, since the medium goes into it. */
+        const char *format = declared_format(argv[1]);
+        medium = remanence_session_load_media(session, source, format, device_type,
+                                              declared_block_bytes(format),
                                               &error_category, &error, &error_rule);
         if (medium == NULL) {
             report_error("error", error_category, error, error_rule);
             remanence_session_free(session);
             return EXIT_FAILURE;
         }
-        device = remanence_session_add_device(session, family, &error_category, &error,
-                                              &error_rule);
+        device = remanence_session_add_device(session, device_type, &error_category,
+                                              &error, &error_rule);
         if (device == NULL) {
             report_error("error adding the device", error_category, error, error_rule);
             remanence_session_free(session);
@@ -1016,11 +1069,11 @@ int main(int argc, char **argv) {
         }
     } else {
         /* Told no drive, this example asks the artifact rather than
-         * assuming one: the convenience adds a device of the family the
-         * image format declares, pools the medium and seats it. A format
-         * declaring none refuses here, naming the drives to pass as the
-         * second argument. Here the *library* opens, so P7's mandatory
-         * denial applies in full. */
+         * assuming one: the convenience adds a device of the type the
+         * image format records, pools the medium and seats it. A format
+         * that records several refuses here, naming the types to pass as
+         * the second argument. Here the *library* opens, so P7's
+         * mandatory denial applies in full. */
         device = remanence_session_add_device_for(session, argv[1],
                                                   REMANENCE_ACCESS_INTENT_READ,
                                                   &error_category, &error, &error_rule);
@@ -1032,7 +1085,7 @@ int main(int argc, char **argv) {
         medium = remanence_device_medium(device);
     }
     printf("Device:  %s (%s)\n", remanence_device_attachment(device),
-           remanence_device_family(device));
+           remanence_device_slot(device));
 
     RemanenceIdentification *identification = remanence_medium_identify(medium);
 

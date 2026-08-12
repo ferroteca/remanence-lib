@@ -49,52 +49,6 @@ U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
 
-## F57 — Device types, and the articles they compose
-
-The catalog gains the **device type**: one identity per medium naming
-the device its content is assumed recorded by, enumerated in two
-levels — the **class** (`Floppy`, `HardDrive`; `Optical` and `Tape`
-reserved for the coming families), then the **concrete type** within
-it: `Commodore1541` is a `FloppyDrive`, and is a `DeviceType`. The
-floppy class: `FloppyDrive::Commodore1541`, the flux product class
-(encoding, speed zones, timings, tracks); `FloppyDrive::HeathH17`
-and `FloppyDrive::HeathH37`, the Heathkit product classes (hard- and
-soft-sectored); `FloppyDrive::Sector`, the generic schemeless sector
-floppy, geometry per-media. The hard-drive class, whose specs carry
-the partition scheme itself: `HardDrive::MbrSector`,
-`HardDrive::MbrBlock` and `HardDrive::Gpt`, GPT implying block
-addressing by its own definition. `device_type()` answers `Option` —
-archives were recorded by no device, and `None` is the honest answer.
-The granularity rule cuts the catalog: a device type is the coarsest
-name fixing the whole addressing surface and recording discipline
-without per-media parameters. A type the library does not know fails
-to compile; the display strings (`c1541`, `mbr-block-hd`) survive in
-provenance, refusals, and the S2/S3 spellings — integer constants in
-C, enums in Python (P5). `article()` answers the substrate
-(`flexible-5.25-soft`, `flexible-5.25-hard-10`, `logical-block-512`,
-`virtual`); D19's three facts keep their three homes, the recording
-living in the device type. A format that admits one device type
-carries it bare (`Format::H8d` → `FloppyDrive::HeathH17`,
-`Format::P64` → `FloppyDrive::Commodore1541`); one that records many
-declares it, the field typed by the class its adapter records —
-`KryoFlux { device: FloppyDrive }`, `Qcow2 { device: HardDrive }`,
-`Vdi { device: HardDrive }`, `Raw { device: HardDrive, block_bytes }`
-— so a flux capture of a hard drive fails to compile, and a pairing
-no adapter declares within the class is a named refusal at load.
-Insert's check is device-type equality naming both sides, so a 1541
-refuses an H17 disk it could physically hold but never serve. In S1 a
-device type's definition has **one home**: one spec shape per class,
-one instance per concrete type — the enumeration is the
-instantiation, its disciplines flat attributes of the profile —
-while the **traits live on the medium**, where the actions
-(`read_blocks`, `put_sector`, `partition`) take shape, each trait
-surface answering only where the profile's attribute holds, P30
-declarations reached through the type (rule 8).
-
-Touches: S1, S2, S3. Supports: the pledged design; in-force P3, P14
-(gaining the device-type catalog and its granularity rule); U23,
-U25–U28, U32, U34.
-
 ## F58 — Discovered geometry and recording coordinates
 
 Geometry becomes discovered instance evidence with provenance: the
@@ -107,7 +61,7 @@ refuse by name toward the evidence state otherwise, and writes buffer
 until commit (P2). Nothing is ever declared onto an existing medium.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P4;
-U4, U28, U32. Needs F57.
+U4, U28, U32.
 
 ## F59 — Collection sources, and the flux family folds in
 
@@ -130,7 +84,7 @@ Capture-inspection reporting and plan preview stay out, with the
 question tier.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P7, P13,
-P22, P27, P29, P30, P31; U23, U25, U26, U33. Needs F57.
+P22, P27, P29, P30, P31; U23, U25, U26, U33.
 
 ## F60 — Authored media
 
@@ -144,7 +98,7 @@ BPBs, binding a device type) remains reserved in the partition pool's
 create/release slots.
 
 Touches: S1, S2, S3. Supports: the pledged design; in-force P2, P13,
-P27; U32. Needs F57, F58.
+P27; U32. Needs F58.
 
 ## F67 — Discovery holds the claim and builds no cache
 

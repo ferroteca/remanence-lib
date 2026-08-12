@@ -11,7 +11,12 @@
 //! [`Session::load_media`] is the declared reading: the caller's own
 //! opened [`std::fs::File`] and one concrete [`Format`], checked by that
 //! format's own adapter and refused by name where the evidence cannot
-//! bear it. **Whoever opens owns the lock** (P7 as amended) — that open
+//! bear it. **The declaration carries the device its content was
+//! recorded by** — bare where the format records one ([`Format::H8d`]
+//! is a Heathkit H-17 recording), stated by the caller where it records
+//! several ([`Format::Qcow2`] and its `device: HardDrive`) — and a
+//! [`Medium`] answers [`Medium::device_type`] with it, beside the
+//! [`Medium::article`] that says what the substrate is. **Whoever opens owns the lock** (P7 as amended) — that open
 //! is the claim, the library checks it for exactly one thing (may it
 //! write?), honours the answer exactly, and takes no lock of its own; a
 //! name is recovered from the handle for location alone, under an
@@ -19,11 +24,12 @@
 //! location-dependent journeys by name and serves everything else.
 //!
 //! **Devices are configuration beside that, and linking is the one
-//! edge.** [`MachineView::add_device`] takes a [`DeviceFamily`] as
-//! concrete as the drive the machine actually had, [`DeviceView::insert`]
-//! links a pooled medium into it — refusing a medium the family is not
-//! served, naming both sides — and [`DeviceView::eject`] **severs only**,
-//! the claim and everything buffered surviving in the pool.
+//! edge.** [`MachineView::add_device`] takes a [`DeviceSlot`] — a
+//! [`DeviceType`] as concrete as the drive the machine actually had, or
+//! the archive receiver — [`DeviceView::insert`] links a pooled medium
+//! into it by **device-type equality**, refusing a medium another device
+//! recorded and naming both sides, and [`DeviceView::eject`] **severs
+//! only**, the claim and everything buffered surviving in the pool.
 //! [`Session::release_media`] is the one state-destroying verb.
 //!
 //! **Every pool runs the same three verbs: create, look up, release.**
@@ -44,9 +50,11 @@
 //! by name, so P7's mandatory denial applies there in full. The
 //! [`Discovery`] it returns holds that claim and the work already done,
 //! and [`Session::load_discovery`] consumes it into the pool so nothing
-//! runs twice; [`MachineView::add_device_for`] composes the acts over it
-//! where a format declares a default, and refuses by name where none
-//! does.
+//! runs twice — the plain door, opening where the recognizing format
+//! records one device type, with [`Session::load_discovery_as`] taking
+//! the caller's declaration where it records several.
+//! [`MachineView::add_device_for`] composes the acts over a discovery
+//! that knows what recorded it, and refuses by name where none does.
 //!
 //! On the medium: [`Medium::identify`] reports the layers of the
 //! artifact's nesting (archive, image, physical media, filesystem)
@@ -79,8 +87,9 @@
 //!
 //! **An archive is a medium like any other.** It is loaded by its
 //! declared grammar ([`Format::Zip`], [`Format::SevenZip`]), may be
-//! seated in an archive-family device
-//! ([`DeviceFamily::ARCHIVE_DEVICE`]), and its content is walked through
+//! seated in the archive receiver ([`DeviceSlot::Archive`]) — which is
+//! no device type, an archive having been recorded by no device — and
+//! its content is walked through
 //! the namespace door of the direct partition it bears — a namespace
 //! with no addressed extent beneath it. An entry recognized as an
 //! artifact of its own is opened by [`File::discover`] and becomes a
@@ -142,7 +151,7 @@ mod cbm_dos;
 mod checksum;
 mod deflate;
 mod device;
-mod device_family;
+mod device_type;
 mod discovery;
 mod disk;
 mod dos_letters;
@@ -196,7 +205,7 @@ pub use c1541_sectors::{
 };
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode, Claim};
-pub use device_family::DeviceFamily;
+pub use device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive};
 pub use discovery::{Discovery, discover_media, discover_media_with_cache};
 pub use disk::DiskFormat;
 pub use dos_letters::{
@@ -214,7 +223,7 @@ pub use kryoflux::{
     ObservationReport, StepPosition, TimeBaseReport,
 };
 pub use machine::{Machine, MachineView, Session};
-pub use media::{Format, MediaId, Medium};
+pub use media::{Format, FormatClaim, MediaId, Medium};
 pub use p64::{P64HalfTrack, P64Image, P64Report};
 pub use partition::{Partition, PartitionRule, PartitionScheme, PartitionType, PartitionView};
 pub use remanence_format::RemanenceWriteReport;

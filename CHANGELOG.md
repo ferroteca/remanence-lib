@@ -20,6 +20,62 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **Device types: one identity per medium naming the device its content
+  was recorded by.** The catalog is enumerated in two levels — the
+  **class** (`DeviceType::Floppy`, `DeviceType::HardDrive`, with optical
+  and tape reserved for the coming families), then the **concrete type**
+  within it: `FloppyDrive::Commodore1541`, `FloppyDrive::HeathH17`,
+  `FloppyDrive::HeathH37`, `FloppyDrive::Sector`, and
+  `HardDrive::MbrSector`, `HardDrive::MbrBlock`, `HardDrive::Gpt`. A type
+  the library does not know **fails to compile**; the display strings
+  (`c1541`, `mbr-block-hd`) survive in provenance, refusals, and the C
+  and Python spellings, where the identity crosses as text. `Medium`
+  answers `device_type()` as an `Option`, and `None` is the honest
+  answer rather than a gap: an archive was recorded by no device.
+
+  **The granularity rule cuts the catalog**: a device type is the
+  coarsest name fixing the whole addressing surface and recording
+  discipline without per-media parameters. What the device fixes lives in
+  the type — the hard-drive specs carry the **partition scheme itself**,
+  and `HardDrive::Gpt` is block-addressed by GPT's own definition — and
+  what varies disk to disk lives on the medium, which is why the generic
+  sector floppy declares no geometry. Each spec **composes** an article
+  and restates none of its facts, so D19's three homes hold: the
+  substrate in the article catalog, the recording here, the drive's
+  behavior in the P30 profile. A type's definition has one home — one
+  spec shape per class, one instance per concrete type — and the
+  enumeration is the instantiation.
+
+  In C: `remanence_device_slot_count` and the `remanence_device_slot_*`
+  readers (id, name, provenance, class, article, prefix, flux path,
+  scheme, addressing). In Python: `device_slots()` answering `DeviceSlot`
+  records — whose class is spelled `device_class`, `class` being a
+  Python keyword and unreachable as an attribute — and
+  `Medium.device_type`.
+
+- **The load declaration carries the device.** A format that records one
+  device type carries it bare — `Format::H8d` **is** a Heathkit H-17
+  recording — and one that records many takes the caller's declaration,
+  the field typed by the class its adapter records: `Format::Qcow2 {
+  device: HardDrive }`, `Format::Vdi { device: HardDrive }`, and
+  `Format::Raw { device: HardDrive, block_bytes }`, which carries the
+  block size too because a raw image records no addressable unit of its
+  own. **A flux capture of a hard drive fails to compile**, and a
+  pairing no adapter declares within the class — a `gpt-hd` today, which
+  no adapter in this release reads — is a named refusal at the load
+  rather than a silent reading of the wrong table.
+
+  `Format::claimed()` is the catalog behind that: each entry states the
+  device types its adapter records and whether its declaration carries a
+  block size, and `Format::declared(id, device, block_bytes)` is the
+  text-boundary constructor the C and Python surfaces use, refusing each
+  half by name on its own terms. In C, `remanence_session_load_media`
+  takes the device type and the block size beside the format, with
+  `remanence_format_device_count`/`_device` and
+  `remanence_format_takes_block_bytes` enumerating what each accepts; in
+  Python, `Session.load_media(source, format, device=…,
+  block_bytes=…)`, with `formats()` carrying the same four facts.
+
 - **The partition pool: every medium bears a partition, and its content
   is reached through one.** `Medium::partition(ordinal)` is the borrow
   that holds a partition and its medium at once, `Medium::partitions()`
@@ -148,6 +204,95 @@ rather than bridged. Read every entry below in that light.
   one does.
 
 ### Changed
+
+- **In-force P14 is amended: the recording side is the device type.**
+  The principle gains the device-type catalog and its granularity rule
+  beside the article it already carried, and the media-type vocabulary
+  is superseded throughout: what a medium **is** is now `article()` —
+  `flexible-5.25-soft`, `flexible-5.25-hard-10`, `logical-block-512`,
+  `virtual` — and what **recorded** it is `device_type()`. The archive's
+  article is renamed `virtual` from `archive`, which is what it always
+  was: a substrate with no physical article behind it.
+
+  In C: `remanence_medium_article` and `remanence_medium_device_type`
+  replace `remanence_medium_media_type`; `remanence_discovery_article`,
+  `_article_name` and `_device_type` replace the media-type pair and
+  `_default_device`; `remanence_layer_disk_article` and
+  `remanence_report_device_article` replace their `_media_type`
+  spellings, with `remanence_report_device_type` beside the second. In
+  Python: `Medium.article`, `Medium.device_type`, `Discovery.article`,
+  `Discovery.article_name`, `Discovery.device_type`, and the `article`
+  and `device_type` fields of `DiskLayout` and `DeviceInfo`.
+
+- **The device-family catalog is replaced by the device type, and the
+  lineage goes with it.** A device is now typed by a `DeviceSlot`: a
+  recording device of one concrete type, or the **archive receiver**,
+  which is no device type at all — an archive was recorded by no device,
+  so there is no recording for a type to name, and `arc0` stays an
+  ordinary attachment identity (D27). `add_device` takes that, and
+  **there is no interior name left to refuse**: "some floppy" is not a
+  value, because the catalog is an enumerated two-level type and a name
+  the library does not know fails to compile. `StorageDevice::slot()`
+  and `device_type()` answer what a device is;
+  `DeviceFamily`, its lineage query and its `accepted_media` are gone.
+
+  **An attachment identity now names a place rather than a recording.**
+  Several device types share one bay — three hard-drive types take
+  `hdd`, both Heathkit controllers take `heathfloppy` — so
+  `AttachmentId` carries the prefix and the index, `AttachmentId::prefix()`
+  replaces `family()`, and the lowest free slot counts by bay: two hard
+  drives of different types cannot both be `hdd0`. In C,
+  `remanence_device_slot` and `remanence_device_type` replace
+  `remanence_device_family`; in Python, `StorageDevice.slot`,
+  `.device_type` and `.slot_prefix` replace `.family`.
+
+- **Insert is device-type equality, naming both sides.** A medium
+  carries the device its content was recorded by and a slot is typed by
+  the device that fills it, so **a 1541 refuses an H-37 disk it could
+  physically hold but never serve** — a check the article alone cannot
+  make, both being the same soft-sectored 5.25-inch disk. That is the
+  rule the recording being a fact of its own (D19) exists to support;
+  the refusal names what recorded the medium and what the slot takes.
+
+- **The partition pool populates under the device type's spec.** F56
+  landed the pool under the medium's kind because the device spec it was
+  owed did not exist yet (D32); it exists now. A medium recorded by a
+  hard-drive type has that spec's declared scheme checked against its
+  content, and the **schemeless types — the floppy class, and the
+  archive whose vantage is a namespace — bear the direct partition with
+  no step at all**, the table never read because no spec declared one.
+  A sector 0 that looks like a table on a floppy is content nothing
+  claims, and says so, rather than being read as a layout nobody
+  declared. Where a declared scheme does not check out the answer stays
+  the direct partition rather than a refusal, which is D32's ruling
+  kept: an unpartitioned hard-drive recording is an ordinary disk this
+  release reads, and refusing it would refuse every bare FAT image.
+
+- **A discovery over a format that records several device types asserts
+  none, and the load takes the caller's declaration instead.**
+  `Discovery::device_type()` answers where the recognizing format records
+  exactly one — an H8D says Heathkit H-17 — and `None` where it records
+  several, because nothing in a qcow2 says which hard drive wrote it and
+  `None` means *recorded by no device* rather than *unknown*.
+  `Discovery::device_types()` is the list a declaration may name, and
+  `Discovery::accepting_devices()` is the other question — every device
+  served the article — replacing `accepting_families()`.
+
+  **`Session::load_discovery_as(discovery, device)` is the declared
+  door**, and `load_discovery` is the plain one: the same pair the
+  vantage doors already make, opening where the evidence determines the
+  answer and taking the caller's reading where it does not. The plain
+  door refuses a device-typeless discovery by name and points at the
+  `_as` form; the `_as` form checks the declaration against what the
+  recognizing format records, so a raw member of an archive may be
+  declared a hard-drive recording and never a 1541's. That keeps the
+  nested journey whole — an archived artifact no adapter identifies is
+  still reachable, under one claim held from the question to the load —
+  while no medium is ever pooled that could be neither seated nor laid
+  out (P3). `add_device_for` has nothing to declare with and refuses,
+  naming the types. In C:
+  `remanence_session_load_discovery_as`, consuming the discovery exactly
+  as the plain door does. In Python: `Session.load_discovery_as`.
 
 - **In-force P19 is amended: the walk is uniform.** "When every
   applicable seam has one supported result, composition is transparent:
