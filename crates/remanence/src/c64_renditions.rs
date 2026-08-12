@@ -1193,14 +1193,11 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&scratch);
         let written = image.write_p64(&scratch).expect("the p64 writes");
-        let resolved = crate::source::resolve_image(
-            &scratch,
-            crate::device::AccessIntent::Read,
-            crate::cache::DEFAULT_CACHE_BYTES,
-        )
-        .expect("the artifact resolves");
+        let source = crate::source::claim_image(&scratch, crate::device::AccessIntent::Read)
+            .expect("the artifact claims")
+            .resolve(crate::cache::DEFAULT_CACHE_BYTES);
         let (medium, report) = crate::p64::decode(
-            &resolved.source,
+            &source,
             "the rendition scratch artifact",
             crate::cache::DEFAULT_CACHE_BYTES,
         )
@@ -1220,7 +1217,7 @@ mod tests {
             restored > 1_000_000,
             "a whole side carries over a million pulses: {restored}"
         );
-        drop((medium, report, resolved));
+        drop((medium, report, source));
         let _ = std::fs::remove_file(&scratch);
     }
 

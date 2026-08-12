@@ -743,9 +743,9 @@ pub(crate) fn fixture_capture(capture_path: &std::path::Path) -> crate::flux_cap
         }
     }
     let file = std::fs::File::open(capture_path).expect("the fixture opens");
-    let archive =
-        crate::archive::ArchiveMedium::load(file, "7z", crate::cache::DEFAULT_CACHE_BYTES)
-            .expect("the fixture is a 7z");
+    let archive = crate::archive::ArchiveRecognition::load(file, "7z")
+        .expect("the fixture is a 7z")
+        .into_medium(crate::cache::DEFAULT_CACHE_BYTES);
     let members: Vec<Member> = archive
         .entry_group_sources("")
         .expect("the members gather")

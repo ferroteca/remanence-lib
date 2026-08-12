@@ -1301,14 +1301,15 @@ fn assurance_conditions() -> Vec<String> {
 /// `Discovery` until that is consumed or dropped, so `writable=True`
 /// claims the artifact exclusively and raises here when that claim
 /// cannot be secured, never falling back.
+///
+/// **Nothing is created**: no medium, no session cache, no spilled
+/// backing. A cache bound is the load's declaration, so there is no
+/// `cache_bytes` here — it is stated at `Session.load_discovery`, where
+/// the medium comes into existence.
 #[pyfunction]
-#[pyo3(signature = (path, *, writable, cache_bytes = None))]
-fn discover_media(path: PathBuf, writable: bool, cache_bytes: Option<u64>) -> PyResult<Discovery> {
-    let intent = access_intent(writable);
-    let discovered = match cache_bytes {
-        Some(cache_bytes) => remanence::discover_media_with_cache(path, intent, cache_bytes),
-        None => remanence::discover_media(path, intent),
-    };
+#[pyo3(signature = (path, *, writable))]
+fn discover_media(path: PathBuf, writable: bool) -> PyResult<Discovery> {
+    let discovered = remanence::discover_media(path, access_intent(writable));
     Ok(Discovery {
         inner: Mutex::new(Some(discovered.map_err(to_py_err)?)),
     })
@@ -1764,17 +1765,24 @@ impl Session {
     ///
     /// This is the load that runs nothing twice: the discovery holds the
     /// claim taken when the artifact was identified and the work that
-    /// identification did, and both move into the pool, so nothing can
-    /// change the artifact between the question and the load. The
-    /// intent, the cache bound and the assurance are the ones the
-    /// discovery established.
+    /// identification did, and the medium is built over that claim, so
+    /// nothing can change the artifact between the question and the
+    /// load. The intent and the assurance are the ones the discovery
+    /// established; the **cache bound is declared here**, because this
+    /// is where the medium comes into existence — discovery built
+    /// nothing, so it had nothing to bound.
     ///
     /// **The discovery is consumed either way** — a refused load
     /// releases its claim with it. Asking again is `discover_media`.
-    fn load_discovery(&self, discovery: &Discovery) -> PyResult<Medium> {
+    #[pyo3(signature = (discovery, *, cache_bytes = None))]
+    fn load_discovery(&self, discovery: &Discovery, cache_bytes: Option<u64>) -> PyResult<Medium> {
         let discovered = discovery.take()?;
         let mut session = self.lock();
-        let id = session.load_discovery(discovered).map_err(to_py_err)?.id();
+        let loaded = match cache_bytes {
+            Some(cache_bytes) => session.load_discovery_with_cache(discovered, cache_bytes),
+            None => session.load_discovery(discovered),
+        };
+        let id = loaded.map_err(to_py_err)?.id();
         drop(session);
         Ok(Medium {
             session: Arc::clone(&self.inner),
@@ -1788,15 +1796,23 @@ impl Session {
     ///
     /// `device` is a stable spelling from `Discovery.device_types`, and
     /// one the recognizing format's adapter records; anything else
-    /// raises by name. The discovery is consumed either way.
-    fn load_discovery_as(&self, discovery: &Discovery, device: &str) -> PyResult<Medium> {
+    /// raises by name. The discovery is consumed either way, and the
+    /// cache bound is declared here as it is at the plain door.
+    #[pyo3(signature = (discovery, device, *, cache_bytes = None))]
+    fn load_discovery_as(
+        &self,
+        discovery: &Discovery,
+        device: &str,
+        cache_bytes: Option<u64>,
+    ) -> PyResult<Medium> {
         let device = remanence::DeviceType::from_id(device).map_err(to_py_err)?;
         let taken = discovery.take()?;
         let mut session = self.lock();
-        let id = session
-            .load_discovery_as(taken, device)
-            .map_err(to_py_err)?
-            .id();
+        let loaded = match cache_bytes {
+            Some(cache_bytes) => session.load_discovery_as_with_cache(taken, device, cache_bytes),
+            None => session.load_discovery_as(taken, device),
+        };
+        let id = loaded.map_err(to_py_err)?.id();
         drop(session);
         Ok(Medium {
             session: Arc::clone(&self.inner),

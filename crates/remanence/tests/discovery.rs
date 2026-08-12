@@ -14,8 +14,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AccessIntent, AccessMode, AttachmentId, DeviceType, ErrorCategory, FloppyDrive, Format,
-    HardDrive, Session, discover_media,
+    AccessIntent, AccessMode, AssuranceOutcome, AttachmentId, DeviceType, ErrorCategory,
+    FloppyDrive, Format, HardDrive, Session, discover_media,
 };
 
 mod common;
@@ -370,4 +370,80 @@ fn discovery_refuses_a_foreign_family_artifact_where_a_load_would() {
     );
 
     std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_discovery_creates_nothing_and_the_load_declares_the_bound() {
+    // F67's constraint made observable: what a discovery answers is a
+    // reading of the artifact, and the medium comes into existence at
+    // the load, under the bound *that* verb declares. A discovery has
+    // no bound to take — a verb that creates nothing has nothing to
+    // bound (P27) — and every fact it reports comes off the claim it
+    // holds rather than off a medium built ahead of the question.
+    let disk = write_h8d("no-cache");
+    let discovery = discover_media(&disk, AccessIntent::Read).expect("identifies");
+
+    // Every fact answers before any medium exists.
+    assert_eq!(discovery.image_format(), "h8d");
+    assert_eq!(
+        discovery.size().expect("a disk image presents a disk"),
+        102_400
+    );
+    assert_eq!(discovery.image_size_bytes(), 102_400);
+    assert_eq!(discovery.mode(), AccessMode::ReadOnly);
+    assert_eq!(discovery.identify().layers.len(), 3);
+    assert_eq!(discovery.assurance().outcome, AssuranceOutcome::Verified);
+
+    // The load states the bound, and it is a real one: a single 64 KiB
+    // extent, under which the medium still reads its whole extent
+    // because unaltered extents evict and re-read (P27).
+    let mut session = Session::new();
+    let media = session
+        .load_discovery_with_cache(discovery, 1)
+        .expect("the discovery pools under the load's own bound")
+        .id();
+    let mut tail = [0u8; 16];
+    session
+        .medium(media)
+        .expect("pooled")
+        .read_at(102_384, &mut tail)
+        .expect("the far end reads under a one-extent bound");
+    assert_eq!(tail, [0u8; 16]);
+
+    // And the claim was held from the question to the load: nothing was
+    // re-opened, and the artifact is claimed by the pool now.
+    let rival = discover_media(&disk, AccessIntent::Write)
+        .expect_err("the medium the discovery became holds the claim");
+    assert_eq!(rival.category(), ErrorCategory::Locked);
+
+    session.release_media(media).expect("released");
+    drop(session);
+    std::fs::remove_file(&disk).ok();
+}
+
+#[test]
+fn the_declared_door_takes_the_bound_the_same_way() {
+    // The `_as` door creates the medium too, so the bound is declared
+    // there for the same reason — the pair stays symmetrical.
+    let image = write_raw("declared-bound");
+    let discovery = discover_media(&image, AccessIntent::Read).expect("identifies");
+    assert_eq!(
+        discovery.device_type(),
+        None,
+        "a raw image records several device types and asserts none"
+    );
+
+    let mut session = Session::new();
+    let media = session
+        .load_discovery_as_with_cache(discovery, DeviceType::HardDrive(HardDrive::MbrBlock), 1)
+        .expect("the caller declares the device and the bound at once");
+    assert_eq!(
+        media.device_type(),
+        Some(DeviceType::HardDrive(HardDrive::MbrBlock))
+    );
+    let media = media.id();
+
+    session.release_media(media).expect("released");
+    drop(session);
+    std::fs::remove_file(&image).ok();
 }

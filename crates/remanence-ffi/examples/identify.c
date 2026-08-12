@@ -666,7 +666,12 @@ static void list_devices(void) {
  * it: the exact medium, the drives that would take it, and the drive the
  * image format declares for the disks it records. The discovery holds the
  * claim under which all that was established, so freeing it is what ends
- * that claim -- here, because this mode loads nothing afterwards. */
+ * that claim -- here, because this mode loads nothing afterwards.
+ *
+ * It creates nothing: no medium, no session cache, no spilled backing.
+ * That is why there is no cache bound to pass here -- the bound is the
+ * load's declaration, stated at
+ * remanence_session_load_discovery_with_cache. */
 static int show_discovery(const char *path) {
     RemanenceErrorCategory error_category;
     char *error = NULL;

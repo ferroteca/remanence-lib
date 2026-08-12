@@ -329,7 +329,47 @@ rather than bridged. Read every entry below in that light.
   `Medium.partition_scheme`, and the `partition_schemes()` and
   `partition_types()` catalog functions.
 
+### Changed
+
+- **Discovery holds the claim and builds no cache.** `discover_media`
+  opens the artifact, takes the P7 claim, probes for the type, and
+  stops: no medium, no session cache, no spilled backing. It used to
+  open a whole medium under a declared bound, which is a load's work
+  done before anyone asked for one — and doing it made the ask-first
+  journey a duplicate of the declared one. It is not: loading says
+  *make this a medium under a format I name*, discovery says *what is
+  this?*, and this constraint is what keeps them distinct (D30).
+  Everything a `Discovery` reports still answers — the article, the
+  presented size, the format, the recorded and accepting devices, the
+  effective mode, the assurance, and `identify()` — because the probe
+  reads the bounded evidence its claims name (P27), as identification
+  always has. The discovery stays **consumable**: the load takes the
+  claim out of it and builds the medium over that very claim, so
+  nothing is re-opened, no adapter runs twice, and no window opens
+  between the question and the load.
+
+- **The cache bound moves from the discovery to the load.** A bound is
+  a declaration about state that exists (P27), so it is stated where
+  the medium comes into existence. In Rust:
+  `Session::load_discovery_with_cache(discovery, bytes)` and
+  `Session::load_discovery_as_with_cache(discovery, device, bytes)`
+  join the two plain doors. In C:
+  `remanence_session_load_discovery_with_cache` and
+  `remanence_session_load_discovery_as_with_cache`. In Python:
+  `Session.load_discovery(discovery, cache_bytes=…)` and
+  `Session.load_discovery_as(discovery, device, cache_bytes=…)`.
+  `add_device_for_with_cache` is unchanged and keeps its bound — it
+  composes the discovery *and* the load, and the bound belongs to its
+  load half.
+
 ### Removed
+
+- **`discover_media_with_cache` and the bound travelling into the
+  device with a discovery.** Gone from all three surfaces:
+  `remanence::discover_media_with_cache`,
+  `remanence_discover_media_with_cache`, and the `cache_bytes` keyword
+  on Python's `remanence.discover_media`. A verb that creates nothing
+  has nothing to bound; the bound is declared at the load, above.
 
 - **The standalone `CaptureSet` and `P64Image` roots are folded into
   the model.** Gone from all three surfaces: `CaptureSet` and its

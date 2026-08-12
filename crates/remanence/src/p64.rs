@@ -1364,13 +1364,9 @@ mod tests {
     /// resolved to a streamed source, then read through the one decode
     /// path the crate has.
     fn decode_at(path: &Path, cache_bytes: u64) -> Result<(FluxMedium, P64Report)> {
-        let resolved =
-            crate::source::resolve_image(path, crate::device::AccessIntent::Read, cache_bytes)?;
-        decode(
-            &resolved.source,
-            &format!("'{}'", path.display()),
-            cache_bytes,
-        )
+        let source = crate::source::claim_image(path, crate::device::AccessIntent::Read)?
+            .resolve(cache_bytes);
+        decode(&source, &format!("'{}'", path.display()), cache_bytes)
     }
 
     fn temp_path(tag: &str) -> PathBuf {

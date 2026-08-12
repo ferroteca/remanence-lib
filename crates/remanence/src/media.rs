@@ -40,7 +40,7 @@ use crate::c1541_sectors::C1541Sectors;
 use crate::device::AccessMode;
 use crate::device_type::{Addressing, DeviceSlot, DeviceType, FloppyDrive, HardDrive};
 use crate::discovery::Discovery;
-use crate::disk::{DiskFormat, MediumState};
+use crate::disk::{DiskFormat, MediumRecognition, MediumState};
 use crate::error::{Error, Result};
 use crate::fat::FatEntry;
 use crate::filesystem::Catalog;
@@ -1160,12 +1160,8 @@ impl Medium {
                 self.state.named()
             ))
         })?;
-        let cache_bytes = archive.cache_bytes();
-        let resolved = archive.resolve_entry(name)?;
-        Ok(Discovery::over(MediumState::open_entry(
-            resolved,
-            cache_bytes,
-        )?))
+        let claimed = archive.claim_entry(name)?;
+        Ok(Discovery::over(MediumRecognition::over_entry(claimed)?))
     }
 
     /// Opens the namespace a declaration named, over one partition's

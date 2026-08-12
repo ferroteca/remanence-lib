@@ -58,9 +58,12 @@ would guess.*
 
 ## What returns here from the delivered surface
 
-`discover_media` / `discover_media_with_cache`, the consumable
-`Discovery` handle, `load_discovery`, `add_device_for`, and the
-image-format's recorded-device declaration (`device_type`,
+`discover_media`, the consumable `Discovery` handle,
+`load_discovery` and its bound-declaring sibling, `add_device_for`, and
+the image-format's recorded-device declaration (`device_type`,
 `device_types`) — the ask-first journey
 whole. Their claim-continuity idea (one open, no window between the
-question and the load) is kept as a requirement on this tier's design.
+question and the load) is kept as a requirement on this tier's design,
+as is the constraint that distinguishes them: discovery holds the claim
+and builds no cache, so a tier layered above it inherits a question verb
+that creates nothing.

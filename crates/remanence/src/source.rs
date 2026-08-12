@@ -9,6 +9,15 @@
 //! session cache — while a coded entry is session-backed, decoded once
 //! by its catalog into private session storage and served from there
 //! through the same cache.
+//!
+//! **The claim and the cache over it are two acts, not one.** A
+//! [`ClaimedSource`] is the artifact claimed and nothing more: reads go
+//! straight to the backing, which is what lets an artifact be recognized
+//! before any bound is declared (F67). [`ClaimedSource::resolve`] is
+//! where the load states its bound and the [`ImageSource`] — the session
+//! cache and the predictive reader — comes into existence over the same
+//! claim. Both answer [`Evidence`], so identification reads the same
+//! bounded evidence on either side of that line.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -43,7 +52,7 @@ pub(crate) struct ArchiveLayer {
 }
 
 /// What the session reads image bytes from.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Backing {
     /// The claimed source file itself, from `offset`: a plain image, or
     /// an uncompressed archive entry read in place. Source-backed
@@ -141,6 +150,121 @@ fn prefetch_loop(
     }
 }
 
+/// The bounded evidence plane a probe reads (P27): a length, and reads
+/// within it.
+///
+/// Two things answer it, and the difference between them is the whole
+/// of F67. A [`ClaimedSource`] answers straight from the backing —
+/// discovery holds the claim and builds no cache, so its reads go to
+/// the file and nowhere else — and an [`ImageSource`] answers through
+/// the session cache and the predictive reader a load declared a bound
+/// for. Identification reads the same bounded evidence either way, as
+/// it always has.
+pub(crate) trait Evidence {
+    fn len(&self) -> u64;
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()>;
+
+    /// The image's leading bytes (up to `limit`), for bounded probes.
+    fn prefix(&self, limit: usize) -> Result<Vec<u8>> {
+        let take = self.len().min(limit as u64) as usize;
+        let mut bytes = vec![0u8; take];
+        self.read_at(0, &mut bytes)?;
+        Ok(bytes)
+    }
+}
+
+/// One artifact **claimed and nothing more**: the P7 claim, the backing
+/// span it covers, and the provenance it was reached through — with no
+/// session cache over it and nothing spilled.
+///
+/// This is what discovery holds. A cache bound is the *load's*
+/// declaration (P27), so it enters at [`ClaimedSource::resolve`] and
+/// nowhere earlier; a verb that creates no medium has nothing to bound,
+/// and the probe's reads go straight to the backing. The claim itself
+/// is taken once and moves into the load, so nothing is re-opened and
+/// no window exists between the question and the load.
+///
+/// Both names are optional because a caller-opened handle need not have
+/// one: a name is recovered from the handle for location alone, under an
+/// identity check, and a nameless handle is served everywhere that does
+/// not need a neighbourhood (`handle.rs`).
+#[derive(Debug)]
+pub(crate) struct ClaimedSource {
+    pub source_path: Option<PathBuf>,
+    pub image_path: Option<PathBuf>,
+    claim: Arc<File>,
+    mode: AccessMode,
+    backing: Backing,
+    len: u64,
+    pub archive_layers: Vec<ArchiveLayer>,
+    /// Whose open the claim beneath this source is.
+    pub claim_class: Claim,
+}
+
+impl ClaimedSource {
+    pub(crate) fn mode(&self) -> AccessMode {
+        self.mode
+    }
+
+    /// The file reads land on and where the span starts in it: the
+    /// claimed artifact itself, or the session spool a coded entry was
+    /// decoded into before this source existed.
+    fn backing_file(&self) -> (&Arc<File>, u64) {
+        match &self.backing {
+            Backing::Claim { offset } => (&self.claim, *offset),
+            Backing::Spool { spool, offset } => (spool, *offset),
+        }
+    }
+
+    /// A [`MediumDevice`] over this claim and this backing — the plane a
+    /// format adapter is opened on.
+    ///
+    /// This is the bridge F43 turns on. The two planes a medium has — the
+    /// raw bytes identification and the HDOS reader work over, and the
+    /// presented disk the format adapters expose — are different layers
+    /// (P13), but they are one artifact under one claim, and before this
+    /// they were reached by opening the file twice. The claim is shared
+    /// rather than reacquired, so the second plane costs no second claim
+    /// and cannot conflict with the first. What it does *not* carry is a
+    /// cache, which is why recognition happens before any bound is
+    /// declared.
+    pub(crate) fn medium_device(&self, path: String) -> MediumDevice {
+        let (backing, base) = self.backing_file();
+        MediumDevice::range(
+            Arc::clone(&self.claim),
+            Arc::clone(backing),
+            base,
+            self.len,
+            self.mode,
+            path,
+        )
+    }
+
+    /// The load's streamed source over this claim, under the bound the
+    /// load declared (P27). The claim moves; nothing is opened again.
+    pub(crate) fn resolve(self, cache_bytes: u64) -> ImageSource {
+        ImageSource::new(self.claim, self.backing, self.len, cache_bytes)
+    }
+}
+
+impl Evidence for ClaimedSource {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        if offset + buf.len() as u64 > self.len {
+            return Err(Error::io(format!(
+                "read past end of image (offset {offset}, length {})",
+                buf.len()
+            )));
+        }
+        let (file, base) = self.backing_file();
+        FileRangeDevice::new(file, base, self.len).read_at(offset, buf)
+    }
+}
+
 /// The session's image source: the P7 claim on the source file, held for
 /// the session's lifetime, and the backing reads are served from.
 #[derive(Debug)]
@@ -149,7 +273,6 @@ pub(crate) struct ImageSource {
     /// open until the session drops. For a plain image it is also the
     /// read backing.
     claim: Arc<File>,
-    mode: AccessMode,
     backing: Backing,
     len: u64,
     cache: Arc<Mutex<SessionCache>>,
@@ -157,13 +280,7 @@ pub(crate) struct ImageSource {
 }
 
 impl ImageSource {
-    fn new(
-        claim: Arc<File>,
-        mode: AccessMode,
-        backing: Backing,
-        len: u64,
-        cache_bytes: u64,
-    ) -> Self {
+    fn new(claim: Arc<File>, backing: Backing, len: u64, cache_bytes: u64) -> Self {
         let cache = Arc::new(Mutex::new(SessionCache::with_bytes(cache_bytes)));
         let (file, base) = match &backing {
             Backing::Claim { offset } => (Arc::clone(&claim), *offset),
@@ -172,7 +289,6 @@ impl ImageSource {
         let prefetcher = (len > 0).then(|| Prefetcher::spawn(Arc::clone(&cache), file, base, len));
         Self {
             claim,
-            mode,
             backing,
             len,
             cache,
@@ -186,21 +302,12 @@ impl ImageSource {
     /// are readable under the very claim its catalog reads through, which
     /// is plumbing rather than a vantage anyone composes on — an
     /// archive's own vantage is its namespace.
-    pub(crate) fn over_claim(
-        claim: Arc<File>,
-        mode: AccessMode,
-        len: u64,
-        cache_bytes: u64,
-    ) -> Self {
-        Self::new(claim, mode, Backing::Claim { offset: 0 }, len, cache_bytes)
+    pub(crate) fn over_claim(claim: Arc<File>, len: u64, cache_bytes: u64) -> Self {
+        Self::new(claim, Backing::Claim { offset: 0 }, len, cache_bytes)
     }
 
     pub fn len(&self) -> u64 {
         self.len
-    }
-
-    pub fn mode(&self) -> AccessMode {
-        self.mode
     }
 
     /// Reads `buf` at `offset`, streaming from the backing — the
@@ -229,49 +336,26 @@ impl ImageSource {
         Ok(())
     }
 
-    /// The image's leading bytes (up to `limit`), for bounded probes.
-    pub fn prefix(&self, limit: usize) -> Result<Vec<u8>> {
-        let take = (self.len).min(limit as u64) as usize;
-        let mut bytes = vec![0u8; take];
-        self.read_at(0, &mut bytes)?;
-        Ok(bytes)
-    }
-
     /// The claimed handle itself, shared — for a medium that holds the
     /// claim past the source that carried it.
     pub(crate) fn claim_handle(&self) -> Arc<File> {
         Arc::clone(&self.claim)
     }
+}
 
-    /// A [`MediumDevice`] over the same claim and the same backing this
-    /// source reads.
-    ///
-    /// This is the bridge F43 turns on. The two planes a medium has — the
-    /// raw bytes identification and the HDOS reader work over, and the
-    /// presented disk the format adapters expose — are different layers
-    /// (P13), but they are one artifact under one claim, and before this
-    /// they were reached by opening the file twice. The claim is shared
-    /// rather than reacquired, so the second plane costs no second claim
-    /// and cannot conflict with the first.
-    pub fn medium_device(&self, path: String) -> MediumDevice {
-        let (backing, base) = match &self.backing {
-            Backing::Claim { offset } => (Arc::clone(&self.claim), *offset),
-            Backing::Spool { spool, offset } => (Arc::clone(spool), *offset),
-        };
-        MediumDevice::range(
-            Arc::clone(&self.claim),
-            backing,
-            base,
-            self.len,
-            self.mode,
-            path,
-        )
+impl Evidence for ImageSource {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        ImageSource::read_at(self, offset, buf)
     }
 }
 
-/// A read-only [`Device`] over an [`ImageSource`], for drivers that walk
+/// A read-only [`Device`] over an evidence plane, for drivers that walk
 /// the image (the session's qcow2 layer walk).
-pub(crate) struct SourceDevice<'a>(pub &'a ImageSource);
+pub(crate) struct SourceDevice<'a>(pub &'a dyn Evidence);
 
 impl Device for SourceDevice<'_> {
     fn len(&self) -> u64 {
@@ -293,22 +377,6 @@ impl Device for SourceDevice<'_> {
     }
 }
 
-/// The fully-resolved image source and provenance.
-///
-/// Both names are optional because a caller-opened handle need not have
-/// one: a name is recovered from the handle for location alone, under an
-/// identity check, and a nameless handle is served everywhere that does
-/// not need a neighbourhood (`handle.rs`).
-#[derive(Debug)]
-pub(crate) struct ResolvedImage {
-    pub source_path: Option<PathBuf>,
-    pub image_path: Option<PathBuf>,
-    pub source: ImageSource,
-    pub archive_layers: Vec<ArchiveLayer>,
-    /// Whose open the claim beneath this source is.
-    pub claim: Claim,
-}
-
 /// A file taken out of another medium's namespace as a load's source —
 /// one of `load_media`'s source shapes.
 ///
@@ -324,7 +392,6 @@ pub struct FileSource {
     pub(crate) claim_class: Claim,
     pub(crate) layer: ArchiveLayer,
     pub(crate) entry: EntrySource,
-    pub(crate) cache_bytes: u64,
 }
 
 impl std::fmt::Debug for FileSource {
@@ -380,16 +447,16 @@ impl FileSource {
         Ok(bytes)
     }
 
-    /// The source resolved to a streamed image, for a single-artifact
-    /// load.
-    pub(crate) fn resolve(self) -> ResolvedImage {
-        resolve_entry(
+    /// The source as the claim a load recognizes over, for a
+    /// single-artifact load. The bound is the load's own declaration and
+    /// enters at [`ClaimedSource::resolve`].
+    pub(crate) fn claim(self) -> ClaimedSource {
+        claim_entry(
             self.claim,
             self.mode,
             self.claim_class,
             self.layer,
             self.entry,
-            self.cache_bytes,
         )
     }
 }
@@ -404,14 +471,13 @@ impl FileSource {
 /// once into private session storage, and it is free-standing from that
 /// moment (P27). Either way, ejecting the archive under a disk already
 /// loaded from it takes nothing away.
-pub(crate) fn resolve_entry(
+pub(crate) fn claim_entry(
     claim: Arc<File>,
     mode: AccessMode,
     claim_class: Claim,
     layer: ArchiveLayer,
     entry: EntrySource,
-    cache_bytes: u64,
-) -> ResolvedImage {
+) -> ClaimedSource {
     let source_path = layer.path.clone();
     let image_path = PathBuf::from(layer.entry_name.clone());
     let (backing, len) = match entry {
@@ -422,14 +488,17 @@ pub(crate) fn resolve_entry(
             length,
         } => (Backing::Spool { spool, offset }, length),
     };
-    ResolvedImage {
+    ClaimedSource {
         source_path,
         image_path: Some(image_path),
-        source: ImageSource::new(claim, mode, backing, len, cache_bytes),
+        claim,
+        mode,
+        backing,
+        len,
         archive_layers: vec![layer],
         // The child rides the archive's claim, so it is the archive's
         // class the entry inherits rather than one of its own.
-        claim: claim_class,
+        claim_class,
     }
 }
 
@@ -439,7 +508,7 @@ pub(crate) fn resolve_entry(
 /// Nothing is opened here and no lock is taken: the handle arrived
 /// claimed, the library asks it the one question it is entitled to ask —
 /// may it write? — and recovers a name from it for location alone.
-pub(crate) fn resolve_handle(file: File, cache_bytes: u64) -> Result<ResolvedImage> {
+pub(crate) fn claim_handle(file: File) -> Result<ClaimedSource> {
     let mode = handle::afforded_access(&file);
     let name = handle::recovered_name(&file);
     let len = file
@@ -450,23 +519,19 @@ pub(crate) fn resolve_handle(file: File, cache_bytes: u64) -> Result<ResolvedIma
             ))
         })?
         .len();
-    Ok(ResolvedImage {
+    Ok(ClaimedSource {
         source_path: name.clone(),
         image_path: name,
-        source: ImageSource::new(
-            Arc::new(file),
-            mode,
-            Backing::Claim { offset: 0 },
-            len,
-            cache_bytes,
-        ),
+        claim: Arc::new(file),
+        mode,
+        backing: Backing::Claim { offset: 0 },
+        len,
         archive_layers: Vec::new(),
-        claim: Claim::CallerOpened,
+        claim_class: Claim::CallerOpened,
     })
 }
 
-/// Resolves `path` to a streamed image source under the caller's
-/// declared intent (P7) and declared cache bound (P27).
+/// Claims `path` under the caller's declared intent (P7).
 ///
 /// **A path names a file.** An artifact inside an archive is reached
 /// through the archive's own namespace and loaded from the file view
@@ -478,27 +543,20 @@ pub(crate) fn resolve_handle(file: File, cache_bytes: u64) -> Result<ResolvedIma
 /// path refused by name; one surface cannot hold both rules, and in-force
 /// P7 forbids obtaining a claim by silent fallback, so the refusal is
 /// what survives.
-pub(crate) fn resolve_image(
-    path: &Path,
-    intent: AccessIntent,
-    cache_bytes: u64,
-) -> Result<ResolvedImage> {
+pub(crate) fn claim_image(path: &Path, intent: AccessIntent) -> Result<ClaimedSource> {
     let file = open_declared(path, intent)?;
     let len = file
         .metadata()
         .map_err(|error| Error::io(format!("failed to stat '{}': {error}", path.display())))?
         .len();
-    Ok(ResolvedImage {
+    Ok(ClaimedSource {
         source_path: Some(path.to_path_buf()),
         image_path: Some(path.to_path_buf()),
-        source: ImageSource::new(
-            Arc::new(file),
-            intent.mode(),
-            Backing::Claim { offset: 0 },
-            len,
-            cache_bytes,
-        ),
+        claim: Arc::new(file),
+        mode: intent.mode(),
+        backing: Backing::Claim { offset: 0 },
+        len,
         archive_layers: Vec::new(),
-        claim: Claim::LibraryOpened,
+        claim_class: Claim::LibraryOpened,
     })
 }

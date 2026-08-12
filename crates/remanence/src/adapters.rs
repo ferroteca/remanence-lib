@@ -20,7 +20,7 @@ use crate::mbr;
 use crate::media::Format;
 use crate::media_profile::{FLEXIBLE_5_25_HARD_10, LOGICAL_BLOCK_512, MediaProfile};
 use crate::qcow2::{QCOW2_MAGIC, Qcow2, SUPPORTED_VERSION_CEILING};
-use crate::source::{ImageSource, SourceDevice};
+use crate::source::{Evidence, SourceDevice};
 use crate::vdi::{
     SIGNATURE_AT as VDI_SIGNATURE_AT, SUPPORTED_MAJOR as VDI_SUPPORTED_MAJOR,
     SUPPORTED_MINOR_CEILING as VDI_SUPPORTED_MINOR_CEILING, VDI_SIGNATURE,
@@ -349,7 +349,7 @@ pub(crate) trait ImageFormatAdapter: Sync {
     fn probe(&self, input: &ProbeInput<'_>) -> ProbeResult;
     fn identify_filesystems(
         &self,
-        _source: &ImageSource,
+        _source: &dyn Evidence,
         _evidence: &mut Vec<String>,
     ) -> Result<Vec<DetectedFilesystem>> {
         Ok(Vec::new())
@@ -582,7 +582,7 @@ impl ImageFormatAdapter for H8dAdapter {
 
     fn identify_filesystems(
         &self,
-        source: &ImageSource,
+        source: &dyn Evidence,
         _evidence: &mut Vec<String>,
     ) -> Result<Vec<DetectedFilesystem>> {
         let expected = H8D_DESCRIPTOR.disk.expect("H8D geometry").expected_size();
@@ -684,7 +684,7 @@ impl ImageFormatAdapter for Qcow2Adapter {
 
     fn identify_filesystems(
         &self,
-        source: &ImageSource,
+        source: &dyn Evidence,
         evidence: &mut Vec<String>,
     ) -> Result<Vec<DetectedFilesystem>> {
         let mut qcow2 = Qcow2::open(SourceDevice(source))?;
@@ -859,7 +859,7 @@ impl ImageFormatAdapter for VdiAdapter {
     /// reports as contents not walked.
     fn identify_filesystems(
         &self,
-        source: &ImageSource,
+        source: &dyn Evidence,
         evidence: &mut Vec<String>,
     ) -> Result<Vec<DetectedFilesystem>> {
         let mut device = SourceDevice(source);

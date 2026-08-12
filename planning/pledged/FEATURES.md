@@ -48,20 +48,3 @@ nothing crosses the C boundary differently. Supports: S2, P5, P10 — no
 U-number demands idiomatic C++, the demand being developer experience
 at an existing surface. Wraps whatever S2 is when it lands, so it
 neither requires nor blocks the features below.
-
-## F67 — Discovery holds the claim and builds no cache
-
-The constraint D30 reinstated the discovery surface *on*, made real.
-`discover_media` opens the artifact, takes the P7 claim, probes for the
-type, and stops: no media state, no session cache, no spilled backing —
-where the delivered verb opens a whole `MediumState` under a declared
-bound today, which is a load's work done before anyone asked for one.
-The `Discovery` stays consumable, so a load still takes the open handle
-out of it and nothing runs twice. `discover_media_with_cache` and the
-bound travelling into the device with a discovery go with the
-materialization: a cache bound is the load's declaration, and a verb
-that creates nothing has nothing to bound. The probe reads the bounded
-evidence its claims name (P27), as identification always has.
-
-Touches: S1, S2, S3. Supports: D30; in-force P4, P7, P27. Needs
-nothing — the delivered surface is what it changes.

@@ -58,6 +58,62 @@ removes it is the record either way.
 
 ## Decisions
 
+### D37 — Rulings made delivering the no-cache discovery
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-12. **Supports** S1, S2, S3; in-force P4, P7, P27; D30.
+
+F67's delivery is recorded by the commit; these are the calls made in
+its course.
+
+**"Builds no cache" is read as "builds no medium", and recognition is
+what a discovery keeps.** The narrow reading — drop the two caches and
+keep the medium — would have left the medium's every other part
+standing, which is the load's work under a different name. The wide
+reading — keep nothing but the claim and re-run the adapter at the load
+— would have made the discovery cheap by making it run twice, and D30's
+whole point is that it runs once. So the split lands at the seam the
+work already has: **recognizing** an artifact (claim the file, ask the
+catalog which adapter bears it, run the P28 gate) and **materializing**
+a medium from that recognition (the session cache the reads stream
+through, the commit buffer the writes land in). A discovery holds the
+first; `load_discovery` performs the second over the very claim already
+held. Nothing is re-opened, no adapter runs twice, and every fact a
+discovery reported before it reports still.
+
+**An archive's index is recognition, not state built ahead of the
+question.** Reading a zip's central directory *is* how the artifact is
+recognized as a zip, so the catalog belongs on the recognition side of
+the seam. What the archive medium adds at the load is its evidence plane
+— the artifact's own bytes through a bounded cache — which is exactly
+the part that has a bound to declare.
+
+**The bound moves to the load rather than disappearing.** F67 strikes
+`discover_media_with_cache`, and the temptation was to leave the
+discovery journey with no way to state a bound at all. That would have
+cost a delivered capability to make a point: the caller who wanted a
+small working set still wants one, and now there is a verb whose job is
+to create the thing being bounded. So `load_discovery_with_cache` and
+`load_discovery_as_with_cache` land beside the plain doors, matching
+`load_media_with_cache` and `new_media_with_cache` exactly.
+`add_device_for_with_cache` keeps its bound unchanged — it composes the
+discovery *and* the load, and the bound belongs to its load half.
+
+**`Discovery::state()` becomes `recognized()`, and the refusal it feeds
+is spelled once over both.** The convenience's "nothing says which drive
+wrote it" refusal was built from a `MediumState`; it now has to be built
+from a recognition too. Rather than two spellings of one message, the
+refusal takes the three facts it names — the artifact, the format, the
+recorded types — and both callers hand them over.
+
+**Weighed and declined:** keeping `ResolvedImage` as the shape a load
+takes (with the claim and the cache now separated, it held nothing the
+`ClaimedSource` and the `ImageSource` do not, and a struct that exists
+to be destructured immediately is a seam nobody crosses); and letting a
+discovery answer `identify()` lazily off a cache built on first use (it
+reinstates the cache this feature removes, one call later, and the read
+is bounded evidence either way).
+
 ### D36 — Rulings made delivering authored media
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -672,7 +728,8 @@ cache bound is the *load's* declaration and has no meaning at discovery,
 so the delivered `discover_media_with_cache` and the bound travelling
 into the device with a discovery go — the delivered surface materializes
 today, and closing that gap is F67 rather than something this ruling
-performs.
+performs. *(Delivered: F67 landed the constraint and the bound moved to
+`load_discovery`; D37 records the rulings.)*
 
 Three places carried the demotion and all three are corrected: F55 is
 struck, the pledged media-first design's "the question tier is demoted,

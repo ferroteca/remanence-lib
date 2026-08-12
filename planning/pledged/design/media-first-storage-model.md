@@ -316,8 +316,10 @@ S1–S3 on the reading that a declared `load_media` already did its work.
 **D30 reversed that**: the two verbs answer different questions, and a
 caller who does not yet know what an artifact is has no format to
 declare. The surface stays, under the constraint that distinguishes it —
-**discovery holds the claim and builds no cache** — which F67 makes
-real, the delivered verb materializing a whole medium today.
+**discovery holds the claim and builds no cache**. *Delivered: the
+discovery holds a recognition rather than a medium, and the cache bound
+moved to `load_discovery`, where the medium comes into existence
+(D37).*
 
 *The `default_device` declaration is delivered as the format's recorded
 device types: where an adapter records exactly one, the discovery
@@ -381,7 +383,8 @@ the features that make each real.
   `load_discovery`, `add_device_for`, `default_device` — because
   discovery and loading answer different questions. What it owes is the
   constraint, not the exit: discovery holds the claim and builds no
-  cache (F67). *Delivered, with `default_device` spelled
+  cache. *Delivered, the constraint included (D37), and with
+  `default_device` spelled
   `device_type()` and its list `device_types()`: the fact the format
   declares and the fact the medium carries became one fact (D33).*
 - **The delivered "zero partitions, not one trivial one" ruling is

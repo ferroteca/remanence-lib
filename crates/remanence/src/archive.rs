@@ -45,7 +45,7 @@ use crate::handle;
 use crate::media_profile::{MediaProfile, VIRTUAL};
 use crate::session::{Identification, Layer, LayerKind, LayerLayout, SizeInformation};
 use crate::sevenzip::SEVENZIP_ADAPTER;
-use crate::source::{self, ArchiveLayer, ImageSource, ResolvedImage};
+use crate::source::{self, ArchiveLayer, ClaimedSource, ImageSource};
 use crate::zip::ZIP_ADAPTER;
 
 /// What an archive grammar is called, and what it answers to.
@@ -252,22 +252,43 @@ pub(crate) fn load_archive(file: File, grammar: &str, named: &str) -> Result<Cla
 /// established — while answering none of the space questions, because it
 /// has no space. Those refuse by name on the device that holds it.
 pub(crate) struct ArchiveMedium {
+    /// What recognizing the artifact established: the claim, the
+    /// catalog its grammar read, and the assurance the index settled.
+    recognized: ArchiveRecognition,
+    /// The artifact's own bytes, under the same claim: readable as
+    /// evidence (P2), which is plumbing rather than a vantage.
+    source: ImageSource,
+}
+
+/// The archive **recognized and nothing more**: the claim, the catalog
+/// its grammar declares, and the assurance reading that index
+/// established — with no session cache over it.
+///
+/// It is what a discovery over an archive holds (F67). Recognizing an
+/// archive *is* reading its index, so the catalog is the recognition
+/// rather than state a load builds ahead of the question; what the load
+/// adds is the evidence plane and the bound it declared for it.
+pub(crate) struct ArchiveRecognition {
     /// The artifact as the caller named it, or as its handle was
     /// recovered — absent where the handle has no recoverable name.
     path: Option<String>,
     claimed: ClaimedArchive,
-    /// The artifact's own bytes, under the same claim: readable as
-    /// evidence (P2), which is plumbing rather than a vantage.
-    source: ImageSource,
-    /// The declared session cache bound (P27), carried into whatever is
-    /// loaded out of this archive.
-    cache_bytes: u64,
     assurance: Assurance,
 }
 
 impl std::fmt::Debug for ArchiveMedium {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ArchiveMedium")
+            .field("path", &self.recognized.path)
+            .field("format", &self.format_id())
+            .field("entries", &self.claimed().catalog.entries().len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ArchiveRecognition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArchiveRecognition")
             .field("path", &self.path)
             .field("format", &self.format_id())
             .field("entries", &self.claimed.catalog.entries().len())
@@ -275,15 +296,15 @@ impl std::fmt::Debug for ArchiveMedium {
     }
 }
 
-impl ArchiveMedium {
-    /// Claims the archive at `path` (P7) and loads its state — the
+impl ArchiveRecognition {
+    /// Claims the archive at `path` (P7) and reads its index — the
     /// entries its grammar declares.
     ///
     /// **Read-only, as archives are.** A write would have to be encoded
     /// back into the grammar's own form and no adapter claims that, so a
     /// write intent is refused by name here rather than accepted and
     /// disappointed at the commit point (P7).
-    pub(crate) fn open(path: &Path, intent: AccessIntent, cache_bytes: u64) -> Result<Self> {
+    pub(crate) fn open(path: &Path, intent: AccessIntent) -> Result<Self> {
         if intent == AccessIntent::Write {
             return Err(Error::read_only(format!(
                 "'{}' is an archive medium, which this release reads and does \
@@ -297,11 +318,10 @@ impl ArchiveMedium {
             Some(path.display().to_string()),
             claimed,
             Claim::LibraryOpened,
-            cache_bytes,
         ))
     }
 
-    /// Loads the caller's own opened archive as the grammar they
+    /// Reads the caller's own opened archive as the grammar they
     /// **declared**, under their claim (P7 as amended).
     ///
     /// An archive is read and not written whichever way it was reached,
@@ -309,19 +329,17 @@ impl ArchiveMedium {
     /// nothing: the medium is read-only because no adapter encodes an
     /// archive back into its own grammar, which is a fact about this
     /// release rather than about the claim.
-    pub(crate) fn load(file: File, grammar: &str, cache_bytes: u64) -> Result<Self> {
+    pub(crate) fn load(file: File, grammar: &str) -> Result<Self> {
         let name = handle::recovered_name(&file).map(|name| name.display().to_string());
         let named = crate::media::named(name.as_deref());
         let claimed = load_archive(file, grammar, &named)?;
-        Ok(Self::over(name, claimed, Claim::CallerOpened, cache_bytes))
+        Ok(Self::over(name, claimed, Claim::CallerOpened))
     }
 
-    /// The medium both journeys build: the claimed catalog, the evidence
-    /// plane beside it, and the assurance the index established.
-    fn over(path: Option<String>, claimed: ClaimedArchive, claim: Claim, cache_bytes: u64) -> Self {
+    /// The recognition both journeys build: the claimed catalog and the
+    /// assurance the index established.
+    fn over(path: Option<String>, claimed: ClaimedArchive, claim: Claim) -> Self {
         let len = claimed.catalog.archive_size();
-        let source =
-            ImageSource::over_claim(Arc::clone(&claimed.file), claimed.mode, len, cache_bytes);
         let assurance = Assurance {
             outcome: AssuranceOutcome::Verified,
             condition: None,
@@ -342,9 +360,21 @@ impl ArchiveMedium {
         Self {
             path,
             claimed,
-            source,
-            cache_bytes,
             assurance,
+        }
+    }
+
+    /// The medium this recognition becomes, under the bound the load
+    /// declared (P27) — the evidence plane over the claim already held.
+    pub(crate) fn into_medium(self, cache_bytes: u64) -> ArchiveMedium {
+        let source = ImageSource::over_claim(
+            Arc::clone(&self.claimed.file),
+            self.claimed.catalog.archive_size(),
+            cache_bytes,
+        );
+        ArchiveMedium {
+            recognized: self,
+            source,
         }
     }
 
@@ -371,10 +401,6 @@ impl ArchiveMedium {
         &self.assurance
     }
 
-    pub(crate) fn cache_bytes(&self) -> u64 {
-        self.cache_bytes
-    }
-
     /// The article this medium is (P14) — the virtual one, whose sole
     /// family fact is that its vantage is a namespace.
     pub(crate) fn media(&self) -> &'static MediaProfile {
@@ -388,6 +414,49 @@ impl ArchiveMedium {
     pub(crate) fn format_name(&self) -> &'static str {
         self.claimed.catalog.descriptor().name
     }
+}
+
+impl ArchiveMedium {
+    fn claimed(&self) -> &ClaimedArchive {
+        &self.recognized.claimed
+    }
+
+    pub(crate) fn path(&self) -> Option<&str> {
+        self.recognized.path()
+    }
+
+    /// The artifact as a refusal names it.
+    pub(crate) fn named(&self) -> String {
+        self.recognized.named()
+    }
+
+    /// The archive file's own size in bytes — the artifact, not a
+    /// presented disk, of which an archive has none.
+    pub(crate) fn size_bytes(&self) -> u64 {
+        self.recognized.size_bytes()
+    }
+
+    pub(crate) fn mode(&self) -> AccessMode {
+        self.recognized.mode()
+    }
+
+    pub(crate) fn assurance(&self) -> &Assurance {
+        self.recognized.assurance()
+    }
+
+    /// The article this medium is (P14) — the virtual one, whose sole
+    /// family fact is that its vantage is a namespace.
+    pub(crate) fn media(&self) -> &'static MediaProfile {
+        self.recognized.media()
+    }
+
+    pub(crate) fn format_id(&self) -> &'static str {
+        self.recognized.format_id()
+    }
+
+    pub(crate) fn format_name(&self) -> &'static str {
+        self.recognized.format_name()
+    }
 
     /// Reads the artifact's own bytes — evidence, streamed through the
     /// session cache like every other read (P27).
@@ -395,6 +464,28 @@ impl ArchiveMedium {
         self.source.read_at(offset, buf)
     }
 
+    /// The nesting this artifact was reached through: the archive, and
+    /// nothing else.
+    pub(crate) fn identify(&self) -> Identification {
+        self.recognized.identify()
+    }
+
+    /// The namespace this medium bears, for the resolver above.
+    ///
+    /// An archive's content *is* its namespace, so this always answers —
+    /// there is nothing to probe for and nothing to refuse.
+    pub(crate) fn namespace(&self) -> (&'static str, Box<dyn Catalog>) {
+        (
+            self.format_id(),
+            Box::new(ArchiveNamespace {
+                catalog: Arc::clone(&self.claimed().catalog),
+                file: Arc::clone(&self.claimed().file),
+            }),
+        )
+    }
+}
+
+impl ArchiveRecognition {
     /// The nesting this artifact was reached through: the archive, and
     /// nothing else.
     ///
@@ -427,25 +518,13 @@ impl ArchiveMedium {
             )],
         }
     }
+}
 
-    /// The namespace this medium bears, for the resolver above.
-    ///
-    /// An archive's content *is* its namespace, so this always answers —
-    /// there is nothing to probe for and nothing to refuse.
-    pub(crate) fn namespace(&self) -> (&'static str, Box<dyn Catalog>) {
-        (
-            self.format_id(),
-            Box::new(ArchiveNamespace {
-                catalog: Arc::clone(&self.claimed.catalog),
-                file: Arc::clone(&self.claimed.file),
-            }),
-        )
-    }
-
+impl ArchiveMedium {
     /// One entry taken as a load's source, under this archive's own
     /// claim — the single-`File` source shape.
     pub(crate) fn entry_file_source(&self, name: &str) -> Result<source::FileSource> {
-        let catalog = self.claimed.catalog.as_ref();
+        let catalog = self.claimed().catalog.as_ref();
         let index = entry_index(catalog, name)?;
         let entry = &catalog.entries()[index];
         if entry.is_dir {
@@ -456,12 +535,11 @@ impl ArchiveMedium {
             ));
         }
         Ok(source::FileSource {
-            claim: Arc::clone(&self.claimed.file),
-            mode: self.claimed.mode,
-            claim_class: self.assurance.claim,
+            claim: Arc::clone(&self.claimed().file),
+            mode: self.claimed().mode,
+            claim_class: self.assurance().claim,
             layer: self.entry_layer(entry),
             entry: catalog.entry_source(index)?,
-            cache_bytes: self.cache_bytes,
         })
     }
 
@@ -470,7 +548,7 @@ impl ArchiveMedium {
     /// stream — a collection spread over a solid archive decodes once,
     /// not once per member (P27).
     pub(crate) fn entry_group_sources(&self, path: &str) -> Result<Vec<source::FileSource>> {
-        let catalog = self.claimed.catalog.as_ref();
+        let catalog = self.claimed().catalog.as_ref();
         let prefix = path.trim_matches('/');
         let indices: Vec<usize> = catalog
             .entries()
@@ -503,12 +581,11 @@ impl ArchiveMedium {
             .map(|(index, entry_source)| {
                 let entry = &catalog.entries()[index];
                 source::FileSource {
-                    claim: Arc::clone(&self.claimed.file),
-                    mode: self.claimed.mode,
-                    claim_class: self.assurance.claim,
+                    claim: Arc::clone(&self.claimed().file),
+                    mode: self.claimed().mode,
+                    claim_class: self.assurance().claim,
                     layer: self.entry_layer(entry),
                     entry: entry_source,
-                    cache_bytes: self.cache_bytes,
                 }
             })
             .collect())
@@ -517,48 +594,38 @@ impl ArchiveMedium {
     /// The archive layer an entry is reached through, for its
     /// provenance.
     fn entry_layer(&self, entry: &ArchiveEntry) -> ArchiveLayer {
-        let descriptor = self.claimed.catalog.descriptor();
+        let descriptor = self.claimed().catalog.descriptor();
         ArchiveLayer {
             id: descriptor.id.to_owned(),
             name: descriptor.name.to_owned(),
-            path: self.path.as_deref().map(PathBuf::from),
+            path: self.path().map(PathBuf::from),
             entry_name: entry.name.clone(),
-            archive_size: Some(self.claimed.catalog.archive_size()),
+            archive_size: Some(self.claimed().catalog.archive_size()),
             compressed_size: entry.compressed_size,
             uncompressed_size: Some(entry.uncompressed_size),
         }
     }
 
-    /// Resolves one entry to a source a device can load, under this
-    /// archive's own claim.
-    pub(crate) fn resolve_entry(&self, name: &str) -> Result<ResolvedImage> {
-        let catalog = self.claimed.catalog.as_ref();
-        let descriptor = catalog.descriptor();
+    /// Claims one entry as an artifact of its own, under this archive's
+    /// own claim — the nested journey's source, with no bound declared
+    /// over it yet (F67).
+    pub(crate) fn claim_entry(&self, name: &str) -> Result<ClaimedSource> {
+        let catalog = self.claimed().catalog.as_ref();
         let index = entry_index(catalog, name)?;
         let entry = &catalog.entries()[index];
         if entry.is_dir {
             return Err(Error::categorized_archive(
                 ErrorCategory::IsDirectory,
-                descriptor.id,
+                catalog.descriptor().id,
                 format!("entry '{name}' is a directory"),
             ));
         }
-        let layer = ArchiveLayer {
-            id: descriptor.id.to_owned(),
-            name: descriptor.name.to_owned(),
-            path: self.path.as_deref().map(PathBuf::from),
-            entry_name: entry.name.clone(),
-            archive_size: Some(catalog.archive_size()),
-            compressed_size: entry.compressed_size,
-            uncompressed_size: Some(entry.uncompressed_size),
-        };
-        Ok(source::resolve_entry(
-            Arc::clone(&self.claimed.file),
-            self.claimed.mode,
-            self.assurance.claim,
-            layer,
+        Ok(source::claim_entry(
+            Arc::clone(&self.claimed().file),
+            self.claimed().mode,
+            self.assurance().claim,
+            self.entry_layer(entry),
             catalog.entry_source(index)?,
-            self.cache_bytes,
         ))
     }
 }
@@ -863,12 +930,8 @@ mod tests {
     fn a_write_intent_on_an_archive_is_refused_by_name() {
         // Read-only, as archives are: a write would have to be encoded
         // back into the grammar's own form, and no adapter claims that.
-        let error = ArchiveMedium::open(
-            Path::new("nowhere.zip"),
-            AccessIntent::Write,
-            crate::DEFAULT_CACHE_BYTES,
-        )
-        .expect_err("a write intent is refused");
+        let error = ArchiveRecognition::open(Path::new("nowhere.zip"), AccessIntent::Write)
+            .expect_err("a write intent is refused");
         assert_eq!(error.category(), ErrorCategory::ReadOnly);
         assert!(
             error.to_string().contains("reads and does not write"),

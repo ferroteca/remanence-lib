@@ -693,54 +693,17 @@ impl RemanenceDiscovery {
 /// mutates nothing (P2). The claim it takes is held by the returned
 /// discovery until that is consumed or freed, so a `Write` discovery
 /// claims the artifact exclusively and fails here when it cannot, never
-/// by falling back (P7). Returns null on failure.
+/// by falling back (P7).
+///
+/// **Nothing is created**: no medium, no session cache, no spilled
+/// backing. A cache bound is the load's declaration (P27), so there is
+/// no `_with_cache` sibling here — the bound is stated at
+/// `remanence_session_load_discovery_with_cache`, where the medium
+/// comes into existence. Returns null on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_discover_media(
     path: *const c_char,
     intent: RemanenceAccessIntent,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceDiscovery {
-    unsafe {
-        discover(
-            path,
-            intent,
-            remanence::DEFAULT_CACHE_BYTES,
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-/// `remanence_discover_media` under a caller-declared session cache
-/// bound (P27), which a load consuming the discovery keeps.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_discover_media_with_cache(
-    path: *const c_char,
-    intent: RemanenceAccessIntent,
-    cache_bytes: u64,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceDiscovery {
-    unsafe {
-        discover(
-            path,
-            intent,
-            cache_bytes,
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-unsafe fn discover(
-    path: *const c_char,
-    intent: RemanenceAccessIntent,
-    cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -751,7 +714,7 @@ unsafe fn discover(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match remanence::discover_media_with_cache(path.as_ref(), access_intent(intent), cache_bytes) {
+    match remanence::discover_media(path.as_ref(), access_intent(intent)) {
         Ok(discovery) => Box::into_raw(Box::new(RemanenceDiscovery::new(discovery))),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -2403,10 +2366,14 @@ pub unsafe extern "C" fn remanence_session_load_media_sources(
 ///
 /// This is the load that runs nothing twice: the discovery holds the
 /// claim taken when the artifact was identified and the work that
-/// identification did, and both move into the pool, so no window exists
-/// between the question and the load in which the artifact could change
-/// (P7). The intent, the cache bound and the assurance are the ones the
-/// discovery established.
+/// identification did, and the medium is built over that claim, so no
+/// window exists between the question and the load in which the artifact
+/// could change (P7). The intent and the assurance are the ones the
+/// discovery established; the **cache bound is declared here**, because
+/// this is where the medium comes into existence — discovery built
+/// nothing, so it had nothing to bound (P27). This door takes the stated
+/// default; `remanence_session_load_discovery_with_cache` takes the
+/// caller's own.
 ///
 /// **The discovery is freed either way** — a refused load releases its
 /// claim with it — so the pointer must never be used or freed again
@@ -2420,6 +2387,29 @@ pub unsafe extern "C" fn remanence_session_load_media_sources(
 pub unsafe extern "C" fn remanence_session_load_discovery(
     session: *mut RemanenceSession,
     discovery: *mut RemanenceDiscovery,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMedium {
+    unsafe {
+        remanence_session_load_discovery_with_cache(
+            session,
+            discovery,
+            remanence::DEFAULT_CACHE_BYTES,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// `remanence_session_load_discovery` under a caller-declared session
+/// cache bound (P27), which the medium this load creates keeps.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_load_discovery_with_cache(
+    session: *mut RemanenceSession,
+    discovery: *mut RemanenceDiscovery,
+    cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -2441,7 +2431,10 @@ pub unsafe extern "C" fn remanence_session_load_discovery(
         return ptr::null_mut();
     }
     let handle = unsafe { &mut *session };
-    match handle.session.load_discovery(discovery.discovery) {
+    match handle
+        .session
+        .load_discovery_with_cache(discovery.discovery, cache_bytes)
+    {
         Ok(medium) => {
             let id = medium.id();
             unsafe { medium_view(session, id) }
@@ -2467,6 +2460,31 @@ pub unsafe extern "C" fn remanence_session_load_discovery_as(
     session: *mut RemanenceSession,
     discovery: *mut RemanenceDiscovery,
     device_type: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanenceMedium {
+    unsafe {
+        remanence_session_load_discovery_as_with_cache(
+            session,
+            discovery,
+            device_type,
+            remanence::DEFAULT_CACHE_BYTES,
+            error_category_out,
+            error_out,
+            error_rule_out,
+        )
+    }
+}
+
+/// `remanence_session_load_discovery_as` under a caller-declared session
+/// cache bound (P27).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_session_load_discovery_as_with_cache(
+    session: *mut RemanenceSession,
+    discovery: *mut RemanenceDiscovery,
+    device_type: *const c_char,
+    cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -2500,7 +2518,7 @@ pub unsafe extern "C" fn remanence_session_load_discovery_as(
     let handle = unsafe { &mut *session };
     match handle
         .session
-        .load_discovery_as(discovery.discovery, device)
+        .load_discovery_as_with_cache(discovery.discovery, device, cache_bytes)
     {
         Ok(medium) => {
             let id = medium.id();

@@ -47,8 +47,8 @@ use std::path::Path;
 use crate::authored::NewMedia;
 use crate::device::AccessIntent;
 use crate::device_type::{DeviceSlot, DeviceType};
-use crate::discovery::{Discovery, discover_media_with_cache};
-use crate::disk::MediumState;
+use crate::discovery::{Discovery, discover_media};
+use crate::disk::{MediumRecognition, MediumState};
 use crate::error::{Error, Result};
 use crate::media::{Format, MediaId, MediaPool, MediaSource, Medium};
 use crate::storage_device::{AttachmentId, DeviceView, StorageDevice};
@@ -147,11 +147,15 @@ impl Session {
     ///
     /// This is the load that runs nothing twice. A discovery holds the
     /// claim taken when the artifact was identified and the work that
-    /// identification did; the state moves into the pool here, so there
-    /// is no window between the question and the load in which the
-    /// artifact could have changed (P7 continuity), and the intent, the
-    /// cache bound and the assurance are the ones the discovery
-    /// established rather than a second open's.
+    /// identification did; the medium is built over that claim here, so
+    /// there is no window between the question and the load in which the
+    /// artifact could have changed (P7 continuity), and the intent and
+    /// the assurance are the ones the discovery established rather than a
+    /// second open's.
+    ///
+    /// **The cache bound is declared here**, because this is where the
+    /// medium comes into existence: discovery built nothing, so it had
+    /// nothing to bound (P27).
     ///
     /// **This is the plain door, and it opens where the recognizing
     /// format records exactly one device type** — an H8D is a Heathkit
@@ -163,7 +167,17 @@ impl Session {
     /// the evidence determines the answer, the `_as` form where the
     /// caller's reading does.
     pub fn load_discovery(&mut self, discovery: Discovery) -> Result<&mut Medium> {
-        self.admit(discovery.into_medium())
+        self.load_discovery_with_cache(discovery, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// [`Session::load_discovery`] under a caller-declared session cache
+    /// bound (P27).
+    pub fn load_discovery_with_cache(
+        &mut self,
+        discovery: Discovery,
+        cache_bytes: u64,
+    ) -> Result<&mut Medium> {
+        self.admit(discovery.into_medium(cache_bytes))
     }
 
     /// [`Session::load_discovery`] under the caller's own declaration of
@@ -179,6 +193,17 @@ impl Session {
         &mut self,
         discovery: Discovery,
         device: DeviceType,
+    ) -> Result<&mut Medium> {
+        self.load_discovery_as_with_cache(discovery, device, crate::DEFAULT_CACHE_BYTES)
+    }
+
+    /// [`Session::load_discovery_as`] under a caller-declared session
+    /// cache bound (P27).
+    pub fn load_discovery_as_with_cache(
+        &mut self,
+        mut discovery: Discovery,
+        device: DeviceType,
+        cache_bytes: u64,
     ) -> Result<&mut Medium> {
         let recorded = discovery.device_types();
         if !recorded.contains(&device) {
@@ -198,9 +223,8 @@ impl Session {
                 device.id()
             )));
         }
-        let mut state = discovery.into_medium();
-        state.declare_device(device);
-        self.admit(state)
+        discovery.declare_device(device);
+        self.admit(discovery.into_medium(cache_bytes))
     }
 
     /// Creates blank media whole — **authorship, the third fact class**
@@ -530,18 +554,26 @@ impl Session {
 /// is stated. The list is the adapter's own, so it is exactly what a
 /// declaration will be accepted for rather than a suggestion.
 fn undeclared_device(state: &MediumState) -> Error {
-    let recorded: Vec<&str> = state
-        .recorded_devices()
-        .iter()
-        .map(|device| device.id())
-        .collect();
+    undeclared(state.named(), state.format_name(), state.recorded_devices())
+}
+
+/// The same refusal about a reading that has not been materialized:
+/// what a discovery meets at the convenience over it.
+fn undeclared_recognition(recognized: &MediumRecognition) -> Error {
+    undeclared(
+        recognized.named(),
+        recognized.format_name(),
+        recognized.recorded_devices(),
+    )
+}
+
+fn undeclared(named: String, format_name: &str, devices: &[DeviceType]) -> Error {
+    let recorded: Vec<&str> = devices.iter().map(|device| device.id()).collect();
     Error::unsupported(format!(
-        "{} is a {} and that format records {} — nothing in the artifact \
-         says which wrote it. Declare one at the load: \
+        "{named} is a {format_name} and that format records {} — nothing in \
+         the artifact says which wrote it. Declare one at the load: \
          `load_discovery_as` over this discovery, or `load_media` where \
          the artifact is a file you hold.",
-        crate::media::named(state.path()),
-        state.format_name(),
         match recorded.len() {
             0 => "no device at all".to_owned(),
             _ => recorded.join(" and "),
@@ -554,7 +586,7 @@ fn undeclared_device(state: &MediumState) -> Error {
 fn discovered_slot(discovery: &Discovery) -> Result<DeviceSlot> {
     discovery
         .device_slot()
-        .ok_or_else(|| undeclared_device(discovery.state()))
+        .ok_or_else(|| undeclared_recognition(discovery.recognized()))
 }
 
 /// One machine within a session: a set of storage devices, their
@@ -721,18 +753,19 @@ impl<'a> MachineView<'a> {
     }
 
     /// [`MachineView::add_device_for`] under a caller-declared session
-    /// cache bound (P27), which the discovery is made under and the
-    /// medium keeps.
+    /// cache bound (P27). The bound belongs to the load half of this
+    /// convenience — the discovery it opens with creates nothing and has
+    /// nothing to bound — and the medium it makes keeps it.
     pub fn add_device_for_with_cache(
         &mut self,
         path: impl AsRef<Path>,
         intent: AccessIntent,
         cache_bytes: u64,
     ) -> Result<DeviceView<'_>> {
-        let discovery = discover_media_with_cache(path, intent, cache_bytes)?;
+        let discovery = discover_media(path, intent)?;
         let slot = discovered_slot(&discovery)?;
         let attachment = self.place(slot, None)?;
-        let mut state = discovery.into_medium();
+        let mut state = discovery.into_medium(cache_bytes);
         let partitions = match state.establish_partitions() {
             Ok(partitions) => partitions,
             Err(error) => {

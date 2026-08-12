@@ -55,7 +55,10 @@
 //! [`discover_media`] answers the other question — *what is this?* —
 //! on no handle at all: the exact medium, the device families served it,
 //! and the image format's declared default device. It opens the artifact
-//! by name, so P7's mandatory denial applies there in full. The
+//! by name, so P7's mandatory denial applies there in full, and it
+//! **builds no cache**: no medium, no session cache, no spilled
+//! backing, because a cache bound is the load's declaration and a verb
+//! that creates nothing has nothing to bound (P27). The
 //! [`Discovery`] it returns holds that claim and the work already done,
 //! and [`Session::load_discovery`] consumes it into the pool so nothing
 //! runs twice — the plain door, opening where the recognizing format
@@ -255,7 +258,7 @@ pub use c1541_sectors::{
 pub use cache::DEFAULT_CACHE_BYTES;
 pub use device::{AccessIntent, AccessMode, Claim};
 pub use device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive};
-pub use discovery::{Discovery, discover_media, discover_media_with_cache};
+pub use discovery::{Discovery, discover_media};
 pub use disk::DiskFormat;
 pub use dos_letters::{
     DosAssignmentRule, DosMachine, DriveMap, DriveMapping, LetterOutcome, MachineDevice,

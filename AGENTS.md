@@ -31,8 +31,15 @@ ABI, or Python module.
   the claim, the identification, the exact article, the devices derived
   from the catalog's own declarations as accepting it, and the device
   the format records where it records one — answered as a consumable
-  handle a load takes the state out of, so nothing runs twice and no
-  window opens between the question and the load; `device_type.rs` the
+  handle a load takes the claim out of, so nothing runs twice and no
+  window opens between the question and the load. **It holds the claim
+  and builds no cache**: no medium, no session cache, no spilled
+  backing, the bound being the load's own declaration and stated at
+  `load_discovery`, where the medium comes into existence; what a
+  discovery holds instead is the `MediumRecognition` beneath it — the
+  claimed source, the adapter that claimed it, and what the assurance
+  gate settled — which the load turns into state over the very claim
+  already held; `device_type.rs` the
   P14 recording seam — the **device-type catalog** in its two levels
   (the class, then the concrete type), one spec shape per class and one
   instance per concrete type, the granularity rule that cuts it, the

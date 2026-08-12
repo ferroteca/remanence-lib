@@ -11,6 +11,16 @@
 //! article, the device types the recognizing format records, and the
 //! devices that would accept the article. It mutates nothing (P2).
 //!
+//! **Discovery holds the claim and builds no cache.** It opens the
+//! artifact, takes the claim, probes for the type, and stops: no media
+//! state, no session cache, no spilled backing. That constraint is what
+//! makes discovery something other than a load wearing a different name
+//! — loading says *make this a medium under a format I name*, discovery
+//! says *what is this?* — and it is why a cache bound has no meaning
+//! here: the bound is the load's declaration (P27), and a verb that
+//! creates nothing has nothing to bound. The probe reads the bounded
+//! evidence its claims name, as identification always has.
+//!
 //! **The discovery it answers with is a consumable handle — a claim
 //! scope holding the work already done.** Recognizing an artifact is not
 //! free, and re-opening it to load it would do that work twice and, worse,
@@ -18,7 +28,8 @@
 //! could change. So [`crate::Session::load_discovery`] takes the
 //! discovery and moves its state into the media pool: one open, one
 //! claim, held continuously from the question to the load (P7
-//! continuity).
+//! continuity), with the bound declared there and the medium materialized
+//! under it.
 //!
 //! **The library opens here, so P7's mandatory denial applies in full.**
 //! Discovery names an artifact by path — a caller who does not yet know
@@ -46,7 +57,7 @@ use std::path::Path;
 use crate::assurance::Assurance;
 use crate::device::{AccessIntent, AccessMode};
 use crate::device_type::{DeviceSlot, DeviceType};
-use crate::disk::{DiskFormat, MediumState};
+use crate::disk::{DiskFormat, MediumRecognition, MediumState};
 use crate::error::{Error, Result};
 use crate::session::Identification;
 
@@ -64,26 +75,19 @@ use crate::session::Identification;
 /// exclusively exactly as a load does, and a discovery that cannot secure
 /// its claim fails here rather than falling back (P7).
 ///
+/// **Nothing is created.** No medium, no session cache, no spilled
+/// backing — the artifact is claimed and recognized, and the medium is
+/// built when a load asks for one, under the bound that load declares.
+///
 /// Discovery answers a question; it configures nothing. Adding a device
 /// is [`crate::MachineView::add_device`], loading a medium is
 /// [`crate::Session::load_media`], and the one convenience that composes
 /// the acts over a discovery is
 /// [`crate::MachineView::add_device_for`].
 pub fn discover_media(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Discovery> {
-    discover_media_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
-}
-
-/// [`discover_media`] under a caller-declared session cache bound (P27).
-/// The bound travels into the device with the discovery, so a load that
-/// consumes one keeps the bound the discovery was made under.
-pub fn discover_media_with_cache(
-    path: impl AsRef<Path>,
-    intent: AccessIntent,
-    cache_bytes: u64,
-) -> Result<Discovery> {
     let path = path.as_ref();
-    let medium = MediumState::open(path, intent, cache_bytes)?;
-    if let Some(foreign) = medium.foreign_family() {
+    let recognized = MediumRecognition::at_path(path, intent)?;
+    if let Some(foreign) = recognized.foreign_family() {
         return Err(Error::unsupported(format!(
             "'{}' is a {foreign}-family artifact, and this release \
              discovers no {foreign} medium; a {foreign} artifact is \
@@ -91,7 +95,7 @@ pub fn discover_media_with_cache(
             path.display()
         )));
     }
-    Ok(Discovery { medium })
+    Ok(Discovery { recognized })
 }
 
 /// What one artifact turned out to be, and the claim under which that
@@ -102,13 +106,19 @@ pub fn discover_media_with_cache(
 /// recognition did. Everything it reports is a value — identities and
 /// names — and reporting them mutates nothing.
 ///
+/// **It holds no medium.** What is behind it is the claim and the
+/// recognition over it: the format adapter that claimed the artifact and
+/// what the assurance gate settled, with no session cache and nothing
+/// spilled. A load turns that into a medium under its own declared
+/// bound.
+///
 /// A discovery is **consumed by a load** and dropped otherwise; either
 /// way the claim ends there. Dropping one is not a refusal of anything,
 /// and asking again is always allowed — it is only the work and the
 /// continuity that are lost.
 #[derive(Debug)]
 pub struct Discovery {
-    medium: MediumState,
+    recognized: MediumRecognition,
 }
 
 impl Discovery {
@@ -119,19 +129,19 @@ impl Discovery {
     /// cannot name, which a discovery over an archive entry inherits
     /// from the archive it came out of.
     pub fn path(&self) -> Option<&str> {
-        self.medium.path()
+        self.recognized.path()
     }
 
     /// The resolved artifact — the entry name for an image discovered
     /// inside an archive, else the source's own name.
     pub fn image_path(&self) -> Option<&Path> {
-        self.medium.image_path()
+        self.recognized.image_path()
     }
 
     /// The resolved image's own size in bytes — the raw plane, distinct
     /// from [`Discovery::size`], which is the disk the format presents.
     pub fn image_size_bytes(&self) -> u64 {
-        self.medium.image_size_bytes()
+        self.recognized.image_size_bytes()
     }
 
     /// The presented disk's size (the guest-visible size for qcow2), or
@@ -141,38 +151,38 @@ impl Discovery {
     /// name; its artifact's own extent is
     /// [`Discovery::image_size_bytes`], which every medium has.
     pub fn size(&self) -> Result<u64> {
-        Ok(self.medium.space("size")?.size())
+        self.recognized.size("size")
     }
 
     /// The image container format the artifact turned out to be, or the
     /// refusal naming a medium that is no disk image. An archive's
     /// grammar is [`Discovery::image_format`].
     pub fn format(&self) -> Result<DiskFormat> {
-        Ok(self.medium.space("format")?.format())
+        self.recognized.format("format")
     }
 
     /// The recognized format's stable spelling — `h8d`, `qcow2`, `vdi`,
     /// `raw`, or an archive grammar's `zip` or `7z`.
     pub fn image_format(&self) -> &'static str {
-        self.medium.format_id()
+        self.recognized.format_id()
     }
 
     /// That format's name, fit to show a user.
     pub fn image_format_name(&self) -> &'static str {
-        self.medium.format_name()
+        self.recognized.format_name()
     }
 
     /// The **exact article**, by the catalog's stable spelling (P14).
-    /// The image-format adapter that loaded the state named it; nothing
-    /// here guessed.
+    /// The image-format adapter that recognized the artifact named it;
+    /// nothing here guessed.
     pub fn article(&self) -> &'static str {
-        self.medium.media().id
+        self.recognized.media().id
     }
 
     /// The article's name, fit to show a user beside the drive it goes
     /// in.
     pub fn article_name(&self) -> &'static str {
-        self.medium.media().name
+        self.recognized.media().name
     }
 
     /// The device this artifact's content was recorded by, where the
@@ -184,14 +194,14 @@ impl Discovery {
     /// refuses by name toward the declared load
     /// ([`crate::Session::load_media`]).
     pub fn device_type(&self) -> Option<DeviceType> {
-        self.medium.device_type()
+        self.recognized.device_type()
     }
 
     /// Every device type the recognizing format records — one where it
     /// carries it bare, several where a load declares which, and none
     /// for an archive grammar, which records no device at all.
     pub fn device_types(&self) -> &'static [DeviceType] {
-        self.medium.recorded_devices()
+        self.recognized.recorded_devices()
     }
 
     /// Every device an artifact of this article could go in, derived
@@ -203,7 +213,7 @@ impl Discovery {
     /// empty answer means no device this release claims is served the
     /// article — an archive's case, and the honest one.
     pub fn accepting_devices(&self) -> Vec<DeviceType> {
-        DeviceType::accepting(self.medium.media())
+        DeviceType::accepting(self.recognized.media())
     }
 
     /// What slot a load of this artifact would go into: the recording
@@ -211,7 +221,7 @@ impl Discovery {
     /// and `None` where the format records several types and the load
     /// must declare which.
     pub fn device_slot(&self) -> Option<DeviceSlot> {
-        self.medium.slot()
+        self.recognized.slot()
     }
 
     /// The **effective** access mode this discovery established: the
@@ -219,39 +229,48 @@ impl Discovery {
     /// where it does not (P28). A load that consumes the discovery
     /// inherits it, because it is the same open.
     pub fn mode(&self) -> AccessMode {
-        self.medium.mode()
+        self.recognized.mode()
     }
 
     /// What the open established about the evidence beneath the medium
-    /// (P28) — available before anything is read, and carried into the
-    /// device by a load that consumes this discovery.
+    /// (P28) — available before anything is created, and carried into
+    /// the medium by a load that consumes this discovery.
     pub fn assurance(&self) -> &Assurance {
-        self.medium.assurance()
+        self.recognized.assurance()
     }
 
     /// Identifies the artifact's nesting layers and probable
     /// filesystem, over bounded evidence alone (P27) — the same reading
     /// [`crate::Medium::identify`] gives once a medium is loaded.
     pub fn identify(&self) -> Identification {
-        self.medium.identify()
+        self.recognized.identify()
     }
 
-    /// The state behind this discovery, for the refusals a load makes
-    /// about it before taking it.
-    pub(crate) fn state(&self) -> &MediumState {
-        &self.medium
+    /// The recognition behind this discovery, for the refusals a load
+    /// makes about it before taking it.
+    pub(crate) fn recognized(&self) -> &MediumRecognition {
+        &self.recognized
     }
 
-    /// The medium, taken out of the discovery by the load that consumes
-    /// it. The claim moves with the state; nothing is re-opened.
-    pub(crate) fn into_medium(self) -> MediumState {
-        self.medium
+    /// The medium this discovery becomes, built by the load that
+    /// consumes it under the bound that load declared (P27). The claim
+    /// moves with the recognition; nothing is re-opened and no adapter
+    /// runs twice.
+    pub(crate) fn into_medium(self, cache_bytes: u64) -> MediumState {
+        self.recognized.into_state(cache_bytes)
     }
 
-    /// A discovery over a medium already opened — the nested journey,
-    /// where the artifact was reached through a namespace rather than
+    /// The caller's declaration of what recorded the artifact, taken
+    /// before the load materializes it — a declaration onto a reading,
+    /// never onto a medium.
+    pub(crate) fn declare_device(&mut self, device: DeviceType) {
+        self.recognized.declare_device(device);
+    }
+
+    /// A discovery over an artifact already recognized — the nested
+    /// journey, where it was reached through a namespace rather than
     /// named by path.
-    pub(crate) fn over(medium: MediumState) -> Self {
-        Self { medium }
+    pub(crate) fn over(recognized: MediumRecognition) -> Self {
+        Self { recognized }
     }
 }

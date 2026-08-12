@@ -47,6 +47,11 @@ image format declares for the disks it records. It opens the artifact by
 name, so there the library's own claim applies in full, and it hands
 back a discovery a load consumes so nothing is opened twice; where a
 format declares a drive, `add_device_for` composes the acts in one.
+**Discovery holds the claim and builds no cache** — no medium, no
+session cache, no spilled backing — which is what keeps it something
+other than a load: the cache bound is the load's own declaration, and
+it is stated at `load_discovery`, where the medium comes into
+existence.
 
 A load identifies the layers of the artifact's nesting: the archive
 wrapper, image format, physical media geometry, and probable filesystem,
@@ -528,8 +533,9 @@ let inner = session
 session.release_media(archive)?;          // the disk keeps answering
 
 // Asking what an artifact is, before a machine has been configured for
-// it. The discovery holds the claim under which that was established;
-// a load consumes it, so nothing is opened twice.
+// it. The discovery holds the claim under which that was established
+// and creates nothing; a load consumes it — declaring the cache bound
+// there, where the medium is made — so nothing is opened twice.
 let discovery = remanence::discover_media("disk.h8d", remanence::AccessIntent::Read)?;
 println!("{} in {:?}", discovery.article(), discovery.accepting_devices());
 match discovery.device_type() {
@@ -663,6 +669,8 @@ device.eject()                      # the drive stays; the disk stays too
 session.release_media(medium.id)
 
 # What an artifact is, before a machine has been configured for it.
+# It creates nothing, so it takes no cache bound: that is the load's
+# own declaration, stated where the medium comes into existence.
 discovery = remanence.discover_media("disk.h8d", writable=False)
 print(discovery.article, discovery.accepting_devices, discovery.device_type)
 found = session.load_discovery(discovery)   # consumed: one claim, one open

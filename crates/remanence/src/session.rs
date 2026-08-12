@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{
     self, DeviceIdentity, ImageFormatDescriptor, ImageIdentification, ProbeInput,
 };
-use crate::source::{ArchiveLayer, ImageSource};
+use crate::source::{ArchiveLayer, Evidence};
 
 /// What role a recognized layer plays in the artifact's nesting.
 ///
@@ -256,7 +256,7 @@ fn layers_with(layers: &[Layer], extra: Vec<Layer>) -> Vec<Layer> {
 /// bytes, above the same claim the presented disk is opened on, and is
 /// reached through [`crate::StorageDevice`].
 pub(crate) fn identify_medium(
-    source: &ImageSource,
+    source: &dyn Evidence,
     image_path: Option<&Path>,
     layers: &[Layer],
     device_identity: DeviceIdentity,
@@ -384,7 +384,7 @@ pub(crate) fn identify_medium(
             image,
             physical_media_from_descriptor(descriptor, current_bytes),
         ];
-        match found.identify_filesystems(&source, &mut archive_evidence) {
+        match found.identify_filesystems(source, &mut archive_evidence) {
             Ok(filesystems) if !filesystems.is_empty() => {
                 for filesystem in filesystems {
                     archive_evidence.extend(filesystem.evidence);
