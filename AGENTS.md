@@ -374,7 +374,7 @@ ABI, or Python module.
   handle. `planning/TASKS.md` is the pre-approved task queue: **agents
   do not add tasks on their own initiative, and ask before editing that
   file at all**; anyone may pick up what is already there.
-- **The vision is in force.** Use cases U1–U6, U22, U25, U26, U32 and U33
+- **The vision is in force.** Use cases U1–U6, U22, U25, U26, U32, U33 and U34
   (root [USE-CASES.md](USE-CASES.md)) and architectural principles
   (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage

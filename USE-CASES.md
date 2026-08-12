@@ -423,3 +423,42 @@ session.machine_mut("c64").expect("still here")
 session.release_machine("c64")?;         // the cascade: configuration falls
                                          // with its owner; state never does
 ```
+
+## U34 — I load the one image inside an archive, by naming it
+
+An archive holding a disk image is two media, and I take them one
+declared step at a time: the archive by its format, then the image by
+its own — a `File` from the first medium's namespace being an ordinary
+source for the second.
+
+```rust
+let mut session = Session::new();
+
+let arc  = session.load_media(File::open("HDOS_1-0.zip")?, Format::Zip)?;
+let file = arc
+    .partition(0).expect("an archive bears its direct partition")
+    .filesystem().expect("an archive's content is its namespace")
+    .get_file("HDOS_1-0_Issue_#50-00-00_890-1.h8d")?
+    .source()?;                          // a File of OURS, taken as a
+                                         // free-standing source — it
+                                         // rides the archive's claim
+
+let disk = session.load_media(file, Format::H8d)?;
+assert_eq!(disk.device_type(),
+           Some(DeviceType::Floppy(FloppyDrive::HeathH17)));
+
+let mut hdos = disk
+    .partition(0).expect("flexible media record no scheme: the direct partition")
+    .filesystem_as("hdos")?;             // my reading — an h8d could bear
+                                         // CP/M, so the choice is mine and
+                                         // the check is the library's
+for entry in hdos.entries("")? {         // a flat catalog: one root of leaves
+    println!("{:12} {:>4} {}", entry.name,
+             entry.fact("size-sectors").unwrap_or(""),
+             entry.fact("flags").unwrap_or(""));
+}
+```
+
+Nothing was guessed at any step: I named the entry rather than being
+served "the only file", I declared each format, and I declared the
+filesystem — the reading mine, the check the library's, at every rung.

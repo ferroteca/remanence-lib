@@ -834,39 +834,3 @@ handle affords and honoured it — and the commit is durable: the journal
 lands beside the file, its name recovered from my handle for location
 and nothing else; interrupted anywhere, the next open reconciles to
 wholly the old image or wholly the new one.
-
-## U34 — I load the one image inside an archive, by naming it
-
-An archive holding a disk image is two media, and I take them one
-declared step at a time: the archive by its format, then the image by
-its own — a `File` from the first medium's namespace being an ordinary
-source for the second.
-
-```rust
-let mut session = Session::new();
-
-let arc  = session.load_media(File::open("HDOS_1-0.zip")?, Format::Zip)?;
-let file = arc
-    .partition(0).expect("an archive bears its direct partition")
-    .filesystem().expect("an archive's content is its namespace")
-    .get_file("HDOS_1-0_Issue_#50-00-00_890-1.h8d")?;
-
-let disk = session.load_media(file, Format::H8d)?;   // a File of OURS —
-                                                      // it rides the archive's claim
-assert_eq!(disk.device_type(),
-           Some(DeviceType::Floppy(FloppyDrive::HeathH17)));
-
-let hdos = disk
-    .partition(0).expect("flexible media record no scheme: the direct partition")
-    .filesystem_as("hdos")?;             // my reading — an h8d could bear
-                                         // CP/M, so the choice is mine and
-                                         // the check is the library's
-for entry in hdos.files("")? {           // a flat catalog: one root of leaves
-    println!("{:12} {:>4} {}", entry.name,
-             entry.fact("size-sectors"), entry.fact("flags"));
-}
-```
-
-Nothing was guessed at any step: I named the entry rather than being
-served "the only file", I declared each format, and I declared the
-filesystem — the reading mine, the check the library's, at every rung.
