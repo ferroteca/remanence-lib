@@ -19,7 +19,8 @@
 //! [`open`]: FilesystemAdapter::open
 
 use crate::error::{Error, ErrorCategory, Result};
-use crate::filesystem::{Catalog, HdosCatalog, SpaceRule};
+use crate::filesystem::hdos::HdosCatalog;
+use crate::filesystem::{Catalog, SpaceRule};
 use crate::io::device::Device;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

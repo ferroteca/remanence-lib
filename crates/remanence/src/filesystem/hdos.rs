@@ -3,7 +3,9 @@
 
 //! HDOS directory parsing for raw hard-sectored images (e.g. `.h8d`).
 
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorCategory, Result};
+use crate::filesystem::space::path_is_root;
+use crate::filesystem::{Catalog, Entry, EntryFact, EntryKind};
 
 const SECTOR_SIZE: usize = 256;
 const LABEL_SECTOR: usize = 9;
@@ -379,4 +381,86 @@ pub fn list_hdos_files(image: &[u8]) -> Result<Vec<HdosFile>> {
     }
 
     Ok(files)
+}
+
+/// The HDOS catalog, read out of the medium it occupies.
+///
+/// HDOS has no subdirectories, so the namespace is one root of leaves:
+/// any path but the root is refused where it is asked to hold names, and
+/// answered as absent where it is asked for one.
+#[derive(Debug)]
+pub(crate) struct HdosCatalog {
+    /// The medium's bytes, held for as long as the view is (P27): the
+    /// format bounds an HDOS volume small, and reading one file out of
+    /// it is a walk of the group table rather than a second pass over
+    /// the medium.
+    image: Vec<u8>,
+    files: Vec<crate::filesystem::hdos::HdosFile>,
+}
+
+/// The largest extent the HDOS reader will take whole (P27).
+///
+/// The bound is the adapter's own, and it is the whole of what bounds a
+/// declared reading: a declaration names the adapter, and the adapter
+/// says how much of an extent it is willing to hold.
+const HDOS_BOUND: u64 = 8 * 1024 * 1024;
+
+impl HdosCatalog {
+    pub(crate) fn open(volume: &mut dyn crate::io::device::Device) -> Result<Self> {
+        let length = volume.len();
+        if length > HDOS_BOUND {
+            return Err(Error::categorized_image(
+                ErrorCategory::Unsupported,
+                "hdos",
+                format!(
+                    "this extent is {length} bytes and the HDOS reader is \
+                     bounded to {HDOS_BOUND}"
+                ),
+            ));
+        }
+        let mut image = vec![0u8; length as usize];
+        volume.read_at(0, &mut image)?;
+        let files = crate::filesystem::hdos::list_hdos_files(&image)?;
+        Ok(Self { image, files })
+    }
+
+    fn entry(file: &crate::filesystem::hdos::HdosFile) -> Entry {
+        Entry {
+            name: file.display_name(),
+            kind: EntryKind::File,
+            size_bytes: file.size_bytes(),
+            declared: vec![
+                EntryFact::new("size-sectors", file.size_sectors.to_string()),
+                EntryFact::new("modified-date", file.modified_date_string()),
+                EntryFact::new("modified-date-raw", file.modified_date.to_string()),
+                EntryFact::new("flags", file.flags_string()),
+                EntryFact::new("flags-raw", file.flags.to_string()),
+            ],
+        }
+    }
+}
+
+impl Catalog for HdosCatalog {
+    fn entries(&self, path: &str) -> Result<Vec<Entry>> {
+        if !path_is_root(path) {
+            return Err(Error::categorized_image(
+                ErrorCategory::NotDirectory,
+                "hdos",
+                format!("'{path}' holds no names; the HDOS catalog is flat"),
+            ));
+        }
+        Ok(self.files.iter().map(Self::entry).collect())
+    }
+
+    fn stat(&self, path: &str) -> Result<Option<Entry>> {
+        Ok(self
+            .files
+            .iter()
+            .find(|file| file.display_name().eq_ignore_ascii_case(path))
+            .map(Self::entry))
+    }
+
+    fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+        crate::filesystem::hdos::read_hdos_file(&self.image, path)
+    }
 }

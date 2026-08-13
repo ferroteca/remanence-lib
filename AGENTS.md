@@ -228,21 +228,42 @@ ABI, or Python module.
   vantage doors (P16, P17, P19), with `mbr.rs` the one scheme reader
   beneath it: partition discovery with pinned types.
 
-  **`filesystem/`** — `mod.rs` is the P19 volume/filesystem node and the
-  presentation contract beneath it: the public `StorageSpace` carrying
-  **two vantage traits on one object**, addressable I/O within its own
-  extent and namespace I/O over the files it names, so that a FAT volume
-  has both, a volume bearing no filesystem has only the first, and a
-  medium's own namespace only the second (the 0..1 as trait presence
-  rather than prose); the `File` view, the one `Entry` vocabulary with
-  the facts a filesystem declares in its own spelling, the label and
-  evidence a recognition answers with, the enumerated `SpaceRule` set
-  its refusals name, and the resolver that walks device → volume →
-  namespace where every seam has one supported answer and refuses naming
-  the candidates where it does not; **the file verbs live here and on
-  nothing else** — including for a namespace no device composed, where
-  the node is the same one with its device and its extent absent rather
-  than a second type carrying the same verbs.
+  **`filesystem/`** — the P19 seam, whose head is four files.
+  `filesystem/mod.rs` is the shared vocabulary every layer here speaks:
+  the one `Entry` set with the facts a filesystem declares in its own
+  spelling, the `Catalog` trait a flat on-medium namespace is reached
+  by, and the enumerated `SpaceRule` set its refusals name.
+  `filesystem/space.rs` is the node itself — the public `StorageSpace`
+  carrying **two vantage traits on one object**, addressable I/O within
+  its own extent and namespace I/O over the files it names, so that a
+  FAT volume has both, a volume bearing no filesystem has only the
+  first, and a medium's own namespace only the second (the 0..1 as trait
+  presence rather than prose) — beside the `File` view and the resolver
+  that walks device → volume → namespace, every seam having one
+  supported answer and refusing naming the candidates where it does not.
+  **The file verbs live there and on nothing else**, including for a
+  namespace no device composed, where the node is the same one with its
+  device and its extent absent rather than a second type carrying the
+  same verbs.
+
+  Beneath the node, `filesystem/contract.rs` is what an adapter presents
+  *through*: a `RecordedName` keeping the bytes as written beside the
+  encoding claimed for them, an `ItemRef` so several names may reach one
+  item, a `SizeClaim` recording what the size is a claim *about*, a
+  `ContentSource` that stays a bounded descriptor rather than bytes, and
+  a `ForeignRecord` keeping whole what this layer cannot name — with
+  `FilesystemView` the trait and its refusals attributed to the provider
+  that presents rather than to the seam. `filesystem/coverage.rs` is the
+  account over a floor, **total because the remainder is derived** rather
+  than declared, so a provider cannot leave a hole by forgetting to
+  mention one; overlapping claims are refused naming both sides, a claim
+  past the floor is refused in the floor's own units, and an opaque
+  region is accounted and never named. `filesystem/fixtures.rs` is
+  `#[cfg(test)]` only: the one synthetic provider both test modules
+  drive, so they cannot drift onto two providers that disagree.
+  `space.rs` carries no unit tests of its own — `StorageSpace` is
+  exercised end to end from `tests/`, over real volumes rather than a
+  synthetic one.
 
   `catalog.rs` holds the streamed filesystem adapters and catalog for
   the namespaces a medium bears directly (crate-private, reached through
@@ -259,7 +280,8 @@ ABI, or Python module.
   variant-by-variant assignment rules it claims, the conditions it
   refuses to model, and the mapping it answers with, undetermined
   letters included; `hdos.rs` the HDOS directory lister and file
-  extractor, private behind the namespace node; and `cbm_dos.rs` the P18
+  extractor with the `Catalog` adapter over it, private behind the
+  namespace node; and `cbm_dos.rs` the P18
   adapter at the top of the flux ladder — the directory CBM DOS wrote,
   read through a `BlockSource` and nothing else, so the filesystem never
   learns what it is standing on: the BAM header as the space's label,
