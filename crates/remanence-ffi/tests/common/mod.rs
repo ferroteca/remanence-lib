@@ -96,6 +96,63 @@ pub fn runtime_library() -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
+/// Where the probe-enabled build of the library goes.
+///
+/// **A separate target directory, which is the whole trick** (D50). The
+/// leak probe is a global allocator and an exported symbol, so it must
+/// never reach the shipped cdylib — an extra `remanence_*` symbol is an
+/// S2 change. Building it here leaves `target/<profile>` untouched, and
+/// because cargo locks a target directory rather than a workspace, this
+/// build can run while `cargo test` holds the lock on the other one.
+fn probe_target_dir() -> PathBuf {
+    crate_dir().join("../../target/leak-probe")
+}
+
+/// Builds the library with the leak probe and answers what to link.
+///
+/// Cold this costs about twenty seconds; warm it is a no-op cargo
+/// resolves in a fifth of a second, which is what makes running the leak
+/// check by default affordable.
+fn probe_library() -> PathBuf {
+    let dir = probe_target_dir();
+    let output = Command::new("cargo")
+        .args(["build", "-p", "remanence-ffi", "--features", "leak-probe"])
+        .arg("--target-dir")
+        .arg(&dir)
+        .current_dir(workspace_dir())
+        .output()
+        .unwrap_or_else(|error| {
+            panic!(
+                "cannot build the probe-enabled library: {error}\n\n\
+                 The leak check runs by default (D50) and needs a cdylib \
+                 built with `--features leak-probe`, which never ships. \
+                 Set {SKIP}=1 to skip the C tests deliberately."
+            )
+        });
+    assert!(
+        output.status.success(),
+        "the probe-enabled library did not build:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let built = dir.join("debug");
+    for name in [
+        "remanence_ffi.dll.lib",
+        "libremanence_ffi.so",
+        "libremanence_ffi.dylib",
+    ] {
+        let path = built.join(name);
+        if path.exists() {
+            return path;
+        }
+    }
+    panic!(
+        "the probe build reported success but left nothing to link in {}",
+        built.display()
+    );
+}
+
 fn run(what: &str, command: &mut Command) -> String {
     let output = command.output().unwrap_or_else(|error| {
         panic!(
@@ -139,16 +196,9 @@ pub fn build_dir() -> &'static PathBuf {
                 crate_dir().join("examples").display()
             ));
 
-        // Stated either way, never omitted. CMake caches what it was
-        // last told, so a build directory configured under
-        // `--features leak-probe` would keep trying to link the probe
-        // target on the next run without it — an unresolved symbol that
-        // fails every C test for a reason none of them is about.
-        configure.arg(if cfg!(feature = "leak-probe") {
-            "-DREMANENCE_LEAK_PROBE=ON"
-        } else {
-            "-DREMANENCE_LEAK_PROBE=OFF"
-        });
+        // The leak target links its own build of the library — the one
+        // carrying the probe — so CMake is told about both.
+        configure.arg(format!("-DREMANENCE_PROBE_LIB={}", probe_library().display()));
         if let Some(generator) = std::env::var_os(GENERATOR) {
             configure.arg("-G").arg(generator);
         }
@@ -172,10 +222,21 @@ pub fn build_dir() -> &'static PathBuf {
         );
 
         let bin = build.join("bin");
-        // Windows resolves imports from beside the executable.
+        // Windows resolves an import from beside the executable before
+        // anything on PATH, and both builds of the library carry the
+        // same file name — so the probe binary gets its own directory
+        // and its own copy, or it would load the shipped one and fail to
+        // find the symbol.
         if let Some(library) = runtime_library() {
-            let beside = bin.join(library.file_name().expect("the library has a name"));
-            let _ = std::fs::copy(&library, &beside);
+            let name = library.file_name().expect("the library has a name");
+            let _ = std::fs::copy(&library, bin.join(name));
+
+            let probe_bin = bin.join("leak");
+            let _ = std::fs::create_dir_all(&probe_bin);
+            let probe = probe_target_dir().join("debug").join(name);
+            if probe.exists() {
+                let _ = std::fs::copy(&probe, probe_bin.join(name));
+            }
         }
         bin
     })
@@ -184,7 +245,17 @@ pub fn build_dir() -> &'static PathBuf {
 /// Runs a built C executable with the given arguments, from the
 /// workspace root so fixture paths in the tests are workspace-relative.
 pub fn run_c(program: &str, args: &[&str]) -> String {
-    let exe = build_dir().join(if cfg!(windows) {
+    run_c_in(build_dir().clone(), program, args)
+}
+
+/// The same, for the probe binary, which lives beside its own copy of
+/// the library rather than the shipped one.
+pub fn run_c_probe(program: &str, args: &[&str]) -> String {
+    run_c_in(build_dir().join("leak"), program, args)
+}
+
+fn run_c_in(dir: PathBuf, program: &str, args: &[&str]) -> String {
+    let exe = dir.join(if cfg!(windows) {
         format!("{program}.exe")
     } else {
         program.to_owned()

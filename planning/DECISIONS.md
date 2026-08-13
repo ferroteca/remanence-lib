@@ -58,6 +58,64 @@ removes it is the record either way.
 
 ## Decisions
 
+### D50 — The leak check runs by default, the probe having never needed to be in the shipped library
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S2; D45, D47. `DECISIONS.md` was searched first
+and returned **D47, which made this check opt-in** and named that as its
+own weak point. This reverses it.
+
+**D47's constraint was real and is not weakened here.** The probe is a
+global allocator and an exported symbol, and S2 is defined as *every*
+`remanence_*` symbol `crates/remanence-ffi` exports — so shipping it
+would be a surface change bought with a test's convenience. That still
+holds; the shipped cdylib is untouched, and `dumpbin /exports` over
+`target/debug/remanence_ffi.dll` finds no probe symbol while the probe
+build's does.
+
+**What was wrong was the inference, not the constraint.** D47 reasoned
+from "the probe must not ship" to "the probe must be opt-in", and the
+step between them does not follow. The probe has to be in a library a C
+caller can *link*, which is not the same library that ships. The harness
+builds one with `--features leak-probe` into `target/leak-probe`, and
+the leak binary links that.
+
+**Cargo locks a target directory, not a workspace**, which is what makes
+this work at all. D45 declined to run a nested `cargo build` because it
+"would contend for the lock the current run already holds" — true of the
+same target directory, and false of a different one. That was the second
+premise worth testing rather than assuming. Cold, the extra build costs
+about twenty seconds; warm, a fifth of a second, which is what makes
+running it by default affordable rather than merely possible.
+
+**Both builds carry the same file name, and Windows loads the copy
+beside the executable**, so the probe binary gets its own output
+directory and its own copy of the library. Without that it would load
+the shipped one and fail to find the symbol — a link that succeeds and a
+run that does not, which is the confusing shape of failure.
+
+**Verified in both directions.** `remanence_string_free` was made to
+`forget` rather than drop, and the check reported *8 blocks over 8
+cycles, 1.00 per cycle* on the refusal path while the discovery path
+stayed clean; restored, it passes. And the shipped DLL was inspected
+directly rather than reasoned about.
+
+**What this closes.** D47 recorded that with the feature off its binary
+reported "0 tests", which reads like nothing to check, and called that a
+real departure from the fail-rather-than-skip rule D44 and D45 follow.
+There is no longer a feature to leave off: the rule holds across every C
+test again, and the check that was most likely to quietly stop being run
+now runs whenever `cargo test` does.
+
+**Weighed and declined:** making `leak-probe` a default cargo feature
+and disabling it at release (one forgotten flag ships an undocumented
+symbol, and a surface change by omission is exactly what a governed
+surface exists to prevent); naming the symbol outside the `remanence_*`
+prefix so it falls outside S2's letter (it would still be an exported
+symbol nobody documented, which is the spirit); and a second cdylib that
+re-exports the ABI plus the probe (the C tests would then exercise a
+library that is not the one shipped).
+
 ### D49 — A fresh clone can run the suite, and the rig layout is built rather than downloaded
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -256,6 +314,11 @@ first cycle is a warm-up whose count is discarded: a library settles
 lazily-initialised state on first use, and that is allocation which is
 never freed and never should be. A leak is the count rising *per cycle*
 after that, which the C caller reports as a rate.
+
+> **Annotated by D50**, which makes this check run by default. The
+> constraint below stands — the probe still never ships — but the
+> inference from it to "opt-in" did not follow: the probe must be in a
+> library a C caller can *link*, which is not the library that ships.
 
 **Opt-in, and the cost of that is stated rather than glossed.** The
 probe is a global allocator and an exported symbol; carrying it in a

@@ -856,25 +856,24 @@ satisfies it. When the library is missing the tests say so and say what
 to run; they do not build it themselves, because a nested `cargo` would
 contend for the lock the running test already holds.
 
-**The `_free` discipline is checked separately, and only when asked**
-(D47). Every handle and string the ABI hands out is allocated by Rust
-inside the cdylib, so no leak checker outside it — CppUTest's, or a
+**The `_free` discipline is checked too, and it runs by default**
+(D47, D50). Every handle and string the ABI hands out is allocated by
+Rust inside the cdylib, so no leak checker outside it — CppUTest's, or a
 sanitizer's — can see them; the library counts its own live allocations
 instead and exports the count, and a C caller reads it either side of
-repeated create/release cycles. It is a global allocator and an extra
-symbol, so it never ships: it lives behind the `leak-probe` feature, is
-kept out of the generated header, and runs under
+repeated create/release cycles.
 
-```bash
-cargo build -p remanence-ffi --features leak-probe && cargo test -p remanence-ffi --features leak-probe
-```
+**The probe never ships**, being a global allocator and an exported
+symbol — and an extra `remanence_*` symbol is an S2 change. It does not
+have to: the harness builds a second copy of the library with
+`--features leak-probe` into `target/leak-probe`, and the leak binary
+links *that*, leaving `target/<profile>` exactly as it was. Cargo locks
+a target directory rather than a workspace, so that build runs while
+`cargo test` holds the other lock. Cold it adds about twenty seconds;
+warm, a fifth of a second.
 
-Both commands need the feature — the first makes the cdylib the caller
-links, the second decides whether the test exists at all. With it off
-that binary reports "0 tests", which is the one place the
-fail-rather-than-skip rule is given up, and deliberately: the
-alternative is shipping the probe. Run it when the ABI's ownership rules
-change, and before a release.
+If you change what the ABI hands out or who frees it, this is the test
+that notices. Nothing needs enabling.
 
 Running the example against a real image is still by hand, below; that is
 the part neither compiling nor the boundary tests stands in for. When the Python surface changed, build `-p remanence-py` (needs

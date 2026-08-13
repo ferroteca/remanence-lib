@@ -80,13 +80,18 @@ add_library(example_identify OBJECT "${REMANENCE_EXAMPLES}/identify.c")
 add_executable(abi_boundary abi_boundary.c)
 target_link_libraries(abi_boundary PRIVATE "${REMANENCE_LIB}")
 
-# --- the leak probe, when the library was built with it ----------------
+# --- the leak probe ----------------------------------------------------
 #
-# Optional because the symbol it calls exists only under the cdylib's
-# `leak-probe` feature, which is off for a released artifact. Building
-# this target against a library without it is a link error, so it is not
-# built unless the caller says the feature is on.
-if(REMANENCE_LEAK_PROBE)
+# This one links a **different build** of the library: the probe is a
+# global allocator and an exported symbol, so it never reaches the
+# shipped cdylib, and the Rust harness builds it into its own target
+# directory (D50). Its own output directory too — both builds carry the
+# same file name, and Windows loads the copy beside the executable.
+if(REMANENCE_PROBE_LIB)
     add_executable(abi_leaks abi_leaks.c)
-    target_link_libraries(abi_leaks PRIVATE "${REMANENCE_LIB}")
+    target_link_libraries(abi_leaks PRIVATE "${REMANENCE_PROBE_LIB}")
+    foreach(suffix "" _DEBUG _RELEASE _RELWITHDEBINFO _MINSIZEREL)
+        set_target_properties(abi_leaks PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY${suffix} "${CMAKE_BINARY_DIR}/bin/leak")
+    endforeach()
 endif()
