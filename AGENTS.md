@@ -780,9 +780,26 @@ cargo test
 git diff --check
 ```
 
-When the C ABI changed, rebuild and commit the regenerated header, and
-recompile `examples/identify.c` against it (instructions in the file
-header). When the Python surface changed, build `-p remanence-py` (needs
+When the C ABI changed, rebuild and commit the regenerated header.
+`cargo test` **compiles** the C surface for you (D44): that the header
+stands alone, that `examples/identify.c` still compiles against it, and
+that the header is valid C++, which `cpp_compat = true` claims and
+nothing tested before. It compiles rather than links — a header
+generated from the `extern "C"` signatures cannot declare a symbol the
+library lacks, so linking would add nothing and would need a built
+cdylib.
+
+**On Windows** the compiler is looked for in `$MSYS_HOME` (default
+`C:\msys64`) under `ucrt64\bin` then `mingw64\bin`, then on `PATH`;
+elsewhere `PATH` is the whole search, and MSYS2 is not mentioned at all —
+neither in the lookup nor in what a failure advises. `REMANENCE_CC` and
+`REMANENCE_CXX` override either outright. A bare `cl` is never tried, since
+it can resolve to Watcom's rather than MSVC's. **No compiler is a test
+failure, not a skip** — `REMANENCE_SKIP_CC=1` skips deliberately, and
+plain `cargo test` needs a C compiler because of it.
+
+Running the example against a real image is still by hand, below; that is
+the part compiling cannot stand in for. When the Python surface changed, build `-p remanence-py` (needs
 Python ≥ 3.10) and smoke-test the module, **and move the type stub with
 it** (above); for release artifacts, `uv build crates/remanence-py`
 produces the sdist and abi3 wheel.
@@ -810,11 +827,16 @@ how the wheel is built. If none is reachable the tests **fail** rather
 than skip, because a check that quietly does not run reads exactly like
 one that passed; `REMANENCE_SKIP_MYPY=1` skips them deliberately.
 
-### Recompiling the C example on this host
+### Running the C example on this host
+
+`cargo test` already compiles the example (above). This links and runs
+it, which is the part a compile cannot stand in for: it exercises the
+ABI end to end against a real artifact.
 
 The example links against the MSVC-built DLL and compiles with MSYS2's
-ucrt64 gcc. **Put `C:\msys64\ucrt64\bin` on `PATH` first**, from
-PowerShell:
+ucrt64 gcc. **Put `C:\msys64\ucrt64\bin` on `PATH` first** — without it
+the toolchain cannot load its own runtime DLLs, and `g++` in particular
+fails with no diagnostic at all. From PowerShell:
 
 ```powershell
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
