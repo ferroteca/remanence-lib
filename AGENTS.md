@@ -789,14 +789,21 @@ generated from the `extern "C"` signatures cannot declare a symbol the
 library lacks, so linking would add nothing and would need a built
 cdylib.
 
-**On Windows** the compiler is looked for in `$MSYS_HOME` (default
-`C:\msys64`) under `ucrt64\bin` then `mingw64\bin`, then on `PATH`;
-elsewhere `PATH` is the whole search, and MSYS2 is not mentioned at all —
-neither in the lookup nor in what a failure advises. `REMANENCE_CC` and
-`REMANENCE_CXX` override either outright. A bare `cl` is never tried, since
-it can resolve to Watcom's rather than MSVC's. **No compiler is a test
-failure, not a skip** — `REMANENCE_SKIP_CC=1` skips deliberately, and
-plain `cargo test` needs a C compiler because of it.
+**CMake builds all of it, with MSVC** (D46). CMake is here for one
+reason: `cl.exe` needs the environment `vcvars64.bat` sets, and locating
+and sourcing that from a test harness is more bespoke machinery than the
+compiler search it replaces. CMake does it and finds MSVC unaided, which
+is the native match — the cdylib is MSVC-built, so a C caller links the
+import library the same toolchain produced. `crates/remanence-ffi/tests/c/CMakeLists.txt`
+is the build; the Rust tests drive it and it is not meant to be
+configured by hand.
+
+Overrides, all optional: `REMANENCE_CC` / `REMANENCE_CXX` set CMake's
+compilers (MinGW's gcc still works — it is one variable away, just no
+longer the default), and `REMANENCE_CMAKE_GENERATOR` sets the generator.
+**No CMake or no compiler is a test failure, not a skip** —
+`REMANENCE_SKIP_CC=1` skips deliberately, and plain `cargo test` needs
+both because of it.
 
 `cargo test` also **runs** a C caller against the built library
 (D45): `tests/c/abi_boundary.c` is compiled against the header, linked,
@@ -812,6 +819,26 @@ cdylib — `cargo build` does.** Running the two in the order above
 satisfies it. When the library is missing the tests say so and say what
 to run; they do not build it themselves, because a nested `cargo` would
 contend for the lock the running test already holds.
+
+**The `_free` discipline is checked separately, and only when asked**
+(D47). Every handle and string the ABI hands out is allocated by Rust
+inside the cdylib, so no leak checker outside it — CppUTest's, or a
+sanitizer's — can see them; the library counts its own live allocations
+instead and exports the count, and a C caller reads it either side of
+repeated create/release cycles. It is a global allocator and an extra
+symbol, so it never ships: it lives behind the `leak-probe` feature, is
+kept out of the generated header, and runs under
+
+```bash
+cargo build -p remanence-ffi --features leak-probe && cargo test -p remanence-ffi --features leak-probe
+```
+
+Both commands need the feature — the first makes the cdylib the caller
+links, the second decides whether the test exists at all. With it off
+that binary reports "0 tests", which is the one place the
+fail-rather-than-skip rule is given up, and deliberately: the
+alternative is shipping the probe. Run it when the ABI's ownership rules
+change, and before a release.
 
 Running the example against a real image is still by hand, below; that is
 the part neither compiling nor the boundary tests stands in for. When the Python surface changed, build `-p remanence-py` (needs
@@ -848,9 +875,11 @@ one that passed; `REMANENCE_SKIP_MYPY=1` skips them deliberately.
 it, which is the part a compile cannot stand in for: it exercises the
 ABI end to end against a real artifact.
 
-The example links against the MSVC-built DLL and compiles with MSYS2's
-ucrt64 gcc. **Put `C:\msys64\ucrt64\bin` on `PATH` first** — without it
-the toolchain cannot load its own runtime DLLs, and `g++` in particular
+This recipe uses MSYS2's ucrt64 gcc, which is no longer what the tests
+use (D46 moved those to CMake and MSVC) but still works and is kept
+deliberately: it is the second compiler's opinion the switch otherwise
+gave up. **Put `C:\msys64\ucrt64\bin` on `PATH` first** — without it the
+toolchain cannot load its own runtime DLLs, and `g++` in particular
 fails with no diagnostic at all. From PowerShell:
 
 ```powershell

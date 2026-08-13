@@ -1,224 +1,216 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Finding and driving a C toolchain, shared by the tests that need one.
+//! Driving the C tests' CMake build, shared by everything that needs it.
 //!
-//! Both the compile checks (D44) and the ABI boundary tests (D45) have
-//! to locate a compiler, put its own directory on `PATH` so it can load
-//! its runtime DLLs, and fail rather than skip when there is none. That
-//! is one policy, so it lives in one place.
+//! **CMake is here for MSVC**, and for nothing else it happens to also
+//! do. `cl.exe` needs the environment `vcvars64.bat` sets, and locating
+//! and sourcing that from a test harness is more bespoke machinery than
+//! the compiler discovery it replaces — where MSYS2's gcc needed a known
+//! install path, its own directory on `PATH`, and a rule against ever
+//! trying a bare `cl` (which resolves to Watcom's on the development
+//! host). CMake finds MSVC unaided and sets its environment up, so all
+//! of that goes.
+//!
+//! Configured and built **once per test binary**: the harness runs tests
+//! on threads of one process, and concurrent `cmake --build` calls on
+//! one build directory race. A failure is reported to whichever test
+//! asked first, with the compiler's own output.
 
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
-/// Point this at a compiler to override discovery — a full path, or a
-/// command on `PATH`. Its directory is prepended to `PATH` for the run.
+/// Overrides the CMake generator, for a host where the default is wrong.
+pub const GENERATOR: &str = "REMANENCE_CMAKE_GENERATOR";
+/// Overrides the C compiler CMake would choose.
 pub const CC_OVERRIDE: &str = "REMANENCE_CC";
-/// The same, for the C++ compiler used by the `cpp_compat` check.
+/// The same, for C++.
 pub const CXX_OVERRIDE: &str = "REMANENCE_CXX";
-/// Set this to skip the checks deliberately. As elsewhere, an unrun
-/// check must be somebody's decision rather than a tool's absence.
+/// Skips the C tests deliberately. An unrun check must be somebody's
+/// decision rather than a tool's absence.
 pub const SKIP: &str = "REMANENCE_SKIP_CC";
-
-/// MSYS2 is a Windows thing, so everything about it is compiled only
-/// there: the names, the search, and the advice a failure gives. A
-/// message telling a Linux developer to install MSYS2 and set
-/// `MSYS_HOME` would be worse than no message.
-#[cfg(windows)]
-mod msys {
-    use std::path::PathBuf;
-
-    /// Names the MSYS2 installation, when it is not where it installs.
-    pub const HOME: &str = "MSYS_HOME";
-    /// Where MSYS2 installs unless told otherwise.
-    pub const DEFAULT: &str = "C:/msys64";
-
-    /// The toolchain directories to try before `PATH`.
-    ///
-    /// Before, because `PATH` on a developer's Windows box has surprises
-    /// on it: a bare `cl` can resolve to **Watcom's**, not MSVC's, which
-    /// is why no `cl` is consulted at any point.
-    pub fn dirs() -> Vec<PathBuf> {
-        let root = std::env::var_os(HOME)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(DEFAULT));
-        vec![root.join("ucrt64/bin"), root.join("mingw64/bin")]
-    }
-
-    /// How to fix an absent compiler, in Windows' terms.
-    pub fn advice() -> String {
-        format!(
-            "  - install MSYS2's ucrt64 toolchain (expected at {DEFAULT})\n  \
-             - set {HOME}=<msys2 root> if it is installed elsewhere\n"
-        )
-    }
-}
-
-/// Directories searched ahead of `PATH`. Only Windows has any.
-pub fn toolchain_dirs() -> Vec<PathBuf> {
-    #[cfg(windows)]
-    {
-        msys::dirs()
-    }
-    #[cfg(not(windows))]
-    {
-        Vec::new()
-    }
-}
-
-/// The platform's own advice for installing a compiler.
-pub fn toolchain_advice() -> String {
-    #[cfg(windows)]
-    {
-        msys::advice()
-    }
-    #[cfg(not(windows))]
-    {
-        "  - install a C toolchain through the system package manager\n".to_owned()
-    }
-}
+/// The build configuration asked of multi-config generators.
+const CONFIG: &str = "Debug";
 
 pub fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-pub fn scratch() -> PathBuf {
-    let dir = crate_dir().join("../../target/c-surface");
-    std::fs::create_dir_all(&dir).expect("a scratch directory for object files");
-    dir
+pub fn workspace_dir() -> PathBuf {
+    crate_dir()
+        .join("../..")
+        .canonicalize()
+        .expect("the workspace root is reachable from the crate")
 }
 
-/// A compiler that answered `--version`, and the directory to put on
-/// `PATH` so it can find its own runtime DLLs. Without that, MSYS2's
-/// `g++` exits non-zero and prints **nothing at all**, which reads as a
-/// compile failure with no diagnostic — the confusing failure this
-/// function exists to prevent.
-pub struct Compiler {
-    pub program: PathBuf,
-    pub bin_dir: Option<PathBuf>,
-}
-
-impl Compiler {
-    pub fn command(&self) -> Command {
-        let mut command = Command::new(&self.program);
-        if let Some(dir) = &self.bin_dir {
-            let existing = std::env::var("PATH").unwrap_or_default();
-            command.env("PATH", format!("{};{existing}", dir.display()));
-        }
-        command
-    }
-
-    pub fn answers(program: &Path, bin_dir: Option<PathBuf>) -> Option<Self> {
-        let candidate = Compiler {
-            program: program.to_path_buf(),
-            bin_dir,
-        };
-        let ok = candidate
-            .command()
-            .arg("--version")
-            .output()
-            .is_ok_and(|output| output.status.success());
-        ok.then_some(candidate)
-    }
-}
-
-pub fn find(override_var: &str, names: &[&str]) -> Option<Compiler> {
-    if let Some(stated) = std::env::var_os(override_var) {
-        let path = PathBuf::from(&stated);
-        let bin_dir = path.parent().filter(|p| !p.as_os_str().is_empty());
-        let found = Compiler::answers(&path, bin_dir.map(Path::to_path_buf));
-        assert!(
-            found.is_some(),
-            "{override_var} is set to {stated:?}, and that does not answer \
-             `--version`. Point it at a working compiler or unset it; \
-             discovery is not attempted while it is set, so a typo here \
-             fails loudly rather than falling back to something else."
-        );
-        return found;
-    }
-
-    for dir in toolchain_dirs() {
-        for name in names {
-            let path = dir.join(format!("{name}.exe"));
-            if path.exists() {
-                if let Some(found) = Compiler::answers(&path, Some(dir.clone())) {
-                    return Some(found);
-                }
-            }
-        }
-    }
-    for name in names {
-        if let Some(found) = Compiler::answers(Path::new(name), None) {
-            return Some(found);
-        }
-    }
-    None
+/// `target/<profile>`, from this test binary's own location rather than
+/// assumed to be `debug`, so a `--release` run links what it just built.
+pub fn target_dir() -> PathBuf {
+    let exe = std::env::current_exe().expect("a test binary knows its own path");
+    exe.parent()
+        .and_then(Path::parent)
+        .expect("the test binary sits in target/<profile>/deps")
+        .to_path_buf()
 }
 
 pub fn skipping() -> bool {
     if std::env::var_os(SKIP).is_some() {
-        eprintln!("!! {SKIP} is set: the C surface was NOT compiled.");
+        eprintln!("!! {SKIP} is set: the C surface was NOT built or run.");
         return true;
     }
     false
 }
 
-pub fn require(override_var: &str, names: &[&str], language: &str) -> Option<Compiler> {
-    let found = find(override_var, names);
-    let searched = toolchain_dirs();
-    let where_looked = if searched.is_empty() {
-        "on PATH".to_owned()
-    } else {
-        format!("in {searched:?}, then on PATH")
-    };
-    assert!(
-        found.is_some(),
-        "no {language} compiler was found, so the C surface went \
-         unchecked. This fails rather than skips, because a check that \
-         quietly does not run reads exactly like a check that passed.\n\n\
-         Tried {names:?} {where_looked}. A bare `cl` is never tried: it \
-         can resolve to Watcom's rather than MSVC's.\n\n\
-         Fix it with any of:\n{}  \
-         - put a compiler on PATH\n  \
-         - set {override_var}=<path to the compiler>\n\n\
-         To skip deliberately, set {SKIP}=1.",
-        toolchain_advice()
+/// The library a C caller links against: MSVC links the import library
+/// beside the DLL, everything else links the shared object itself.
+fn link_target() -> PathBuf {
+    let dir = target_dir();
+    for name in [
+        "remanence_ffi.dll.lib",
+        "libremanence_ffi.so",
+        "libremanence_ffi.dylib",
+    ] {
+        let path = dir.join(name);
+        if path.exists() {
+            return path;
+        }
+    }
+    panic!(
+        "no built library in {}, so there is nothing for a C caller to \
+         link against.\n\n\
+         `cargo test` does not build a cdylib — `cargo build` does, and \
+         AGENTS.md orders it first for exactly this reason:\n\n  \
+         cargo build\n  cargo test\n\n\
+         This does not run cargo itself: a nested build would contend for \
+         the lock the current run already holds.",
+        dir.display()
     );
-    found
 }
 
-pub fn compile(compiler: &Compiler, source: &Path, object: &str, extra: &[&str]) -> Result<(), String> {
-    let output = compiler
-        .command()
-        .args(["-c", "-Wall", "-Wextra", "-Werror"])
-        .args(extra)
-        .arg("-I")
-        .arg(crate_dir().join("include"))
-        .arg("-o")
-        .arg(scratch().join(object))
-        .arg(source)
-        .output()
-        .map_err(|error| format!("cannot run the compiler: {error}"))?;
+/// The DLL that must sit beside a test executable on Windows.
+pub fn runtime_library() -> Option<PathBuf> {
+    let path = target_dir().join("remanence_ffi.dll");
+    path.exists().then_some(path)
+}
 
-    if output.status.success() {
-        return Ok(());
-    }
+fn run(what: &str, command: &mut Command) -> String {
+    let output = command.output().unwrap_or_else(|error| {
+        panic!(
+            "cannot run {what}: {error}\n\n\
+             CMake drives the C tests since D46. Install it, or set \
+             {SKIP}=1 to skip them deliberately."
+        )
+    });
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Err(if text.trim().is_empty() {
-        format!(
-            "the compiler exited {} and printed nothing, which usually \
-             means it could not load its own runtime DLLs — check the \
-             directory beside {} is reachable",
-            output.status,
-            compiler.program.display()
-        )
-    } else {
-        text
+    assert!(output.status.success(), "{what} failed:\n{text}");
+    text
+}
+
+/// Where the built executables land, whichever generator ran.
+static BUILD: OnceLock<PathBuf> = OnceLock::new();
+
+/// Configures and builds every C target once, and answers the directory
+/// the executables are in.
+pub fn build_dir() -> &'static PathBuf {
+    BUILD.get_or_init(|| {
+        let source = crate_dir().join("tests/c");
+        let build = target_dir().join("c-tests");
+
+        let mut configure = Command::new("cmake");
+        configure
+            .arg("-S")
+            .arg(&source)
+            .arg("-B")
+            .arg(&build)
+            .arg(format!("-DREMANENCE_LIB={}", link_target().display()))
+            .arg(format!(
+                "-DREMANENCE_INCLUDE={}",
+                crate_dir().join("include").display()
+            ))
+            .arg(format!(
+                "-DREMANENCE_EXAMPLES={}",
+                crate_dir().join("examples").display()
+            ));
+
+        // Stated either way, never omitted. CMake caches what it was
+        // last told, so a build directory configured under
+        // `--features leak-probe` would keep trying to link the probe
+        // target on the next run without it — an unresolved symbol that
+        // fails every C test for a reason none of them is about.
+        configure.arg(if cfg!(feature = "leak-probe") {
+            "-DREMANENCE_LEAK_PROBE=ON"
+        } else {
+            "-DREMANENCE_LEAK_PROBE=OFF"
+        });
+        if let Some(generator) = std::env::var_os(GENERATOR) {
+            configure.arg("-G").arg(generator);
+        }
+        for (variable, cmake) in [
+            (CC_OVERRIDE, "CMAKE_C_COMPILER"),
+            (CXX_OVERRIDE, "CMAKE_CXX_COMPILER"),
+        ] {
+            if let Some(compiler) = std::env::var(variable).ok() {
+                configure.arg(format!("-D{cmake}={compiler}"));
+            }
+        }
+
+        run("cmake configure", &mut configure);
+        run(
+            "cmake build",
+            Command::new("cmake")
+                .arg("--build")
+                .arg(&build)
+                .arg("--config")
+                .arg(CONFIG),
+        );
+
+        let bin = build.join("bin");
+        // Windows resolves imports from beside the executable.
+        if let Some(library) = runtime_library() {
+            let beside = bin.join(library.file_name().expect("the library has a name"));
+            let _ = std::fs::copy(&library, &beside);
+        }
+        bin
     })
+}
+
+/// Runs a built C executable with the given arguments, from the
+/// workspace root so fixture paths in the tests are workspace-relative.
+pub fn run_c(program: &str, args: &[&str]) -> String {
+    let exe = build_dir().join(if cfg!(windows) {
+        format!("{program}.exe")
+    } else {
+        program.to_owned()
+    });
+    assert!(
+        exe.exists(),
+        "the C target `{program}` was not built; expected it at {}",
+        exe.display()
+    );
+
+    let output = Command::new(&exe)
+        .args(args)
+        .current_dir(workspace_dir())
+        .output()
+        .expect("the C caller runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "the C caller `{program} {}` failed. This is the ABI as C meets \
+         it, so a failure here is a real boundary defect rather than a \
+         harness one:\n{text}",
+        args.join(" ")
+    );
+    text
 }

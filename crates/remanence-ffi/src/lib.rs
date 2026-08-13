@@ -30,6 +30,81 @@ use remanence::{
     MediaId, PhysicalMediaLayout, SectorLayout, Session,
 };
 
+/// Counting live allocations, so a C caller can prove the `_free`
+/// discipline (D47).
+///
+/// **Everything this ABI hands out is allocated by Rust inside this
+/// cdylib** — `CString::into_raw` for strings, `Box::into_raw` for
+/// handles — and freed by Rust when the matching `remanence_*_free`
+/// runs. A C-side leak checker cannot see any of it: CppUTest, and the
+/// sanitizers, instrument the *test binary's* allocator, which these
+/// allocations never touch. So the count has to come from in here.
+///
+/// Off by default and absent from a released artifact: it is a global
+/// allocator and an exported symbol, and an extra `remanence_*` symbol
+/// would be an S2 change.
+#[cfg(feature = "leak-probe")]
+mod leak_probe {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    static LIVE: AtomicI64 = AtomicI64::new(0);
+
+    /// Counts blocks rather than bytes: the question is whether every
+    /// allocation was given back, and a block is what a `_free` returns.
+    pub struct Counting;
+
+    // SAFETY: every method forwards to `System` unchanged and only adds
+    // an atomic to the bookkeeping, so the allocator contract is
+    // whatever `System` already satisfies.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let pointer = unsafe { System.alloc(layout) };
+            if !pointer.is_null() {
+                LIVE.fetch_add(1, Ordering::Relaxed);
+            }
+            pointer
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            let pointer = unsafe { System.alloc_zeroed(layout) };
+            if !pointer.is_null() {
+                LIVE.fetch_add(1, Ordering::Relaxed);
+            }
+            pointer
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            LIVE.fetch_sub(1, Ordering::Relaxed);
+            unsafe { System.dealloc(pointer, layout) }
+        }
+
+        // `realloc` is deliberately left to the trait's default, which
+        // allocates, copies and deallocates through the methods above —
+        // so a growing buffer nets to zero rather than needing its own
+        // rule.
+    }
+
+    pub fn live() -> i64 {
+        LIVE.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(feature = "leak-probe")]
+#[global_allocator]
+static LEAK_PROBE: leak_probe::Counting = leak_probe::Counting;
+
+/// How many Rust allocations inside this library are live right now.
+///
+/// Test-only, and present only under the `leak-probe` feature — it is
+/// deliberately **not** in the generated header, because it is not part
+/// of S2. A caller declares it itself.
+#[cfg(feature = "leak-probe")]
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_probe_live_allocations() -> i64 {
+    leak_probe::live()
+}
+
 /// Stable, machine-readable classification of a library refusal. A fallible
 /// call writes one beside its error message; the output is untouched on success.
 #[repr(C)]

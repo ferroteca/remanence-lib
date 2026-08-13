@@ -10,6 +10,13 @@ repository.workspace = true
 name = "remanence_ffi"
 crate-type = ["staticlib", "cdylib"]
 
+[features]
+# Counts live Rust allocations inside the cdylib and exports the count,
+# so a C caller can assert that a handle's `_free` gives back everything
+# its creation took (D46). Test-only and off by default: a released
+# artifact carries neither the counter nor the symbol.
+leak-probe = []
+
 [dependencies]
 remanence.workspace = true
 

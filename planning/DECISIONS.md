@@ -58,6 +58,134 @@ removes it is the record either way.
 
 ## Decisions
 
+### D47 — The `_free` discipline is asserted by counting, because nothing outside the library can see these allocations
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S2; D45, D46; pledged F45. `DECISIONS.md` was
+searched first and returned D45, which named leak detection as the thing
+a framework would have been for and left it open.
+
+**No leak checker outside this library can see the allocations that
+matter.** Everything the ABI hands out is Rust's, made inside the
+cdylib — `CString::into_raw` for strings, `Box::into_raw` for handles —
+and reclaimed by Rust when the matching `remanence_*_free` runs.
+CppUTest's leak detector, and the sanitizers, instrument the *test
+binary's* allocator, which these allocations never touch. That is a
+statement about where memory comes from, not a preference, and it is
+what settles the framework question D45 left open: **CppUTest would have
+reported a clean bill of health however badly `_free` leaked.**
+
+**The standard tools do not reach here either, and the reason is the
+platform.** Miri is the standard Rust answer and would catch a leaked
+`Box::into_raw` — but it is an interpreter and cannot execute a C
+caller, so it checks the Rust side only. LeakSanitizer is the standard
+answer for a mixed process and *would* see Rust's allocator, but it is
+unsupported on Windows, where this project is developed; ASan there
+ships without it. Valgrind is Linux and macOS. So the counting allocator
+is bespoke because the standard options are absent, not because they
+were judged worse. Miri over the Rust-side FFI tests stays worth adding
+and is not this entry.
+
+**It counts blocks, not bytes**, because the question is whether every
+allocation was given back and a block is what a `_free` returns. The
+first cycle is a warm-up whose count is discarded: a library settles
+lazily-initialised state on first use, and that is allocation which is
+never freed and never should be. A leak is the count rising *per cycle*
+after that, which the C caller reports as a rate.
+
+**Opt-in, and the cost of that is stated rather than glossed.** The
+probe is a global allocator and an exported symbol; carrying it in a
+released artifact would add a `remanence_*` symbol, which is an S2
+change. So it lives behind the `leak-probe` feature, is excluded from
+the generated header by cbindgen configuration, and the C caller
+declares the symbol itself. **This is a real departure from the
+fail-rather-than-skip rule** D44 and D45 follow: with the feature off,
+the test binary reports "0 tests", which reads like nothing to check.
+The rule is kept where it can be — an absent CMake or compiler still
+fails — and given up here because the alternative is shipping the probe.
+AGENTS.md carries the command so it is a step someone runs.
+
+**Verified by leaking on purpose.** `remanence_string_free` was made to
+`forget` rather than drop, and the probe reported *8 blocks over 8
+cycles, 1.00 per cycle*, on the refusal path while the discovery path
+stayed clean — so it both detects and localises. Sound, it reports zero
+live blocks either side of both.
+
+**A cache bug this found, worth recording because it fails
+confusingly:** CMake caches what it was last told, so a build directory
+configured with the probe on kept trying to link the probe target when
+the next run had the feature off — an unresolved symbol failing every C
+test for a reason none of them is about. The flag is now stated either
+way rather than omitted.
+
+**This serves F45 more than it serves S2 today.** The pledged C++
+presentation is a set of move-only RAII classes "each owning its
+handle's lifetime through the ABI's free functions" — which is a claim
+about exactly what this measures, and which no C++ test framework,
+GoogleTest included, has any way to check.
+
+### D46 — CMake drives the C tests, because MSVC's environment is the thing worth outsourcing
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S2; D44, D45; pledged F45. `DECISIONS.md` was
+searched first and returned D44 and D45, whose toolchain machinery this
+replaces, and D45's declining of CppUTest, which this revisits only far
+enough to record that the framework question has moved.
+
+**CMake is adopted for MSVC, and that is the whole argument.** Compiler
+discovery in the abstract was never the problem — D44's hand-rolled
+search worked. The problem is that `cl.exe` needs the environment
+`vcvars64.bat` sets, and locating and sourcing that from a test harness
+is *more* bespoke machinery than the gcc search it would replace. CMake
+does it, and finds MSVC unaided: configured bare on the development
+host it selects the Visual Studio generator and MSVC without being
+told. Everything D44 carried goes with it — `MSYS_HOME`, the toolchain
+directories, putting the compiler's own directory on `PATH`, and the
+rule against ever trying a bare `cl` because it resolves to Watcom's.
+
+**MSVC is the native match, and was tested before being adopted rather
+than after.** The cdylib is built by the `x86_64-pc-windows-msvc`
+toolchain, so linking a C caller with MSVC links against the import
+library the same toolchain produced. All four things compile clean at
+`/W4`: the boundary caller, `identify.c`, the self-contained header, and
+the header as C++ — and the boundary caller links and passes its 44
+checks.
+
+**What is given up is a second compiler's opinion.** MinGW's gcc caught
+nothing MSVC does not, on today's sources, but two compilers reading one
+header is genuinely more coverage than one. `REMANENCE_CC` /
+`REMANENCE_CXX` still override CMake's choice and
+`REMANENCE_CMAKE_GENERATOR` the generator, so gcc remains one variable
+away; it is no longer the default, and no longer discovered.
+
+**It is not shorter, and the entry says so.** The shared module is 209
+lines against 224. The gain is in what those lines *do* — configure and
+build, rather than know where MSYS2 installs, which compiler names to
+try, which one to distrust, and which directory a toolchain needs on
+`PATH` to load its own runtime.
+
+**GoogleTest becomes a drop-in, deliberately.** F45 pledges an idiomatic
+C++ presentation whose deliverable is "a header, its tests, and a C++
+example consumer" — move-only RAII types with typed errors, which is
+what a C++ framework is for and what CppUTest, an embedded-C framework,
+is not. The CMake project declares `C CXX` and already compiles the
+header as C++, so adding `FetchContent_Declare(googletest)` when F45
+lands needs no new toolchain decision. **The C boundary tests stay C**
+regardless: they exist to exercise the ABI as a *C* caller meets it, and
+a C++ test of them would be a different claim.
+
+**Weighed and declined:** keeping MinGW as the default and adding CMake
+only for its build orchestration (it keeps every line of discovery D44
+wrote *and* adds CMake, which is the worst of both); driving MSVC
+directly by locating `vswhere` and sourcing `vcvars64.bat` (more
+bespoke machinery than the gcc search, for the same result CMake gives);
+and adopting GoogleTest now, before F45 exists, to save a later change
+(the C tests would become C++ tests of a C surface, which is the one
+thing D45 exists to avoid).
+
+**No changelog entry.** Tests and their toolchain are not
+release-facing.
+
 ### D45 — A C caller crosses the boundary in the test suite, and CppUTest is declined for now rather than on principle
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

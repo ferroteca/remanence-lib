@@ -11,6 +11,12 @@ documentation_style = "c99"
 style = "type"
 usize_is_size_t = true
 
+[export]
+# The leak probe is test-only and lives behind the `leak-probe` feature.
+# It is not part of S2, so it never reaches the header however the crate
+# is built; a C caller that wants it declares it itself.
+exclude = ["remanence_probe_live_allocations"]
+
 [enum]
 rename_variants = "QualifiedScreamingSnakeCase"
 
