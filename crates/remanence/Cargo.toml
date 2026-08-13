@@ -5,13 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-# Extracted and generated fixture files stay out of published
-# artifacts; the globs mirror tests/fixtures/.gitignore.
-exclude = [
-    "tests/fixtures/HDOS_*",
-    "tests/fixtures/freedos-parttest.qcow2",
-    "tests/fixtures/Bill Budge Pinball Construction Set \\[Commodore 64\\] (1of2).7z",
-]
+# A released artifact carries what a consumer runs and nothing else.
+# maturin builds the Python sdist from cargo's package listing, so
+# without this the whole integration suite ships — it did, in the
+# published 0.0.1a1 and 0.0.1a2. Excluding the tree also covers
+# tests/fixtures/, where the large downloaded HDOS, FreeDOS and
+# KryoFlux fixtures land; they are gitignored there as well.
+exclude = ["tests/**"]
 
 [dependencies]
 # Intentionally none: the library is dependency-free, including its own
