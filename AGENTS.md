@@ -324,12 +324,31 @@ ABI, or Python module.
   the fat-track comparison, and the orbit clock — floats measure,
   integers state.
 
-  `drive_profile.rs` is the P30 seam — a family's declared stepping,
-  rotation, surfaces, encoding shape and density map, its read-channel
-  and group-code declarations, the C1541 entry, and the probe that
-  recognizes a capture from interval statistics alone and reports a
-  ranked verdict with its evidence. Every rung reads its rules through
-  it, which is why the rungs take no policy arguments.
+  `drive_profile/` is the P30 seam, in four files with the dependency
+  running one way. `drive_profile/mod.rs` is the **declaration
+  vocabulary** — the types a family's facts are stated in (stepping,
+  rotation, surfaces, encoding shape, density map, the read-channel and
+  group-code declarations, the record grammar) and the enrollment list.
+  It holds no entry and no behaviour, which is why it carries no tests
+  of its own: what there is to test is the entry filled into it.
+  `drive_profile/entries.rs` holds the enrolled families — today the
+  C1541 alone — and **each entry is declared whole in one place**, its
+  recognition half beside its materialization half, because these are
+  facts about the same drive and splitting them across two places is
+  how two features come to hold different answers about one of them.
+  `drive_profile/intervals.rs` is the measurement: the cell derived as
+  the rational the interval population is self-consistent with, and
+  every interval classified into a declared multiple by exact integer
+  arithmetic — recognition stops at structure, so what leaves it is a
+  count, a density, an angle, a location and an absence, never a
+  resolved bit or an assembled byte. `drive_profile/verdict.rs` is what
+  that measurement is reported as: `probe` over one profile,
+  `recognize`/`recognize_as` over the enrollment, and `recognition` as
+  the whole act — ranked, carrying the observations that produced them
+  (P4), and refusing by name where no profile claims a capture, a lone
+  enrolled entry never winning by being alone. Every rung reads its
+  rules through this seam, which is why the rungs take no policy
+  arguments.
 
   `bitstream.rs` and `bytestream.rs` are the two P23 layers above the
   medium — circular track-relative clocked bit state, every bit saying
