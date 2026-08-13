@@ -24,3 +24,9 @@ Repository = "https://github.com/ferroteca/remanence-lib"
 [tool.maturin]
 module-name = "remanence"
 features = ["pyo3/extension-module"]
+# A mixed layout, for the type stub alone. maturin generates the
+# re-export shim for a pure-Rust project but has nowhere to put a
+# `py.typed`, which PEP 561 requires to live inside the package; naming
+# a python source root gives the stub and the marker a home, and
+# `python/remanence/__init__.py` is the generated shim written out.
+python-source = "python"

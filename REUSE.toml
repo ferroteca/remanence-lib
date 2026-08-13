@@ -21,6 +21,9 @@ path = [
     "crates/remanence-ffi/cbindgen.toml",
     "crates/remanence-py/Cargo.toml",
     "crates/remanence-py/pyproject.toml",
+    # PEP 561 requires this marker to be empty; a comment header would
+    # not make it invalid, but the file's whole content is its absence.
+    "crates/remanence-py/python/remanence/py.typed",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Paul Galbraith"

@@ -58,6 +58,64 @@ removes it is the record either way.
 
 ## Decisions
 
+### D40 — S3 gets a hand-written type stub, and the stub is surface rather than documentation
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S3. `DECISIONS.md` was searched first and
+returned nothing on typing, stubs or PEP 561 — this is the first ruling
+in that area.
+
+The naming review that produced D38 and D39 also reported that S3 had no
+type stub, which meant every name those two entries corrected was
+invisible to a Python consumer's editor and type checker. The stub lands
+here.
+
+**It is written by hand, and that is the decision.** Generating stubs
+from the pyo3 macros was the obvious alternative and is rejected on the
+same ground the C header is *not*: cbindgen derives the header from the
+`extern "C"` signatures, which carry the whole contract, whereas a pyo3
+class carries its Python types only in `IntoPyObject` impls that a
+generator would have to guess through — `Option<T>` reaching Python as
+`T | None`, `Py<PyBytes>` as `bytes`, `PathBuf` as an os.PathLike union,
+a `#[getter]` as a property, a frozen `get_all` field as a *read-only*
+one. A generator that got those wrong would produce a stub that
+type-checks a lie, which is worse than no stub. Written by hand, the
+stub is a second statement of the surface that can disagree with the
+first — and disagreement is detectable, which is the property that
+matters.
+
+**The module is the norm and the stub is what moves.** A mismatch is a
+bug in the stub, never a licence to change the module to match it. The
+obligation is recorded in AGENTS.md beside the binding rule it belongs
+to, because nothing regenerates this file and a surface change that
+forgets it produces a stub that is confidently wrong.
+
+**Values that cross as stable spellings are typed `str`, not `Literal`
+unions.** A format id, a device type, an article and a rule identity are
+all enumerated at runtime — `formats()`, `device_slots()`,
+`partition_types()`, `dos_assignment_rules()` and their kin exist so a
+caller can hold the claim without meeting it first (P3). Freezing those
+sets into the stub would put a second, staler claim beside the one the
+library answers with, and the two would drift apart silently. The
+narrower types are declined for that reason and not for effort.
+
+**A mixed maturin layout is adopted for the marker's sake.** PEP 561
+requires `py.typed` inside a package, and maturin's pure-Rust mode
+generates the re-export shim with nowhere to put one. Naming a
+`python-source` root gives the stub and the marker a home; the generated
+`__init__.py` is written out unchanged, so the wheel's shape is what it
+already was — `remanence/__init__.py` beside the extension — with two
+files added.
+
+**Weighed and declined:** a `Literal` union per stable-spelling family
+(above); shipping the stub as a separate `remanence-stubs` distribution
+(it decouples the two things that must move together, which is the one
+failure this design is trying to make detectable); and asserting the
+stub against the module in the test suite (worth doing, and it needs a
+built wheel and an environment to install it into, which no test in this
+workspace has today — the check is written down in AGENTS.md as a
+procedure until something runs it).
+
 ### D39 — The flux root stops being called an image, and three more names are corrected
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

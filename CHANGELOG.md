@@ -18,6 +18,24 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **The Python module ships a type stub and a `py.typed` marker.**
+  `remanence/__init__.pyi` states S3 in full — every class, property and
+  verb, with `Option<T>` as `T | None`, byte payloads as `bytes`, paths
+  as `str | os.PathLike[str]`, and frozen fields as read-only
+  properties — so an editor completes the surface and `mypy --strict`
+  checks it. Both files reach the wheel and the sdist; the wheel's shape
+  is otherwise unchanged.
+
+  The stub is written by hand and is **surface, not documentation**: a
+  name added, renamed or removed in the module moves it in the same
+  change, and a disagreement is a bug in the stub, the module being the
+  norm. Stable spellings — format ids, device types, articles, rule
+  identities — are typed `str` rather than `Literal` unions, because the
+  claim is enumerated at runtime by `formats()`, `device_slots()` and
+  their kin, and a frozen copy in the stub would drift from it (D40).
+
 ### Changed
 
 - **`as_type` is now `check_type`.** The `as_` prefix promises a

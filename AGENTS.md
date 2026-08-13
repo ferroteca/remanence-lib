@@ -547,6 +547,16 @@ regenerates on build (commit the result), and `remanence-py` mirrors the
 public surface explicitly. The example consumer and tests move in the same
 change.
 
+**The Python type stub is part of that surface, and nothing regenerates
+it.** `crates/remanence-py/python/remanence/__init__.pyi` is written by
+hand and states S3 in full — every class, property and verb the module
+registers, exactly once. A name added, renamed or removed in
+`crates/remanence-py/src/lib.rs` moves the stub in the same change; a
+stub that disagrees with the module is a bug in the stub, the module
+being the norm. The `py.typed` marker beside it is what makes a type
+checker honour either (PEP 561), and both reach the wheel through
+`python-source` in `pyproject.toml`.
+
 ### The core stays dependency-free at runtime
 
 `crates/remanence` has no runtime dependencies, deliberately — its ZIP
@@ -773,8 +783,16 @@ git diff --check
 When the C ABI changed, rebuild and commit the regenerated header, and
 recompile `examples/identify.c` against it (instructions in the file
 header). When the Python surface changed, build `-p remanence-py` (needs
-Python ≥ 3.10) and smoke-test the module; for release artifacts,
-`uv build crates/remanence-py` produces the sdist and abi3 wheel.
+Python ≥ 3.10) and smoke-test the module, **and move the type stub with
+it** (above); for release artifacts, `uv build crates/remanence-py`
+produces the sdist and abi3 wheel.
+
+To check the stub against the module rather than by eye, build the wheel,
+install it into a throwaway environment, and compare what the stub
+declares against `dir()` on the imported module in both directions —
+every class the module exports and every member of each. Type-checking a
+sample consumer under `mypy --strict` catches the second half of it: that
+the declared types are usable and that a wrong call is actually refused.
 
 ### Recompiling the C example on this host
 
