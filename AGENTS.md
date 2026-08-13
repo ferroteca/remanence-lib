@@ -548,11 +548,17 @@ public surface explicitly. The example consumer and tests move in the same
 change.
 
 **S3 has a pytest suite, and it is what the sdist ships** (D48). It runs
-against the *installed* module, so build and install first:
+under the ordinary `cargo build && cargo test` (D51, D52) — no wheel, no
+install, and no flag: every workspace member is a default member, so all
+three surfaces' checks run together.
 
-```bash
-uv build crates/remanence-py && uv pip install --reinstall crates/remanence-py/dist/remanence-0.0.1a3-cp310-abi3-win_amd64.whl && pytest crates/remanence-py/tests
-```
+The suite needs the compiled module, which `cargo test` does not build
+but `cargo build` does. `python_suite.rs` then stages a `remanence/` package from what
+that produced — the cdylib renamed as the extension, beside
+`__init__.py`, the stub and `py.typed` — and points `PYTHONPATH` at it.
+That exercises a **debug** build staged by hand; `uv build` is still
+what proves the artifact, and the sdist run below is what proves the
+suite travels.
 
 It opens **no disk image**, deliberately: every fixture this project
 tests against is third-party media it does not distribute and git does
@@ -876,12 +882,11 @@ If you change what the ABI hands out or who frees it, this is the test
 that notices. Nothing needs enabling.
 
 Running the example against a real image is still by hand, below; that is
-the part neither compiling nor the boundary tests stands in for. When the Python surface changed, build `-p remanence-py` (needs
-Python ≥ 3.10) and smoke-test the module, **and move the type stub with
-it** (above); for release artifacts, `uv build crates/remanence-py`
+the part neither compiling nor the boundary tests stands in for. When the Python surface changed, **move the type stub with it** (above);
+the suite itself needs no separate command; for release artifacts, `uv build crates/remanence-py`
 produces the sdist and abi3 wheel.
 
-The stub is checked by `cargo test -p remanence-py`, in three tests that
+The stub is checked by `cargo test`, in three tests that
 between them cover both halves of what it claims (D42, D43). None of
 them needs a built wheel or an installed module. Run them after any
 Python-surface change and believe them: the module is the norm, so what

@@ -5,11 +5,19 @@ members = [
     "crates/remanence-ffi",
     "crates/remanence-py",
 ]
-# remanence-py needs a Python toolchain (maturin/PyO3); keep plain
-# `cargo build` / `cargo test` runnable without one.
+# Every member is a default member: `cargo test` runs the tests of all
+# three application surfaces, and no surface's checks are reached only by
+# a flag someone has to remember (D52).
+#
+# This costs a **Python interpreter to build**, PyO3's build script
+# needing one — a heavier requirement than the C toolchain the C tests
+# want, which is needed only to test. It used to be avoided by leaving
+# remanence-py out here, at the price of S3's checks running by default
+# for nobody. The surfaces are treated alike instead.
 default-members = [
     "crates/remanence",
     "crates/remanence-ffi",
+    "crates/remanence-py",
 ]
 
 [workspace.package]

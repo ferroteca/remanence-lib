@@ -58,6 +58,109 @@ removes it is the record either way.
 
 ## Decisions
 
+### D52 — Every member is a default member, because two surfaces were being treated differently for no reason a caller could see
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S1, S2, S3; D44, D51. `DECISIONS.md` was
+searched first and returned D44, which recorded the asymmetry this
+removes and defended it at the time.
+
+D51 put the Python suite under `cargo test -p remanence-py`, and the
+question that followed was whether it therefore runs "when we run all
+tests". It did not. `cargo test` ran the C tests — CMake, MSVC, a
+compiled and executed C caller — and none of S3's, because
+`remanence-ffi` was a default member and `remanence-py` was not.
+
+**The stated reason was real and is still true**: a C compiler is needed
+to *test*, where PyO3 needs a Python interpreter to *build*, so the
+Python crate cost more to include. D44 drew the line there. What it did
+not weigh is that `default-members` governs building and testing
+together, so protecting the build from a Python requirement also
+withheld S3's checks from every default run — and a check reached only
+by a flag is one that stops being run, which is the objection D42, D43,
+D50 and D51 each answered in turn.
+
+**The cost is paid rather than hidden.** `cargo build` and `cargo test`
+now need a Python interpreter, on any machine, including one whose owner
+is touching only the Rust core. The comment in the workspace
+`Cargo.toml` that recorded the old property is replaced by one recording
+this, so the next reader meets the decision rather than its residue.
+
+**Who that cost falls on is the reason it is acceptable** (Paul,
+2026-08-13, asked directly): *anyone contributing is expected to run the
+tests*. A contributor who must run the suite already needs whatever the
+suite needs, so a toolchain the *build* alone could have avoided buys
+them nothing — it only postpones the requirement to the moment they run
+`cargo test`, having already been told to. CONTRIBUTING.md states
+`cargo test # the full suite` as the expectation, and after this entry
+that line is true rather than approximate.
+
+**What it buys is one command.** `cargo build && cargo test` covers all
+three application surfaces: 27 binaries and 600 tests, against 23 and
+584 before. No surface's checks are behind a flag, and "run all tests"
+means what it says.
+
+**Weighed and declined:** documenting `cargo test --workspace` as the
+run-everything command and changing nothing (it works, and it leaves two
+surfaces treated differently behind a flag people forget — the shape of
+this whole sequence of entries is that such flags do not get typed); and
+gating the C tests to match, so a plain run is toolchain-free for both
+(consistent in the other direction, and it reverses D44, D45 and D50,
+which spent real effort getting those checks to run by default).
+
+**No changelog entry.** How the suite is invoked is not release-facing.
+
+### D51 — The Python suite runs under `cargo test`, staged from the build rather than installed from a wheel
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S3; D48, D50. `DECISIONS.md` was searched first
+and returned D48, which wrote the suite and left running it to a person.
+
+D48 delivered a pytest suite and three commands to run it: build a
+wheel, install it, run pytest. That is the shape of a check that stops
+being run — the objection D42 and D43 answered for the stub and D50 for
+the leak probe, arriving a fourth time. `cargo test -p remanence-py` now
+runs it.
+
+**A wheel was never the requirement; the layout was.** A wheel is a
+`remanence/` package holding the compiled module beside `__init__.py`,
+the stub and `py.typed` — and that can be staged from what `cargo build`
+already produced, the debug cdylib renamed as the extension plus three
+files copied from `python/remanence/`. `PYTHONPATH` finds it and pytest
+imports it, so the release compile a wheel needs never happens. This is
+the same shape as D50's finding one entry earlier: the artifact a check
+needs is not always the artifact that ships.
+
+**What it does not prove is stated rather than left implied.** This
+exercises a *debug* build staged by hand, not a release wheel installed
+by a packaging tool. `uv build` remains what proves the artifact, and
+D48's run from an unpacked sdist remains what proves the suite travels.
+The point of this entry is that the suite runs at all, every time,
+rather than that it now proves more.
+
+**It stays outside the default `cargo test`, deliberately.**
+`remanence-py` is not a workspace default member because pyo3 needs a
+Python toolchain to *build*, which the workspace `Cargo.toml` records in
+a comment; nothing here changes that, and a plain `cargo test` still
+builds none of it. The command this joins is the one AGENTS.md already
+names for a Python-surface change.
+
+**A nested cargo build is declined here, where D50 adopted one.** D50
+could build a *different* crate's cdylib into a separate target
+directory; this would be the crate the test is running from, so the
+build would contend for the lock the run already holds however the
+target directory is set. The test requires `cargo build -p remanence-py`
+first and says so — the same contract the C tests have.
+
+**pytest is found the way mypy is** — `python -m pytest`, then `pytest`,
+then `uv run --with pytest` — and its absence fails rather than skips.
+The two finders are now one generic helper in `tests/common/mod.rs`
+rather than two implementations of the same policy.
+
+**Verified by breaking a Python assertion**, which failed the cargo test
+with pytest's own output naming the line — so the two are genuinely
+wired together rather than merely both green.
+
 ### D50 — The leak check runs by default, the probe having never needed to be in the shipped library
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -535,6 +638,12 @@ project whose second application surface *is* a C ABI, and it is a
 weaker requirement than the Python one it sits beside — a C compiler is
 needed to *test*, where pyo3 needs an interpreter to *build*, which is
 why `remanence-py` is out of `default-members` and this is not.
+
+> **Annotated by D52**, which puts `remanence-py` in `default-members`
+> after all. The distinction drawn here is still true; what it did not
+> weigh is that the same setting governs building and testing, so
+> sparing the build a Python requirement also withheld S3's checks from
+> every default run.
 `REMANENCE_SKIP_CC=1` skips deliberately.
 
 **Verified by injecting drift.** The example was made to call a name
