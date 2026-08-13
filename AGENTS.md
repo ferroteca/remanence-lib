@@ -787,19 +787,28 @@ Python ≥ 3.10) and smoke-test the module, **and move the type stub with
 it** (above); for release artifacts, `uv build crates/remanence-py`
 produces the sdist and abi3 wheel.
 
-The stub is checked against the module by
-`cargo test -p remanence-py`, which compares what `src/lib.rs` registers
-with pyo3 against what the stub declares, in both directions, and names
-the class and member on any disagreement (D42). It needs no wheel, no
-interpreter and no environment — it reads both files — so run it after
-any Python-surface change and believe it: the module is the norm, so
-what it reports is a fix to the stub.
+The stub is checked by `cargo test -p remanence-py`, in three tests that
+between them cover both halves of what it claims (D42, D43). None of
+them needs a built wheel or an installed module. Run them after any
+Python-surface change and believe them: the module is the norm, so what
+they report is a fix to the stub.
 
-It checks *names*, not types. Type-checking a sample consumer under
-`mypy --strict` against a built wheel is still the way to catch the other
-half — that the declared types are usable, and that a wrong call is
-actually refused — and is worth doing when the stub's types change rather
-than only its names.
+- **Names** — `stub_matches_module.rs` compares what `src/lib.rs`
+  registers with pyo3 against what the stub declares, in both
+  directions, and names the class and member on any disagreement.
+- **Types** — `stub_typechecks.rs` runs `mypy --strict` over
+  `tests/typing/accepts.py`, ordinary consumer code that must check
+  clean, at Python 3.10 (the minimum `pyproject.toml` claims).
+- **Refusals** — the same file runs mypy over `tests/typing/rejects.py`,
+  which must *fail*, each line naming the error code it expects. This is
+  the one that catches a stub degraded to `Any`: a widened parameter or
+  a lost `py.typed` still lets `accepts.py` pass.
+
+mypy is found through `python -m mypy`, `mypy` on `PATH`, or
+`uv run --with mypy` — the last needs no prior install, uv already being
+how the wheel is built. If none is reachable the tests **fail** rather
+than skip, because a check that quietly does not run reads exactly like
+one that passed; `REMANENCE_SKIP_MYPY=1` skips them deliberately.
 
 ### Recompiling the C example on this host
 

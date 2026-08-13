@@ -58,6 +58,71 @@ removes it is the record either way.
 
 ## Decisions
 
+### D43 — The type check joins the name check, and checking the stub *source* beats checking a built wheel
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S3; D40, D42. `DECISIONS.md` was searched first
+and returned D42, which named this as the complement it was leaving
+manual. Nothing declined it.
+
+D42 automated the *name* check and said plainly what it could not
+settle: whether a declared type is right or even usable. This entry
+takes the other half. `mypy --strict` now runs in
+`crates/remanence-py/tests/stub_typechecks.rs` over two fixtures kept in
+the repository.
+
+**Checking the stub source is better than checking a built wheel, not
+merely cheaper.** D40 and D42 both assumed the type check needed an
+installed module. It does not — mypy resolves `import remanence` to the
+stub through `MYPYPATH` — and the source reading is *stronger*: mypy
+reports errors **inside** a first-party stub, where a stub reached
+through an installed package is followed silently. That is not
+theoretical. Pointing mypy at the source immediately found two real
+defects the wheel-based run had passed for days: `File.bytes` and
+`LocationBytes.bytes` name members that shadow the builtin `bytes`
+inside their own class bodies, breaking three return annotations. Both
+are fixed here with an explicit `builtins.bytes`.
+
+**The negative fixture is the one that matters.** `accepts.py` — ordinary
+consumer code that must check clean — catches a type that is wrong or
+unusable. It does **not** catch a stub that has stopped saying anything:
+a parameter widened to `object`, a lost `py.typed`, a class the checker
+no longer resolves all leave `accepts.py` passing. `rejects.py` is
+misuse that must be refused, every line naming the mypy error code it
+expects, and the test asserts both that each expected error appears and
+that no line fails for a reason nobody asked for — so the fixture can
+neither start passing silently nor start failing for the wrong reason.
+Injected regressions confirm the split: a wrong declared type fails only
+`accepts.py`; a widened parameter and a read-only property made writable
+fail only `rejects.py`.
+
+**It runs at Python 3.10**, the minimum `pyproject.toml` claims, so the
+stub is verified against the oldest version the distribution promises to
+serve rather than whichever happens to be installed.
+
+**An absent mypy fails rather than skips.** This is D42's principle
+applied to a tool dependency instead of a parser: a check that quietly
+does not run reads exactly like a check that passed. mypy is looked for
+as `python -m mypy`, then `mypy` on `PATH`, then
+`uv run --with mypy`, which needs no prior install and uses the tool the
+project already builds its wheel with. `REMANENCE_SKIP_MYPY=1` skips
+deliberately, which is a decision somebody made and can be found.
+
+**Weighed and declined:** `typing.assert_type` in the accepting fixture
+(it arrived in 3.11, and checking at 3.10 is worth more than the nicer
+spelling — explicit annotations assert the same thing); asserting
+against a built wheel for fidelity (it is the weaker reading, as above,
+besides needing a build); and pinning a mypy version (a newer mypy
+finding more is the point, and a pin would have to be maintained to keep
+that).
+
+**No changelog entry for the tests.** They change nothing a consumer of
+S1–S3 meets. The `builtins.bytes` fix is release-facing, but the stub it
+corrects is itself unreleased — added under the same `Unreleased`
+heading by D40 — and that section is editable until it ships, so the
+correction lands inside the entry that introduces the stub rather than
+beside it.
+
 ### D42 — The stub drift check becomes a test, D40's declination having rested on a false premise
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -106,6 +171,10 @@ registration and constructibility are what a static reading can settle;
 whether `rule` is `str | None` is not. The `mypy --strict` pass over a
 built wheel remains the way to check that, and AGENTS.md keeps it as the
 complement rather than the leftover.
+
+> **Annotated by D43**, which automates that complement — and finds that
+> it needs no built wheel either. The clause above stands as a statement
+> of what *this* test does and does not establish.
 
 **Verified by injecting drift, not by passing.** A green assertion
 proves nothing until it is shown to fail, so each kind was introduced and
