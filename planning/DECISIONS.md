@@ -58,6 +58,76 @@ removes it is the record either way.
 
 ## Decisions
 
+### D42 — The stub drift check becomes a test, D40's declination having rested on a false premise
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S3; D40. `DECISIONS.md` was searched first and
+returned **D40, which declined exactly this** — so this entry is a
+reversal and says why one is warranted rather than treating the earlier
+call as absent.
+
+**What D40 got wrong was a premise, not a judgement.** It declined the
+test because the check "needs a built wheel and an environment to
+install it into, which no test in this workspace has today". That is
+true of the check *as D40 had performed it* — importing the built module
+and reading `dir()` — and it silently assumed that was the only way to
+ask the question. It is not. What `crates/remanence-py/src/lib.rs`
+registers with pyo3 **is** the module surface, so comparing the stub
+against that source asks the same question of the same norm, and reads
+two files to do it. This is the new evidence the record requires before
+a declined item is revisited.
+
+**A `tests/` target works in a cdylib-only crate**, which is the second
+half of why this is now cheap. The test links nothing — it never
+mentions `remanence_py` — so `crate-type = ["cdylib"]` and the
+`extension-module` feature both stay exactly as they are, and the
+deliberate property recorded in the workspace `Cargo.toml` (plain
+`cargo build`/`cargo test` runnable without a Python toolchain) is
+untouched: `remanence-py` is still outside `default-members`, and the
+test runs under `cargo test -p remanence-py`, which is already the
+command AGENTS.md names for a Python-surface change.
+
+**The parsers refuse what they do not understand, and that is the whole
+design.** A checker that silently fails to see a construct passes a stub
+with a hole in it, which is worse than no checker, because it converts
+"unverified" into "verified" without doing the work. So the reader
+asserts the shape it depends on — `#[pyclass]` on one line, `#[pymethods]`
+and `impl` and `pub struct` at column 0, members indented four — and
+fails the test where the file stops matching, demanding the parser be
+taught rather than guessing. It also refuses `#[pyo3(name = ...)]`
+outright, since that would decouple the Rust identifier from the Python
+name this test reads it as, and asserts a floor on the number of classes
+found so that a parser that stopped reading cannot look like a surface
+that shrank.
+
+**It checks names, not types**, and the entry says so rather than
+letting a green test imply more than it establishes. Membership,
+registration and constructibility are what a static reading can settle;
+whether `rule` is `str | None` is not. The `mypy --strict` pass over a
+built wheel remains the way to check that, and AGENTS.md keeps it as the
+complement rather than the leftover.
+
+**Verified by injecting drift, not by passing.** A green assertion
+proves nothing until it is shown to fail, so each kind was introduced and
+caught: a getter added to the module, a property deleted from the stub, a
+class invented in the stub, a method renamed on one side only, and a
+`#[pyclass]` that `add_class` never registers. Two attributes stay
+exempt and are named in the test — `Error.category` and `Error.rule` are
+set with `setattr`, so no static reading can see them as members (D41).
+
+**Weighed and declined:** introspecting the built module in-process with
+`Python::attach` (the most truthful comparison, and it needs `rlib` in
+`crate-type`, `extension-module` moved off the default features, and
+libpython linked into a test binary — three changes to how the crate
+builds, to check something two files already answer); and adding
+`remanence-py` to `default-members` so the test runs under a bare
+`cargo test` (it would make every build require a Python toolchain, which
+the workspace `Cargo.toml` deliberately avoids and says so in a comment).
+
+**No changelog entry.** A test is not release-facing: it changes nothing
+a consumer of S1–S3 meets, and the changelog records what they meet plus
+principle armings.
+
 ### D41 — The Python exception is `remanence.Error`, and it states its two attributes
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -169,6 +239,11 @@ stub against the module in the test suite (worth doing, and it needs a
 built wheel and an environment to install it into, which no test in this
 workspace has today — the check is written down in AGENTS.md as a
 procedure until something runs it).
+
+> **Annotated by D42**, which reverses the last of those. The premise
+> was wrong rather than the judgement: the check needs a built wheel only
+> if it compares against a *built module*, and comparing against the
+> module's defining source needs neither. The rest of this entry stands.
 
 ### D39 — The flux root stops being called an image, and three more names are corrected
 

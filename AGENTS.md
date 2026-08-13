@@ -787,12 +787,19 @@ Python ≥ 3.10) and smoke-test the module, **and move the type stub with
 it** (above); for release artifacts, `uv build crates/remanence-py`
 produces the sdist and abi3 wheel.
 
-To check the stub against the module rather than by eye, build the wheel,
-install it into a throwaway environment, and compare what the stub
-declares against `dir()` on the imported module in both directions —
-every class the module exports and every member of each. Type-checking a
-sample consumer under `mypy --strict` catches the second half of it: that
-the declared types are usable and that a wrong call is actually refused.
+The stub is checked against the module by
+`cargo test -p remanence-py`, which compares what `src/lib.rs` registers
+with pyo3 against what the stub declares, in both directions, and names
+the class and member on any disagreement (D42). It needs no wheel, no
+interpreter and no environment — it reads both files — so run it after
+any Python-surface change and believe it: the module is the norm, so
+what it reports is a fix to the stub.
+
+It checks *names*, not types. Type-checking a sample consumer under
+`mypy --strict` against a built wheel is still the way to catch the other
+half — that the declared types are usable, and that a wrong call is
+actually refused — and is worth doing when the stub's types change rather
+than only its names.
 
 ### Recompiling the C example on this host
 
