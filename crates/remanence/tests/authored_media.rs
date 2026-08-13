@@ -99,13 +99,13 @@ fn an_authored_chs_disk_answers_in_the_coordinates_its_author_stated() {
 
     // A blank reads as a blank, in the author's own coordinates.
     let mut before = [0xffu8; 512];
-    disk.get_sector(0, 0, 1, &mut before).expect("reads");
+    disk.read_sector(0, 0, 1, &mut before).expect("reads");
     assert_eq!(before, [0u8; 512], "nothing is recorded on it yet");
 
     let mut boot = [0u8; 512];
     boot[510] = 0x55;
     boot[511] = 0xaa;
-    disk.put_sector(0, 0, 1, &boot)
+    disk.write_sector(0, 0, 1, &boot)
         .expect("the authored geometry answers");
     assert!(
         disk.is_modified(),
@@ -113,23 +113,23 @@ fn an_authored_chs_disk_answers_in_the_coordinates_its_author_stated() {
     );
 
     let mut read = [0u8; 512];
-    disk.get_sector(0, 0, 1, &mut read).expect("reads");
+    disk.read_sector(0, 0, 1, &mut read).expect("reads");
     assert_eq!(read, boot, "the session reads its own buffered truth");
 
     disk.commit()
         .expect("the commit point, with no artifact to journal");
     assert!(!disk.is_modified());
     let mut after = [0u8; 512];
-    disk.get_sector(0, 0, 1, &mut after).expect("reads");
+    disk.read_sector(0, 0, 1, &mut after).expect("reads");
     assert_eq!(after, boot, "the commit made it the medium's own state");
 
     // The last sector the coordinates address is inside them, and the
     // one past it is not.
     let mut last = [0u8; 512];
-    disk.get_sector(1023, 15, 63, &mut last)
+    disk.read_sector(1023, 15, 63, &mut last)
         .expect("the last sector");
     let error = disk
-        .get_sector(1024, 0, 1, &mut last)
+        .read_sector(1024, 0, 1, &mut last)
         .expect_err("outside the authored coordinates");
     assert_eq!(
         error.rule(),
@@ -154,18 +154,18 @@ fn a_rollback_takes_an_authored_write_back_to_what_was_committed() {
         .new_media(NewMedia::ChsDisk { geometry: small() })
         .expect("created");
 
-    disk.put_sector(0, 0, 1, &[0xa5; 512]).expect("writes");
+    disk.write_sector(0, 0, 1, &[0xa5; 512]).expect("writes");
     disk.commit().expect("commits");
-    disk.put_sector(0, 0, 2, &[0x5a; 512]).expect("writes");
+    disk.write_sector(0, 0, 2, &[0x5a; 512]).expect("writes");
     assert!(disk.is_modified());
     disk.rollback().expect("discards everything buffered");
     assert!(!disk.is_modified());
 
     let mut kept = [0u8; 512];
-    disk.get_sector(0, 0, 1, &mut kept).expect("reads");
+    disk.read_sector(0, 0, 1, &mut kept).expect("reads");
     assert_eq!(kept, [0xa5; 512], "the committed sector survives");
     let mut gone = [0xffu8; 512];
-    disk.get_sector(0, 0, 2, &mut gone).expect("reads");
+    disk.read_sector(0, 0, 2, &mut gone).expect("reads");
     assert_eq!(gone, [0u8; 512], "and the rolled-back one never landed");
 }
 
@@ -207,7 +207,7 @@ fn an_authored_disk_bears_the_direct_partition_over_its_own_content() {
     let mut boot = [0u8; 512];
     boot[510] = 0x55;
     boot[511] = 0xaa;
-    disk.put_sector(0, 0, 1, &boot).expect("writes");
+    disk.write_sector(0, 0, 1, &boot).expect("writes");
 
     let partition = disk
         .partition(0)
@@ -259,7 +259,7 @@ fn a_blank_article_is_the_article_and_states_nothing_else() {
         // exactly that.
         assert!(blank.size().is_err());
         let error = blank
-            .put_sector(0, 0, 1, &[0u8; 512])
+            .write_sector(0, 0, 1, &[0u8; 512])
             .expect_err("nothing is recorded on it");
         assert_eq!(
             error.rule(),

@@ -1205,7 +1205,7 @@ impl C1541Bytestream {
     /// separate session state, carrying this bytestream's provenance
     /// beneath the grammar and policy that produced it. There is no way
     /// back down (P33): a sector is not lowered into bytes.
-    pub fn recognize_c1541_sectors(&self, cache_bytes: u64) -> Result<C1541Sectors> {
+    pub fn recognize_sectors(&self, cache_bytes: u64) -> Result<C1541Sectors> {
         recognize(
             self.inner(),
             crate::flux::drive_profile::C1541.presentation.sector_policy,
@@ -1379,7 +1379,7 @@ mod tests {
         )
         .expect("the channel clocks it");
         let bytestream = bitstream
-            .materialize_c1541_bytestream(1 << 20)
+            .materialize_bytestream(1 << 20)
             .expect("the codec resolves it");
         recognize(bytestream.inner(), policy, 1 << 20)
     }

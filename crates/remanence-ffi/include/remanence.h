@@ -177,7 +177,7 @@ typedef struct RemanenceAssurance RemanenceAssurance;
 // A hardware bitstream, held in the session. The bits stay behind this
 // handle; what it reports is the transition that produced them.
 //
-// Two doors mint it: `remanence_image_materialize_c1541_bitstream`,
+// Two doors mint it: `remanence_flux_image_materialize_c1541_bitstream`,
 // whose handle owns the stream it materialized, and
 // `remanence_medium_bitstream`, whose handle is a view of the stream
 // cached in the pooled medium — that one **must not outlive its
@@ -253,6 +253,13 @@ typedef struct RemanenceFileSource RemanenceFileSource;
 // `remanence_session_load_media_sources` consumed it.
 typedef struct RemanenceFileSourceList RemanenceFileSourceList;
 
+// An opened remanence image, holding its claim on the artifact and the
+// points it decoded into private session storage.
+typedef struct RemanenceFluxImage RemanenceFluxImage;
+
+// What writing an image into a `.remanence` artifact carried.
+typedef struct RemanenceFluxWriteReport RemanenceFluxWriteReport;
+
 // What a g64 rendition carried, or will carry, of one image.
 typedef struct RemanenceG64Report RemanenceG64Report;
 
@@ -262,13 +269,6 @@ typedef struct RemanenceGeometry RemanenceGeometry;
 
 // The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
-
-// An opened remanence image, holding its claim on the artifact and the
-// points it decoded into private session storage.
-typedef struct RemanenceImage RemanenceImage;
-
-// What writing an image into a `.remanence` artifact carried.
-typedef struct RemanenceImageWriteReport RemanenceImageWriteReport;
 
 // A borrowed view of one machine in a session.
 //
@@ -425,7 +425,7 @@ typedef struct {
   uint64_t center_denominator;
   uint64_t extent_numerator;
   uint64_t extent_denominator;
-} RemanenceImageHole;
+} RemanenceFluxHole;
 
 // One orbit's identity and shape — never its points.
 typedef struct {
@@ -437,7 +437,7 @@ typedef struct {
   uint64_t coherent_points;
   // How many spans the image declines to read.
   uint64_t unaligned_spans;
-} RemanenceImageOrbit;
+} RemanenceFluxOrbit;
 
 // One CBM DOS block, by the address the recording states for it.
 typedef struct {
@@ -583,7 +583,7 @@ const char *remanence_device_slot_scheme(size_t index);
 // receiver, which is no device type at all.
 //
 // A `sector` type is one whose medium answers
-// `remanence_medium_get_sector` and `remanence_medium_put_sector`, in
+// `remanence_medium_read_sector` and `remanence_medium_write_sector`, in
 // the coordinates that medium's own geometry established.
 const char *remanence_device_slot_addressing(size_t index);
 
@@ -1555,28 +1555,28 @@ const char *remanence_geometry_source_name(size_t index);
 // `error_rule_out` naming which: `not-sector-addressed`,
 // `geometry-unstated`, `geometry-undetermined`, `outside-geometry` or
 // `partial-sector`.
-bool remanence_medium_get_sector(RemanenceMedium *medium,
-                                 uint32_t cylinder,
-                                 uint32_t head,
-                                 uint32_t sector,
-                                 uint8_t *buffer_out,
-                                 size_t length,
-                                 RemanenceErrorCategory *error_category_out,
-                                 char **error_out,
-                                 char **error_rule_out);
+bool remanence_medium_read_sector(RemanenceMedium *medium,
+                                  uint32_t cylinder,
+                                  uint32_t head,
+                                  uint32_t sector,
+                                  uint8_t *buffer_out,
+                                  size_t length,
+                                  RemanenceErrorCategory *error_category_out,
+                                  char **error_out,
+                                  char **error_rule_out);
 
 // Writes one whole sector in the recording's own coordinates,
 // **buffered until `remanence_medium_commit`** like every other write
-// (P2), under the same rules `remanence_medium_get_sector` answers by.
-bool remanence_medium_put_sector(RemanenceMedium *medium,
-                                 uint32_t cylinder,
-                                 uint32_t head,
-                                 uint32_t sector,
-                                 const uint8_t *data,
-                                 size_t length,
-                                 RemanenceErrorCategory *error_category_out,
-                                 char **error_out,
-                                 char **error_rule_out);
+// (P2), under the same rules `remanence_medium_read_sector` answers by.
+bool remanence_medium_write_sector(RemanenceMedium *medium,
+                                   uint32_t cylinder,
+                                   uint32_t head,
+                                   uint32_t sector,
+                                   const uint8_t *data,
+                                   size_t length,
+                                   RemanenceErrorCategory *error_category_out,
+                                   char **error_out,
+                                   char **error_rule_out);
 
 // How many partition schemes this release reads (P16).
 size_t remanence_partition_scheme_count(void);
@@ -2166,11 +2166,11 @@ const char *remanence_p64_evidence(const RemanenceP64Report *report, size_t inde
 // The handle owns the stream; free it with
 // `remanence_c1541_bitstream_free`. Returns null on failure and stores
 // a message in `error_out` (free with `remanence_string_free`).
-RemanenceC1541Bitstream *remanence_image_materialize_c1541_bitstream(const RemanenceImage *image,
-                                                                     uint64_t cache_bytes,
-                                                                     RemanenceErrorCategory *error_category_out,
-                                                                     char **error_out,
-                                                                     char **error_rule_out);
+RemanenceC1541Bitstream *remanence_flux_image_materialize_c1541_bitstream(const RemanenceFluxImage *image,
+                                                                          uint64_t cache_bytes,
+                                                                          RemanenceErrorCategory *error_category_out,
+                                                                          char **error_out,
+                                                                          char **error_rule_out);
 
 // The family's hardware bitstream over this medium's recording,
 // materialized once — lazily, into the pooled medium itself — and
@@ -2850,128 +2850,132 @@ const char *remanence_drive_map_provenance(const RemanenceDriveMap *map, size_t 
 // anything else is believed, and a version past this release's claim is
 // refused by name. Returns null on failure and stores a message in
 // `error_out` (free with `remanence_string_free`).
-RemanenceImage *remanence_image_open(const char *path,
-                                     RemanenceErrorCategory *error_category_out,
-                                     char **error_out,
-                                     char **error_rule_out);
+RemanenceFluxImage *remanence_flux_image_open(const char *path,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
 
-// Opens a remanence image as `remanence_image_open` does, under a
+// Opens a remanence image as `remanence_flux_image_open` does, under a
 // declared cache bound: at most `cache_bytes` of the decoded image
 // stays resident. The bound narrows the working set; it never refuses
 // service.
-RemanenceImage *remanence_image_open_with_cache(const char *path,
-                                                uint64_t cache_bytes,
-                                                RemanenceErrorCategory *error_category_out,
-                                                char **error_out,
-                                                char **error_rule_out);
+RemanenceFluxImage *remanence_flux_image_open_with_cache(const char *path,
+                                                         uint64_t cache_bytes,
+                                                         RemanenceErrorCategory *error_category_out,
+                                                         char **error_out,
+                                                         char **error_rule_out);
 
 // Frees an image handle, releasing its claim on the artifact and
 // discarding the private session storage its points decoded into.
-void remanence_image_free(RemanenceImage *image);
+void remanence_flux_image_free(RemanenceFluxImage *image);
 
 // The artifact the image was opened from.
-const char *remanence_image_path(const RemanenceImage *image);
+const char *remanence_flux_image_path(const RemanenceFluxImage *image);
 
 // The artifact format's stable identifier: `"remanence"`.
-const char *remanence_image_format_id(const RemanenceImage *image);
+const char *remanence_flux_image_format_id(const RemanenceFluxImage *image);
 
 // That format's human-readable name.
-const char *remanence_image_format_name(const RemanenceImage *image);
+const char *remanence_flux_image_format_name(const RemanenceFluxImage *image);
 
 // Which P7 mode the open obtained on the artifact.
-RemanenceAccessMode remanence_image_access_mode(const RemanenceImage *image);
+RemanenceAccessMode remanence_flux_image_access_mode(const RemanenceFluxImage *image);
 
 // The medium's shape in the model's own spelling: `"8-inch"`,
 // `"5.25-inch"` or `"3.5-inch"`.
-const char *remanence_image_form_factor(const RemanenceImage *image);
+const char *remanence_flux_image_form_factor(const RemanenceFluxImage *image);
 
 // The angular unit every angle in the image is stated over — a unit
 // rather than a measurement, so equality is exact.
-uint64_t remanence_image_angular_divisions(const RemanenceImage *image);
+uint64_t remanence_flux_image_angular_divisions(const RemanenceFluxImage *image);
 
 // How many bytes of private session storage the decoded points occupy.
-uint64_t remanence_image_backing_bytes(const RemanenceImage *image);
+uint64_t remanence_flux_image_backing_bytes(const RemanenceFluxImage *image);
 
 // How much of that backing is currently resident. The points are never
 // held whole.
-uint64_t remanence_image_resident_bytes(const RemanenceImage *image);
+uint64_t remanence_flux_image_resident_bytes(const RemanenceFluxImage *image);
 
 // How many index holes the image holds.
-size_t remanence_image_hole_count(const RemanenceImage *image);
+size_t remanence_flux_image_hole_count(const RemanenceFluxImage *image);
 
 // One of them, written into `out`. Returns false when out of range.
-bool remanence_image_hole(const RemanenceImage *image, size_t index, RemanenceImageHole *out);
+bool remanence_flux_image_hole(const RemanenceFluxImage *image,
+                               size_t index,
+                               RemanenceFluxHole *out);
 
 // How many surfaces carry orbits.
-size_t remanence_image_surface_count(const RemanenceImage *image);
+size_t remanence_flux_image_surface_count(const RemanenceFluxImage *image);
 
 // One surface's index, written into `out`, ascending. Returns false
 // when out of range.
-bool remanence_image_surface(const RemanenceImage *image, size_t index, uint64_t *out);
+bool remanence_flux_image_surface(const RemanenceFluxImage *image, size_t index, uint64_t *out);
 
 // How many orbits the image holds, across every surface.
-size_t remanence_image_orbit_count(const RemanenceImage *image);
+size_t remanence_flux_image_orbit_count(const RemanenceFluxImage *image);
 
 // One of them, written into `out`, ordered by surface then radius.
 // Returns false when out of range.
-bool remanence_image_orbit(const RemanenceImage *image, size_t index, RemanenceImageOrbit *out);
+bool remanence_flux_image_orbit(const RemanenceFluxImage *image,
+                                size_t index,
+                                RemanenceFluxOrbit *out);
 
 // How the image came to be known, in human-readable terms.
-size_t remanence_image_provenance_count(const RemanenceImage *image);
+size_t remanence_flux_image_provenance_count(const RemanenceFluxImage *image);
 
-const char *remanence_image_provenance(const RemanenceImage *image, size_t index);
+const char *remanence_flux_image_provenance(const RemanenceFluxImage *image, size_t index);
 
 // Writes the image into a new `.remanence` artifact at `path` (UTF-8)
 // and reports what the artifact carried. An existing destination is a
 // named refusal rather than an overwrite, and an interruption leaves
 // the destination absent rather than half an artifact. Returns null on
-// failure; free the report with `remanence_image_write_report_free`.
-RemanenceImageWriteReport *remanence_image_write(const RemanenceImage *image,
-                                                 const char *path,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+// failure; free the report with `remanence_flux_write_report_free`.
+RemanenceFluxWriteReport *remanence_flux_image_write(const RemanenceFluxImage *image,
+                                                     const char *path,
+                                                     RemanenceErrorCategory *error_category_out,
+                                                     char **error_out,
+                                                     char **error_rule_out);
 
 // Frees a write report.
-void remanence_image_write_report_free(RemanenceImageWriteReport *report);
+void remanence_flux_write_report_free(RemanenceFluxWriteReport *report);
 
 // Where the artifact was written.
-const char *remanence_image_write_path(const RemanenceImageWriteReport *report);
+const char *remanence_flux_write_report_path(const RemanenceFluxWriteReport *report);
 
 // The artifact's size on storage.
-uint64_t remanence_image_write_artifact_bytes(const RemanenceImageWriteReport *report);
+uint64_t remanence_flux_write_report_artifact_bytes(const RemanenceFluxWriteReport *report);
 
 // How many orbits it carried.
-uint64_t remanence_image_write_orbits(const RemanenceImageWriteReport *report);
+uint64_t remanence_flux_write_report_orbits(const RemanenceFluxWriteReport *report);
 
 // Every point across every orbit it carried.
-uint64_t remanence_image_write_points(const RemanenceImageWriteReport *report);
+uint64_t remanence_flux_write_report_points(const RemanenceFluxWriteReport *report);
 
 // How many kinds of loss the crossing did not carry. Zero for this
 // format, always: the remanence artifact is the model's own, so it
 // carries every fact the image holds. An empty account is the claim,
 // not a missing one.
-size_t remanence_image_write_declared_loss_count(const RemanenceImageWriteReport *report);
+size_t remanence_flux_write_report_declared_loss_count(const RemanenceFluxWriteReport *report);
 
 // One loss entry's stable code, or null when out of range.
-const char *remanence_image_write_declared_loss_code(const RemanenceImageWriteReport *report,
-                                                     size_t index);
+const char *remanence_flux_write_report_declared_loss_code(const RemanenceFluxWriteReport *report,
+                                                           size_t index);
 
 // What was lost, in the source's own terms. A count is not an account.
-const char *remanence_image_write_declared_loss_detail(const RemanenceImageWriteReport *report,
-                                                       size_t index);
+const char *remanence_flux_write_report_declared_loss_detail(const RemanenceFluxWriteReport *report,
+                                                             size_t index);
 
 // How much of it there was, in whatever the detail counts.
-uint64_t remanence_image_write_declared_loss_amount(const RemanenceImageWriteReport *report,
-                                                    size_t index);
+uint64_t remanence_flux_write_report_declared_loss_amount(const RemanenceFluxWriteReport *report,
+                                                          size_t index);
 
 // Computes the d64 this image renders to, writing nothing. Read it
 // before writing: the write adds nothing to the account. Returns null
 // on failure; free the report with `remanence_d64_report_free`.
-RemanenceD64Report *remanence_image_describe_d64(const RemanenceImage *image,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+RemanenceD64Report *remanence_flux_image_describe_d64(const RemanenceFluxImage *image,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out,
+                                                      char **error_rule_out);
 
 // Writes the image into a new d64 at `path` (UTF-8) and reports what
 // the artifact carried. The recording's own sectors are read by the
@@ -2979,11 +2983,11 @@ RemanenceD64Report *remanence_image_describe_d64(const RemanenceImage *image,
 // nothing is repaired and nothing is rejected, and an incomplete disk
 // carries the error map. An existing destination is a named refusal
 // rather than an overwrite. Returns null on failure.
-RemanenceD64Report *remanence_image_write_d64(const RemanenceImage *image,
-                                              const char *path,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out,
-                                              char **error_rule_out);
+RemanenceD64Report *remanence_flux_image_write_d64(const RemanenceFluxImage *image,
+                                                   const char *path,
+                                                   RemanenceErrorCategory *error_category_out,
+                                                   char **error_out,
+                                                   char **error_rule_out);
 
 // Frees a d64 report.
 void remanence_d64_report_free(RemanenceD64Report *report);
@@ -3029,10 +3033,10 @@ uint64_t remanence_d64_report_declared_loss_amount(const RemanenceD64Report *rep
 
 // Computes the g64 this image renders to, writing nothing. Returns null
 // on failure; free the report with `remanence_g64_report_free`.
-RemanenceG64Report *remanence_image_describe_g64(const RemanenceImage *image,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+RemanenceG64Report *remanence_flux_image_describe_g64(const RemanenceFluxImage *image,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out,
+                                                      char **error_rule_out);
 
 // Writes the image into a new g64 at `path` (UTF-8) and reports what
 // the artifact carried. Every on-grid orbit is clocked at its measured
@@ -3040,11 +3044,11 @@ RemanenceG64Report *remanence_image_describe_g64(const RemanenceImage *image,
 // recording's — and packed under the `GCR-1541` grammar, one speed
 // zone per half-track. An existing destination is a named refusal
 // rather than an overwrite. Returns null on failure.
-RemanenceG64Report *remanence_image_write_g64(const RemanenceImage *image,
-                                              const char *path,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out,
-                                              char **error_rule_out);
+RemanenceG64Report *remanence_flux_image_write_g64(const RemanenceFluxImage *image,
+                                                   const char *path,
+                                                   RemanenceErrorCategory *error_category_out,
+                                                   char **error_out,
+                                                   char **error_rule_out);
 
 // Frees a g64 report.
 void remanence_g64_report_free(RemanenceG64Report *report);
@@ -3080,21 +3084,21 @@ uint64_t remanence_g64_report_declared_loss_amount(const RemanenceG64Report *rep
 // Computes what a p64 will and will not carry of this image, writing
 // nothing. The report is the delivered P64 one, and is freed with
 // `remanence_p64_report_free`. Returns null on failure.
-RemanenceP64Report *remanence_image_describe_p64(const RemanenceImage *image,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+RemanenceP64Report *remanence_flux_image_describe_p64(const RemanenceFluxImage *image,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out,
+                                                      char **error_rule_out);
 
 // Writes the image into a new p64 at `path` (UTF-8) and reports what
 // the container carried: one multiply from angle to cycle over the
 // coherent points, an orbit with no pulse left absent rather than
 // written empty. An existing destination is a named refusal rather
 // than an overwrite. Returns null on failure.
-RemanenceP64Report *remanence_image_write_p64(const RemanenceImage *image,
-                                              const char *path,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out,
-                                              char **error_rule_out);
+RemanenceP64Report *remanence_flux_image_write_p64(const RemanenceFluxImage *image,
+                                                   const char *path,
+                                                   RemanenceErrorCategory *error_category_out,
+                                                   char **error_out,
+                                                   char **error_rule_out);
 
 #ifdef __cplusplus
 }  // extern "C"

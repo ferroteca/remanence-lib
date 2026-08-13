@@ -147,7 +147,7 @@ commit point over it, with no recovery journal beneath, because no file
 changes for an interruption to leave half-written. The arc from authored
 to recorded, which would bind a device type, is reserved.
 
-`get_sector` and `put_sector` address in what that established — on the
+`read_sector` and `write_sector` address in what that established — on the
 device types whose `addressing()` says `sector`, which is every floppy
 and the CHS hard drive, and on an authored disk in the coordinates its
 author stated. Cylinders and heads number from zero and
@@ -175,8 +175,8 @@ for reading in geometry.readings() {
 // One sector in those coordinates: cylinder 0, head 0, sector 1 is the
 // first record of the recording, wherever the image format puts it.
 let mut sector = [0u8; 512];
-medium.get_sector(0, 0, 1, &mut sector)?;
-medium.put_sector(0, 0, 1, &sector)?;     // buffered until commit
+medium.read_sector(0, 0, 1, &mut sector)?;
+medium.write_sector(0, 0, 1, &sector)?;     // buffered until commit
 ```
 
 **An archive is a medium like any other.** A `.zip` or `.7z` is loaded
@@ -616,7 +616,7 @@ for line in &blank.assurance().evidence {
 }
 let mut boot = [0u8; 512];
 boot[510] = 0x55; boot[511] = 0xaa;
-blank.put_sector(0, 0, 1, &boot)?;         // the authored geometry answers
+blank.write_sector(0, 0, 1, &boot)?;         // the authored geometry answers
 blank.commit()?;                           // session-backed: no artifact yet
 
 // A blank article kind states the article and nothing else — a disk in
@@ -649,7 +649,7 @@ print(geometry.state, geometry.cylinders, geometry.heads,
       geometry.sectors_per_track, geometry.sector_bytes)
 for reading in geometry.readings:            # `conflicts` where they disagree
     print(" ", reading.source, reading.at, reading.detail)
-first = medium.get_sector(0, 0, 1)           # sectors number from one
+first = medium.read_sector(0, 0, 1)           # sectors number from one
 
 # Content is reached through the partition that composes it: this image
 # records no scheme, so the direct partition is the whole of it, and the
@@ -712,7 +712,7 @@ first = bytes_.location(1).read_at(0, 1)   # the first *framed* byte of
                                            # is a byte at all
 
 # And the sectors the recording states for itself, above those bytes.
-sectors = bytes_.recognize_c1541_sectors()
+sectors = bytes_.recognize_sectors()
 for claim in sectors.inspect().claims:
     print(claim.track, claim.sector, claim.readable, claim.rule,
           claim.header_checksum_stated, claim.header_checksum_computed)
@@ -741,7 +741,7 @@ blank = session.new_media("chs-disk", cylinders=1024, heads=16,
                           sectors_per_track=63, sector_bytes=512)
 print(blank.device_type, blank.article, blank.authored_as)  # None authored chs-disk
 print(blank.geometry.readings[0].source)                    # authorship
-blank.put_sector(0, 0, 1, bytes(510) + b"\x55\xaa")
+blank.write_sector(0, 0, 1, bytes(510) + b"\x55\xaa")
 blank.commit()                         # session-backed until an encode
 ```
 

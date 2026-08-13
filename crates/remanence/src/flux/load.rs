@@ -427,7 +427,7 @@ impl FluxState {
         if self.bytestream.is_none() {
             let cache_bytes = self.cache_bytes;
             let bitstream = self.bitstream()?;
-            let bytestream = bitstream.materialize_c1541_bytestream(cache_bytes)?;
+            let bytestream = bitstream.materialize_bytestream(cache_bytes)?;
             self.bytestream = Some(bytestream);
         }
         Ok(self.bytestream.as_ref().expect("just materialized"))
@@ -440,7 +440,7 @@ impl FluxState {
         if self.sectors.is_none() {
             let cache_bytes = self.cache_bytes;
             let bytestream = self.bytestream()?;
-            let sectors = bytestream.recognize_c1541_sectors(cache_bytes)?;
+            let sectors = bytestream.recognize_sectors(cache_bytes)?;
             self.sectors = Some(sectors);
         }
         Ok(self.sectors.as_ref().expect("just recognized"))

@@ -34,8 +34,8 @@
 //! record's recorded heads and sectors-per-track, the partition table's
 //! end tuples, arithmetic over the content's extent — each reading kept
 //! with where it came from, and `"undetermined"` where two of them
-//! disagree. `Medium.get_sector(cylinder, head, sector)` and
-//! `Medium.put_sector(...)` address in what that established, on the
+//! disagree. `Medium.read_sector(cylinder, head, sector)` and
+//! `Medium.write_sector(...)` address in what that established, on the
 //! device types whose `addressing` is `"sector"`, and raise by name
 //! everywhere else; a write buffers until `Medium.commit()` like every
 //! other write, and **nothing is ever declared onto a medium that
@@ -578,7 +578,7 @@ pub struct DeviceSlot {
     /// `"sector"` or `"block"` — how this device type addresses its
     /// recording. Every device type declares one; `None` for the archive
     /// receiver, which is no device type at all. A `"sector"` type is one
-    /// whose medium answers `get_sector` and `put_sector`, in the
+    /// whose medium answers `read_sector` and `write_sector`, in the
     /// coordinates that medium's own geometry established.
     pub addressing: Option<String>,
 }
@@ -2559,7 +2559,7 @@ impl Medium {
     /// the error naming which: `"not-sector-addressed"`,
     /// `"geometry-unstated"`, `"geometry-undetermined"`,
     /// `"outside-geometry"` or `"partial-sector"`.
-    fn get_sector<'py>(
+    fn read_sector<'py>(
         &self,
         py: Python<'py>,
         cylinder: u32,
@@ -2576,17 +2576,17 @@ impl Medium {
         // never a short read dressed up as an answer.
         let mut buffer = vec![0u8; length as usize];
         medium
-            .get_sector(cylinder, head, sector, &mut buffer)
+            .read_sector(cylinder, head, sector, &mut buffer)
             .map_err(to_py_err)?;
         Ok(PyBytes::new(py, &buffer))
     }
 
     /// Writes one whole sector in the recording's own coordinates,
     /// **buffered until `commit`** like every other write, under the same
-    /// rules `get_sector` answers by.
-    fn put_sector(&self, cylinder: u32, head: u32, sector: u32, data: &[u8]) -> PyResult<()> {
+    /// rules `read_sector` answers by.
+    fn write_sector(&self, cylinder: u32, head: u32, sector: u32, data: &[u8]) -> PyResult<()> {
         self.get()?
-            .put_sector(cylinder, head, sector, data)
+            .write_sector(cylinder, head, sector, data)
             .map_err(to_py_err)
     }
 
@@ -4144,10 +4144,10 @@ impl C1541Bitstream {
     /// it was; the bytestream is separate session state with its own
     /// provenance, which is this bitstream's with the codec added to it.
     #[pyo3(signature = (*, cache_bytes = None))]
-    fn materialize_c1541_bytestream(&self, cache_bytes: Option<u64>) -> PyResult<C1541Bytestream> {
+    fn materialize_bytestream(&self, cache_bytes: Option<u64>) -> PyResult<C1541Bytestream> {
         let inner = self.provider.with(|bitstream| {
             bitstream
-                .materialize_c1541_bytestream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+                .materialize_bytestream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
         })?;
         let report = BytestreamReport::new(inner.inspect());
         Ok(C1541Bytestream {
@@ -4257,10 +4257,10 @@ impl C1541Bytestream {
     /// separate session state, and there is no way back down — a sector
     /// is not lowered into bytes.
     #[pyo3(signature = (*, cache_bytes = None))]
-    fn recognize_c1541_sectors(&self, cache_bytes: Option<u64>) -> PyResult<C1541Sectors> {
+    fn recognize_sectors(&self, cache_bytes: Option<u64>) -> PyResult<C1541Sectors> {
         let inner = self.provider.with(|bytestream| {
             bytestream
-                .recognize_c1541_sectors(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+                .recognize_sectors(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
         })?;
         let report = SectorReport::new(inner.inspect());
         Ok(C1541Sectors {
@@ -4706,7 +4706,7 @@ impl P64Report {
 /// for the centre and another for the extent. Nothing radial is stored.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone, PartialEq, Eq)]
-pub struct RemanenceHole {
+pub struct FluxHole {
     pub center_numerator: u64,
     pub center_denominator: u64,
     pub extent_numerator: u64,
@@ -4714,10 +4714,10 @@ pub struct RemanenceHole {
 }
 
 #[pymethods]
-impl RemanenceHole {
+impl FluxHole {
     fn __repr__(&self) -> String {
         format!(
-            "RemanenceHole(center={}/{}, extent={}/{})",
+            "FluxHole(center={}/{}, extent={}/{})",
             self.center_numerator,
             self.center_denominator,
             self.extent_numerator,
@@ -4733,7 +4733,7 @@ impl RemanenceHole {
 /// is where the orbit sits and how much it holds.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone, PartialEq, Eq)]
-pub struct RemanenceOrbit {
+pub struct FluxOrbit {
     pub surface: u64,
     /// The centre radius of the recorded band, in whole microns — a
     /// fact about the disk, never the step index of whichever
@@ -4749,10 +4749,10 @@ pub struct RemanenceOrbit {
 }
 
 #[pymethods]
-impl RemanenceOrbit {
+impl FluxOrbit {
     fn __repr__(&self) -> String {
         format!(
-            "RemanenceOrbit(surface={}, radius_microns={}, points={})",
+            "FluxOrbit(surface={}, radius_microns={}, points={})",
             self.surface, self.radius_microns, self.points
         )
     }
@@ -4761,42 +4761,42 @@ impl RemanenceOrbit {
 /// A remanence image as it stands: the physical facts of one disk.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
-pub struct RemanenceImageReport {
+pub struct FluxImageReport {
     /// The medium's shape in the model's own spelling: `"8-inch"`,
     /// `"5.25-inch"` or `"3.5-inch"`.
     pub form_factor: String,
     /// The angular unit every angle in the image is stated over — a
     /// unit rather than a measurement, so equality is exact.
     pub angular_divisions: u64,
-    pub holes: Vec<RemanenceHole>,
+    pub holes: Vec<FluxHole>,
     /// The surfaces carrying orbits, ascending.
     pub surfaces: Vec<u64>,
     /// Every orbit, ordered by surface then radius.
-    pub orbits: Vec<RemanenceOrbit>,
+    pub orbits: Vec<FluxOrbit>,
     /// How the image came to be known, in human-readable terms.
     pub provenance: Vec<String>,
 }
 
 #[pymethods]
-impl RemanenceImageReport {
+impl FluxImageReport {
     fn __repr__(&self) -> String {
         format!(
-            "RemanenceImageReport(form_factor={:?}, orbits={})",
+            "FluxImageReport(form_factor={:?}, orbits={})",
             self.form_factor,
             self.orbits.len()
         )
     }
 }
 
-impl RemanenceImageReport {
-    fn new(report: &remanence::RemanenceImageReport) -> Self {
+impl FluxImageReport {
+    fn new(report: &remanence::FluxImageReport) -> Self {
         Self {
             form_factor: report.form_factor.clone(),
             angular_divisions: report.angular_divisions,
             holes: report
                 .holes
                 .iter()
-                .map(|hole| RemanenceHole {
+                .map(|hole| FluxHole {
                     center_numerator: hole.center_numerator,
                     center_denominator: hole.center_denominator,
                     extent_numerator: hole.extent_numerator,
@@ -4807,7 +4807,7 @@ impl RemanenceImageReport {
             orbits: report
                 .orbits
                 .iter()
-                .map(|orbit| RemanenceOrbit {
+                .map(|orbit| FluxOrbit {
                     surface: orbit.surface,
                     radius_microns: orbit.radius_microns,
                     points: orbit.points,
@@ -4823,7 +4823,7 @@ impl RemanenceImageReport {
 /// What writing an image into a `.remanence` artifact carried.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
-pub struct RemanenceWriteReport {
+pub struct FluxWriteReport {
     /// Where the artifact was written.
     pub path: String,
     /// The artifact's size on storage.
@@ -4839,10 +4839,10 @@ pub struct RemanenceWriteReport {
 }
 
 #[pymethods]
-impl RemanenceWriteReport {
+impl FluxWriteReport {
     fn __repr__(&self) -> String {
         format!(
-            "RemanenceWriteReport(path={:?}, orbits={}, points={})",
+            "FluxWriteReport(path={:?}, orbits={}, points={})",
             self.path, self.orbits, self.points
         )
     }
@@ -5011,13 +5011,13 @@ fn declared_loss(account: &[remanence::DeclaredLoss]) -> Vec<DeclaredLoss> {
 /// — decodes the whole image once into private session storage, and
 /// holds the claim until the image is closed or collected.
 #[pyclass(module = "remanence")]
-pub struct RemanenceImage {
-    inner: Option<remanence::RemanenceImage>,
-    report: RemanenceImageReport,
+pub struct FluxImage {
+    inner: Option<remanence::FluxImage>,
+    report: FluxImageReport,
 }
 
 #[pymethods]
-impl RemanenceImage {
+impl FluxImage {
     /// Opens the `.remanence` artifact at `path`. The magic, the binary
     /// sentinel and the layout version are checked before anything else
     /// is believed, and a version past this release's claim is refused
@@ -5027,11 +5027,11 @@ impl RemanenceImage {
     #[pyo3(signature = (path, *, cache_bytes = None))]
     fn new(path: PathBuf, cache_bytes: Option<u64>) -> PyResult<Self> {
         let image = match cache_bytes {
-            Some(cache_bytes) => remanence::RemanenceImage::open_with_cache(path, cache_bytes),
-            None => remanence::RemanenceImage::open(path),
+            Some(cache_bytes) => remanence::FluxImage::open_with_cache(path, cache_bytes),
+            None => remanence::FluxImage::open(path),
         }
         .map_err(to_py_err)?;
-        let report = RemanenceImageReport::new(&image.inspect());
+        let report = FluxImageReport::new(&image.inspect());
         Ok(Self {
             inner: Some(image),
             report,
@@ -5040,7 +5040,7 @@ impl RemanenceImage {
 
     /// The image as it stands: its shape, its holes, and every orbit's
     /// identity and counts.
-    fn inspect(&self) -> RemanenceImageReport {
+    fn inspect(&self) -> FluxImageReport {
         self.report.clone()
     }
 
@@ -5094,9 +5094,9 @@ impl RemanenceImage {
     /// destination absent rather than half an artifact. The bytes are
     /// deterministic — the same image spells the same artifact, every
     /// time.
-    fn write(&self, path: PathBuf) -> PyResult<RemanenceWriteReport> {
+    fn write(&self, path: PathBuf) -> PyResult<FluxWriteReport> {
         let written = self.get()?.write(path).map_err(to_py_err)?;
-        Ok(RemanenceWriteReport {
+        Ok(FluxWriteReport {
             path: written.path.clone(),
             artifact_bytes: written.artifact_bytes,
             orbits: written.orbits,
@@ -5232,15 +5232,15 @@ impl RemanenceImage {
 
     fn __repr__(&self) -> String {
         format!(
-            "RemanenceImage(form_factor={:?}, orbits={})",
+            "FluxImage(form_factor={:?}, orbits={})",
             self.report.form_factor,
             self.report.orbits.len()
         )
     }
 }
 
-impl RemanenceImage {
-    fn get(&self) -> PyResult<&remanence::RemanenceImage> {
+impl FluxImage {
+    fn get(&self) -> PyResult<&remanence::FluxImage> {
         self.inner
             .as_ref()
             .ok_or_else(|| categorized_py_err(remanence::ErrorCategory::Io, "image is closed"))
@@ -5272,11 +5272,11 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SectorLocation>()?;
     m.add_class::<SectorClaim>()?;
     m.add_class::<ContestedAddress>()?;
-    m.add_class::<RemanenceImage>()?;
-    m.add_class::<RemanenceImageReport>()?;
-    m.add_class::<RemanenceHole>()?;
-    m.add_class::<RemanenceOrbit>()?;
-    m.add_class::<RemanenceWriteReport>()?;
+    m.add_class::<FluxImage>()?;
+    m.add_class::<FluxImageReport>()?;
+    m.add_class::<FluxHole>()?;
+    m.add_class::<FluxOrbit>()?;
+    m.add_class::<FluxWriteReport>()?;
     m.add_class::<D64Report>()?;
     m.add_class::<D64Block>()?;
     m.add_class::<G64Report>()?;

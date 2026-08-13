@@ -58,6 +58,75 @@ removes it is the record either way.
 
 ## Decisions
 
+### D39 — The flux root stops being called an image, and three more names are corrected
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports (none)** — naming again, and the clause is `none`
+for the reason D38 gives. D38 named these four and explicitly declined
+to rule on them; this entry is that ruling. `DECISIONS.md` was searched
+first: D34 and D23 both mention `get_sector`, but on *which types* and
+*which handle* own it, never on its spelling, so nothing here reopens a
+settled question.
+
+**`RemanenceImage` becomes `FluxImage`, because `image` meant two
+things in one C namespace.** The C ABI spelled the `.remanence` root
+`remanence_image_*` across 36 functions while `remanence_medium_image_path`,
+`remanence_discovery_image_format` and their kin used `image` in the
+ordinary disk-image sense. A caller reading `remanence_image_open` had
+nothing in the name to tell them it opens a `.remanence` artifact rather
+than any image the library reads. The family moves together —
+`FluxImage`, `FluxImageReport`, `FluxHole`, `FluxOrbit`,
+`FluxWriteReport`, and the internal `FluxImageBuilder` with them — and
+the C ABI keeps its library type prefix, so the C spellings are
+`RemanenceFluxImage` and `remanence_flux_image_*`. The stutter in
+`remanence::RemanenceImage` goes with it.
+
+**The cost is accepted, not overlooked:** the type no longer echoes the
+`.remanence` format name, and "flux image" is slightly broader than the
+one container it names, P64 also holding flux at rest. Weighed against a
+C namespace where one word meant two things, the broader name is the
+cheaper defect — and it is broader, not wrong.
+
+**The write-report accessors stop reading as verbs, which the rename
+delivers rather than patches.** `remanence_image_write_path(report)`
+named the same prefix as the verb `remanence_image_write(image, path)`
+and read as "write path". Named after their own type as every sibling
+report already is — `remanence_d64_report_*` being the pattern — they
+become `remanence_flux_write_report_*`. This was reported as its own
+defect and needed no separate rule: name accessors after the type they
+read and it does not arise.
+
+**A qualifier the receiver already carries is dropped, and one that
+earns its place stays.** `C1541Bitstream::materialize_c1541_bytestream`
+and `C1541Bytestream::recognize_c1541_sectors` restated `c1541` to
+receivers that are nothing else; they become `materialize_bytestream`
+and `recognize_sectors`, which is what the C ABI already spelled them
+and what the three surfaces now agree on.
+`FluxImage::materialize_c1541_bitstream` **keeps** its qualifier: that
+receiver is not a c1541 type, so the word says which family is being
+materialized and is doing work.
+
+**`get_sector`/`put_sector` become `read_sector`/`write_sector`.** Rust
+discourages the `get_` prefix (C-GETTER), and the crate already spelled
+the same act `C1541Sectors::read_sector`, so the pair was diverging from
+its own neighbour. `read`/`write` is the symmetric pair `get`/`put` was
+reaching for and matches `read_at`/`write_at` beside it. The addressing
+rules, the `GeometryRule` refusals and D34's ruling that block-addressed
+types answer no such call are all untouched.
+
+**Weighed and declined:** renaming only the C prefix and leaving Rust
+and Python on `RemanenceImage` (cheapest, and it would have manufactured
+exactly the three-surface disagreement the `materialize` ruling above
+exists to remove); leaving the collision and documenting it as inherent
+to a library that shares its name with its native format (defensible,
+but it asks every C caller to carry the distinction the name should have
+carried); renaming the *other* `image` uses instead (they are correct —
+`remanence_medium_image_path` names the medium's type first and reads
+unambiguously).
+
+**Still not decided.** The `remanence.RemanenceError` stutter in Python
+and the missing `.pyi` stub were both reported and are untouched here.
+
 ### D38 — Two surface names are corrected to say what they do: `check_type` and the `_count` pair
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -110,6 +179,10 @@ in the C ABI, the `image` prefix carrying two meanings there, the
 differently, and `Medium::get_sector` against C-GETTER. They are
 untouched and unadjudicated; this entry rules on nothing it does not
 name.
+
+> **Annotated by D39**, which adjudicates all four. The clause above was
+> true when written and is the reason D39 exists; it is superseded only
+> in the sense that the four are no longer open.
 
 ### D37 — Rulings made delivering the no-cache discovery
 

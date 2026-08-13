@@ -864,7 +864,7 @@ mod tests {
         assert_eq!(authored.media().id, "flexible-5.25-hard-10");
         assert!(!authored.is_sector_addressed());
         assert_eq!(authored.geometry().determined(), None);
-        let error = authored.space_mut("put_sector").expect_err("bears none");
+        let error = authored.space_mut("write_sector").expect_err("bears none");
         let message = error.to_string();
         assert!(
             message.contains("nothing recorded on it"),

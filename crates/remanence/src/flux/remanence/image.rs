@@ -549,7 +549,7 @@ impl std::fmt::Debug for RemanenceBacking {
 /// for the centre and another for the extent. Nothing radial, because
 /// nothing radial is stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemanenceHole {
+pub struct FluxHole {
     pub center_numerator: u64,
     pub center_denominator: u64,
     pub extent_numerator: u64,
@@ -562,7 +562,7 @@ pub struct RemanenceHole {
 /// side carries millions of them, and what a reader of the image needs
 /// is where the orbit sits and how much it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemanenceOrbit {
+pub struct FluxOrbit {
     pub surface: u64,
     /// The centre radius of the recorded band, in whole microns — a
     /// fact about the disk, never the step index of whichever
@@ -579,18 +579,18 @@ pub struct RemanenceOrbit {
 
 /// A remanence image as it stands: the physical facts of one disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemanenceImageReport {
+pub struct FluxImageReport {
     /// The medium's shape in the model's own spelling: `"8-inch"`,
     /// `"5.25-inch"` or `"3.5-inch"`.
     pub form_factor: String,
     /// The angular unit every angle in the image is stated over — a
     /// unit rather than a measurement, so equality is exact.
     pub angular_divisions: u64,
-    pub holes: Vec<RemanenceHole>,
+    pub holes: Vec<FluxHole>,
     /// The surfaces carrying orbits, ascending.
     pub surfaces: Vec<u64>,
     /// Every orbit, ordered by surface then radius.
-    pub orbits: Vec<RemanenceOrbit>,
+    pub orbits: Vec<FluxOrbit>,
     /// How the image came to be known, in human-readable terms (P4).
     pub provenance: Vec<String>,
 }
@@ -617,7 +617,7 @@ struct OpenedArtifact {
 /// geometry — is the library's own and stays there. What crosses the
 /// surface is the image's shape, through [`inspect`](Self::inspect).
 #[derive(Debug)]
-pub struct RemanenceImage {
+pub struct FluxImage {
     form_factor: MediaFormFactor,
     holes: Vec<Hole>,
     orbits: BTreeMap<OrbitKey, Orbit>,
@@ -626,7 +626,7 @@ pub struct RemanenceImage {
     artifact: Option<OpenedArtifact>,
 }
 
-impl RemanenceImage {
+impl FluxImage {
     /// The stable identifier of the artifact format this image reads
     /// and writes: `"remanence"`.
     pub fn format_id(&self) -> &'static str {
@@ -658,16 +658,16 @@ impl RemanenceImage {
     /// The report is a projection of what is already resident — orbit
     /// identities and counts, never points — so it is built on demand
     /// rather than held beside the state it restates.
-    pub fn inspect(&self) -> RemanenceImageReport {
+    pub fn inspect(&self) -> FluxImageReport {
         let mut surfaces: Vec<u64> = self.orbits.keys().map(|key| key.surface).collect();
         surfaces.dedup();
-        RemanenceImageReport {
+        FluxImageReport {
             form_factor: self.form_factor.as_str().to_owned(),
             angular_divisions: ANGULAR_DIVISIONS,
             holes: self
                 .holes
                 .iter()
-                .map(|hole| RemanenceHole {
+                .map(|hole| FluxHole {
                     center_numerator: hole.center_angle().numerator(),
                     center_denominator: hole.center_angle().denominator(),
                     extent_numerator: hole.angular_extent().numerator(),
@@ -678,7 +678,7 @@ impl RemanenceImage {
             orbits: self
                 .orbits
                 .values()
-                .map(|orbit| RemanenceOrbit {
+                .map(|orbit| FluxOrbit {
                     surface: orbit.key.surface,
                     radius_microns: orbit.key.radius_microns,
                     points: orbit.points,
@@ -1119,13 +1119,13 @@ const METADATA_VERSION: u64 = 1;
 
 /// Builds a remanence image by streaming each orbit's packed points
 /// into the backing, orbits in key order.
-pub(crate) struct RemanenceImageBuilder<S: ByteSink = Vec<u8>> {
+pub(crate) struct FluxImageBuilder<S: ByteSink = Vec<u8>> {
     writer: SectionWriter<RemanenceSectionKey, S>,
-    image: RemanenceImage,
+    image: FluxImage,
     chunk_records: usize,
 }
 
-impl RemanenceImageBuilder<Vec<u8>> {
+impl FluxImageBuilder<Vec<u8>> {
     /// A builder whose backing is an in-memory vector, for tests and
     /// for images small enough to assemble before a home exists.
     pub(crate) fn in_memory(
@@ -1137,7 +1137,7 @@ impl RemanenceImageBuilder<Vec<u8>> {
     }
 }
 
-impl<S: ByteSink> RemanenceImageBuilder<S> {
+impl<S: ByteSink> FluxImageBuilder<S> {
     /// A builder streaming into `sink`. Refuses a policy with no
     /// notes: an image is reconstructed from evidence or read from an
     /// artifact, and the account of which travels with it — it is
@@ -1170,7 +1170,7 @@ impl<S: ByteSink> RemanenceImageBuilder<S> {
         }
         Ok(Self {
             writer: SectionWriter::to_sink(sink, LEAF_ENTRIES),
-            image: RemanenceImage {
+            image: FluxImage {
                 form_factor,
                 holes,
                 orbits: BTreeMap::new(),
@@ -1256,7 +1256,7 @@ impl<S: ByteSink> RemanenceImageBuilder<S> {
 
     /// Closes the backing and hands back the image, the sink, and the
     /// backing's total length; the caller attaches the backing.
-    pub(crate) fn seal(self) -> Result<(RemanenceImage, S, u64)> {
+    pub(crate) fn seal(self) -> Result<(FluxImage, S, u64)> {
         let (sink, total) = self.writer.seal()?;
         Ok((self.image, sink, total))
     }
@@ -1519,7 +1519,7 @@ mod tests {
     #[test]
     fn the_builder_drops_an_orbit_asserting_nothing() {
         let mut builder =
-            RemanenceImageBuilder::in_memory(MediaFormFactor::Inch525, Vec::new(), policy())
+            FluxImageBuilder::in_memory(MediaFormFactor::Inch525, Vec::new(), policy())
                 .expect("a noted policy builds");
         let silent = vec![OrbitPoint::new(0, Magnetization::Unaligned).unwrap()];
         let kept = builder
@@ -1536,7 +1536,7 @@ mod tests {
     #[test]
     fn the_builder_refuses_a_second_recording_at_one_radius() {
         let mut builder =
-            RemanenceImageBuilder::in_memory(MediaFormFactor::Inch525, Vec::new(), policy())
+            FluxImageBuilder::in_memory(MediaFormFactor::Inch525, Vec::new(), policy())
                 .expect("a noted policy builds");
         let key = OrbitKey::new(0, 57150).unwrap();
         builder
@@ -1548,7 +1548,7 @@ mod tests {
     #[test]
     fn the_builder_refuses_a_policy_with_nothing_to_say() {
         assert!(
-            RemanenceImageBuilder::in_memory(
+            FluxImageBuilder::in_memory(
                 MediaFormFactor::Inch525,
                 Vec::new(),
                 Provenance::new(REMANENCE),
@@ -1567,7 +1567,7 @@ mod tests {
             Hole::new(eighth, extent).unwrap(),
         ];
         assert!(
-            RemanenceImageBuilder::in_memory(MediaFormFactor::Inch525, disordered, policy())
+            FluxImageBuilder::in_memory(MediaFormFactor::Inch525, disordered, policy())
                 .is_err()
         );
         assert!(Hole::new(TurnFraction::new(5, 4).unwrap(), extent).is_err());
@@ -1577,7 +1577,7 @@ mod tests {
 
     #[test]
     fn points_stream_through_the_backing_and_come_back_whole() {
-        let mut builder = RemanenceImageBuilder::to_sink(
+        let mut builder = FluxImageBuilder::to_sink(
             MediaFormFactor::Inch525,
             vec![
                 Hole::new(

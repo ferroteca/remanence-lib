@@ -23,7 +23,7 @@
 //!
 //! **The reduction answers with the image itself**, not a second root
 //! beside it: what a caller holds afterwards is the same
-//! [`RemanenceImage`] a `.remanence` artifact opens to, carrying this
+//! [`FluxImage`] a `.remanence` artifact opens to, carrying this
 //! reduction's policy and evidence as its provenance. The account of
 //! how it came to be belongs to the *plan*, which computed it before
 //! anything was written.
@@ -37,7 +37,7 @@ use crate::flux::analysis::{
 use crate::flux::capture::{FluxCapture, TrackKey};
 use crate::flux::remanence::image::{
     ANGULAR_DIVISIONS, Hole, Magnetization, MediaFormFactor, OrbitKey, OrbitPoint, REMANENCE,
-    RemanenceImage, RemanenceImageBuilder, WriteWidths,
+    FluxImage, FluxImageBuilder, WriteWidths,
 };
 
 /// The capture rig's radial lattice: the reference 5.25-inch rig steps
@@ -159,9 +159,9 @@ impl ReconstructionPlan {
     /// The image is the family's ordinary physical stratum — the same
     /// root a `.remanence` artifact opens to — and carries this
     /// reduction's declared policy and evidence as its provenance.
-    pub(crate) fn execute(&self, cache_bytes: u64) -> Result<RemanenceImage> {
+    pub(crate) fn execute(&self, cache_bytes: u64) -> Result<FluxImage> {
         let sink = crate::flux::capture::SessionBacking::create()?;
-        let mut builder = RemanenceImageBuilder::to_sink(
+        let mut builder = FluxImageBuilder::to_sink(
             MediaFormFactor::Inch525,
             Vec::<Hole>::new(),
             self.policy.clone(),
@@ -769,8 +769,8 @@ pub(crate) fn fixture_capture(capture_path: &std::path::Path) -> crate::flux::ca
 /// for it, so what a test masters off here is what a run of its own
 /// would have given it.
 #[cfg(test)]
-pub(crate) fn reconstructed_capture() -> &'static crate::flux::remanence::image::RemanenceImage {
-    static SHARED: std::sync::OnceLock<crate::flux::remanence::image::RemanenceImage> =
+pub(crate) fn reconstructed_capture() -> &'static crate::flux::remanence::image::FluxImage {
+    static SHARED: std::sync::OnceLock<crate::flux::remanence::image::FluxImage> =
         std::sync::OnceLock::new();
     SHARED.get_or_init(|| {
         // The archive is opened under a P7 claim, so every test that

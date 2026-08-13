@@ -25,7 +25,7 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::evidence::{DeclaredLoss, LossAccount, Provenance};
 use crate::flux::analysis::cell_of;
-use crate::flux::remanence::image::{ANGULAR_DIVISIONS, Orbit, REMANENCE, RemanenceImage};
+use crate::flux::remanence::image::{ANGULAR_DIVISIONS, Orbit, REMANENCE, FluxImage};
 use crate::io::device;
 
 /// The 1541's reference frame, as the delivered P64 adapter declares
@@ -557,7 +557,7 @@ pub struct D64Report {
 }
 
 /// One orbit's coherent angles and the cell its recording implies.
-fn clocked_orbit(image: &RemanenceImage, orbit: &Orbit) -> Result<(Vec<i64>, f64)> {
+fn clocked_orbit(image: &FluxImage, orbit: &Orbit) -> Result<(Vec<i64>, f64)> {
     let points = image.points(orbit)?;
     let angles: Vec<i64> = points
         .iter()
@@ -570,7 +570,7 @@ fn clocked_orbit(image: &RemanenceImage, orbit: &Orbit) -> Result<(Vec<i64>, f64
 
 /// Every orbit the 96 tpi half-track grid can place, in ascending
 /// slot order, with the ones it cannot counted into the account.
-fn on_grid_orbits<'a>(image: &'a RemanenceImage, loss: &mut LossAccount) -> Vec<(&'a Orbit, u64)> {
+fn on_grid_orbits<'a>(image: &'a FluxImage, loss: &mut LossAccount) -> Vec<(&'a Orbit, u64)> {
     let mut placed = Vec::new();
     for orbit in image.orbits() {
         match grid_step_of(orbit.key().radius_microns()) {
@@ -587,7 +587,7 @@ fn on_grid_orbits<'a>(image: &'a RemanenceImage, loss: &mut LossAccount) -> Vec<
     placed
 }
 
-impl RemanenceImage {
+impl FluxImage {
     /// Computes the g64 this image renders to, writing nothing. Read it
     /// before writing: the write adds nothing to the account.
     pub fn describe_g64(&self) -> Result<G64Report> {

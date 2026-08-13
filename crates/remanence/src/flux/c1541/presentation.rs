@@ -300,7 +300,7 @@ impl C1541Bitstream {
     /// as provenance. The bitstream is untouched and stays exactly what
     /// it was; the bytestream is separate session state with its own
     /// provenance, which is this bitstream's with the codec added to it.
-    pub fn materialize_c1541_bytestream(&self, cache_bytes: u64) -> Result<C1541Bytestream> {
+    pub fn materialize_bytestream(&self, cache_bytes: u64) -> Result<C1541Bytestream> {
         materialize_bytestream(
             &self.bitstream,
             C1541.presentation.codec_policy,
@@ -1308,7 +1308,7 @@ fn describe_codec(
 
 // ------------------------------------------------------- the entry points
 
-impl crate::RemanenceImage {
+impl crate::FluxImage {
     /// Materializes the family's hardware bitstream from what this image
     /// holds, under the family's declared mechanics and read-channel
     /// rules (P23, P30 reached through the type, P33).

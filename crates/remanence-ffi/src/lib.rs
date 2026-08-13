@@ -622,7 +622,7 @@ pub extern "C" fn remanence_device_slot_scheme(index: usize) -> *const c_char {
 /// receiver, which is no device type at all.
 ///
 /// A `sector` type is one whose medium answers
-/// `remanence_medium_get_sector` and `remanence_medium_put_sector`, in
+/// `remanence_medium_read_sector` and `remanence_medium_write_sector`, in
 /// the coordinates that medium's own geometry established.
 #[unsafe(no_mangle)]
 pub extern "C" fn remanence_device_slot_addressing(index: usize) -> *const c_char {
@@ -3711,7 +3711,7 @@ pub unsafe extern "C" fn remanence_medium_is_modified(medium: *const RemanenceMe
 // what the sources said — each reading with where it was taken — what
 // they settled between them, and what they contradict each other about.
 //
-// `remanence_medium_get_sector` and `remanence_medium_put_sector` address
+// `remanence_medium_read_sector` and `remanence_medium_write_sector` address
 // in what that established, on the device types whose
 // `remanence_device_slot_addressing` says `sector`. Everything else
 // refuses by name, carrying one of this seam's rule identities in
@@ -4045,7 +4045,7 @@ pub extern "C" fn remanence_geometry_source_name(index: usize) -> *const c_char 
 /// `geometry-unstated`, `geometry-undetermined`, `outside-geometry` or
 /// `partial-sector`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_medium_get_sector(
+pub unsafe extern "C" fn remanence_medium_read_sector(
     medium: *mut RemanenceMedium,
     cylinder: u32,
     head: u32,
@@ -4073,7 +4073,7 @@ pub unsafe extern "C" fn remanence_medium_get_sector(
         return false;
     };
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer_out, length) };
-    match medium.get_sector(cylinder, head, sector, buffer) {
+    match medium.read_sector(cylinder, head, sector, buffer) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -4084,9 +4084,9 @@ pub unsafe extern "C" fn remanence_medium_get_sector(
 
 /// Writes one whole sector in the recording's own coordinates,
 /// **buffered until `remanence_medium_commit`** like every other write
-/// (P2), under the same rules `remanence_medium_get_sector` answers by.
+/// (P2), under the same rules `remanence_medium_read_sector` answers by.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_medium_put_sector(
+pub unsafe extern "C" fn remanence_medium_write_sector(
     medium: *mut RemanenceMedium,
     cylinder: u32,
     head: u32,
@@ -4114,7 +4114,7 @@ pub unsafe extern "C" fn remanence_medium_put_sector(
         return false;
     };
     let data = unsafe { std::slice::from_raw_parts(data, length) };
-    match medium.put_sector(cylinder, head, sector, data) {
+    match medium.write_sector(cylinder, head, sector, data) {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -6335,7 +6335,7 @@ enum BytestreamBacking {
 /// A hardware bitstream, held in the session. The bits stay behind this
 /// handle; what it reports is the transition that produced them.
 ///
-/// Two doors mint it: `remanence_image_materialize_c1541_bitstream`,
+/// Two doors mint it: `remanence_flux_image_materialize_c1541_bitstream`,
 /// whose handle owns the stream it materialized, and
 /// `remanence_medium_bitstream`, whose handle is a view of the stream
 /// cached in the pooled medium — that one **must not outlive its
@@ -6419,8 +6419,8 @@ fn bytestream_view(bytestream: &C1541Bytestream) -> LayerView {
 /// `remanence_c1541_bitstream_free`. Returns null on failure and stores
 /// a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_materialize_c1541_bitstream(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_materialize_c1541_bitstream(
+    image: *const RemanenceFluxImage,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
@@ -6530,7 +6530,7 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_materialize_bytestream(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match stream.materialize_c1541_bytestream(cache_bytes) {
+    match stream.materialize_bytestream(cache_bytes) {
         Ok(bytestream) => {
             let view = bytestream_view(&bytestream);
             Box::into_raw(Box::new(RemanenceC1541Bytestream {
@@ -7170,7 +7170,7 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_recognize_sectors(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match stream.recognize_c1541_sectors(cache_bytes) {
+    match stream.recognize_sectors(cache_bytes) {
         Ok(sectors) => {
             let report = sectors.inspect();
             let view = LayerView::new(
@@ -9103,16 +9103,16 @@ pub unsafe extern "C" fn remanence_drive_map_provenance(
 // beneath the root — orbits' points, magnetization, write geometry —
 // does not cross this boundary; what crosses is the image's shape.
 
-// The core's own name for the root is `RemanenceImage`, which is also
-// what C calls the handle; the alias keeps both spellings honest inside
-// this file.
-use remanence::{RemanenceImage as PhysicalImage, RemanenceImageReport, RemanenceWriteReport};
+// The core's own name for the root is `FluxImage`; C prefixes it, as it
+// prefixes every exported type, giving `RemanenceFluxImage`. The alias
+// keeps both spellings honest inside this file.
+use remanence::{FluxImage as PhysicalImage, FluxImageReport, FluxWriteReport};
 
 /// One index hole, as the image holds it: an exact fraction of a turn
 /// for the centre and another for the extent. Nothing radial is stored.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct RemanenceImageHole {
+pub struct RemanenceFluxHole {
     pub center_numerator: u64,
     pub center_denominator: u64,
     pub extent_numerator: u64,
@@ -9122,7 +9122,7 @@ pub struct RemanenceImageHole {
 /// One orbit's identity and shape — never its points.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct RemanenceImageOrbit {
+pub struct RemanenceFluxOrbit {
     pub surface: u64,
     /// The centre radius of the recorded band, in whole microns.
     pub radius_microns: u64,
@@ -9142,7 +9142,7 @@ struct ImageView {
 }
 
 impl ImageView {
-    fn new(image: &PhysicalImage, report: &RemanenceImageReport) -> Self {
+    fn new(image: &PhysicalImage, report: &FluxImageReport) -> Self {
         Self {
             path: to_cstring(
                 &image
@@ -9164,15 +9164,15 @@ impl ImageView {
 
 /// An opened remanence image, holding its claim on the artifact and the
 /// points it decoded into private session storage.
-pub struct RemanenceImage {
+pub struct RemanenceFluxImage {
     image: PhysicalImage,
-    report: RemanenceImageReport,
+    report: FluxImageReport,
     view: ImageView,
 }
 
 /// What writing an image into a `.remanence` artifact carried.
-pub struct RemanenceImageWriteReport {
-    report: RemanenceWriteReport,
+pub struct RemanenceFluxWriteReport {
+    report: FluxWriteReport,
     path: CString,
     loss_codes: Vec<CString>,
     loss_details: Vec<CString>,
@@ -9184,7 +9184,7 @@ unsafe fn open_remanence_image(
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceImage {
+) -> *mut RemanenceFluxImage {
     unsafe { clear_error(error_out, error_rule_out) };
     if path.is_null() {
         let error = remanence::Error::io("null path");
@@ -9200,7 +9200,7 @@ unsafe fn open_remanence_image(
         Ok(image) => {
             let report = image.inspect();
             let view = ImageView::new(&image, &report);
-            Box::into_raw(Box::new(RemanenceImage {
+            Box::into_raw(Box::new(RemanenceFluxImage {
                 image,
                 report,
                 view,
@@ -9220,27 +9220,27 @@ unsafe fn open_remanence_image(
 /// refused by name. Returns null on failure and stores a message in
 /// `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_open(
+pub unsafe extern "C" fn remanence_flux_image_open(
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceImage {
+) -> *mut RemanenceFluxImage {
     unsafe { open_remanence_image(path, None, error_category_out, error_out, error_rule_out) }
 }
 
-/// Opens a remanence image as `remanence_image_open` does, under a
+/// Opens a remanence image as `remanence_flux_image_open` does, under a
 /// declared cache bound: at most `cache_bytes` of the decoded image
 /// stays resident. The bound narrows the working set; it never refuses
 /// service.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_open_with_cache(
+pub unsafe extern "C" fn remanence_flux_image_open_with_cache(
     path: *const c_char,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceImage {
+) -> *mut RemanenceFluxImage {
     unsafe {
         open_remanence_image(
             path,
@@ -9255,7 +9255,7 @@ pub unsafe extern "C" fn remanence_image_open_with_cache(
 /// Frees an image handle, releasing its claim on the artifact and
 /// discarding the private session storage its points decoded into.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_free(image: *mut RemanenceImage) {
+pub unsafe extern "C" fn remanence_flux_image_free(image: *mut RemanenceFluxImage) {
     if !image.is_null() {
         drop(unsafe { Box::from_raw(image) });
     }
@@ -9263,28 +9263,28 @@ pub unsafe extern "C" fn remanence_image_free(image: *mut RemanenceImage) {
 
 /// The artifact the image was opened from.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_path(image: *const RemanenceImage) -> *const c_char {
+pub unsafe extern "C" fn remanence_flux_image_path(image: *const RemanenceFluxImage) -> *const c_char {
     unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.view.path.as_ptr())
 }
 
 /// The artifact format's stable identifier: `"remanence"`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_format_id(image: *const RemanenceImage) -> *const c_char {
+pub unsafe extern "C" fn remanence_flux_image_format_id(image: *const RemanenceFluxImage) -> *const c_char {
     unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.view.format_id.as_ptr())
 }
 
 /// That format's human-readable name.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_format_name(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_format_name(
+    image: *const RemanenceFluxImage,
 ) -> *const c_char {
     unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.view.format_name.as_ptr())
 }
 
 /// Which P7 mode the open obtained on the artifact.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_access_mode(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_access_mode(
+    image: *const RemanenceFluxImage,
 ) -> RemanenceAccessMode {
     unsafe { image.as_ref() }.map_or(RemanenceAccessMode::ReadOnly, |image| {
         image
@@ -9297,8 +9297,8 @@ pub unsafe extern "C" fn remanence_image_access_mode(
 /// The medium's shape in the model's own spelling: `"8-inch"`,
 /// `"5.25-inch"` or `"3.5-inch"`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_form_factor(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_form_factor(
+    image: *const RemanenceFluxImage,
 ) -> *const c_char {
     unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.view.form_factor.as_ptr())
 }
@@ -9306,35 +9306,35 @@ pub unsafe extern "C" fn remanence_image_form_factor(
 /// The angular unit every angle in the image is stated over — a unit
 /// rather than a measurement, so equality is exact.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_angular_divisions(image: *const RemanenceImage) -> u64 {
+pub unsafe extern "C" fn remanence_flux_image_angular_divisions(image: *const RemanenceFluxImage) -> u64 {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.angular_divisions)
 }
 
 /// How many bytes of private session storage the decoded points occupy.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_backing_bytes(image: *const RemanenceImage) -> u64 {
+pub unsafe extern "C" fn remanence_flux_image_backing_bytes(image: *const RemanenceFluxImage) -> u64 {
     unsafe { image.as_ref() }.map_or(0, |image| image.image.backing_bytes())
 }
 
 /// How much of that backing is currently resident. The points are never
 /// held whole.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_resident_bytes(image: *const RemanenceImage) -> u64 {
+pub unsafe extern "C" fn remanence_flux_image_resident_bytes(image: *const RemanenceFluxImage) -> u64 {
     unsafe { image.as_ref() }.map_or(0, |image| image.image.resident_bytes())
 }
 
 /// How many index holes the image holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_hole_count(image: *const RemanenceImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_hole_count(image: *const RemanenceFluxImage) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.holes.len())
 }
 
 /// One of them, written into `out`. Returns false when out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_hole(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_hole(
+    image: *const RemanenceFluxImage,
     index: usize,
-    out: *mut RemanenceImageHole,
+    out: *mut RemanenceFluxHole,
 ) -> bool {
     let Some(image) = (unsafe { image.as_ref() }) else {
         return false;
@@ -9344,7 +9344,7 @@ pub unsafe extern "C" fn remanence_image_hole(
     };
     if !out.is_null() {
         unsafe {
-            *out = RemanenceImageHole {
+            *out = RemanenceFluxHole {
                 center_numerator: hole.center_numerator,
                 center_denominator: hole.center_denominator,
                 extent_numerator: hole.extent_numerator,
@@ -9357,15 +9357,15 @@ pub unsafe extern "C" fn remanence_image_hole(
 
 /// How many surfaces carry orbits.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_surface_count(image: *const RemanenceImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_surface_count(image: *const RemanenceFluxImage) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.surfaces.len())
 }
 
 /// One surface's index, written into `out`, ascending. Returns false
 /// when out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_surface(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_surface(
+    image: *const RemanenceFluxImage,
     index: usize,
     out: *mut u64,
 ) -> bool {
@@ -9383,17 +9383,17 @@ pub unsafe extern "C" fn remanence_image_surface(
 
 /// How many orbits the image holds, across every surface.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_orbit_count(image: *const RemanenceImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_orbit_count(image: *const RemanenceFluxImage) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.orbits.len())
 }
 
 /// One of them, written into `out`, ordered by surface then radius.
 /// Returns false when out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_orbit(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_orbit(
+    image: *const RemanenceFluxImage,
     index: usize,
-    out: *mut RemanenceImageOrbit,
+    out: *mut RemanenceFluxOrbit,
 ) -> bool {
     let Some(image) = (unsafe { image.as_ref() }) else {
         return false;
@@ -9403,7 +9403,7 @@ pub unsafe extern "C" fn remanence_image_orbit(
     };
     if !out.is_null() {
         unsafe {
-            *out = RemanenceImageOrbit {
+            *out = RemanenceFluxOrbit {
                 surface: orbit.surface,
                 radius_microns: orbit.radius_microns,
                 points: orbit.points,
@@ -9417,13 +9417,13 @@ pub unsafe extern "C" fn remanence_image_orbit(
 
 /// How the image came to be known, in human-readable terms.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_provenance_count(image: *const RemanenceImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_provenance_count(image: *const RemanenceFluxImage) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.view.provenance.len())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_provenance(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_provenance(
+    image: *const RemanenceFluxImage,
     index: usize,
 ) -> *const c_char {
     unsafe { image.as_ref() }.map_or(ptr::null(), |image| {
@@ -9439,15 +9439,15 @@ pub unsafe extern "C" fn remanence_image_provenance(
 /// and reports what the artifact carried. An existing destination is a
 /// named refusal rather than an overwrite, and an interruption leaves
 /// the destination absent rather than half an artifact. Returns null on
-/// failure; free the report with `remanence_image_write_report_free`.
+/// failure; free the report with `remanence_flux_write_report_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_write(
+    image: *const RemanenceFluxImage,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceImageWriteReport {
+) -> *mut RemanenceFluxWriteReport {
     unsafe { clear_error(error_out, error_rule_out) };
     let Some(image) = (unsafe { image.as_ref() }) else {
         let error = remanence::Error::io("null image");
@@ -9473,7 +9473,7 @@ pub unsafe extern "C" fn remanence_image_write(
                 .iter()
                 .map(|loss| to_cstring(&loss.detail))
                 .collect();
-            Box::into_raw(Box::new(RemanenceImageWriteReport {
+            Box::into_raw(Box::new(RemanenceFluxWriteReport {
                 report,
                 path,
                 loss_codes,
@@ -9489,7 +9489,7 @@ pub unsafe extern "C" fn remanence_image_write(
 
 /// Frees a write report.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_report_free(report: *mut RemanenceImageWriteReport) {
+pub unsafe extern "C" fn remanence_flux_write_report_free(report: *mut RemanenceFluxWriteReport) {
     if !report.is_null() {
         drop(unsafe { Box::from_raw(report) });
     }
@@ -9497,32 +9497,32 @@ pub unsafe extern "C" fn remanence_image_write_report_free(report: *mut Remanenc
 
 /// Where the artifact was written.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_path(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_path(
+    report: *const RemanenceFluxWriteReport,
 ) -> *const c_char {
     unsafe { report.as_ref() }.map_or(ptr::null(), |report| report.path.as_ptr())
 }
 
 /// The artifact's size on storage.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_artifact_bytes(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_artifact_bytes(
+    report: *const RemanenceFluxWriteReport,
 ) -> u64 {
     unsafe { report.as_ref() }.map_or(0, |report| report.report.artifact_bytes)
 }
 
 /// How many orbits it carried.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_orbits(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_orbits(
+    report: *const RemanenceFluxWriteReport,
 ) -> u64 {
     unsafe { report.as_ref() }.map_or(0, |report| report.report.orbits)
 }
 
 /// Every point across every orbit it carried.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_points(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_points(
+    report: *const RemanenceFluxWriteReport,
 ) -> u64 {
     unsafe { report.as_ref() }.map_or(0, |report| report.report.points)
 }
@@ -9532,16 +9532,16 @@ pub unsafe extern "C" fn remanence_image_write_points(
 /// carries every fact the image holds. An empty account is the claim,
 /// not a missing one.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_declared_loss_count(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_declared_loss_count(
+    report: *const RemanenceFluxWriteReport,
 ) -> usize {
     unsafe { report.as_ref() }.map_or(0, |report| report.report.declared_loss.len())
 }
 
 /// One loss entry's stable code, or null when out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_declared_loss_code(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_declared_loss_code(
+    report: *const RemanenceFluxWriteReport,
     index: usize,
 ) -> *const c_char {
     unsafe { report.as_ref() }.map_or(ptr::null(), |report| {
@@ -9554,8 +9554,8 @@ pub unsafe extern "C" fn remanence_image_write_declared_loss_code(
 
 /// What was lost, in the source's own terms. A count is not an account.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_declared_loss_detail(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_declared_loss_detail(
+    report: *const RemanenceFluxWriteReport,
     index: usize,
 ) -> *const c_char {
     unsafe { report.as_ref() }.map_or(ptr::null(), |report| {
@@ -9568,8 +9568,8 @@ pub unsafe extern "C" fn remanence_image_write_declared_loss_detail(
 
 /// How much of it there was, in whatever the detail counts.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_declared_loss_amount(
-    report: *const RemanenceImageWriteReport,
+pub unsafe extern "C" fn remanence_flux_write_report_declared_loss_amount(
+    report: *const RemanenceFluxWriteReport,
     index: usize,
 ) -> u64 {
     unsafe { report.as_ref() }.map_or(0, |report| {
@@ -9653,8 +9653,8 @@ fn boxed_g64(report: G64Report) -> *mut RemanenceG64Report {
 /// before writing: the write adds nothing to the account. Returns null
 /// on failure; free the report with `remanence_d64_report_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_describe_d64(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_describe_d64(
+    image: *const RemanenceFluxImage,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -9681,8 +9681,8 @@ pub unsafe extern "C" fn remanence_image_describe_d64(
 /// carries the error map. An existing destination is a named refusal
 /// rather than an overwrite. Returns null on failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_d64(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_write_d64(
+    image: *const RemanenceFluxImage,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
@@ -9847,8 +9847,8 @@ pub unsafe extern "C" fn remanence_d64_report_declared_loss_amount(
 /// Computes the g64 this image renders to, writing nothing. Returns null
 /// on failure; free the report with `remanence_g64_report_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_describe_g64(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_describe_g64(
+    image: *const RemanenceFluxImage,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -9875,8 +9875,8 @@ pub unsafe extern "C" fn remanence_image_describe_g64(
 /// zone per half-track. An existing destination is a named refusal
 /// rather than an overwrite. Returns null on failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_g64(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_write_g64(
+    image: *const RemanenceFluxImage,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
@@ -10018,8 +10018,8 @@ pub unsafe extern "C" fn remanence_g64_report_declared_loss_amount(
 /// nothing. The report is the delivered P64 one, and is freed with
 /// `remanence_p64_report_free`. Returns null on failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_describe_p64(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_describe_p64(
+    image: *const RemanenceFluxImage,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
@@ -10048,8 +10048,8 @@ pub unsafe extern "C" fn remanence_image_describe_p64(
 /// written empty. An existing destination is a named refusal rather
 /// than an overwrite. Returns null on failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_image_write_p64(
-    image: *const RemanenceImage,
+pub unsafe extern "C" fn remanence_flux_image_write_p64(
+    image: *const RemanenceFluxImage,
     path: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,

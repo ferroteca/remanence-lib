@@ -44,6 +44,41 @@ rather than bridged. Read every entry below in that light.
   `locations` and `claims`: those hold the collections, where the plural
   is correct (D38).
 
+- **The `.remanence` flux root is `FluxImage`, not `RemanenceImage`.**
+  In the C ABI `remanence_image_*` named this root across 36 functions
+  while `remanence_medium_image_path`, `remanence_discovery_image_format`
+  and their kin used `image` in the ordinary disk-image sense, so one
+  word meant two things in one namespace. The family moves together:
+  Rust and Python `FluxImage`, `FluxImageReport`, `FluxHole`,
+  `FluxOrbit`, `FluxWriteReport`; C `RemanenceFluxImage`,
+  `RemanenceFluxHole`, `RemanenceFluxOrbit`, `RemanenceFluxWriteReport`
+  and the `remanence_flux_image_*` prefix, the library type prefix being
+  kept as C requires. `remanence::RemanenceImage` no longer stutters
+  (D39).
+
+- **The flux write-report accessors are named after their own type.**
+  `remanence_image_write_path(report)` shared a prefix with the verb
+  `remanence_image_write(image, path)` and read as "write path". They
+  are now `remanence_flux_write_report_*`, matching
+  `remanence_d64_report_*` and every other report in the C ABI. C only
+  (D39).
+
+- **A `c1541` qualifier the receiver already carries is dropped.**
+  `C1541Bitstream::materialize_c1541_bytestream` becomes
+  `materialize_bytestream` and `C1541Bytestream::recognize_c1541_sectors`
+  becomes `recognize_sectors` — which is what the C ABI already spelled
+  them, so the three surfaces now agree.
+  `FluxImage::materialize_c1541_bitstream` **keeps** its qualifier: that
+  receiver is not a c1541 type, so the word says which family is being
+  materialized (D39).
+
+- **`get_sector`/`put_sector` are `read_sector`/`write_sector`.** Rust
+  discourages the `get_` prefix (C-GETTER), and the crate already spelled
+  the same act `C1541Sectors::read_sector`. C
+  `remanence_medium_read_sector` and `remanence_medium_write_sector`,
+  Python `Medium.read_sector` and `Medium.write_sector`. The addressing
+  rules and the `GeometryRule` refusals are unchanged (D39).
+
 ## 0.0.1-alpha.3 - 2026-08-12
 
 ### Added

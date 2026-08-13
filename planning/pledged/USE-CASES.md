@@ -729,7 +729,7 @@ assert_eq!(disk.device_type(),
            Some(DeviceType::HardDrive(HardDrive::MbrSector)));
 // geometry: evidence read UNDER my declarations (BPB, MBR end-tuples) —
 // verification fills values, it never picks readings — so
-// disk.get_sector(c, h, s) answers, and disagreement between the
+// disk.read_sector(c, h, s) answers, and disagreement between the
 // sources comes back Undetermined rather than settled
 
 let part = disk.partition(1).expect("the declared table bears entry 1");

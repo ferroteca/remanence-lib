@@ -878,23 +878,23 @@ impl Medium {
     /// A coordinate the geometry does not cover — or one it covers and
     /// the content does not hold — is refused rather than answered with
     /// zeros.
-    pub fn get_sector(
+    pub fn read_sector(
         &mut self,
         cylinder: u32,
         head: u32,
         sector: u32,
         buf: &mut [u8],
     ) -> Result<()> {
-        let offset = self.sector_offset("get_sector", cylinder, head, sector, buf.len())?;
+        let offset = self.sector_offset("read_sector", cylinder, head, sector, buf.len())?;
         self.read_space_at(offset, buf)
     }
 
     /// Writes one whole sector in the recording's own coordinates,
     /// **buffered until [`commit`](Self::commit)** like every other
     /// write (P2), under the same rules
-    /// [`get_sector`](Self::get_sector) answers by.
-    pub fn put_sector(&mut self, cylinder: u32, head: u32, sector: u32, data: &[u8]) -> Result<()> {
-        let offset = self.sector_offset("put_sector", cylinder, head, sector, data.len())?;
+    /// [`read_sector`](Self::read_sector) answers by.
+    pub fn write_sector(&mut self, cylinder: u32, head: u32, sector: u32, data: &[u8]) -> Result<()> {
+        let offset = self.sector_offset("write_sector", cylinder, head, sector, data.len())?;
         self.write_space_at(offset, data)
     }
 

@@ -287,7 +287,7 @@ static void print_geometry(RemanenceMedium *medium) {
             RemanenceErrorCategory category;
             char *error = NULL;
             char *rule = NULL;
-            if (remanence_medium_get_sector(medium, 0, 0, 1, sector, (size_t)sector_bytes,
+            if (remanence_medium_read_sector(medium, 0, 0, 1, sector, (size_t)sector_bytes,
                                             &category, &error, &rule)) {
                 printf("  sector 0/0/1:");
                 for (size_t i = 0; i < 16 && i < (size_t)sector_bytes; ++i) {
@@ -748,36 +748,36 @@ static int show_remanence_image(const char *path, const char *destination) {
     RemanenceErrorCategory error_category;
     char *error = NULL;
     char *error_rule = NULL;
-    RemanenceImage *image =
-        remanence_image_open(path, &error_category, &error, &error_rule);
+    RemanenceFluxImage *image =
+        remanence_flux_image_open(path, &error_category, &error, &error_rule);
     if (image == NULL) {
         report_error("error", error_category, error, error_rule);
         return EXIT_FAILURE;
     }
 
-    printf("Source:  %s\n", remanence_image_path(image));
-    printf("Format:  %s (%s)\n", remanence_image_format_name(image),
-           remanence_image_format_id(image));
-    printf("Medium:  %s\n", remanence_image_form_factor(image));
+    printf("Source:  %s\n", remanence_flux_image_path(image));
+    printf("Format:  %s (%s)\n", remanence_flux_image_format_name(image),
+           remanence_flux_image_format_id(image));
+    printf("Medium:  %s\n", remanence_flux_image_form_factor(image));
     printf("Angles:  %" PRIu64 " divisions per turn\n",
-           remanence_image_angular_divisions(image));
+           remanence_flux_image_angular_divisions(image));
 
-    size_t holes = remanence_image_hole_count(image);
+    size_t holes = remanence_flux_image_hole_count(image);
     printf("Holes:   %zu\n", holes);
     for (size_t i = 0; i < holes; ++i) {
-        RemanenceImageHole hole;
-        if (remanence_image_hole(image, i, &hole)) {
+        RemanenceFluxHole hole;
+        if (remanence_flux_image_hole(image, i, &hole)) {
             printf("  centre %" PRIu64 "/%" PRIu64 ", extent %" PRIu64 "/%" PRIu64 "\n",
                    hole.center_numerator, hole.center_denominator,
                    hole.extent_numerator, hole.extent_denominator);
         }
     }
 
-    size_t surfaces = remanence_image_surface_count(image);
+    size_t surfaces = remanence_flux_image_surface_count(image);
     printf("Surfaces (%zu):", surfaces);
     for (size_t i = 0; i < surfaces; ++i) {
         uint64_t surface = 0;
-        if (remanence_image_surface(image, i, &surface)) {
+        if (remanence_flux_image_surface(image, i, &surface)) {
             printf(" %" PRIu64, surface);
         }
     }
@@ -786,13 +786,13 @@ static int show_remanence_image(const char *path, const char *destination) {
     /* One recorded band at one radius. "Orbit", not "track": both the
      * flux community and the recording formats use "track" and mean
      * different radii by it. */
-    size_t orbits = remanence_image_orbit_count(image);
+    size_t orbits = remanence_flux_image_orbit_count(image);
     uint64_t points = 0;
     uint64_t unread = 0;
     printf("Orbits (%zu):\n", orbits);
     for (size_t i = 0; i < orbits; ++i) {
-        RemanenceImageOrbit orbit;
-        if (!remanence_image_orbit(image, i, &orbit)) {
+        RemanenceFluxOrbit orbit;
+        if (!remanence_flux_image_orbit(image, i, &orbit)) {
             continue;
         }
         points += orbit.points;
@@ -810,13 +810,13 @@ static int show_remanence_image(const char *path, const char *destination) {
     }
     printf("Total:   %" PRIu64 " points, %" PRIu64 " spans unread\n", points, unread);
 
-    size_t provenance = remanence_image_provenance_count(image);
+    size_t provenance = remanence_flux_image_provenance_count(image);
     printf("Known by (%zu):\n", provenance);
     for (size_t i = 0; i < provenance; ++i) {
-        printf("  %s\n", remanence_image_provenance(image, i));
+        printf("  %s\n", remanence_flux_image_provenance(image, i));
     }
     printf("Backing: %" PRIu64 " bytes, %" PRIu64 " resident\n",
-           remanence_image_backing_bytes(image), remanence_image_resident_bytes(image));
+           remanence_flux_image_backing_bytes(image), remanence_flux_image_resident_bytes(image));
 
     /* Writing is the other direction of the same claim. An existing
      * destination refuses by name rather than being overwritten, and the
@@ -824,7 +824,7 @@ static int show_remanence_image(const char *path, const char *destination) {
      * artifact: nothing of the image was left behind. */
     int status = EXIT_SUCCESS;
     if (destination != NULL) {
-        RemanenceImageWriteReport *written = remanence_image_write(
+        RemanenceFluxWriteReport *written = remanence_flux_image_write(
             image, destination, &error_category, &error, &error_rule);
         if (written == NULL) {
             report_error("error", error_category, error, error_rule);
@@ -832,19 +832,19 @@ static int show_remanence_image(const char *path, const char *destination) {
         } else {
             printf("Wrote:   %s (%" PRIu64 " bytes, %" PRIu64 " orbits, %" PRIu64
                    " points)\n",
-                   remanence_image_write_path(written),
-                   remanence_image_write_artifact_bytes(written),
-                   remanence_image_write_orbits(written),
-                   remanence_image_write_points(written));
-            size_t losses = remanence_image_write_declared_loss_count(written);
+                   remanence_flux_write_report_path(written),
+                   remanence_flux_write_report_artifact_bytes(written),
+                   remanence_flux_write_report_orbits(written),
+                   remanence_flux_write_report_points(written));
+            size_t losses = remanence_flux_write_report_declared_loss_count(written);
             printf("Not carried (%zu):%s\n", losses, losses == 0 ? " nothing" : "");
             for (size_t i = 0; i < losses; ++i) {
                 printf("  %s: %s (%" PRIu64 ")\n",
-                       remanence_image_write_declared_loss_code(written, i),
-                       remanence_image_write_declared_loss_detail(written, i),
-                       remanence_image_write_declared_loss_amount(written, i));
+                       remanence_flux_write_report_declared_loss_code(written, i),
+                       remanence_flux_write_report_declared_loss_detail(written, i),
+                       remanence_flux_write_report_declared_loss_amount(written, i));
             }
-            remanence_image_write_report_free(written);
+            remanence_flux_write_report_free(written);
         }
     }
 
@@ -852,7 +852,7 @@ static int show_remanence_image(const char *path, const char *destination) {
      * the destination varies, so each states what it will not carry
      * before anything exists to carry it. */
     RemanenceD64Report *d64 =
-        remanence_image_describe_d64(image, &error_category, &error, &error_rule);
+        remanence_flux_image_describe_d64(image, &error_category, &error, &error_rule);
     if (d64 == NULL) {
         report_error("no d64", error_category, error, error_rule);
     } else {
@@ -867,7 +867,7 @@ static int show_remanence_image(const char *path, const char *destination) {
     }
 
     RemanenceG64Report *g64 =
-        remanence_image_describe_g64(image, &error_category, &error, &error_rule);
+        remanence_flux_image_describe_g64(image, &error_category, &error, &error_rule);
     if (g64 == NULL) {
         report_error("no g64", error_category, error, error_rule);
     } else {
@@ -889,7 +889,7 @@ static int show_remanence_image(const char *path, const char *destination) {
     }
 
     RemanenceP64Report *p64 =
-        remanence_image_describe_p64(image, &error_category, &error, &error_rule);
+        remanence_flux_image_describe_p64(image, &error_category, &error, &error_rule);
     if (p64 == NULL) {
         report_error("no p64", error_category, error, error_rule);
     } else {
@@ -905,7 +905,7 @@ static int show_remanence_image(const char *path, const char *destination) {
         remanence_p64_report_free(p64);
     }
 
-    remanence_image_free(image);
+    remanence_flux_image_free(image);
     return status;
 }
 
@@ -916,8 +916,8 @@ static int write_renditions(const char *path, const char *stem) {
     RemanenceErrorCategory error_category;
     char *error = NULL;
     char *error_rule = NULL;
-    RemanenceImage *image =
-        remanence_image_open(path, &error_category, &error, &error_rule);
+    RemanenceFluxImage *image =
+        remanence_flux_image_open(path, &error_category, &error, &error_rule);
     if (image == NULL) {
         report_error("error", error_category, error, error_rule);
         return EXIT_FAILURE;
@@ -927,7 +927,7 @@ static int write_renditions(const char *path, const char *stem) {
     int status = EXIT_SUCCESS;
 
     snprintf(destination, sizeof destination, "%s.d64", stem);
-    RemanenceD64Report *d64 = remanence_image_write_d64(image, destination, &error_category,
+    RemanenceD64Report *d64 = remanence_flux_image_write_d64(image, destination, &error_category,
                                                         &error, &error_rule);
     if (d64 == NULL) {
         report_error("d64", error_category, error, error_rule);
@@ -942,7 +942,7 @@ static int write_renditions(const char *path, const char *stem) {
     }
 
     snprintf(destination, sizeof destination, "%s.g64", stem);
-    RemanenceG64Report *g64 = remanence_image_write_g64(image, destination, &error_category,
+    RemanenceG64Report *g64 = remanence_flux_image_write_g64(image, destination, &error_category,
                                                         &error, &error_rule);
     if (g64 == NULL) {
         report_error("g64", error_category, error, error_rule);
@@ -956,7 +956,7 @@ static int write_renditions(const char *path, const char *stem) {
     }
 
     snprintf(destination, sizeof destination, "%s.p64", stem);
-    RemanenceP64Report *p64 = remanence_image_write_p64(image, destination, &error_category,
+    RemanenceP64Report *p64 = remanence_flux_image_write_p64(image, destination, &error_category,
                                                         &error, &error_rule);
     if (p64 == NULL) {
         report_error("p64", error_category, error, error_rule);
@@ -967,7 +967,7 @@ static int write_renditions(const char *path, const char *stem) {
         remanence_p64_report_free(p64);
     }
 
-    remanence_image_free(image);
+    remanence_flux_image_free(image);
     return status;
 }
 
@@ -1048,7 +1048,7 @@ static int author_media(const char *kind) {
         memset(boot, 0, sizeof boot);
         boot[510] = 0x55;
         boot[511] = 0xaa;
-        if (!remanence_medium_put_sector(medium, 0, 0, 1, boot, sizeof boot, &error_category,
+        if (!remanence_medium_write_sector(medium, 0, 0, 1, boot, sizeof boot, &error_category,
                                          &error, &error_rule)) {
             report_error("\nerror writing sector 0/0/1", error_category, error, error_rule);
             remanence_session_free(session);
@@ -1067,7 +1067,7 @@ static int author_media(const char *kind) {
                remanence_medium_is_modified(medium) ? "yes" : "no");
 
         unsigned char back[512];
-        if (remanence_medium_get_sector(medium, 0, 0, 1, back, sizeof back, &error_category,
+        if (remanence_medium_read_sector(medium, 0, 0, 1, back, sizeof back, &error_category,
                                         &error, &error_rule)) {
             printf("sector 0/0/1 signature: %02x %02x\n", back[510], back[511]);
         } else {

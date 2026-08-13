@@ -152,7 +152,7 @@ fn medium_facts(session: &mut Session, disk_id: MediaId) {
     assert!(disk.format().is_err(), "no block image format");
     assert!(disk.commit().is_err(), "nothing to commit");
     let error = disk
-        .get_sector(0, 0, 1, &mut [0u8; 256])
+        .read_sector(0, 0, 1, &mut [0u8; 256])
         .expect_err("no cylinder-head-sector coordinates are stated");
     assert!(error.to_string().contains("geometry"), "{error}");
 }
@@ -276,7 +276,7 @@ fn sectors_and_directory(session: &mut Session, disk_id: MediaId) {
     let sectors = disk
         .bytestream()
         .expect("the codec resolves it")
-        .recognize_c1541_sectors(1 << 20)
+        .recognize_sectors(1 << 20)
         .expect("the family's record grammar reads the recording's own sectors");
     let report = sectors.inspect();
     assert_eq!(report.grammar_id, "cbm-dos-record");

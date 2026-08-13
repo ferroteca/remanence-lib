@@ -22,7 +22,7 @@
 
 use std::path::PathBuf;
 
-use remanence::RemanenceImage;
+use remanence::FluxImage;
 
 mod common;
 
@@ -247,9 +247,9 @@ fn placed(tag: &str, bytes: &[u8]) -> PathBuf {
 
 /// One image holding track one alone, at the radius a 96 tpi drive's
 /// first step position sits at.
-fn track_one_image(tag: &str) -> (RemanenceImage, PathBuf) {
+fn track_one_image(tag: &str) -> (FluxImage, PathBuf) {
     let path = placed(tag, &artifact(&payload(57_150, &track_one_angles())));
-    let image = RemanenceImage::open(&path).expect("the hand-built disk opens");
+    let image = FluxImage::open(&path).expect("the hand-built disk opens");
     (image, path)
 }
 
@@ -497,7 +497,7 @@ fn a_disk_the_grid_cannot_place_refuses_by_name() {
     // Half a step in from the first: a radius the 96 tpi grid has no
     // slot for, refused rather than pulled onto a neighbour.
     let path = placed("off-grid", &artifact(&payload(57_018, &track_one_angles())));
-    let image = RemanenceImage::open(&path).expect("the off-grid disk opens");
+    let image = FluxImage::open(&path).expect("the off-grid disk opens");
 
     let refusal = image
         .describe_g64()

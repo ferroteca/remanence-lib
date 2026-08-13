@@ -108,7 +108,7 @@
 //! table's end tuples, arithmetic over the content's extent — each
 //! reading kept with where it came from. Sources that disagree settle
 //! nothing: the answer is [`GeometryState::Undetermined`], carrying both
-//! readings. [`Medium::get_sector`] and [`Medium::put_sector`] address
+//! readings. [`Medium::read_sector`] and [`Medium::write_sector`] address
 //! in the coordinates that establishes, on the types whose
 //! [`DeviceType::addressing`] says the recording is sector-addressed,
 //! and refuse by name — their own [`GeometryRule`] set — everywhere
@@ -137,10 +137,10 @@
 //! medium of its own, which is the one recursion this model has.
 //!
 //! **The flux family's physical stratum is reached through its own
-//! type.** [`RemanenceImage`] opens a `.remanence` artifact and answers
+//! type.** [`FluxImage`] opens a `.remanence` artifact and answers
 //! the physical facts of one disk, and the C64 renditions are mastered
-//! off it: [`RemanenceImage::write_d64`], [`RemanenceImage::write_g64`]
-//! and [`RemanenceImage::write_p64`], each paired with a `describe_`
+//! off it: [`FluxImage::write_d64`], [`FluxImage::write_g64`]
+//! and [`FluxImage::write_p64`], each paired with a `describe_`
 //! verb that computes everything and writes nothing, and each stating
 //! what its destination did not carry (P29).
 //!
@@ -168,9 +168,9 @@
 //! c1541 channel and codec — and
 //! [`C1541Bytestream::location`] serves the framed bytes of one
 //! [`Location`]. The same rungs stand on a `.remanence` image through
-//! [`RemanenceImage::materialize_c1541_bitstream`] and
-//! [`C1541Bitstream::materialize_c1541_bytestream`]. The rungs assign
-//! nothing above a byte; [`C1541Bytestream::recognize_c1541_sectors`]
+//! [`FluxImage::materialize_c1541_bitstream`] and
+//! [`C1541Bitstream::materialize_bytestream`]. The rungs assign
+//! nothing above a byte; [`C1541Bytestream::recognize_sectors`]
 //! is where that ends, and it ends by stating what it derives — every
 //! record carrying its evidence, and [`C1541Sectors::read_sector`]
 //! refusing by name (its own [`SectorRule`] set) rather than filling in
@@ -221,9 +221,9 @@ pub use crate::flux::c1541::sectors::{
     C1541Sectors, ContestedAddress, SectorClaim, SectorLocation, SectorReport, SectorRule,
 };
 pub use crate::flux::p64::{P64HalfTrack, P64Report};
-pub use crate::flux::remanence::format::RemanenceWriteReport;
+pub use crate::flux::remanence::format::FluxWriteReport;
 pub use crate::flux::remanence::image::{
-    RemanenceHole, RemanenceImage, RemanenceImageReport, RemanenceOrbit,
+    FluxHole, FluxImage, FluxImageReport, FluxOrbit,
 };
 pub use crate::io::cache::DEFAULT_CACHE_BYTES;
 pub use crate::io::device::{AccessIntent, AccessMode, Claim};

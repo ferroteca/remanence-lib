@@ -554,7 +554,7 @@ assert_eq!(disk.geometry().readings()[0].source, GeometrySource::Authorship);
 
 let mut boot = [0u8; 512];
 boot[510] = 0x55; boot[511] = 0xaa;
-disk.put_sector(0, 0, 1, &boot)?;               // the authored geometry answers
+disk.write_sector(0, 0, 1, &boot)?;               // the authored geometry answers
 disk.commit()?;
 ```
 

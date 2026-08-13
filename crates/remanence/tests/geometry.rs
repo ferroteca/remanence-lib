@@ -260,7 +260,7 @@ fn the_coordinates_address_the_recording_and_a_write_buffers_until_commit() {
     // Cylinder 0, head 0, sector 1 is block zero — the table itself.
     let mut leading = [0u8; 512];
     medium
-        .get_sector(0, 0, 1, &mut leading)
+        .read_sector(0, 0, 1, &mut leading)
         .expect("the first sector reads");
     assert_eq!(&leading[510..], &[0x55, 0xaa], "the boot signature");
 
@@ -269,7 +269,7 @@ fn the_coordinates_address_the_recording_and_a_write_buffers_until_commit() {
     // recording's coordinates rather than by an offset computed by hand.
     let mut boot = [0u8; 512];
     medium
-        .get_sector(0, 1, 1, &mut boot)
+        .read_sector(0, 1, 1, &mut boot)
         .expect("the volume's boot record reads");
     assert_eq!(&boot[3..11], b"REMANENC", "the BPB's own OEM name");
 
@@ -278,11 +278,11 @@ fn the_coordinates_address_the_recording_and_a_write_buffers_until_commit() {
     let mut written = [0x5au8; 512];
     written[0] = 0xc0;
     medium
-        .put_sector(221, 1, 18, &written)
+        .write_sector(221, 1, 18, &written)
         .expect("the last block writes");
     let mut read_back = [0u8; 512];
     medium
-        .get_sector(221, 1, 18, &mut read_back)
+        .read_sector(221, 1, 18, &mut read_back)
         .expect("reads back through the session");
     assert_eq!(read_back, written, "the session reads its own write");
     assert!(medium.is_modified());
@@ -302,11 +302,11 @@ fn the_coordinates_address_the_recording_and_a_write_buffers_until_commit() {
     // And a rollback discards a later one, leaving the committed state.
     let medium = session.medium_mut(id).expect("pooled");
     medium
-        .put_sector(221, 1, 18, &[0u8; 512])
+        .write_sector(221, 1, 18, &[0u8; 512])
         .expect("writes again");
     medium.rollback().expect("rolls back");
     medium
-        .get_sector(221, 1, 18, &mut read_back)
+        .read_sector(221, 1, 18, &mut read_back)
         .expect("reads back");
     assert_eq!(read_back, written, "the rollback left the committed bytes");
 
@@ -329,7 +329,7 @@ fn a_coordinate_the_geometry_or_the_content_does_not_hold_is_refused_by_name() {
     // Outside the coordinates themselves.
     for (cylinder, head, number) in [(280, 0, 1), (0, 2, 1), (0, 0, 19), (0, 0, 0)] {
         let error = medium
-            .get_sector(cylinder, head, number, &mut sector)
+            .read_sector(cylinder, head, number, &mut sector)
             .expect_err("outside the geometry");
         assert_eq!(error.rule(), Some(OUTSIDE_GEOMETRY));
         assert_eq!(error.category(), ErrorCategory::NotFound);
@@ -342,7 +342,7 @@ fn a_coordinate_the_geometry_or_the_content_does_not_hold_is_refused_by_name() {
     // Inside the coordinates and past the content: the last cylinder is
     // reached and not wholly held, which is a different sentence.
     let error = medium
-        .get_sector(279, 1, 18, &mut sector)
+        .read_sector(279, 1, 18, &mut sector)
         .expect_err("past the content");
     assert_eq!(error.rule(), Some(OUTSIDE_GEOMETRY));
     assert!(
@@ -353,11 +353,11 @@ fn a_coordinate_the_geometry_or_the_content_does_not_hold_is_refused_by_name() {
     // A sector is answered whole or not at all.
     let mut half = [0u8; 256];
     let error = medium
-        .get_sector(0, 0, 1, &mut half)
+        .read_sector(0, 0, 1, &mut half)
         .expect_err("half a sector");
     assert_eq!(error.rule(), Some(PARTIAL_SECTOR));
     let error = medium
-        .put_sector(0, 0, 1, &[0u8; 1024])
+        .write_sector(0, 0, 1, &[0u8; 1024])
         .expect_err("two sectors");
     assert_eq!(error.rule(), Some(PARTIAL_SECTOR));
     assert!(
@@ -411,12 +411,12 @@ fn sources_that_disagree_leave_the_geometry_undetermined_and_settle_nothing() {
     // And the sector verbs refuse toward that state rather than picking
     // a reading to act on.
     let error = medium
-        .get_sector(0, 0, 1, &mut [0u8; 512])
+        .read_sector(0, 0, 1, &mut [0u8; 512])
         .expect_err("no coordinates to address in");
     assert_eq!(error.rule(), Some(GEOMETRY_UNDETERMINED));
     assert!(error.to_string().contains("neither settles it"), "{error}");
     let error = medium
-        .put_sector(0, 0, 1, &[0u8; 512])
+        .write_sector(0, 0, 1, &[0u8; 512])
         .expect_err("and neither does a write");
     assert_eq!(error.rule(), Some(GEOMETRY_UNDETERMINED));
 
@@ -508,7 +508,7 @@ fn a_disk_whose_sources_all_stay_silent_states_no_geometry_at_all() {
     );
 
     let error = medium
-        .get_sector(0, 0, 1, &mut [0u8; 512])
+        .read_sector(0, 0, 1, &mut [0u8; 512])
         .expect_err("nothing to address in");
     assert_eq!(error.rule(), Some(GEOMETRY_UNSTATED));
     assert!(
@@ -538,7 +538,7 @@ fn a_block_addressed_drive_has_no_cylinder_or_head_to_be_told() {
     // says what it says — and the verbs are what the addressing gates.
     assert_eq!(medium.geometry().state(), GeometryState::Determined);
     let error = medium
-        .get_sector(0, 0, 1, &mut [0u8; 512])
+        .read_sector(0, 0, 1, &mut [0u8; 512])
         .expect_err("block-addressed");
     assert_eq!(error.rule(), Some(NOT_SECTOR_ADDRESSED));
     assert_eq!(error.category(), ErrorCategory::Unsupported);
@@ -586,7 +586,7 @@ fn a_format_that_declares_a_geometry_states_it_for_every_image_it_claims() {
     // means: cylinder 1, head 0, sector 1 is the eleventh record.
     let mut recorded = [0u8; 256];
     medium
-        .get_sector(1, 0, 1, &mut recorded)
+        .read_sector(1, 0, 1, &mut recorded)
         .expect("the record reads");
     let mut raw = [0u8; 256];
     medium.read_at(2_560, &mut raw).expect("the bytes read");
@@ -594,7 +594,7 @@ fn a_format_that_declares_a_geometry_states_it_for_every_image_it_claims() {
 
     // A read-only claim refuses the write before anything else does.
     let error = medium
-        .put_sector(1, 0, 1, &recorded)
+        .write_sector(1, 0, 1, &recorded)
         .expect_err("the handle affords no write");
     assert_eq!(error.category(), ErrorCategory::ReadOnly);
 
@@ -613,7 +613,7 @@ fn an_archive_has_no_coordinates_at_all_and_says_so() {
         "nothing was read, because there is nothing there to read"
     );
     let error = medium
-        .get_sector(0, 0, 1, &mut [0u8; 512])
+        .read_sector(0, 0, 1, &mut [0u8; 512])
         .expect_err("an archive has no sector");
     assert_eq!(error.rule(), Some(NOT_SECTOR_ADDRESSED));
     assert!(

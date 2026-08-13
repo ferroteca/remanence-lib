@@ -34,7 +34,7 @@
 //! per concrete type.** The enumeration is the instantiation — each
 //! variant resolves to exactly one static spec below, its disciplines
 //! flat attributes of the profile. The *traits live on the medium*: the
-//! actions (`read_blocks`, `put_sector`, `partition`) take shape as
+//! actions (`read_blocks`, `write_sector`, `partition`) take shape as
 //! surfaces on [`crate::Medium`], each answering only where the
 //! profile's attribute holds, with the P30 declarations reached through
 //! the type rather than passed as arguments.
@@ -410,8 +410,8 @@ impl DeviceType {
     /// Every type declares one: it is part of the addressing surface the
     /// granularity rule says a device type fixes. A sector-addressed
     /// type is one whose medium answers
-    /// [`get_sector`](crate::Medium::get_sector) and
-    /// [`put_sector`](crate::Medium::put_sector), in the coordinates the
+    /// [`read_sector`](crate::Medium::read_sector) and
+    /// [`write_sector`](crate::Medium::write_sector), in the coordinates the
     /// medium's own geometry establishes; a block-addressed one refuses
     /// them by name, having no cylinder or head to be told about.
     pub fn addressing(self) -> &'static str {

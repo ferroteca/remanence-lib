@@ -38,8 +38,8 @@
 //! contradict each other" are different facts about the artifact.
 //!
 //! The coordinates themselves are [`RecordingGeometry`], and
-//! [`Medium::get_sector`](crate::Medium::get_sector) and
-//! [`Medium::put_sector`](crate::Medium::put_sector) are what address in
+//! [`Medium::read_sector`](crate::Medium::read_sector) and
+//! [`Medium::write_sector`](crate::Medium::write_sector) are what address in
 //! them. Cylinders and heads number from zero and **sectors number from
 //! one**, which is the recording's own convention rather than this
 //! library's.

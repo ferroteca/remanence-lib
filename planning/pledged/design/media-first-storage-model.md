@@ -69,7 +69,7 @@ StorageDevice hdd0                             config only: slot · device type
    ▼
 Medium                                         pool-owned, holdable — ALL content
    │     device_type · article · recording facts (geometry…) · mode · assurance
-   │     .get_sector(…)? / .put_sector(…)?  · .read_at()? · .commit()? / .rollback()?
+   │     .read_sector(…)? / .write_sector(…)?  · .read_at()? · .commit()? / .rollback()?
    │     .bitstream()? / .bytestream()?       kind-declared rules, no arguments
    │
    ├── PARTITION POOL — populated under the DEVICE SPEC, never probed
@@ -220,7 +220,7 @@ Medium                                         pool-owned, holdable — ALL cont
    `disk.bytestream()?` takes no policy because the device type carries
    it (P30 declarations reached through the type). The disciplines are
    **flat attributes of the device-type profile — the traits live on
-   the medium**: the actions (`read_blocks`, `put_sector`,
+   the medium**: the actions (`read_blocks`, `write_sector`,
    `partition`) take shape as trait surfaces on `Medium`, each
    answering only where the profile's attribute holds —
    `Commodore1541`'s profile bears flux, so its medium answers the
@@ -233,7 +233,7 @@ Medium                                         pool-owned, holdable — ALL cont
    `load_media` declaration. *The type carries its declarations
    today; the trait surfaces that read them arrive with the families
    that need them. The first action to take this shape is the sector
-   pair: `get_sector`/`put_sector` answer where the type's own
+   pair: `read_sector`/`write_sector` answer where the type's own
    `addressing` declaration says the recording is addressed by
    cylinder, head and sector — every floppy and the CHS hard drive —
    and refuse by name where it says block, with the coordinates

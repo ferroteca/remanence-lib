@@ -38,7 +38,7 @@ use crate::evidence::{DeclaredLoss, Provenance};
 use crate::flux::capture::{ByteSink, CHUNK_RECORDS, SessionBacking, read_varint, write_varint};
 use crate::flux::remanence::image::{
     Hole, Magnetization, MediaFormFactor, MemorySource, OrbitKey, OrbitPoint, REMANENCE,
-    RemanenceImage, RemanenceImageBuilder, TurnFraction, WriteWidths,
+    FluxImage, FluxImageBuilder, TurnFraction, WriteWidths,
 };
 use crate::io::device::{self, AccessIntent, AccessMode};
 
@@ -110,7 +110,7 @@ pub(crate) fn has_signature(bytes: &[u8]) -> bool {
 
 /// Decodes one `.remanence` artifact held in memory into an image
 /// whose orbit points live in an in-memory section backing.
-pub(crate) fn from_bytes(bytes: &[u8]) -> Result<RemanenceImage> {
+pub(crate) fn from_bytes(bytes: &[u8]) -> Result<FluxImage> {
     let (image, sink, total) = decode(bytes, Vec::new(), CHUNK_RECORDS)?;
     let mut image = image;
     image.attach_backing(
@@ -128,7 +128,7 @@ pub(crate) fn decode<S: ByteSink>(
     bytes: &[u8],
     sink: S,
     chunk_records: usize,
-) -> Result<(RemanenceImage, S, u64)> {
+) -> Result<(FluxImage, S, u64)> {
     if bytes.len() < HEADER_BYTES {
         return Err(Error::invalid_image(
             REMANENCE,
@@ -178,7 +178,7 @@ fn decode_payload<S: ByteSink>(
     payload: &[u8],
     sink: S,
     chunk_records: usize,
-) -> Result<(RemanenceImage, S, u64)> {
+) -> Result<(FluxImage, S, u64)> {
     let mut at = 0;
 
     let form_factor =
@@ -203,7 +203,7 @@ fn decode_payload<S: ByteSink>(
     // group is decoded whole and added reversed.
     let (surface_count, used) = read_varint(REMANENCE, payload, at)?;
     at += used;
-    let mut builder = RemanenceImageBuilder::to_sink(
+    let mut builder = FluxImageBuilder::to_sink(
         form_factor,
         holes,
         Provenance::new(REMANENCE).note("decoded from a remanence artifact"),
@@ -319,7 +319,7 @@ fn read_orbit(
 }
 
 /// Encodes one image as a complete `.remanence` artifact.
-pub(crate) fn to_bytes(image: &RemanenceImage) -> Result<Vec<u8>> {
+pub(crate) fn to_bytes(image: &FluxImage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     payload.push(form_factor_code(image.form_factor()));
 
@@ -396,7 +396,7 @@ pub(crate) fn to_bytes(image: &RemanenceImage) -> Result<Vec<u8>> {
 /// carries every fact the image holds. An empty account is the claim
 /// that nothing was left behind, not an account nobody assembled.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemanenceWriteReport {
+pub struct FluxWriteReport {
     /// Where the artifact was written.
     pub path: String,
     /// The artifact's size on storage.
@@ -409,7 +409,7 @@ pub struct RemanenceWriteReport {
     pub declared_loss: Vec<DeclaredLoss>,
 }
 
-impl RemanenceImage {
+impl FluxImage {
     /// Opens the `.remanence` artifact at `path` with the stated
     /// default session cache bound ([`crate::DEFAULT_CACHE_BYTES`]).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -469,12 +469,12 @@ impl RemanenceImage {
     /// implementation's writer is deliberately not claimed: two correct
     /// DEFLATE encoders legitimately differ, and this reader accepts
     /// any valid stream.
-    pub fn write(&self, path: impl AsRef<Path>) -> Result<RemanenceWriteReport> {
+    pub fn write(&self, path: impl AsRef<Path>) -> Result<FluxWriteReport> {
         write_new_artifact(self, path.as_ref())
     }
 }
 
-fn write_new_artifact(image: &RemanenceImage, path: &Path) -> Result<RemanenceWriteReport> {
+fn write_new_artifact(image: &FluxImage, path: &Path) -> Result<FluxWriteReport> {
     if path.try_exists().unwrap_or(false) {
         return Err(Error::io(format!(
             "cannot write '{}': something is already there, and a destination this \
@@ -511,7 +511,7 @@ fn write_new_artifact(image: &RemanenceImage, path: &Path) -> Result<RemanenceWr
         ))
     })?;
 
-    Ok(RemanenceWriteReport {
+    Ok(FluxWriteReport {
         path: path.display().to_string(),
         artifact_bytes: artifact.len() as u64,
         orbits: image.orbit_count() as u64,
@@ -678,7 +678,7 @@ mod tests {
         ];
         validate_orbit_points(&points).expect("the exercise orbit is valid");
 
-        let mut builder = RemanenceImageBuilder::in_memory(
+        let mut builder = FluxImageBuilder::in_memory(
             MediaFormFactor::Inch525,
             Vec::new(),
             Provenance::new(REMANENCE).note("built by a unit test"),

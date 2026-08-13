@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use remanence::RemanenceImage;
+use remanence::FluxImage;
 
 mod common;
 
@@ -92,7 +92,7 @@ fn placed(tag: &str, bytes: &[u8]) -> PathBuf {
 #[test]
 fn a_hand_built_artifact_opens_and_reports_its_disk() {
     let path = placed("worked-example", &artifact(&EXAMPLE_PAYLOAD, VERSION));
-    let image = RemanenceImage::open(&path).expect("the worked example opens");
+    let image = FluxImage::open(&path).expect("the worked example opens");
 
     assert_eq!(image.format_id(), "remanence");
     assert_eq!(image.path(), Some(path.as_path()));
@@ -130,7 +130,7 @@ fn a_hand_built_artifact_opens_and_reports_its_disk() {
 #[test]
 fn the_image_writes_back_and_reopens_unchanged() {
     let source = placed("round-trip-source", &artifact(&EXAMPLE_PAYLOAD, VERSION));
-    let image = RemanenceImage::open(&source).expect("the worked example opens");
+    let image = FluxImage::open(&source).expect("the worked example opens");
 
     let destination = scratch("round-trip-written");
     let _ = std::fs::remove_file(&destination);
@@ -151,7 +151,7 @@ fn the_image_writes_back_and_reopens_unchanged() {
         "the model's own artifact carries every fact it holds"
     );
 
-    let reopened = RemanenceImage::open(&destination).expect("our own artifact opens");
+    let reopened = FluxImage::open(&destination).expect("our own artifact opens");
     assert_eq!(reopened.inspect().form_factor, image.inspect().form_factor);
     assert_eq!(reopened.inspect().holes, image.inspect().holes);
     assert_eq!(reopened.inspect().orbits, image.inspect().orbits);
@@ -176,7 +176,7 @@ fn the_image_writes_back_and_reopens_unchanged() {
 #[test]
 fn an_occupied_destination_is_refused_rather_than_overwritten() {
     let source = placed("occupied-source", &artifact(&EXAMPLE_PAYLOAD, VERSION));
-    let image = RemanenceImage::open(&source).expect("the worked example opens");
+    let image = FluxImage::open(&source).expect("the worked example opens");
 
     let occupied = placed(
         "occupied-destination",
@@ -208,7 +208,7 @@ fn the_header_is_gated_before_anything_is_believed() {
     // guessed at (P8): the layout is implicit, so a reader that guesses
     // does not fail, it misreads.
     let future = placed("future-version", &artifact(&EXAMPLE_PAYLOAD, VERSION + 1));
-    let refusal = RemanenceImage::open(&future)
+    let refusal = FluxImage::open(&future)
         .expect_err("a layout version this build does not know is refused");
     assert!(
         refusal.to_string().contains("version"),
@@ -220,14 +220,14 @@ fn the_header_is_gated_before_anything_is_believed() {
         b"this is not a remanence artifact at all",
     );
     assert!(
-        RemanenceImage::open(&stranger).is_err(),
+        FluxImage::open(&stranger).is_err(),
         "a file that is not an artifact is refused"
     );
 
     let absent = scratch("never-written");
     let _ = std::fs::remove_file(&absent);
     assert!(
-        RemanenceImage::open(&absent).is_err(),
+        FluxImage::open(&absent).is_err(),
         "an artifact that is not there is refused"
     );
 

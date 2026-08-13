@@ -98,7 +98,7 @@ ABI, or Python module.
   them, a `FileSource` from an archive medium's namespace, a collection
   of those), the pool identity, and every content verb (identify,
   inspect, read_at, the space and namespace doors, the discovered
-  geometry and the `get_sector`/`put_sector` pair that addresses in it,
+  geometry and the `read_sector`/`write_sector` pair that addresses in it,
   the argument-free `bitstream`/`bytestream` pair a flux medium answers,
   commit and rollback), a medium being created by a declared reading
   **or by its author** (`authored_as` saying which) and destroyed only
@@ -421,7 +421,7 @@ ABI, or Python module.
 
   `remanence/` is the family's **physical stratum** — the disk's own
   magnetization, below every clock and every code. `image.rs` is the
-  public `RemanenceImage` root, which answers the image's *shape* and
+  public `FluxImage` root, which answers the image's *shape* and
   nothing below it (form factor, the angular unit, holes, surfaces, and
   per orbit its radius and counts), over the crate-private model it is a
   face of: form factor, holes as angular data, and per surface the
