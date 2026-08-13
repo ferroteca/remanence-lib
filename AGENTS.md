@@ -798,8 +798,23 @@ it can resolve to Watcom's rather than MSVC's. **No compiler is a test
 failure, not a skip** — `REMANENCE_SKIP_CC=1` skips deliberately, and
 plain `cargo test` needs a C compiler because of it.
 
+`cargo test` also **runs** a C caller against the built library
+(D45): `tests/c/abi_boundary.c` is compiled against the header, linked,
+and executed, one group per Rust test — the catalogs, the version, a
+refusal's out-parameters, null handling, and a real artifact discovered
+and released. This is the only thing that crosses the boundary as a C
+caller meets it; the FFI crate's unit tests call the same functions from
+Rust, where no header, no C compiler and no C calling convention are
+involved.
+
+**Those need the built library, and `cargo test` does not produce a
+cdylib — `cargo build` does.** Running the two in the order above
+satisfies it. When the library is missing the tests say so and say what
+to run; they do not build it themselves, because a nested `cargo` would
+contend for the lock the running test already holds.
+
 Running the example against a real image is still by hand, below; that is
-the part compiling cannot stand in for. When the Python surface changed, build `-p remanence-py` (needs
+the part neither compiling nor the boundary tests stands in for. When the Python surface changed, build `-p remanence-py` (needs
 Python ≥ 3.10) and smoke-test the module, **and move the type stub with
 it** (above); for release artifacts, `uv build crates/remanence-py`
 produces the sdist and abi3 wheel.
