@@ -18,6 +18,8 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+## 0.0.1-alpha.3 - 2026-08-12
+
 ### Added
 
 - **Authored media: `new_media` creates blank media whole, and
