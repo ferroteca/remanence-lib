@@ -7,6 +7,17 @@
 > reused. Proposed and pledged use cases live under
 > [planning/](planning/README.md) until full delivery brings them here.
 
+## How the walks read
+
+Several entries below carry a walk in code, and these conventions hold
+across every one of them. Each is written to the Rust surface, which the
+C ABI and the Python module mirror. Local artifacts arrive as the
+caller's own opened files — `File::open` is `std::fs::File`, the
+portable file; files from inside media are this library's own views —
+and **whoever opens owns the lock**: my open is my safeguard and the
+library's claim, checked for what it affords (may it write?), honoured
+exactly, never escalated.
+
 ## U1 — Identify a disk image I know nothing about
 
 I have a file that claims to be a disk image — maybe raw, maybe a
@@ -39,18 +50,75 @@ the host, write a file in, create a directory. Writing a file that
 already exists replaces its contents, shorter or longer, releasing
 and reclaiming clusters; creating a directory creates missing
 parents and succeeds when the directory already exists. I attach each
-image to a storage device in my session, ask that device which
-filesystem it resolves to — or select one by the opaque identity its
-inspection report issued for a volume, where several bear one — and
-work through the filesystem it answers with, which is the one type
-carrying file verbs; a path within it names the file. Where the guest
-was DOS, U22's composer maps that same volume identity to the drive
-letter I show a user. All of
+image to a storage device in my session, exactly as U4 does, and reach
+a volume by the ordinal its own partition scheme declares — a medium
+recording no scheme bearing its whole content as the direct one. The
+namespace opens under the type that scheme declares, or under my own
+reading where nothing declares one, and what answers is the one type
+carrying file verbs; a path within it names the file. It states the
+volume identity this disk's inspection report issued, so the volume I
+worked through and the volume I reported are the same one. Where the
+guest was DOS, U22's composer maps that same volume identity to the
+drive letter I show a user. All of
 this without booting the guest and without any external helper
 process: the library does
 the format work itself. Reading never changes the image. Writing is
 a separate, explicit mode with a commit point: until I commit,
 everything I wrote can be rolled back cleanly.
+
+**The steps are U4's setup, with the intent stated in my own open, and
+then the file work on the space that opens.**
+
+```rust
+let mut session = Session::new();
+let mut guest   = session.add_machine("guest-042")?;
+let hdd0        = guest.add_device(HardDrive::MbrSector)?.attachment();
+
+// My open affords the write, and nothing else does: the library checks
+// this handle for what it allows and the medium's mode echoes it.
+let media = session.load_media(
+    File::options().read(true).write(true).open("system.qcow2")?,
+    Format::Qcow2 { device: HardDrive::MbrSector })?.id();
+session.machine_mut("guest-042").expect("just added")
+    .device_mut(hdd0).expect("just added").insert(media)?;
+
+let mut drive = session.machine_mut("guest-042").expect("still here")
+    .into_device(hdd0).expect("still here");
+let disk = drive.medium_mut().expect("the disk I just inserted");
+assert_eq!(disk.mode(), AccessMode::ReadWrite);
+
+// The volume: the ordinal the MBR itself declared, opened under the type
+// it declares. A bare image records no scheme, so its whole content is
+// partition 0 and the reading is mine — .filesystem_as("fat"). A space
+// is a view over the disk (P23), so it lives for the work and no longer:
+{
+    let mut fat = disk.partition(1).expect("the MBR declared it")
+        .filesystem().expect("its declared type determines the namespace");
+
+    for entry in fat.entries("OUT")? {        // names exactly as stored
+        println!("{:12} {:>8} {}",
+            entry.name, entry.size_bytes, entry.kind.name());
+    }
+
+    match fat.stat("OUT/X.TXT")? {            // absence is an answer, and
+        Some(entry) => println!("{} bytes", entry.size_bytes), // a failure
+        None        => println!("no such path"),   // is an error — never
+    }                                              // one wearing the
+                                                   // other's clothes
+    let bytes = fat.read_file("OUT/X.TXT")?;  // out to the host
+    fat.make_directory("OUT/LOGS")?;          // missing parents made, and
+                                              // already-there succeeds
+    fat.write_file("OUT/LOGS/RUN.TXT", &bytes)?;  // an existing file has
+                                              // its contents replaced,
+                                              // shorter or longer,
+                                              // clusters released and
+                                              // reclaimed
+}
+
+disk.commit()?;        // the commit point is the disk's — …or
+                       // disk.rollback()?, and until one of them the
+                       // image on disk holds none of the above
+```
 
 Names are the seam's rule, not mine. A read matches the way DOS matched
 — without regard to case — and gives me back the name as stored, so
@@ -65,6 +133,25 @@ can branch on the rule and tell the user which one in my own words
 without parsing a sentence. Nothing is truncated, transliterated, or
 renamed to fit: a refused name is refused.
 
+```rust
+let mut fat = disk.partition(1).expect("the MBR declared it")
+    .filesystem().expect("its declared type determines the namespace");
+
+fat.write_file("out\\x.txt", &bytes)?;   // stored as OUT\X.TXT: matching
+                                         // and uppercasing are the seam's
+
+if let Err(error) = fat.write_file("OUT/report.2026.txt", &bytes) {
+    match error.rule().and_then(DosNameRule::from_identity) {
+        Some(DosNameRule::Separator)   => println!("one dot, and no more"),
+        Some(DosNameRule::BaseTooLong) => println!("eight before the dot"),
+        Some(rule) => println!("{rule}"),   // the set is enumerated, so a
+                                            // rule I don't branch on still
+                                            // has a stable spelling
+        None => return Err(error),          // no name rule broke: this is
+    }                                       // some other refusal entirely
+}
+```
+
 ## U4 — I retrieve a stopped machine's partition and volume information
 
 My automation layer's drive reporting runs on host-side facts about a
@@ -73,6 +160,102 @@ from (the guest's own drive letters are U22's mapping, over the same
 facts). For each disk — qcow2, VDI or
 raw — one inspection answers, keeping each fact at the seam that owns
 it rather than flattening them into one snapshot.
+
+**The steps have the machine's own shape**: a machine in my session, a
+drive in it for each image, the medium loaded into that drive, and one
+inspection per drive — because which drive a fact came from is the fact
+my drive reporting is *about*.
+
+```rust
+let mut session = Session::new();
+let mut guest   = session.add_machine("guest-042")?;  // the stopped machine
+
+// One drive per image, in the order this machine attaches them. The
+// convenience composes three acts over one claim: discover the artifact,
+// add a device of the type its format records, load it and insert it.
+let hdd0 = guest.add_device_for("system.vdi", AccessIntent::Read)?
+                .attachment();                        // → hdd0
+
+// The same three acts said one at a time — the door for a format that
+// records several device types, nothing in a qcow2 saying which drive
+// wrote it, so the device is mine to declare:
+let hdd1 = guest.add_device(HardDrive::MbrSector)?.attachment();
+let data = session.load_media(                        // my open, my lock
+    File::open("data.qcow2")?,
+    Format::Qcow2 { device: HardDrive::MbrSector })?.id();
+session.machine_mut("guest-042").expect("just added")
+    .device_mut(hdd1).expect("just added")
+    .insert(data)?;              // checked both ways: a drive takes only
+                                 // the recordings its device type made
+```
+
+Then the reporting itself: I walk the machine's own drives, in
+attachment order, and each answers for what is in it.
+
+```rust
+let mut guest = session.machine_mut("guest-042").expect("still here");
+
+for attachment in guest.attachments() {   // attachment order, which is
+                                          // configuration I own
+    let mut drive = guest.device_mut(attachment).expect("just listed");
+    let Some(disk) = drive.medium_mut() else { continue };  // an empty
+                                 // drive is an answer, not a refusal
+    let report = disk.inspect()?;         // once: the whole layered report
+
+    match &report.content {            // stated, never inferred from
+        DiskContent::Schema => {}      // which lists came back empty
+        DiskContent::DirectVolume => {}
+        DiskContent::Blank => {}
+        DiskContent::UnknownNonblank { evidence } => println!("{evidence}"),
+    }
+
+    for region in &report.regions {    // every declared entry, in place
+        println!("{attachment} {} {} {:#04x} {} {}",
+            region.declared_number,    // the schema's own number, kept
+            region.declared_placement, // "primary" · "logical"
+            region.declared_type,      // the byte exactly as recorded
+            region.declared_type_reading,   // what that byte declares, so
+                                            // I keep no type table of mine
+            region.issue.as_ref().map_or("read", |e| e.category().as_str()));
+    }                                  // refused, and still numbered here
+
+    for volume in &report.volumes {             // what actually composed
+        match report.filesystem_on(volume.id) { // asked by identity, not
+            None => println!("{:?} unread", volume.id),  // found by index
+            Some(fs) => println!("{:?} {:?} {:?}",
+                fs.kind,                // None where refused — the volume
+                                        // stands either way
+                fs.label.as_ref().and_then(|l| l.name.as_deref()),  // None
+                                        // is "unlabeled", resolved by the
+                                        // format rather than by my string
+                fs.declared_geometry),  // what the boot record states
+        }
+    }
+
+    let composed = report.composed_volume_count();            // two counts,
+    let readable = report.readable_filesystem_volume_count(); // never one
+
+    // Carrying an identity: I hold what the report issued and compare it
+    // with what the object answers, and I build none of my own.
+    if let Some(volume) = report.volumes.first().map(|v| v.id) {
+        let space = disk.partition(1).expect("the schema declared it")
+            .filesystem().expect("its declared type determines one");
+        assert_eq!(space.volume_id(), Some(volume));  // one volume, one
+                                                      // name, and U3's
+                                                      // file work begins
+                                                      // on that space
+    }
+}
+```
+
+The two halves stay apart throughout: a drive is configuration I state,
+a medium is session state, and only the insert crosses. Ejecting severs
+that link and leaves the disk in the pool with its claim and its
+buffered writes intact; releasing the machine takes the configuration
+down and never the media. The same device set, in the same order, is
+what U22's composer reads to answer which letter this machine's DOS
+would have shown — I assert nothing twice. And every fact above comes
+off the image alone: nothing boots, and reading changes no byte.
 
 I need what the disk turned out to be, *stated*: blank, a recognized
 partition schema, one unpartitioned volume, or content nothing claims —
@@ -107,11 +290,14 @@ or filesystem in every file verb that it named in this report, and on
 every later open of an unchanged layout. It belongs to the library and
 I treat it as opaque — I never build one from a partition number, an
 offset, a label, or a position in a list — and if it is absent on a
-later open, that object is gone rather than renumbered. These
-identities are scoped to the device holding the image, so two devices
-holding like layouts issue like identities and it is the device I
-name that tells them apart. All of it from the image alone, booting
-nothing.
+later open, that object is gone rather than renumbered. Carrying one
+is holding the value this report issued and comparing it against the
+value the object itself answers with, a partition and the space opened
+on it each stating the identity of the volume they compose; it is
+never a value I built handed to a verb. These identities are scoped to
+the device holding the image, so two devices holding like layouts issue
+like identities and it is the device I name that tells them apart. All
+of it from the image alone, booting nothing.
 
 ## U5 — qcow2 images are first-class citizens of identification
 
@@ -256,18 +442,15 @@ than truncated, transliterated, or renamed to fit.)*
 ## The media-first walks
 
 **No discovery, complete user specification — the defining attribute of
-the walks below.** The caller declares what they have — the format, the
-device it records, every interpretation — and every declaration is
-checked against evidence, refused by name where the evidence cannot
-bear it. Local artifacts arrive as the caller's own opened files —
-`File::open` below is `std::fs::File`, the portable file; files from
-inside media are this library's own views — and whoever opens owns the
-lock: my open is my safeguard and the library's claim, checked for what
-it affords (may it write?), honoured exactly, never escalated. These
-walks are **permanent**: they remain valid, supported workflows even
-when discovery and other conveniences evolve to make the same results
-easier to achieve. Conveniences layer above the declared tier; they
-never replace it.
+the walks below**, and what sets them apart from the walks in U3 and U4,
+which reach for discovery where the caller has no declaration to make.
+The caller declares what they have — the format, the device it records,
+every interpretation — and every declaration is checked against
+evidence, refused by name where the evidence cannot bear it. These walks
+are **permanent**: they remain valid, supported workflows even when
+discovery and other conveniences evolve to make the same results easier
+to achieve. Conveniences layer above the declared tier; they never
+replace it.
 
 ## U25 — I master a 1541 disk from the captures on my filesystem and read its first byte
 
