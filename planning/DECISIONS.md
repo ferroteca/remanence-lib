@@ -58,6 +58,99 @@ removes it is the record either way.
 
 ## Decisions
 
+### D49 — A fresh clone can run the suite, and the rig layout is built rather than downloaded
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S1; D48. `DECISIONS.md` was searched first and
+returned D48, whose fixture-free reasoning this extends from the Python
+suite to the Rust one.
+
+D48 found that the shippable Python suite could open no artifact, and
+that `new_media` and hand-built structures were the way past it. The same
+question turned out to apply to the Rust suite for a different reason: a
+fresh clone could not run `cargo test` at all until
+`prep_fixtures.py` had downloaded artifacts it needs network and a
+`reliquary` alpha to fetch.
+
+**The scale of the problem was smaller than it looked, and the first
+count of it was wrong.** Grepping for `fixtures` matched seven files —
+five of which say in their own doc comments that they *build their images
+by hand and run without fixtures*. The real test is who calls
+`ensure_fixture`, and that was six files: four wholly dependent
+(`freedos_qcow2`, `flux_media`, `hdos_files`, `identify_hdos_image`) and
+two barely so — `dos_drive_letters` at 6 tests of 15, `geometry` at 2 of
+10. Recorded because the wrong number nearly bought a much larger change
+than the right one needed.
+
+**The split is cargo's own mechanism.** A `fixtures` feature, and
+`required-features` on the dependent targets: cargo does not build a
+target whose features are off, so `cargo test` runs everything that
+builds its own images and reports nothing misleading, while
+`cargo test --features fixtures` runs the rest. `ensure_fixture` already
+panicked naming `prep_fixtures.py`, so the guidance was never missing —
+it simply fired for the whole suite instead of the part that needed it.
+
+**The two mixed files were split rather than gated**, which kept 17
+synthetic tests in the default run that whole-file gating would have
+hidden. That cost more than it should have: the section comment marking
+the fixture-dependent half of `dos_drive_letters` did not match the real
+boundary — tests below it still used the image builders above it — and
+the resolution was to move the whole helper layer into a shared
+`tests/dos_letters/mod.rs`. The structure is better than before; it was
+reached by trial rather than by reading first.
+
+**And then the rig layout stopped needing a download at all.** The
+FreeDOS artifact was there for one shape — two DOS primaries and an
+extended chain of two logicals, which is what the claimed drive-letter
+variants disagree over — and that shape is wholly specified. It is now
+built: `fat16_volume` writes a labelled FAT16 with files in its root, and
+`synthetic_rig_disk` lays out the four volumes with a real EBR chain. All
+six tests that needed the qcow2 run without it, so `dos_drive_letters`
+folds back into one ungated file.
+
+**The built layout is asserted before anything trusts it.**
+`rig_layout.rs` exists so a synthetic fixture that quietly differs from
+the artifact it replaces cannot move every test that depends on it onto a
+false footing: it checks the two primaries and two logicals appear, that
+four volumes compose and read as FAT, that each states the label it was
+built with, and that the marker file reads back through the first
+primary.
+
+**A detail worth keeping**, because it is the classic way to build a
+chain nothing can walk: in an EBR, a **data** entry's start is relative
+to its own EBR, while a **link** entry's is relative to the extended
+partition's base. The builder says so where it does it.
+
+**The Python suite gained the same thing first, and for the harder
+reason.** D48's tests reach what an authored blank can answer and stop
+where a *recorded structure* begins, because a partition table and a
+filesystem are things found on media. `tests/synthetic.py` supplies
+both — an MBR and a FAT12 volume written byte by byte — and the shipped
+suite loads the result as a raw image. That reaches the two doors
+authorship cannot, and it does so in an artifact a stranger unpacks,
+where downloading is not merely inconvenient but forbidden: a distro
+packager builds offline. It also buys the thing a downloaded image
+cannot give at any price — bending one field and watching the refusal
+arrive, which is how the suite now covers a table with no signature and
+an entry typed outside the claim.
+
+**What stays behind the feature, and why it should.** `flux_media` needs
+a KryoFlux capture, where a real capture *is* the point; `hdos_files` and
+`identify_hdos_image` read an authentic HDOS filesystem; `freedos_qcow2`
+tests a qcow2 an operating system actually wrote; `geometry_fixtures`
+needs a format that declares its own geometry, and that format nested in
+an archive. The remaining fixtures are the ones whose authenticity is the
+thing under test — which is the right place for that line to fall.
+
+**Weighed and declined:** gating `dos_drive_letters` and `geometry`
+whole (simpler, and it hides 17 tests that need nothing); `#[ignore]`
+instead of a feature (`cargo test` prints "ignored" and nobody reads it);
+and synthesising the remaining four (two are not realistically
+synthesisable, and for the other two a built artifact would test the
+builder rather than the reading).
+
+**No changelog entry.** Test organisation is not release-facing.
+
 ### D48 — The sdist carries a pytest suite, and the fixtures it cannot carry decide its shape
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

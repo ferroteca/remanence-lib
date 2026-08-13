@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Discovered geometry and the recording's own coordinates, over
-//! synthetic images the project owns outright and the two fixtures that
-//! are artifacts in their own right.
+//! synthetic images the project owns outright.
+//!
+//! The two readings that need an artifact of their own — a format that
+//! declares a geometry, and one nested in an archive — are in
+//! `geometry_fixtures.rs`, behind the `fixtures` feature.
 //!
 //! Every geometry here is *read*: nothing in these tests declares one
 //! onto a medium, because nothing can. What the tests vary is what the
@@ -21,7 +24,7 @@ use remanence::{
 };
 
 mod common;
-use common::{ensure_fixture, open_read, open_write};
+use common::{open_read, open_write};
 
 /// The rule identities this seam's refusals carry. They are the
 /// caller-facing half of "refuse by name", so the tests name them the
@@ -549,77 +552,4 @@ fn a_block_addressed_drive_has_no_cylinder_or_head_to_be_told() {
 
     drop(session);
     std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn a_format_that_declares_a_geometry_states_it_for_every_image_it_claims() {
-    // The H8D adapter records a Heathkit H-17 recording: 40 cylinders of
-    // one side at ten 256-byte sectors, which the extent confirms
-    // exactly. Nothing else on this disk states a geometry at all.
-    let source = ensure_fixture("HDOS_1-0_Issue_#50-00-00_890-1.h8d");
-    let (mut session, id) = pool(open_read(&source), Format::H8d);
-    let medium = session.medium_mut(id).expect("pooled");
-
-    assert_eq!(
-        medium.geometry().determined(),
-        Some(RecordingGeometry {
-            cylinders: 40,
-            heads: 1,
-            sectors_per_track: 10,
-            sector_bytes: 256,
-        })
-    );
-    let declaration = medium
-        .geometry()
-        .readings()
-        .iter()
-        .find(|reading| reading.source == GeometrySource::FormatDeclaration)
-        .expect("the format declares one");
-    assert!(
-        declaration.at.contains("h8d"),
-        "the reading names the format that declared it: {}",
-        declaration.at
-    );
-
-    // The recording's coordinates and the artifact's own bytes agree,
-    // which is what a format-declared geometry over a raw block layout
-    // means: cylinder 1, head 0, sector 1 is the eleventh record.
-    let mut recorded = [0u8; 256];
-    medium
-        .read_sector(1, 0, 1, &mut recorded)
-        .expect("the record reads");
-    let mut raw = [0u8; 256];
-    medium.read_at(2_560, &mut raw).expect("the bytes read");
-    assert_eq!(recorded, raw);
-
-    // A read-only claim refuses the write before anything else does.
-    let error = medium
-        .write_sector(1, 0, 1, &recorded)
-        .expect_err("the handle affords no write");
-    assert_eq!(error.category(), ErrorCategory::ReadOnly);
-
-    drop(session);
-}
-
-#[test]
-fn an_archive_has_no_coordinates_at_all_and_says_so() {
-    let source = ensure_fixture("HDOS_1-0.zip");
-    let (mut session, id) = pool(open_read(&source), Format::Zip);
-    let medium = session.medium_mut(id).expect("pooled");
-
-    assert_eq!(medium.geometry().state(), GeometryState::Unstated);
-    assert!(
-        medium.geometry().readings().is_empty(),
-        "nothing was read, because there is nothing there to read"
-    );
-    let error = medium
-        .read_sector(0, 0, 1, &mut [0u8; 512])
-        .expect_err("an archive has no sector");
-    assert_eq!(error.rule(), Some(NOT_SECTOR_ADDRESSED));
-    assert!(
-        error.to_string().contains("recorded by no device"),
-        "the refusal says why rather than naming a missing geometry: {error}"
-    );
-
-    drop(session);
 }

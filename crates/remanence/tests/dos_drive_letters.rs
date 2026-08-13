@@ -12,223 +12,28 @@
 use std::path::PathBuf;
 
 use remanence::{
-    DiskReport, DosAssignmentRule, DosMachine, FloppyDrive, Format, HardDrive, LetterOutcome,
-    MachineDevice, MediaId, RegionRole, ResidentCondition, Session, VolumeId,
+    DosAssignmentRule, DosMachine, FloppyDrive, Format, HardDrive, LetterOutcome,
+    MachineDevice, RegionRole, ResidentCondition, Session,
 };
 
-mod common;
-use common::open_read;
+mod dos_letters;
+use dos_letters::{
+    device_at, inspect, reason_at, synthetic_extended_disk, synthetic_fat12_floppy,
+    synthetic_fat16, synthetic_multi_mbr, synthetic_rig_disk, volume_at, write_image,
+};
+use dos_letters::{attach, seat};
 
-fn attach(path: impl AsRef<std::path::Path>, format: Format) -> (Session, MediaId) {
-    let mut session = Session::new();
-    let id = session
-        .load_media(open_read(path), format)
-        .expect("the image loads")
-        .id();
-    (session, id)
-}
 
-/// Pools an image and seats it in a fresh hard disk of `machine` — the
-/// device set a composer reads its facts from.
-fn seat(session: &mut Session, machine: Option<&str>, path: &PathBuf) {
-    let media = session
-        .load_media(
-            open_read(path),
-            Format::Raw {
-                device: HardDrive::MbrSector,
-                block_bytes: 512,
-            },
-        )
-        .expect("the image loads")
-        .id();
-    let mut view = match machine {
-        Some(identity) => session.machine_mut(identity).expect("is there"),
-        None => session.anonymous_mut(),
-    };
-    view.add_device(HardDrive::MbrSector)
-        .expect("a hard disk is added")
-        .insert(media)
-        .expect("the disk goes in");
-}
 
-fn temp_path(tag: &str) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "remanence-letters-{tag}-{}-{nonce}.img",
-        std::process::id()
-    ))
-}
 
-/// A minimal FAT16 volume: 512-byte sectors, 1 sector/cluster, 2 FATs of
-/// 32 sectors, 512 root entries, 8000 total sectors.
-fn synthetic_fat16() -> Vec<u8> {
-    const TOTAL_SECTORS: usize = 8000;
-    let mut image = vec![0u8; TOTAL_SECTORS * 512];
 
-    image[0] = 0xeb;
-    image[1] = 0x3c;
-    image[2] = 0x90;
-    image[3..11].copy_from_slice(b"REMANENC");
-    image[11..13].copy_from_slice(&512u16.to_le_bytes());
-    image[13] = 1;
-    image[14..16].copy_from_slice(&1u16.to_le_bytes());
-    image[16] = 2;
-    image[17..19].copy_from_slice(&512u16.to_le_bytes());
-    image[19..21].copy_from_slice(&(TOTAL_SECTORS as u16).to_le_bytes());
-    image[21] = 0xf8;
-    image[22..24].copy_from_slice(&32u16.to_le_bytes());
-    image[24..26].copy_from_slice(&18u16.to_le_bytes());
-    image[26..28].copy_from_slice(&2u16.to_le_bytes());
-    image[510] = 0x55;
-    image[511] = 0xaa;
 
-    for fat in 0..2usize {
-        let base = (1 + fat * 32) * 512;
-        image[base..base + 2].copy_from_slice(&0xfff8u16.to_le_bytes());
-        image[base + 2..base + 4].copy_from_slice(&0xffffu16.to_le_bytes());
-    }
 
-    image
-}
 
-/// A 1.44M-floppy-shaped FAT12 volume, bare on the medium as a floppy is.
-fn synthetic_fat12_floppy() -> Vec<u8> {
-    const TOTAL_SECTORS: usize = 2880;
-    let mut image = vec![0u8; TOTAL_SECTORS * 512];
 
-    image[0] = 0xeb;
-    image[1] = 0x3c;
-    image[2] = 0x90;
-    image[3..11].copy_from_slice(b"REMANENC");
-    image[11..13].copy_from_slice(&512u16.to_le_bytes());
-    image[13] = 1;
-    image[14..16].copy_from_slice(&1u16.to_le_bytes());
-    image[16] = 2;
-    image[17..19].copy_from_slice(&224u16.to_le_bytes());
-    image[19..21].copy_from_slice(&(TOTAL_SECTORS as u16).to_le_bytes());
-    image[21] = 0xf0;
-    image[22..24].copy_from_slice(&9u16.to_le_bytes());
-    image[24..26].copy_from_slice(&18u16.to_le_bytes());
-    image[26..28].copy_from_slice(&2u16.to_le_bytes());
-    image[510] = 0x55;
-    image[511] = 0xaa;
 
-    for fat in 0..2usize {
-        let base = (1 + fat * 9) * 512;
-        image[base] = 0xf0;
-        image[base + 1] = 0xff;
-        image[base + 2] = 0xff;
-    }
 
-    image
-}
 
-/// An MBR disk with one primary slot per entry, placed consecutively.
-fn synthetic_multi_mbr(entries: &[(u8, &[u8])]) -> Vec<u8> {
-    let mut start_lba = 2048usize;
-    let mut layout = Vec::new();
-    for (type_byte, volume) in entries {
-        let sectors = volume.len() / 512;
-        layout.push((*type_byte, start_lba, sectors, *volume));
-        start_lba += sectors;
-    }
-
-    let mut disk = vec![0u8; start_lba * 512];
-    for (slot, (type_byte, start, sectors, volume)) in layout.iter().enumerate() {
-        let at = 446 + slot * 16;
-        disk[at + 4] = *type_byte;
-        disk[at + 8..at + 12].copy_from_slice(&(*start as u32).to_le_bytes());
-        disk[at + 12..at + 16].copy_from_slice(&(*sectors as u32).to_le_bytes());
-        disk[start * 512..start * 512 + volume.len()].copy_from_slice(volume);
-    }
-    disk[510] = 0x55;
-    disk[511] = 0xaa;
-    disk
-}
-
-/// A disk with one primary of `primary_type` and an extended chain of one
-/// logical volume, the extended partition declared as `extended_type`.
-fn synthetic_extended_disk(volume: &[u8], extended_type: u8, primary_type: u8) -> Vec<u8> {
-    let sectors = volume.len() / 512;
-    let primary_start = 2048usize;
-    let ext_base = primary_start + sectors;
-    let link_span = 2048 + sectors;
-    let mut disk = vec![0u8; (ext_base + link_span) * 512];
-
-    disk[446 + 4] = primary_type;
-    disk[446 + 8..446 + 12].copy_from_slice(&(primary_start as u32).to_le_bytes());
-    disk[446 + 12..446 + 16].copy_from_slice(&(sectors as u32).to_le_bytes());
-    disk[462 + 4] = extended_type;
-    disk[462 + 8..462 + 12].copy_from_slice(&(ext_base as u32).to_le_bytes());
-    disk[462 + 12..462 + 16].copy_from_slice(&(link_span as u32).to_le_bytes());
-    disk[510] = 0x55;
-    disk[511] = 0xaa;
-    disk[primary_start * 512..primary_start * 512 + volume.len()].copy_from_slice(volume);
-
-    let ebr = ext_base * 512;
-    disk[ebr + 446 + 4] = 0x06;
-    disk[ebr + 446 + 8..ebr + 446 + 12].copy_from_slice(&2048u32.to_le_bytes());
-    disk[ebr + 446 + 12..ebr + 446 + 16].copy_from_slice(&(sectors as u32).to_le_bytes());
-    disk[ebr + 510] = 0x55;
-    disk[ebr + 511] = 0xaa;
-    let logical = (ext_base + 2048) * 512;
-    disk[logical..logical + volume.len()].copy_from_slice(volume);
-
-    disk
-}
-
-fn write_image(tag: &str, bytes: Vec<u8>) -> PathBuf {
-    let path = temp_path(tag);
-    std::fs::write(&path, bytes).expect("image writes");
-    path
-}
-
-/// Inspects an image and hands back the report, keeping the session alive
-/// for as long as the caller holds it.
-fn inspect(path: &PathBuf, format: Format) -> (Session, DiskReport) {
-    let (mut session, attachment) = attach(path, format);
-    let report = session
-        .medium_mut(attachment)
-        .expect("the medium is pooled")
-        .inspect()
-        .expect("inspection reads");
-    (session, report)
-}
-
-fn volume_at(map: &remanence::DriveMap, letter: char) -> VolumeId {
-    match &map
-        .letter(letter)
-        .unwrap_or_else(|| panic!("{letter}: is mapped"))
-        .outcome
-    {
-        LetterOutcome::Volume { volume, .. } => *volume,
-        other => panic!("{letter}: names a volume, not {}", other.name()),
-    }
-}
-
-fn device_at(map: &remanence::DriveMap, letter: char) -> MachineDevice {
-    match &map
-        .letter(letter)
-        .unwrap_or_else(|| panic!("{letter}: is mapped"))
-        .outcome
-    {
-        LetterOutcome::Volume { device, .. } | LetterOutcome::DeclaredDevice { device } => *device,
-        other => panic!("{letter}: names a device, not {}", other.name()),
-    }
-}
-
-fn reason_at(map: &remanence::DriveMap, letter: char) -> String {
-    match &map
-        .letter(letter)
-        .unwrap_or_else(|| panic!("{letter}: is mapped"))
-        .outcome
-    {
-        LetterOutcome::Undetermined { reason } => reason.clone(),
-        other => panic!("{letter}: is undetermined, not {}", other.name()),
-    }
-}
 
 /// The journey U22 asks for: floppy in slot 0, one hard disk, and the
 /// letters DOS would have shown — each naming a volume by the identity its
@@ -647,14 +452,12 @@ fn contradictory_machine_facts_are_refused_by_name() {
 // The FreeDOS rig artifact: two primaries and an extended chain of two
 // logicals on one real disk — the layout the claimed variants differ over.
 
+/// The layout the claimed variants differ over, built rather than
+/// downloaded: two DOS primaries and an extended chain of two
+/// logicals. `rig_layout.rs` is what says the built disk is that
+/// shape; these tests are what the shape is for.
 fn rig_artifact(tag: &str) -> PathBuf {
-    let master = common::ensure_fixture("freedos-parttest.qcow2");
-    let copy = std::env::temp_dir().join(format!(
-        "remanence-letters-{tag}-{}.qcow2",
-        std::process::id()
-    ));
-    std::fs::copy(master, &copy).expect("artifact copies");
-    copy
+    write_image(tag, synthetic_rig_disk())
 }
 
 /// Stating the variant settles the whole map: under MS-DOS 5 the disk's
@@ -664,8 +467,9 @@ fn a_stated_variant_letters_the_second_primary_last() {
     let path = rig_artifact("stated");
     let (_session, report) = inspect(
         &path,
-        Format::Qcow2 {
+        Format::Raw {
             device: HardDrive::MbrBlock,
+            block_bytes: 512,
         },
     );
 
@@ -722,8 +526,9 @@ fn an_unstated_variant_leaves_the_disputed_letter_undetermined() {
     let path = rig_artifact("unstated");
     let (_session, report) = inspect(
         &path,
-        Format::Qcow2 {
+        Format::Raw {
             device: HardDrive::MbrBlock,
+            block_bytes: 512,
         },
     );
 
@@ -776,8 +581,9 @@ fn the_identity_the_mapping_issued_names_the_volume_the_file_verb_reaches() {
     let path = rig_artifact("file-verb");
     let (mut session, attachment) = attach(
         &path,
-        Format::Qcow2 {
+        Format::Raw {
             device: HardDrive::MbrBlock,
+            block_bytes: 512,
         },
     );
     let report = session

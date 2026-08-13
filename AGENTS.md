@@ -797,6 +797,25 @@ cargo test
 git diff --check
 ```
 
+**`cargo test` needs no downloaded fixture** (D49). Everything it runs
+builds its own images, so a fresh clone is testable immediately. Five
+suites open an artifact `test-fixture-prep/prep_fixtures.py` fetches or
+generates, and they sit behind a feature:
+
+```bash
+cargo test --features fixtures
+```
+
+Cargo does not build a target whose required features are off, so the
+default run reports nothing misleading about them. What stays there are
+the readings whose *authenticity* is the point — a KryoFlux capture, an
+authentic HDOS filesystem, a qcow2 an operating system wrote, and a
+format that declares its own geometry. Anything whose shape is wholly
+specified belongs in the default run instead: `tests/dos_letters/mod.rs`
+builds MBR tables, EBR chains and FAT12/FAT16 volumes, and
+`tests/rig_layout.rs` is what asserts a built disk is the shape it
+claims before other tests trust it.
+
 When the C ABI changed, rebuild and commit the regenerated header.
 `cargo test` **compiles** the C surface for you (D44): that the header
 stands alone, that `examples/identify.c` still compiles against it, and

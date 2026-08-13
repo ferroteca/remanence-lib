@@ -13,7 +13,40 @@ repository.workspace = true
 # KryoFlux fixtures land; they are gitignored there as well.
 exclude = ["tests/**"]
 
+[features]
+# Test-only, and it gates test targets rather than any code: the suites
+# below open artifacts `test-fixture-prep/prep_fixtures.py` downloads or
+# generates, which git does not track and a fresh clone does not have.
+# Without it `cargo test` runs everything that builds its own images —
+# which is most of the suite — and a clone is testable immediately.
+fixtures = []
+
 [dependencies]
 # Intentionally none: the library is dependency-free, including its own
 # ZIP central-directory and 7z header readers and its RFC 1951 (DEFLATE)
 # and LZMA/LZMA2 decompressors.
+
+# The suites that open a downloaded or generated artifact. `cargo test`
+# skips them entirely — cargo does not build a target whose required
+# features are off, so they cost nothing and report nothing misleading.
+# `cargo test --features fixtures` runs them, and `ensure_fixture` says
+# which script to run if the artifact is not there.
+[[test]]
+name = "freedos_qcow2"
+required-features = ["fixtures"]
+
+[[test]]
+name = "geometry_fixtures"
+required-features = ["fixtures"]
+
+[[test]]
+name = "flux_media"
+required-features = ["fixtures"]
+
+[[test]]
+name = "hdos_files"
+required-features = ["fixtures"]
+
+[[test]]
+name = "identify_hdos_image"
+required-features = ["fixtures"]
