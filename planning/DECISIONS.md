@@ -58,6 +58,77 @@ removes it is the record either way.
 
 ## Decisions
 
+### D48 — The sdist carries a pytest suite, and the fixtures it cannot carry decide its shape
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S3; D40. `DECISIONS.md` was searched first and
+returned nothing on the Python suite — S3 had no tests of its own at
+all, which is the gap this closes as much as the packaging one.
+
+The `release-artifact-contents` standing skill was amended on 2026-08-13
+so that **the sdist carries the whole suite** while the wheel carries
+none of it, the sdist being conventionally the artifact a stranger can
+build *and verify* from. `888c5ba` had excluded tests from both under
+the previous reading. This entry brings S3 into line — and finds that
+doing so is not a packaging edit but a suite that had to be written.
+
+**pytest, because a packager runs pytest.** S3's only tests were Rust
+integration tests (D42, D43) driven by `cargo test`. A distro packager
+building the Python sdist has no cargo workspace and would not use it if
+they had; the suite that ships has to be Python, run against the
+**installed module**. That is also the stronger reading of the same
+question: `test_typed_surface.py` compares the stub against what
+`import remanence` actually provides, where `stub_matches_module.rs` can
+only parse the crate's source.
+
+**The fixtures cannot ship, and that decides what the suite tests.**
+Every disk image this project tests against is downloaded by
+`test-fixture-prep` and **tracked by git not at all**; they are vintage
+third-party distribution media whose copyright status is an open
+question in this very record. So the shippable suite has no artifact to
+open — and `new_media` is the answer, authorship being the one fact
+class that creates a medium whole from what the author states. The suite
+makes its own media: coordinates, sector round-trips through a commit,
+the direct partition a scheme-less medium bears, the assurance whose
+claim is `authored`. What it cannot reach — a real filesystem, a
+partition table, the flux ladder — is reached by the Rust suite, which
+has the fixtures.
+
+**What stays out of the sdist is the part that tests the repository.**
+The Rust integration tests read the crate's own sources and need the
+workspace; the mypy fixtures exist to drive them. Both are excluded by
+`crates/remanence-py/Cargo.toml`, which is what maturin builds the sdist
+from. The core crate keeps `exclude = ["tests/**"]` for the same reason
+rather than the old one: those are a Rust crate's tests, they need
+fixtures that do not exist in any artifact, and a Python packager can do
+nothing with them.
+
+**Verified by unpacking.** The suite was run from the extracted sdist,
+outside the repository, and passes — which is the coupling rule the
+amended skill states, that a suite in the sdist must be runnable from
+the sdist. The check made was self-containment against an installed
+wheel rather than a full build from the sdist, which would compile the
+Rust; the tests reference no repository path and no fixture, which is
+what that rule is protecting.
+
+**Two findings the suite produced on its first run**, recorded because
+they are the argument for having written it: `chs-disk` refuses a
+partial geometry — every part stated or the declaration addresses
+nothing — which no test had covered and which is now
+`test_a_partial_geometry_is_refused_because_it_is_whole_or_nothing`; and
+a test directory named `typing/` shadows the standard library once
+pytest puts its parent on `sys.path`, so the mypy fixtures moved to
+`tests/mypy_fixtures/`.
+
+**Weighed and declined:** shipping the mypy check in the suite (it needs
+mypy present, which a packager need not have, and it tests the stub
+against the source tree rather than the built package); porting the Rust
+stub tests to pytest and dropping them (they run without a built module,
+which is what makes them useful during development, and D42's reasons
+stand); and shipping fixtures so the suite could open a real artifact
+(they are not the project's to distribute, which is not a packaging
+preference but the open question this record already carries).
+
 ### D47 — The `_free` discipline is asserted by counting, because nothing outside the library can see these allocations
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

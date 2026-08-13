@@ -547,6 +547,23 @@ regenerates on build (commit the result), and `remanence-py` mirrors the
 public surface explicitly. The example consumer and tests move in the same
 change.
 
+**S3 has a pytest suite, and it is what the sdist ships** (D48). It runs
+against the *installed* module, so build and install first:
+
+```bash
+uv build crates/remanence-py && uv pip install --reinstall crates/remanence-py/dist/remanence-0.0.1a3-cp310-abi3-win_amd64.whl && pytest crates/remanence-py/tests
+```
+
+It opens **no disk image**, deliberately: every fixture this project
+tests against is third-party media it does not distribute and git does
+not track, so the shippable suite makes its own through
+`Session.new_media`. What needs a real artifact — filesystems, partition
+tables, the flux ladder — is the Rust suite's job, which has the
+fixtures. The Rust integration tests in `crates/remanence-py/tests/*.rs`
+test the stub against *this repository's sources*, so they stay out of
+the sdist along with the mypy fixtures they drive; `Cargo.toml`'s
+`exclude` is what maturin reads for that.
+
 **The Python type stub is part of that surface, and nothing regenerates
 it.** `crates/remanence-py/python/remanence/__init__.pyi` is written by
 hand and states S3 in full — every class, property and verb the module

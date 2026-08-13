@@ -18,9 +18,9 @@
 //!
 //! Two fixtures, and the second is the one that matters:
 //!
-//! - `typing/accepts.py` — ordinary consumer code, which must check
+//! - `mypy_fixtures/accepts.py` — ordinary consumer code, which must check
 //!   clean. It fails when a declared type is wrong or unusable.
-//! - `typing/rejects.py` — misuse, which must be refused, each line
+//! - `mypy_fixtures/rejects.py` — misuse, which must be refused, each line
 //!   naming the mypy error code it expects. A stub that has quietly
 //!   degraded to `Any` still lets `accepts.py` pass; it stops refusing
 //!   what is wrong, and only this fixture notices.
@@ -163,7 +163,7 @@ fn a_consumer_type_checks_against_the_stub() {
     let Some((label, argv)) = require_mypy() else {
         return;
     };
-    let fixture = crate_dir().join("tests/typing/accepts.py");
+    let fixture = crate_dir().join("tests/mypy_fixtures/accepts.py");
     let run = run_mypy(&argv, &fixture);
     assert!(
         run.status_ok,
@@ -180,7 +180,7 @@ fn the_stub_still_refuses_misuse() {
     let Some((label, argv)) = require_mypy() else {
         return;
     };
-    let path = crate_dir().join("tests/typing/rejects.py");
+    let path = crate_dir().join("tests/mypy_fixtures/rejects.py");
     let source = std::fs::read_to_string(&path).expect("the rejects fixture is readable");
     let expected = expectations(&source);
     assert!(

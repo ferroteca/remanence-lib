@@ -6,6 +6,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# The sdist carries the Python suite — a stranger who unpacks it can
+# verify what they built, which is what an sdist is conventionally for.
+# What stays out is the part that tests *this repository* rather than the
+# package: the Rust integration tests read the crate's own sources and
+# need the cargo workspace, neither of which an sdist has, and the mypy
+# fixtures they drive go with them.
+exclude = ["tests/*.rs", "tests/mypy_fixtures/**"]
+
 [lib]
 name = "remanence_py"
 crate-type = ["cdylib"]

@@ -20,6 +20,25 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **The sdist carries a pytest suite; the wheel still carries none of
+  it.** An sdist is conventionally the artifact a stranger can build
+  *and verify* from — distro packagers run the upstream suite at
+  package-build time, on platforms and Pythons this project never tests
+  against — so `remanence-0.0.1a3.tar.gz` now ships
+  `crates/remanence-py/tests/`, runnable with `pip install
+  remanence[test] && pytest`. The wheel's contents are unchanged: a
+  consumer has no use for a suite in their `site-packages`.
+
+  The suite opens no disk image. Every fixture this project tests
+  against is third-party media it does not distribute, so the shippable
+  tests make their own media through `Session.new_media` — coordinates,
+  sector round-trips through a commit, the direct partition, the
+  assurance whose claim is `authored` — beside the catalogs, the refusal
+  contract, and the type stub checked against the installed module. What
+  stays out is the part that tests the repository rather than the
+  package: the Rust integration tests and the mypy fixtures they drive
+  (D48).
+
 - **The Python module ships a type stub and a `py.typed` marker.**
   `remanence/__init__.pyi` states S3 in full — every class, property and
   verb, with `Option<T>` as `T | None`, byte payloads as `bytes`, paths

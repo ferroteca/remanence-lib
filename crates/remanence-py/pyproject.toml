@@ -18,8 +18,21 @@ classifiers = [
     "Topic :: System :: Filesystems",
 ]
 
+[project.optional-dependencies]
+# The sdist carries the suite so a stranger can verify what they built —
+# a distro packager runs it at package-build time, on a platform and a
+# Python this project never tests against.
+test = ["pytest>=8"]
+
 [project.urls]
 Repository = "https://github.com/ferroteca/remanence-lib"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The suite runs against the *installed* module, never a source tree:
+# there is no importable package here to shadow it, `python/remanence`
+# holding only the stub and the shim.
+addopts = "-q"
 
 [tool.maturin]
 module-name = "remanence"
