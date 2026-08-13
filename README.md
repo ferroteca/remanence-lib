@@ -97,7 +97,7 @@ for declared in medium.partitions() {
 
 // Your reading of the type, checked against the byte the table records.
 let partition = medium.partition(1).expect("the table declares entry 1");
-partition.as_type(remanence::PartitionType::DosPrimary)?;
+partition.check_type(remanence::PartitionType::DosPrimary)?;
 let mut files = partition
     .filesystem()
     .expect("a DOS data partition determines FAT");

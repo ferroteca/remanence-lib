@@ -1717,7 +1717,7 @@ fn the_direct_partition_stands_where_a_medium_records_no_scheme() {
     // none: the refusal names that rather than accepting a reading of
     // nothing (P3, P10).
     let refusal = direct
-        .as_type(PartitionType::DosPrimary)
+        .check_type(PartitionType::DosPrimary)
         .expect_err("nothing was recorded for the reading to be checked against");
     assert_eq!(
         refusal.rule(),
@@ -1910,10 +1910,10 @@ fn an_mbr_table_populates_the_pool_under_its_own_numbers() {
         !view.is_direct(),
         "the table declared it; the library did not"
     );
-    view.as_type(PartitionType::DosPrimary)
+    view.check_type(PartitionType::DosPrimary)
         .expect("0x06 is one of the values that reading covers");
     let refusal = view
-        .as_type(PartitionType::DosExtended)
+        .check_type(PartitionType::DosExtended)
         .expect_err("0x06 declares no extended container");
     assert_eq!(
         refusal.rule(),
@@ -2123,7 +2123,7 @@ fn a_structural_partition_is_declared_with_its_extent_and_opens_neither_door() {
         "and the reading explains it in a sentence fit to show a user"
     );
     extended
-        .as_type(PartitionType::DosExtended)
+        .check_type(PartitionType::DosExtended)
         .expect("0x05 is one of the values that reading covers");
     assert!(
         extended.start_bytes().is_some() && extended.length_bytes().is_some(),

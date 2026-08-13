@@ -82,7 +82,7 @@
 //! library's own composition of the whole content, carried as provenance
 //! and never as evidence. A [`Partition`] states its raw type value
 //! beside a reading of what that value declares, whether the scheme
-//! flags it active, and [`PartitionView::as_type`] checks a caller's own
+//! flags it active, and [`PartitionView::check_type`] checks a caller's own
 //! reading against the recorded byte.
 //!
 //! **Authorship is the third fact class, and it creates media whole.**

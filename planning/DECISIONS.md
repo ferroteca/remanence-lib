@@ -58,6 +58,59 @@ removes it is the record either way.
 
 ## Decisions
 
+### D38 — Two surface names are corrected to say what they do: `check_type` and the `_count` pair
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports (none)** — this is a naming choice and nothing
+more. No use case turns on the spelling of a verb and no principle
+speaks to it; the change is demanded by the languages' own conventions,
+which are not this project's vision to amend. The supports clause is
+`none` rather than a plausible-sounding P-number, because a citation
+that would not survive an audit is worse than an honest absence.
+
+Two names were reported as misleading in an owner-directed review of
+all three surfaces. Both are corrected here; both were judged on the
+same test — **does the name say what the thing does?** — and nothing
+else in the review is decided by this entry.
+
+**`as_type` becomes `check_type`, because `as_` promises a
+conversion.** Rust reserves the `as_` prefix for a free borrowed
+conversion (C-CONV), so `as_type` reads as a verb that hands something
+back. It hands nothing back: it is the check, and D32 already ruled
+exactly that — "the check is the whole of it". The old spelling argued
+against D32's own ruling every time a caller read it. `check_type`
+states the ruling instead of contradicting it, and it no longer sits
+oddly beside `filesystem_as`, which *is* a conversion and rightly puts
+`as` last. D32's ruling on the **return type** stands untouched; only
+the spelling moves.
+
+**`locations()` and `claims()` become `location_count()` and
+`claim_count()`, because they answer a number.** Both returned a `u64`
+under a plural-noun name. In Rust that is merely wrong; in Python it is
+worse, because the bindings expose them as *properties*, so
+`bitstream.locations` evaluated to `5` and read as a defect in the
+library. The C ABI never had the bug — it spells them
+`remanence_c1541_bitstream_location_count` and
+`remanence_c1541_sectors_claim_count` — so this is the core and the
+Python module being brought to the spelling the C surface already
+carried, rather than a new convention being invented. The report
+structs keep `locations` and `claims`: those fields hold the
+collections, and the plural is correct there.
+
+**Weighed and declined:** `expect_type` for the check (it reads as a
+panic in Rust, where `expect` is the panicking unwrap); `len()` for the
+counts (it implies the receiver is a collection, and neither is); and
+renaming the report fields to match the accessors (they are correctly
+named already — the accessors were the ones lying).
+
+**Not decided here.** The same review reported four further naming
+defects — the `RemanenceImageWriteReport` accessors that omit `_report_`
+in the C ABI, the `image` prefix carrying two meanings there, the
+`materialize_c1541_bytestream` qualifier the three surfaces spell
+differently, and `Medium::get_sector` against C-GETTER. They are
+untouched and unadjudicated; this entry rules on nothing it does not
+name.
+
 ### D37 — Rulings made delivering the no-cache discovery
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -631,6 +684,12 @@ name where the recorded byte does not bear it; it settles nothing about
 what the partition then hands out, since the namespace vantage opens
 under the type the *scheme* declared. A verb whose value is its refusal
 is unusual and is what this one is.
+
+> **Annotated by D38** on the spelling only. The verb is now
+> `check_type`, `as_` having promised a conversion this verb never
+> performed. The ruling above is unaffected and is in fact what D38
+> argues from: the check is still the whole of it, and the new spelling
+> says so where the old one worked against it.
 
 **The resolver's medium-namespace bound dissolves into the adapter's
 own.** The 8 MiB bound existed because a resolver *searched* a medium's

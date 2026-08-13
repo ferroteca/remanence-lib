@@ -197,7 +197,7 @@ fn an_authored_disk_bears_the_direct_partition_over_its_own_content() {
         "nothing declares one over a blank"
     );
     assert!(
-        pool[0].as_type(PartitionType::DosPrimary).is_err(),
+        pool[0].check_type(PartitionType::DosPrimary).is_err(),
         "the direct partition records no type to check a reading against"
     );
 

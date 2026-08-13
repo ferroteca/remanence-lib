@@ -18,6 +18,32 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Changed
+
+- **`as_type` is now `check_type`.** The `as_` prefix promises a
+  conversion in Rust (C-CONV), and this verb performs none: it states
+  the caller's reading of a partition's type, checks it against the
+  recorded byte, and answers `Result<()>` — the refusal is its whole
+  value. The new spelling says that; the old one argued against it. The
+  behaviour is unchanged, including the direct partition's refusal by
+  name. Rust `Partition::check_type` and `PartitionView::check_type`,
+  C `remanence_partition_check_type`, Python `Partition.check_type`
+  (D38).
+
+- **The count accessors on the c1541 rungs are spelled `_count`.**
+  `C1541Bitstream::locations`, `C1541Bytestream::locations`,
+  `C1541Sectors::locations` and `C1541Sectors::claims` each returned a
+  `u64` under a plural-noun name. They are now `location_count` and
+  `claim_count`. This bit hardest in Python, where the bindings expose
+  them as properties: `bitstream.locations` evaluated to a number and
+  read as a library defect. The C ABI already spelled them
+  `remanence_c1541_bitstream_location_count` and
+  `remanence_c1541_sectors_claim_count` and **is unchanged** — the core
+  and the Python module move to the spelling C already carried. The
+  `BitstreamReport`, `BytestreamReport` and `SectorReport` fields keep
+  `locations` and `claims`: those hold the collections, where the plural
+  is correct (D38).
+
 ## 0.0.1-alpha.3 - 2026-08-12
 
 ### Added

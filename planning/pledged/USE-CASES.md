@@ -650,7 +650,7 @@ evidence, refused by name where the evidence cannot bear it. No
 discovery does any specifying here. **Partition information in
 particular is specified, never discovered**: the scheme rides my
 declared device type, checked against the table at load; a partition's
-interpretation is my reading of its entry (`as_type`); and a namespace
+interpretation is my reading of its entry (`check_type`); and a namespace
 nothing determines is my reading too (`filesystem_as`) — checked,
 every one, and probed for never. **Local artifacts arrive as the caller's own opened files** —
 `File::open` below is `std::fs::File`, the portable file; files from
@@ -694,12 +694,12 @@ assert_eq!(disk.device_type(),
            Some(DeviceType::HardDrive(HardDrive::MbrBlock)));
 
 let part = disk.partition(1).expect("the declared table bears entry 1");
-part.as_type(PartitionType::DosPrimary)?;   // declared, checked against
-                                            // the raw type byte — 0x06
-                                            // bears it, 0x05 refuses
-                                            // naming both sides
+part.check_type(PartitionType::DosPrimary)?;   // declared, checked against
+                                               // the raw type byte — 0x06
+                                               // bears it, 0x05 refuses
+                                               // naming both sides
 
-let fs = part.filesystem().expect("DosPrimary determines FAT; verified at as_type");
+let fs = part.filesystem().expect("DosPrimary determines FAT; verified at check_type");
 for entry in fs.files("")? {
     println!("{:12} {:>9} {}", entry.name, entry.size_bytes,
              entry.fact("attributes"));
@@ -733,10 +733,10 @@ assert_eq!(disk.device_type(),
 // sources comes back Undetermined rather than settled
 
 let part = disk.partition(1).expect("the declared table bears entry 1");
-part.as_type(PartitionType::DosPrimary)?;
+part.check_type(PartitionType::DosPrimary)?;
 
 let mut head = [0u8; 8];
-part.filesystem().expect("DosPrimary determines FAT; verified at as_type")
+part.filesystem().expect("DosPrimary determines FAT; verified at check_type")
     .get_file("COMMAND.COM")?            // FAT 8.3 matching, without regard
     .read_at(0, &mut head)?;             // to case
 ```
@@ -818,9 +818,9 @@ let image = File::options().read(true).write(true).open("dos_hd.qcow2")?;
 let disk = session.load_media(
     image, Format::Qcow2 { device: HardDrive::MbrBlock })?;
 let part = disk.partition(1).expect("the declared table bears entry 1");
-part.as_type(PartitionType::DosPrimary)?;
+part.check_type(PartitionType::DosPrimary)?;
 
-let fs = part.filesystem().expect("DosPrimary determines FAT; verified at as_type");
+let fs = part.filesystem().expect("DosPrimary determines FAT; verified at check_type");
 fs.make_directory("OUT")?;
 fs.write_file("OUT/REPORT.TXT", report)?;
 

@@ -1595,7 +1595,7 @@ const char *remanence_partition_scheme_name(size_t index);
 size_t remanence_partition_type_count(void);
 
 // One declarable reading's stable spelling (`dos-primary`), by index —
-// the value passed to `remanence_partition_as_type` — or null out of
+// the value passed to `remanence_partition_check_type` — or null out of
 // range. Owned by the library; do not free.
 const char *remanence_partition_type_id(size_t index);
 
@@ -1735,11 +1735,11 @@ const char *remanence_partition_provenance(const RemanencePartition *partition);
 // rather than accepting a reading of nothing. `type_id` is one of the
 // spellings `remanence_partition_type_id` enumerates; any other is
 // refused naming what this release declares.
-bool remanence_partition_as_type(const RemanencePartition *partition,
-                                 const char *type_id,
-                                 RemanenceErrorCategory *error_category_out,
-                                 char **error_out,
-                                 char **error_rule_out);
+bool remanence_partition_check_type(const RemanencePartition *partition,
+                                    const char *type_id,
+                                    RemanenceErrorCategory *error_category_out,
+                                    char **error_out,
+                                    char **error_rule_out);
 
 // The addressable vantage: the space this partition composes, read and
 // written **by position within the partition's own extent** — the

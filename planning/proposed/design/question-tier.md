@@ -36,7 +36,7 @@ is this?"** — and the tier answers it the same way everywhere: with
   decisions). Adopting the template is the caller's declaration act, so
   the no-silent-defaults rule survives intact.
 - The question tier asks; the creation verbs create. A verdict feeds a
-  declaration (`load_media`, `as_type`); it never becomes one.
+  declaration (`load_media`, `check_type`); it never becomes one.
 
 ## The convenience over it: declared derivation chains
 

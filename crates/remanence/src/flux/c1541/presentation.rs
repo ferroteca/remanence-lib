@@ -277,7 +277,7 @@ impl C1541Bitstream {
     }
 
     /// How many locations the bitstream claims.
-    pub fn locations(&self) -> u64 {
+    pub fn location_count(&self) -> u64 {
         self.bitstream.locations().count() as u64
     }
 
@@ -329,7 +329,8 @@ impl C1541Bytestream {
         &self.report
     }
 
-    pub fn locations(&self) -> u64 {
+    /// How many locations the bytestream resolves.
+    pub fn location_count(&self) -> u64 {
         self.bytestream.locations().count() as u64
     }
 

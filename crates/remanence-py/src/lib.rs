@@ -694,7 +694,7 @@ fn partition_schemes() -> Vec<(String, String)> {
 /// Every partition type a declaration may name, by its stable spelling
 /// and the name fit to show a user — so a caller can hold every identity
 /// it may meet without waiting to meet one (P3). It is what
-/// `Partition.as_type` weighs the recorded byte against.
+/// `Partition.check_type` weighs the recorded byte against.
 #[pyfunction]
 fn partition_types() -> Vec<(String, String)> {
     remanence::PartitionType::ALL
@@ -2937,9 +2937,9 @@ impl Partition {
     /// the direct partition — which records no type — raises by name
     /// rather than accepting a reading of nothing; and a spelling this
     /// release does not declare raises naming what it does (P3).
-    fn as_type(&self, type_id: &str) -> PyResult<()> {
+    fn check_type(&self, type_id: &str) -> PyResult<()> {
         let declared = remanence::PartitionType::from_id(type_id).map_err(to_py_err)?;
-        self.with_view(|view| view.as_type(declared).map_err(to_py_err))
+        self.with_view(|view| view.check_type(declared).map_err(to_py_err))
     }
 
     /// The addressable vantage: the space this partition composes, read
@@ -4118,8 +4118,8 @@ impl C1541Bitstream {
 
     /// How many locations the bitstream claims.
     #[getter]
-    fn locations(&self) -> PyResult<u64> {
-        self.provider.with(|bitstream| Ok(bitstream.locations()))
+    fn location_count(&self) -> PyResult<u64> {
+        self.provider.with(|bitstream| Ok(bitstream.location_count()))
     }
 
     #[getter]
@@ -4210,9 +4210,11 @@ impl C1541Bytestream {
         self.report.clone()
     }
 
+    /// How many locations the bytestream resolves.
     #[getter]
-    fn locations(&self) -> PyResult<u64> {
-        self.provider.with(|bytestream| Ok(bytestream.locations()))
+    fn location_count(&self) -> PyResult<u64> {
+        self.provider
+            .with(|bytestream| Ok(bytestream.location_count()))
     }
 
     #[getter]
@@ -4568,14 +4570,14 @@ impl C1541Sectors {
 
     /// How many records the recognition read.
     #[getter]
-    fn claims(&self) -> u64 {
-        self.inner.claims()
+    fn claim_count(&self) -> u64 {
+        self.inner.claim_count()
     }
 
     /// How many locations it read them out of.
     #[getter]
-    fn locations(&self) -> u64 {
-        self.inner.locations()
+    fn location_count(&self) -> u64 {
+        self.inner.location_count()
     }
 
     #[getter]
@@ -4589,7 +4591,7 @@ impl C1541Sectors {
     }
 
     fn __repr__(&self) -> String {
-        format!("C1541Sectors(claims={})", self.inner.claims())
+        format!("C1541Sectors(claims={})", self.inner.claim_count())
     }
 }
 

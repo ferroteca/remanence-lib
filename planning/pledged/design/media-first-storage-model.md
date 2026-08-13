@@ -79,7 +79,7 @@ Medium                                         pool-owned, holdable — ALL cont
    │     .partition(1) → Option · .partitions()
    │       ▼
    │     Partition — raw type + reading · extent · role · .active()
-   │       │   .as_type(PartitionType::DosPrimary)?   a declared reading, checked
+   │       │   .check_type(PartitionType::DosPrimary)?   a declared reading, checked
    │       │   .volume()     → Option<&mut StorageSpace>   the vantage doors:
    │       │   .filesystem() → Option<&mut StorageSpace>   same node behind both
    │       │   .filesystem_as(id)?            the declared reading where no
@@ -143,7 +143,7 @@ Medium                                         pool-owned, holdable — ALL cont
    catalog entry by its enumerated identifier** and the check is that
    entry's own: `load_media` a format (`Format::Zip`,
    `KryoFlux { device: FloppyDrive::… }`, `Qcow2 { device: HardDrive::… }`),
-   `new_media` an authored kind, `as_type` a partition type
+   `new_media` an authored kind, `check_type` a partition type
    (`PartitionType::DosPrimary`). A classification ("archive", "some
    floppy") can check nothing and is refused as a declaration.
    *Delivered for `new_media` (F60): `NewMedia` is the enumerated set —
@@ -422,7 +422,7 @@ the features that make each real.
 - "Machine" is the wrong name for the machine node; kept until a
   better one arrives.
 - The spelling of `Location` addressing. *The declared partition
-  reading is settled: `as_type` takes an enumerated `PartitionType` and
+  reading is settled: `check_type` takes an enumerated `PartitionType` and
   answers `Result<()>`, the check being the whole of it (D32).*
 - Whether `release_media` of a linked medium severs (uniform with the
   cascade) or refuses; the cascade argument says sever. *Settled: it

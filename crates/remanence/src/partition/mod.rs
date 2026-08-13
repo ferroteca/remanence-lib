@@ -111,7 +111,7 @@ impl std::fmt::Display for PartitionScheme {
 ///
 /// It is the caller's reading and the library's check: a declaration
 /// names one enumerated entry, and the entry's own type values are what
-/// [`PartitionView::as_type`] weighs the recorded byte against. A
+/// [`PartitionView::check_type`] weighs the recorded byte against. A
 /// classification could check nothing and none is admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PartitionType {
@@ -449,7 +449,7 @@ impl Partition {
     /// reading the recorded byte does not bear is refused naming both
     /// sides, and the direct partition — which records no type — refuses
     /// by name rather than accepting a reading of nothing.
-    pub fn as_type(&self, declared: PartitionType) -> Result<()> {
+    pub fn check_type(&self, declared: PartitionType) -> Result<()> {
         let Some(type_byte) = self.type_byte else {
             return Err(refuse(
                 PartitionRule::NoDeclaredType,
@@ -635,9 +635,9 @@ impl<'a> PartitionView<'a> {
     }
 
     /// The caller's own reading of the type, checked against the value
-    /// the scheme recorded — see [`Partition::as_type`].
-    pub fn as_type(&self, declared: PartitionType) -> Result<()> {
-        self.partition.as_type(declared)
+    /// the scheme recorded — see [`Partition::check_type`].
+    pub fn check_type(&self, declared: PartitionType) -> Result<()> {
+        self.partition.check_type(declared)
     }
 
     /// The addressable vantage: the space this partition composes, read
@@ -1110,9 +1110,9 @@ mod tests {
         // data partition and 0x05 does not, and the refusal names both
         // sides rather than saying only that something disagreed.
         let fat = declared(1, 0x06);
-        assert!(fat.as_type(PartitionType::DosPrimary).is_ok());
+        assert!(fat.check_type(PartitionType::DosPrimary).is_ok());
         let error = fat
-            .as_type(PartitionType::DosExtended)
+            .check_type(PartitionType::DosExtended)
             .expect_err("0x06 is no extended container");
         assert_eq!(error.rule(), Some(PartitionRule::TypeDisagrees.as_str()));
         let message = error.to_string();
@@ -1126,8 +1126,8 @@ mod tests {
         );
 
         let extended = declared(2, 0x05);
-        assert!(extended.as_type(PartitionType::DosExtended).is_ok());
-        assert!(extended.as_type(PartitionType::DosPrimary).is_err());
+        assert!(extended.check_type(PartitionType::DosExtended).is_ok());
+        assert!(extended.check_type(PartitionType::DosPrimary).is_err());
     }
 
     #[test]
@@ -1146,7 +1146,7 @@ mod tests {
         );
         assert!(direct.evidence().is_empty(), "and never evidence");
         let error = direct
-            .as_type(PartitionType::DosPrimary)
+            .check_type(PartitionType::DosPrimary)
             .expect_err("there is no byte to check against");
         assert_eq!(error.rule(), Some(PartitionRule::NoDeclaredType.as_str()));
     }

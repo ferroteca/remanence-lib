@@ -4373,7 +4373,7 @@ pub extern "C" fn remanence_partition_type_count() -> usize {
 }
 
 /// One declarable reading's stable spelling (`dos-primary`), by index —
-/// the value passed to `remanence_partition_as_type` — or null out of
+/// the value passed to `remanence_partition_check_type` — or null out of
 /// range. Owned by the library; do not free.
 #[unsafe(no_mangle)]
 pub extern "C" fn remanence_partition_type_id(index: usize) -> *const c_char {
@@ -4830,7 +4830,7 @@ pub unsafe extern "C" fn remanence_partition_provenance(
 /// spellings `remanence_partition_type_id` enumerates; any other is
 /// refused naming what this release declares.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_partition_as_type(
+pub unsafe extern "C" fn remanence_partition_check_type(
     partition: *const RemanencePartition,
     type_id: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
@@ -4853,7 +4853,7 @@ pub unsafe extern "C" fn remanence_partition_as_type(
             return false;
         }
     };
-    match unsafe { with_partition(handle, |view| view.as_type(declared)) } {
+    match unsafe { with_partition(handle, |view| view.check_type(declared)) } {
         Ok(()) => true,
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };

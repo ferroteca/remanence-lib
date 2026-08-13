@@ -378,12 +378,12 @@ impl C1541Sectors {
     }
 
     /// How many records the recognition read.
-    pub fn claims(&self) -> u64 {
+    pub fn claim_count(&self) -> u64 {
         self.report.claims.len() as u64
     }
 
     /// How many locations held at least one recognized record.
-    pub fn locations(&self) -> u64 {
+    pub fn location_count(&self) -> u64 {
         self.report.locations.len() as u64
     }
 
