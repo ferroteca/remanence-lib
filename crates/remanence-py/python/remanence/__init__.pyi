@@ -24,11 +24,21 @@ __version__: str
 DEFAULT_CACHE_BYTES: int
 """The per-medium session cache bound a load takes when none is stated."""
 
-class RemanenceError(Exception):
+class Error(Exception):
     """Every refusal the library makes (P3, P10).
 
-    A refusal names the rule it broke where the seam defines a rule set;
-    the message carries the category and the rule identity.
+    Both attributes below are set on every instance, so they are safe to
+    read in an `except` block without `getattr`.
+    """
+
+    category: str
+    """How to behave. Always set."""
+
+    rule: str | None
+    """Which rule of an enumerated set the input broke.
+
+    `None` where the refusal belongs to no such set, which is the
+    ordinary case rather than an omission.
     """
 
 _OpenFile = IO[bytes] | int

@@ -58,6 +58,60 @@ removes it is the record either way.
 
 ## Decisions
 
+### D41 — The Python exception is `remanence.Error`, and it states its two attributes
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S3. `DECISIONS.md` was searched first and
+returned only D39's own note that this was left open.
+
+The last item the naming review reported. `remanence.RemanenceError`
+repeated the module in the class, which is the same defect D39 corrected
+in `remanence::RemanenceImage` and is corrected the same way: the
+exception is now **`remanence.Error`**.
+
+**PEP 8 asks for the `Error` suffix, not for a unique word.** `Error`
+satisfies it, and `sqlite3.Error` is the stdlib precedent for exactly
+this shape — a module whose one exception type is named for what it is
+rather than for the module it already lives in. The counter-examples in
+the stdlib (`json.JSONDecodeError`, `subprocess.SubprocessError`) are
+modules with *several* exception types that need telling apart; this
+module has one, so there is nothing for a qualifier to distinguish it
+from.
+
+**The rename is the Rust identifier, not just the registration.**
+`create_exception!` takes one name and uses it for both, so the class's
+`__name__` moves with the attribute and a traceback reads
+`remanence.Error` rather than the old name wearing a new alias. Nothing
+in the crate imported `remanence::Error` unqualified, so the core error
+type and the binding's exception do not collide.
+
+**`category` and `rule` are written into the stub, which is the second
+half of the fix.** Both are set on every instance by the binding, so
+both are surface — but they are set with `setattr`, so they are not
+class attributes and the stub's first pass (D40) missed them entirely. A
+caller could not see in the stub what it is safe to read in an `except`
+block. They are now declared, `category: str` and `rule: str | None`,
+and the drift check carries a note that these two are instance-only by
+construction rather than by omission.
+
+**The C ABI is untouched, and `RemanenceErrorCategory` is not the same
+defect.** Every exported C type carries the library prefix because C has
+one namespace; that is the convention D39 kept when it made the flux
+root `RemanenceFluxImage`. The stutter exists only where a language has
+modules, which is Python alone here.
+
+**Weighed and declined:** `RemanenceError` kept as-is on the grounds
+that Python libraries commonly stutter (they do, and the project had
+just spent D39 deciding it would rather not); registering the existing
+type under a second name (an alias is two names for one thing, which is
+what pre-1.0 exists to avoid); and a family of exception subclasses per
+category (the category is already a stable string attribute, and a type
+per category would put the same claim in two places — the objection D40
+raised against `Literal` unions, in another form).
+
+**This closes the naming review.** D38, D39, D40 and D41 between them
+take every defect it reported; nothing from it is outstanding.
+
 ### D40 — S3 gets a hand-written type stub, and the stub is surface rather than documentation
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -184,6 +238,10 @@ unambiguously).
 
 **Still not decided.** The `remanence.RemanenceError` stutter in Python
 and the missing `.pyi` stub were both reported and are untouched here.
+
+> **Annotated by D40 and D41**, which take the stub and the stutter
+> respectively. Nothing above is overruled: the clause was an accurate
+> statement of what this entry left open, and both are now closed.
 
 ### D38 — Two surface names are corrected to say what they do: `check_type` and the `_count` pair
 

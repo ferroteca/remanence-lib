@@ -41,7 +41,7 @@
 //! other write, and **nothing is ever declared onto a medium that
 //! exists**.
 //!
-//! Failures raise `RemanenceError`, which carries a stable `category`
+//! Failures raise `remanence.Error`, which carries a stable `category`
 //! saying how to behave and, where the refusal came from an enumerated rule
 //! set such as the DOS 8.3 namespace's, a stable `rule` naming which rule
 //! the input broke.
@@ -56,7 +56,7 @@ use pyo3::types::{PyBytes, PyList};
 
 create_exception!(
     remanence,
-    RemanenceError,
+    Error,
     PyException,
     "Raised when the remanence library reports an error; `category` and \
      `rule` are stable. `category` says how to behave and is always set; \
@@ -77,15 +77,15 @@ fn py_err(
     rule: Option<remanence::RuleIdentity>,
     message: impl Into<String>,
 ) -> PyErr {
-    let error = RemanenceError::new_err(message.into());
+    let error = Error::new_err(message.into());
     Python::attach(|py| {
         let value = error.value(py);
         value
             .setattr("category", category.as_str())
-            .expect("RemanenceError instances accept attributes");
+            .expect("Error instances accept attributes");
         value
             .setattr("rule", rule)
-            .expect("RemanenceError instances accept attributes");
+            .expect("Error instances accept attributes");
     });
     error
 }
@@ -1087,7 +1087,7 @@ fn mode_str(mode: remanence::AccessMode) -> &'static str {
 /// What one open established about the evidence beneath it (P28).
 ///
 /// `outcome` is `"verified"` or `"degraded"`; the third outcome,
-/// `"refused"`, arrives as a `RemanenceError` carrying the same condition
+/// `"refused"`, arrives as a `remanence.Error` carrying the same condition
 /// as its `rule`, so no open medium ever reports it. A degraded medium is
 /// read-only for its whole life, states the shortfall in `evidence`, and
 /// answers only for the extents in `readable` — an operation needing what
@@ -5259,7 +5259,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
     m.add("__version__", version)?;
     m.add("DEFAULT_CACHE_BYTES", remanence::DEFAULT_CACHE_BYTES)?;
-    m.add("RemanenceError", m.py().get_type::<RemanenceError>())?;
+    m.add("Error", m.py().get_type::<Error>())?;
     m.add_class::<C1541Bitstream>()?;
     m.add_class::<C1541Bytestream>()?;
     m.add_class::<LocationBytes>()?;

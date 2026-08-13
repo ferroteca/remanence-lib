@@ -38,6 +38,18 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **The Python exception is `remanence.Error`, not
+  `remanence.RemanenceError`.** The old name repeated the module in the
+  class; PEP 8 asks for the `Error` suffix rather than a unique word,
+  and `sqlite3.Error` is the stdlib precedent for a module with one
+  exception type. The rename moves the class's `__name__` too, so a
+  traceback reads `remanence.Error` rather than the old name behind an
+  alias. Its two attributes are unchanged and are now declared in the
+  stub: `category: str`, always set, and `rule: str | None`, naming
+  which rule of an enumerated set the input broke. The C ABI's
+  `RemanenceErrorCategory` is **not** affected — every exported C type
+  carries the library prefix, C having one namespace (D41).
+
 - **`as_type` is now `check_type`.** The `as_` prefix promises a
   conversion in Rust (C-CONV), and this verb performs none: it states
   the caller's reading of a partition's type, checks it against the
