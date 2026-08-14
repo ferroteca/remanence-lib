@@ -870,8 +870,19 @@ It names no consuming project, like every other library-side document
 ```bash
 cargo build      # also regenerates crates/remanence-ffi/include/remanence.h
 cargo test
+cargo fmt --all -- --check
 git diff --check
 ```
+
+**The formatting check is here because nothing was asking.** It went
+unrun long enough for 21 files to drift, and the drift was invisible:
+every one of them compiled, passed, and read fine. `rust-toolchain.toml`
+is what makes the check meaningful rather than a second opinion —
+rustfmt's output is not stable across releases, so an unpinned tree gets
+a different answer per host and the check becomes noise to ignore.
+Bumping the pin therefore means running `cargo fmt` and committing what
+it rewrites as its own change, never mixed into a commit that means
+something.
 
 **`cargo test` needs no downloaded fixture** (D49). Everything the
 default run touches builds its own images, so a fresh clone is testable
