@@ -722,13 +722,13 @@ fn account_for_the_envelope(capture: &FluxCapture, loss: &mut LossAccount) {
 /// write-denial claim (P7), so the whole-capture tests in this crate
 /// take this gate first rather than colliding on the archive when the
 /// test harness runs them on parallel threads.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(crate) static CAPTURE_FIXTURE_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Assembles the capture fixture the way a declared collection load
 /// does: the archive's namespace gathered whole, each member's bytes
 /// produced once.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(crate) fn fixture_capture(capture_path: &std::path::Path) -> crate::flux::capture::FluxCapture {
     struct Member(crate::io::source::FileSource);
     impl crate::flux::kryoflux::MemberSource for Member {
@@ -768,7 +768,7 @@ pub(crate) fn fixture_capture(capture_path: &std::path::Path) -> crate::flux::ca
 /// out. It is the image the reduction produced rather than a stand-in
 /// for it, so what a test masters off here is what a run of its own
 /// would have given it.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(crate) fn reconstructed_capture() -> &'static crate::flux::remanence::image::FluxImage {
     static SHARED: std::sync::OnceLock<crate::flux::remanence::image::FluxImage> =
         std::sync::OnceLock::new();
@@ -784,8 +784,8 @@ pub(crate) fn reconstructed_capture() -> &'static crate::flux::remanence::image:
             fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
         if !capture_path.exists() {
             panic!(
-                "missing fixture {capture_path:?}: run `uv run --group test-fixture-prep \
-                 test-fixture-prep/prep_fixtures.py`"
+                "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
+                 prep_fixtures.py`"
             );
         }
         let capture = fixture_capture(&capture_path);
@@ -872,14 +872,15 @@ mod tests {
     /// implementation's run of it, which no threshold here could make
     /// meaningful.
     #[test]
+    #[cfg(feature = "fixtures")]
     fn the_pinball_capture_reduces_to_a_whole_side() {
         let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let capture_path =
             fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
         if !capture_path.exists() {
             panic!(
-                "missing fixture {capture_path:?}: run `uv run --group test-fixture-prep \
-                 test-fixture-prep/prep_fixtures.py`"
+                "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
+                 prep_fixtures.py`"
             );
         }
         let _gate = CAPTURE_FIXTURE_GATE

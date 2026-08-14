@@ -1159,6 +1159,7 @@ mod tests {
     /// library's writer and comes back through its own reader
     /// unchanged.
     #[test]
+    #[cfg(feature = "fixtures")]
     fn the_pinball_renditions_round_trip_through_their_own_readers() {
         // The one reduction this crate's tests share. It is the image
         // the reduction produced rather than a stand-in for it, so what

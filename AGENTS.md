@@ -873,11 +873,21 @@ cargo test
 git diff --check
 ```
 
-**`cargo test` needs no downloaded fixture** (D49). Everything it runs
-builds its own images, so a fresh clone is testable immediately. Six
-suites open an artifact `test-fixture-prep/prep_fixtures.py` fetches or
-generates — five in the core crate, and `cpp_flux.rs` in the FFI crate
-(D54) — and they sit behind a feature of that name in each crate:
+**`cargo test` needs no downloaded fixture** (D49). Everything the
+default run touches builds its own images, so a fresh clone is testable
+immediately — and that is a claim about the *whole* default run, the
+unit tests included. Seven tests inside `crates/remanence/src/` open the
+KryoFlux capture instead of building anything: the reduction and the
+renditions over the pinball disk, and the `fixture_tests` module in
+`flux/drive_profile/verdict.rs`, whose claims sit in the source because
+F59 folded the verb they exercised into the declared load and they reach
+`pub(crate)` helpers to do their work. They carry
+`#[cfg(feature = "fixtures")]` for the same reason the suites below
+carry `required-features` — the feature is what marks the tier, not the
+directory — and they cost the default run nothing, having been most of
+its wall clock. Six suites open such an artifact too — five in the core
+crate, and `cpp_flux.rs` in the FFI crate (D54) — and they sit behind
+the same feature in each crate:
 
 ```bash
 cargo test --features fixtures                    # the core crate's five
@@ -893,6 +903,23 @@ specified belongs in the default run instead: `tests/dos_letters/mod.rs`
 builds MBR tables, EBR chains and FAT12/FAT16 volumes, and
 `tests/rig_layout.rs` is what asserts a built disk is the shape it
 claims before other tests trust it.
+
+**Three tiers, and only the first ships.** In-source `#[cfg(test)]`
+tests are the unit tier and travel inside the published crate, so they
+must need nothing but rustc — which is what the gating above is for.
+`tests/*.rs` is the integration tier, and `exclude = ["tests/**"]` keeps
+it out of both published crates: what it checks is *this repository's*
+claims rather than a consumer's build, and it cannot run there anyway —
+the C surface's suites need CMake and a compiler, and the leak probe
+builds through a cargo workspace two directories up that an extracted
+crate does not have. Anything reaching a downloaded or generated
+artifact is gated behind `fixtures` whichever tier it sits in. So a
+packager who extracts either crate and runs `cargo test` gets the unit
+tier, passing, with no network, no fixture and no second toolchain —
+which is the run a distribution build actually performs. `examples/`
+stays in the FFI crate deliberately: `identify.c` and `identify.cpp` are
+the best documentation a C caller gets, and cargo ships them as plain
+files rather than as targets.
 
 When the C ABI changed, rebuild and commit the regenerated header.
 `cargo test` **compiles** the C surface for you (D44, D53): that the C

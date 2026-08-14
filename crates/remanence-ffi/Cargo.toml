@@ -10,6 +10,17 @@ homepage.workspace = true
 # own README is the one whose links survive off GitHub. It addresses the
 # C and C++ consumer, who is not the reader either other README has.
 readme = "README.md"
+# As in the core crate: a released artifact carries what a consumer runs
+# and nothing else. What lives under `tests/` here tests *this
+# repository* — that the header stands alone, that the C++ wrapper's
+# claims hold — and it needs CMake, a C and C++ compiler, and a cargo
+# workspace two directories up to build the leak probe in. A consumer
+# extracting the crate has none of those and is not changing what they
+# check, so `cargo test` on the published crate runs the unit tests and
+# succeeds. `examples/` deliberately stays: `identify.c` and
+# `identify.cpp` are the best documentation a C caller gets, and cargo
+# ships them as plain files rather than as targets it builds.
+exclude = ["tests/**"]
 
 [lib]
 name = "remanence_ffi"

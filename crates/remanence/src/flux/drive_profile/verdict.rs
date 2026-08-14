@@ -556,7 +556,7 @@ mod tests {
 /// public verb. The surface folded into the declared load (F59), and
 /// the claims stayed: the zone table recovered from interval statistics
 /// alone, and every refusal naming the rule it broke.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 mod fixture_tests {
     use super::*;
     use crate::error::ErrorCategory;
@@ -585,8 +585,8 @@ mod fixture_tests {
                 fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
             if !capture_path.exists() {
                 panic!(
-                    "missing fixture {capture_path:?}: run `uv run --group test-fixture-prep \
-                     test-fixture-prep/prep_fixtures.py`"
+                    "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
+                     prep_fixtures.py`"
                 );
             }
             let capture = crate::flux::remanence::reconstruction::fixture_capture(&capture_path);
