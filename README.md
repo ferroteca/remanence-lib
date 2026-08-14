@@ -445,8 +445,9 @@ with build instructions in its header comment.
 header-only and C++17 — which derives from the C ABI rather than adding
 to it: RAII over the handles the ABI hands you to free, views over the
 ones the session owns, and refusals as one exception type carrying the
-stable category. The C ABI is still the norm and still reachable; this
-adds ergonomics, not reach. Its example consumer is
+stable category. It covers every exported function, the flux ladder
+included. The C ABI is still the norm and still reachable; this adds
+ergonomics, not reach. Its example consumer is
 [examples/identify.cpp](crates/remanence-ffi/examples/identify.cpp),
 beside the C one.
 
@@ -790,7 +791,8 @@ try {
     // free themselves in reverse order of construction; nothing here has
     // a `_free` to remember or a status code to check.
     remanence::Filesystem filesystem = medium.partition(0)->filesystem_as("hdos");
-    for (const remanence::Entry& entry : filesystem.entries().entries()) {
+    remanence::EntryList listing = filesystem.entries();
+    for (const remanence::Entry& entry : listing.entries()) {
         std::cout << entry.name() << ' ' << entry.size_bytes() << '\n';
     }
     remanence::FileData data = filesystem.read_file("HDOS.SYS");
@@ -801,6 +803,18 @@ try {
     drive.insert(medium.id());
     drive.eject();
     session.release_media(medium.id());
+
+    // The flux ladder is the same header: a remanence artifact is read
+    // through its own type, and each rung is materialized from the one
+    // below under a declared bound, carrying the account of what it did
+    // not carry.
+    remanence::FluxImage image = remanence::FluxImage::open("capture.remanence");
+    remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+    remanence::C1541Sectors sectors = bits.materialize_bytestream().recognize_sectors();
+    std::vector<std::uint8_t> bam = sectors.read(18, 0);
+    for (const remanence::DeclaredLoss& loss : image.describe_d64().declared_losses()) {
+        std::cout << loss.code << ' ' << loss.amount << ": " << loss.detail << '\n';
+    }
 } catch (const remanence::Error& refusal) {
     std::cerr << static_cast<int>(refusal.category()) << ": " << refusal.what() << '\n';
 }

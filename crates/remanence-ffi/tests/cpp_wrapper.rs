@@ -70,6 +70,27 @@ fn an_honest_absence_is_an_empty_optional() {
 }
 
 #[test]
+fn the_flux_ladder_answers_and_refuses_over_a_built_artifact() {
+    if skipping() {
+        return;
+    }
+    // The remanence format's own worked example, written by the C++
+    // caller itself: one hole, one orbit, two points. Two points frame
+    // no record, which is why the group checks the refusals as closely
+    // as the answers — the sector layer over a real recording is
+    // `cpp_flux.rs`, which needs a fixture.
+    let scratch = std::env::temp_dir().join(format!("remanence-cpp-flux-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("the scratch directory is made");
+    print!("{}", run_c("wrapper", &["flux", &scratch.to_string_lossy()]));
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+#[test]
+fn the_flux_doors_on_a_block_medium_refuse_by_name() {
+    group("flux_refusals", &[]);
+}
+
+#[test]
 fn a_real_artifact_reports_and_reads() {
     if skipping() {
         return;
@@ -95,5 +116,10 @@ fn destructors_give_back_what_constructors_took() {
     if skipping() {
         return;
     }
-    print!("{}", run_c_probe("wrapper_leaks", &[]));
+    // The flux cycle lays the worked-example artifact somewhere, and the
+    // harness owns that somewhere rather than the C++ caller guessing.
+    let scratch = std::env::temp_dir().join(format!("remanence-cpp-leak-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("the scratch directory is made");
+    print!("{}", run_c_probe("wrapper_leaks", &[&scratch.to_string_lossy()]));
+    let _ = std::fs::remove_dir_all(&scratch);
 }

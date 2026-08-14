@@ -58,6 +58,96 @@ removes it is the record either way.
 
 ## Decisions
 
+### D54 — The C++ header covers the whole ABI, so an unwrapped function is a defect rather than a boundary
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S2, P5, P10; amends D53, and stands on D47 and
+D49. `DECISIONS.md` was searched first and returned D53, which drew the
+boundary this removes and stated the reasoning for it.
+
+**The instruction is the argument, and D53's reasoning was not wrong.**
+D53 scoped the C++ presentation to the storage model and left the 136
+flux functions to the C header, on the grounds that they are no
+storage-model node and carry their own presentation ladder. The owner
+directed the rest wrapped, the same day, before that entry had aged an
+hour. Nothing about the earlier reasoning was found faulty; what changed
+is that partial coverage was not what was wanted, and the owner is the
+authority on that.
+
+**What it buys is a rule with a yes-or-no answer.** D53's boundary had
+to be described — which families are in, which are out, and why — and
+every future ABI addition would have had to be triaged against that
+description. Full coverage replaces it with something a script can
+check: **every `remanence_*` function the header declares is wrapped, so
+one that is not is a defect.** The header says so in those words, and
+the count is 470 of 470.
+
+**No F-number is issued, and that is the ruling this entry exists for.**
+D53 said wrapping the flux layer "would need a fresh F-number", which
+was right about a *pledge*: a feature is capability argued and owed
+before it is built. This was neither argued nor owed — it was directed
+and delivered in one motion, and [TASKS.md](TASKS.md) already states the
+principle for that case ("work that arrives already done never appears
+here: there is nothing to schedule, only a decision to make"). Issuing a
+number to retire it in the same commit would be ceremony. The commit is
+the record, and this entry is the decision it points at.
+
+**The ABI's own records are aliased, not restated.** A half-track, a
+bitstream location, a sector claim, an orbit and a hole are
+`#[repr(C)]` plain numbers the ABI copies into an out-parameter — no
+strings, no ownership, nothing for a wrapper to own or free. So the
+header spells them `using SectorClaim = RemanenceSectorClaim;` rather
+than declaring ten C++ structs beside ten C ones, which would add a
+conversion, a maintenance burden, and a place for the two to disagree.
+The copying rule D53 set is about *strings a handle owns*, and these
+carry none.
+
+**Six handle types answer the same three shapes**, so the shapes are
+written once: a declared-loss account, an evidence list, and a list of
+records copied into an out-parameter. Three small function templates in
+`detail` take the ABI functions as arguments, and each class's accessor
+is a line. `DeclaredLoss` is the one new struct — a code, a detail and
+an amount — because every rung of the ladder and every rendition off it
+accounts for what it did not carry.
+
+**The ladder is tested without a fixture, which the flux layer has never
+managed before.** The remanence format's own worked example is
+twenty-one bytes — one index hole at 3/8 of a turn, one orbit at
+57,150 µm, two points — and the artifact around it is a magic string, a
+sentinel, a version byte and one stored DEFLATE block in a zlib stream.
+The C++ caller lays that on disk itself and opens it, so the image, its
+shape, its round trip, the write refusal on an occupied destination, the
+bitstream, the bytestream and all three renditions are checked on a
+fresh clone. **Two points frame no record, and the sector layer's
+refusal is a check rather than a gap**: nothing is manufactured to stand
+in for a recording.
+
+**One test needs a real capture, and it is gated as the core's are.**
+The sector layer, its claims, the BAM and the CBM DOS catalog above it
+need a recording that frames records, so `cpp_flux.rs` walks the
+KryoFlux capture the prep script fetches, behind a `fixtures` feature on
+`remanence-ffi` that mirrors the core crate's (D49). It takes about two
+and a quarter minutes, which is the gap-first reduction over
+eighty-four step positions rather than the boundary being slow. The
+default run is untouched.
+
+**D53's dangling guard caught its own author, which is the evidence for
+it.** Writing the capture group, `catalog.entries().entries()` was typed
+without a second thought and did not compile — the deleted rvalue
+overload doing exactly the job it was added for, on a line a reviewer
+would have read straight past. The leak probe gained a flux cycle for
+the same reason: the ladder's rungs each own private session storage,
+and a C++ caller writes no free for any of them.
+
+**Weighed and declined:** leaving the boundary where D53 put it and
+recording the owner's instruction as a pledge to be worked later (the
+work is mechanical, it was directed, and a pledge nobody means is what
+`planning/README.md` says to withdraw rather than write); declaring C++
+structs for the ABI's plain records (above); and gating the whole flux
+group behind `fixtures` (it would have left the flux half of the header
+unchecked on a fresh clone, which is the property the worked example
+exists to avoid).
+
 ### D53 — The C++ presentation is a hand-maintained header that copies its strings, and it wraps the storage model rather than everything
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -139,6 +229,11 @@ control is not decoration** — the first version of this check compiled
 an *executable*, which failed to link for want of the library and
 reported the refusal as working; the bound form failing is what
 exposed that.
+
+> **Annotated by D54**, which wraps the flux layer too, on the owner's
+> direction the same day. The paragraph below stands as the reasoning
+> for the boundary it drew; the boundary itself is gone, and the
+> wrapper now covers every `remanence_*` function.
 
 **It wraps the storage model, and says so rather than trailing off.**
 Every node the storage model has is here — session, machines, devices,

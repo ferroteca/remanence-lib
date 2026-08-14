@@ -26,18 +26,17 @@
  * added, renamed or retired moves this file in that same change, and a
  * disagreement between the two is a defect here, the ABI being the norm.
  *
- * **What it covers, and what it deliberately does not.** Every node of
- * the storage model is here — the session and its two pools, machines,
- * devices, media, discoveries, partitions, volumes, filesystems and
- * files — with the records they hand back: assurance, geometry,
- * identification, inspection reports, directory listings, file bytes,
- * load sources, and the DOS drive-letter composition. The flux
- * presentations (`remanence_flux_*`, `remanence_c1541_*`,
- * `remanence_p64_*`, `remanence_g64_*`, `remanence_d64_*`) are **not**
- * wrapped: they are not storage-model nodes, they carry their own
- * presentation ladder, and a C++ caller reaches them through the C
- * functions `<remanence.h>` declares — which this header includes, so
- * they are one call away rather than out of reach.
+ * **It covers the whole ABI.** Every node of the storage model is here
+ * — the session and its two pools, machines, devices, media,
+ * discoveries, partitions, volumes, filesystems and files — with the
+ * records they hand back: assurance, geometry, identification,
+ * inspection reports, directory listings, file bytes, load sources, and
+ * the DOS drive-letter composition. So is the flux ladder beside it: the
+ * remanence image, the family's hardware bitstream, the encoded
+ * bytestream, the recognized sectors, and the d64, g64 and p64
+ * renditions. Where a `remanence_*` function is not wrapped, that is a
+ * defect rather than a boundary — and `<remanence.h>` is included here,
+ * so the C function is one call away either way.
  *
  * **Refusals are exceptions.** Every fallible call throws
  * `remanence::Error`, carrying the delivered `ErrorCategory` — the
@@ -478,6 +477,59 @@ struct Release<RemanenceDosMachine> {
 template <>
 struct Release<RemanenceDriveMap> {
     void operator()(RemanenceDriveMap* handle) const noexcept { remanence_drive_map_free(handle); }
+};
+template <>
+struct Release<RemanenceFluxImage> {
+    void operator()(RemanenceFluxImage* handle) const noexcept { remanence_flux_image_free(handle); }
+};
+template <>
+struct Release<RemanenceFluxWriteReport> {
+    void operator()(RemanenceFluxWriteReport* handle) const noexcept
+    {
+        remanence_flux_write_report_free(handle);
+    }
+};
+template <>
+struct Release<RemanenceC1541Bitstream> {
+    void operator()(RemanenceC1541Bitstream* handle) const noexcept
+    {
+        remanence_c1541_bitstream_free(handle);
+    }
+};
+template <>
+struct Release<RemanenceC1541Bytestream> {
+    void operator()(RemanenceC1541Bytestream* handle) const noexcept
+    {
+        remanence_c1541_bytestream_free(handle);
+    }
+};
+template <>
+struct Release<RemanenceC1541Sectors> {
+    void operator()(RemanenceC1541Sectors* handle) const noexcept
+    {
+        remanence_c1541_sectors_free(handle);
+    }
+};
+template <>
+struct Release<RemanenceD64Report> {
+    void operator()(RemanenceD64Report* handle) const noexcept
+    {
+        remanence_d64_report_free(handle);
+    }
+};
+template <>
+struct Release<RemanenceG64Report> {
+    void operator()(RemanenceG64Report* handle) const noexcept
+    {
+        remanence_g64_report_free(handle);
+    }
+};
+template <>
+struct Release<RemanenceP64Report> {
+    void operator()(RemanenceP64Report* handle) const noexcept
+    {
+        remanence_p64_report_free(handle);
+    }
 };
 
 /// One owned handle's lifetime. Move-only, because the ABI's handles are
@@ -2545,6 +2597,847 @@ public:
 };
 
 // ---------------------------------------------------------------------
+// The flux presentations
+//
+// A recording read as the medium actually holds it, and the ladder that
+// stands on it: the image, the family's hardware bitstream, the encoded
+// bytestream above that, and the sectors the recording states for
+// itself. Each rung is materialized from the one below under a declared
+// bound, is a handle of its own, and leaves the rung beneath untouched.
+//
+// **The records here are the ABI's own, aliased rather than restated.**
+// A half-track, a location, a claim, an orbit and a hole carry no
+// strings and no ownership — they are plain numbers the ABI copies into
+// an out-parameter — so a C++ struct beside them would add nothing but
+// a place for the two to disagree.
+// ---------------------------------------------------------------------
+
+using P64HalfTrack = RemanenceP64HalfTrack;
+using BitstreamLocation = RemanenceBitstreamLocation;
+using BytestreamLocation = RemanenceBytestreamLocation;
+using SectorLocation = RemanenceSectorLocation;
+using SectorClaim = RemanenceSectorClaim;
+using ContestedAddress = RemanenceContestedAddress;
+using FluxHole = RemanenceFluxHole;
+using FluxOrbit = RemanenceFluxOrbit;
+using D64Block = RemanenceD64Block;
+using G64HalfTrack = RemanenceG64HalfTrack;
+
+/// One kind of loss a crossing does not carry.
+///
+/// Every rung of the ladder and every rendition off it accounts for what
+/// it dropped, in the source's own terms: a count is not an account.
+struct DeclaredLoss {
+    /// The stable code for what was lost.
+    std::string code;
+    /// What was lost, in the source's own terms.
+    std::string detail;
+    /// How much of it there was, in whatever the detail counts.
+    std::uint64_t amount;
+};
+
+namespace detail {
+
+/// The declared-loss account, which every flux handle answers the same
+/// way — the four ABI functions differ, the shape does not.
+template <typename T, typename Count, typename Code, typename Detail, typename Amount>
+std::vector<DeclaredLoss> losses(const T* handle, Count count, Code code, Detail detail,
+                                 Amount amount)
+{
+    const std::size_t held = count(handle);
+    std::vector<DeclaredLoss> account;
+    account.reserve(held);
+    for (std::size_t at = 0; at < held; at += 1) {
+        account.push_back({copied(code(handle, at)), copied(detail(handle, at)),
+                           amount(handle, at)});
+    }
+    return account;
+}
+
+/// The same for an evidence list, which they also all answer (P4).
+template <typename T, typename Count, typename At>
+std::vector<std::string> lines(const T* handle, Count count, At at_index)
+{
+    const std::size_t held = count(handle);
+    std::vector<std::string> found;
+    found.reserve(held);
+    for (std::size_t at = 0; at < held; at += 1) {
+        found.push_back(copied(at_index(handle, at)));
+    }
+    return found;
+}
+
+/// And the same for a record the ABI copies into an out-parameter.
+template <typename Record, typename T, typename Count, typename At>
+std::vector<Record> records(const T* handle, Count count, At at_index)
+{
+    const std::size_t held = count(handle);
+    std::vector<Record> found;
+    found.reserve(held);
+    for (std::size_t at = 0; at < held; at += 1) {
+        Record record{};
+        if (!at_index(handle, at, &record)) {
+            break;
+        }
+        found.push_back(record);
+    }
+    return found;
+}
+
+} // namespace detail
+
+/// What a p64 container carried, or will carry, of one image.
+class P64Report : public detail::Held<RemanenceP64Report> {
+public:
+    using Held::Held;
+
+    /// The container format's stable identifier, `p64`.
+    std::string format_id() const { return detail::copied(remanence_p64_format_id(get())); }
+
+    std::string format_name() const { return detail::copied(remanence_p64_format_name(get())); }
+
+    /// The container's declared format version.
+    std::uint32_t version() const noexcept { return remanence_p64_version(get()); }
+
+    bool write_protected() const noexcept { return remanence_p64_write_protected(get()); }
+
+    bool double_sided() const noexcept { return remanence_p64_double_sided(get()); }
+
+    /// The drive profile the container's own signature names, and the
+    /// frame that profile declares.
+    std::string profile_id() const { return detail::copied(remanence_p64_profile_id(get())); }
+
+    std::uint64_t reference_clock_hz() const noexcept
+    {
+        return remanence_p64_reference_clock_hz(get());
+    }
+
+    std::uint64_t cycles_per_rotation() const noexcept
+    {
+        return remanence_p64_cycles_per_rotation(get());
+    }
+
+    std::size_t half_track_count() const noexcept { return remanence_p64_half_track_count(get()); }
+
+    P64HalfTrack half_track(std::size_t index) const
+    {
+        detail::in_range(index, half_track_count(), "p64 half-track index");
+        P64HalfTrack track{};
+        remanence_p64_half_track(get(), index, &track);
+        return track;
+    }
+
+    std::vector<P64HalfTrack> half_tracks() const
+    {
+        return detail::records<P64HalfTrack>(get(), remanence_p64_half_track_count,
+                                             remanence_p64_half_track);
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_p64_declared_loss_count,
+                              remanence_p64_declared_loss_code,
+                              remanence_p64_declared_loss_detail,
+                              remanence_p64_declared_loss_amount);
+    }
+
+    /// How the container was recognized and what this adapter claims of
+    /// it.
+    std::vector<std::string> evidence() const
+    {
+        return detail::lines(get(), remanence_p64_evidence_count, remanence_p64_evidence);
+    }
+};
+
+/// What a g64 rendition carried, or will carry, of one image.
+class G64Report : public detail::Held<RemanenceG64Report> {
+public:
+    using Held::Held;
+
+    /// The artifact written, absent where nothing was written — a
+    /// description rather than a rendition.
+    std::optional<std::string> path() const
+    {
+        return detail::optional_copied(remanence_g64_report_path(get()));
+    }
+
+    std::uint64_t artifact_bytes() const noexcept
+    {
+        return remanence_g64_report_artifact_bytes(get());
+    }
+
+    std::size_t half_track_count() const noexcept
+    {
+        return remanence_g64_report_half_track_count(get());
+    }
+
+    G64HalfTrack half_track(std::size_t index) const
+    {
+        detail::in_range(index, half_track_count(), "g64 half-track index");
+        G64HalfTrack track{};
+        remanence_g64_report_half_track(get(), index, &track);
+        return track;
+    }
+
+    std::vector<G64HalfTrack> half_tracks() const
+    {
+        return detail::records<G64HalfTrack>(get(), remanence_g64_report_half_track_count,
+                                             remanence_g64_report_half_track);
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_g64_report_declared_loss_count,
+                              remanence_g64_report_declared_loss_code,
+                              remanence_g64_report_declared_loss_detail,
+                              remanence_g64_report_declared_loss_amount);
+    }
+};
+
+/// What a d64 rendition carried, or will carry, of one image.
+class D64Report : public detail::Held<RemanenceD64Report> {
+public:
+    using Held::Held;
+
+    std::optional<std::string> path() const
+    {
+        return detail::optional_copied(remanence_d64_report_path(get()));
+    }
+
+    std::uint64_t artifact_bytes() const noexcept
+    {
+        return remanence_d64_report_artifact_bytes(get());
+    }
+
+    /// How many blocks the recording answered, against how many the
+    /// rendition's fixed shape defines.
+    std::uint32_t blocks_read() const noexcept { return remanence_d64_report_blocks_read(get()); }
+
+    std::uint32_t blocks_defined() const noexcept
+    {
+        return remanence_d64_report_blocks_defined(get());
+    }
+
+    std::uint32_t failed_checksums() const noexcept
+    {
+        return remanence_d64_report_failed_checksums(get());
+    }
+
+    /// The addresses the rendition defines and the recording did not
+    /// answer.
+    std::vector<D64Block> missing() const
+    {
+        return detail::records<D64Block>(get(), remanence_d64_report_missing_count,
+                                         remanence_d64_report_missing);
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_d64_report_declared_loss_count,
+                              remanence_d64_report_declared_loss_code,
+                              remanence_d64_report_declared_loss_detail,
+                              remanence_d64_report_declared_loss_amount);
+    }
+};
+
+/// What writing an image into a `.remanence` artifact carried.
+class FluxWriteReport : public detail::Held<RemanenceFluxWriteReport> {
+public:
+    using Held::Held;
+
+    std::optional<std::string> path() const
+    {
+        return detail::optional_copied(remanence_flux_write_report_path(get()));
+    }
+
+    std::uint64_t artifact_bytes() const noexcept
+    {
+        return remanence_flux_write_report_artifact_bytes(get());
+    }
+
+    std::uint64_t orbits() const noexcept { return remanence_flux_write_report_orbits(get()); }
+
+    std::uint64_t points() const noexcept { return remanence_flux_write_report_points(get()); }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_flux_write_report_declared_loss_count,
+                              remanence_flux_write_report_declared_loss_code,
+                              remanence_flux_write_report_declared_loss_detail,
+                              remanence_flux_write_report_declared_loss_amount);
+    }
+};
+
+/// The recording's own sectors, read by the address the recording states
+/// for them.
+///
+/// It answers only where the recording is unambiguous — one readable
+/// claim, or several holding the same bytes. Every other outcome is a
+/// refusal naming its rule; nothing is repaired and no block is filled
+/// in.
+class C1541Sectors : public detail::Held<RemanenceC1541Sectors> {
+public:
+    using Held::Held;
+
+    /// How long a payload one sector holds, which is what `read` needs.
+    std::uint32_t payload_bytes() const noexcept
+    {
+        return remanence_c1541_sectors_payload_bytes(get());
+    }
+
+    /// Reads one sector by the address the recording states for it.
+    void read(std::uint8_t track, std::uint8_t sector, std::uint8_t* buffer,
+              std::size_t length) const
+    {
+        detail::Outcome outcome;
+        outcome.require(remanence_c1541_sectors_read(get(), track, sector, buffer, length,
+                                                     outcome.category(), outcome.message(),
+                                                     outcome.rule()),
+                        "that sector does not read");
+    }
+
+    std::vector<std::uint8_t> read(std::uint8_t track, std::uint8_t sector) const
+    {
+        std::vector<std::uint8_t> payload(payload_bytes());
+        if (!payload.empty()) {
+            read(track, sector, payload.data(), payload.size());
+        }
+        return payload;
+    }
+
+    /// The direct partition over this recording — the library's own
+    /// composition of the whole content, which is how a namespace above
+    /// it is reached (P19).
+    std::optional<Partition> partition() const
+    {
+        RemanencePartition* composed = remanence_c1541_sectors_partition(get());
+        if (composed == nullptr) {
+            return std::nullopt;
+        }
+        return Partition(composed);
+    }
+
+    std::string profile_id() const
+    {
+        return detail::copied(remanence_c1541_sectors_profile_id(get()));
+    }
+
+    /// The record grammar the recognition ran under.
+    std::string grammar_id() const
+    {
+        return detail::copied(remanence_c1541_sectors_grammar_id(get()));
+    }
+
+    std::string grammar_name() const
+    {
+        return detail::copied(remanence_c1541_sectors_grammar_name(get()));
+    }
+
+    /// The private session storage this layer occupies, and how much of
+    /// it is resident — the points are never held whole (P27).
+    std::uint64_t backing_bytes() const noexcept
+    {
+        return remanence_c1541_sectors_backing_bytes(get());
+    }
+
+    std::uint64_t resident_bytes() const noexcept
+    {
+        return remanence_c1541_sectors_resident_bytes(get());
+    }
+
+    std::size_t location_count() const noexcept
+    {
+        return remanence_c1541_sectors_location_count(get());
+    }
+
+    SectorLocation location(std::size_t index) const
+    {
+        detail::in_range(index, location_count(), "sector location index");
+        SectorLocation found{};
+        remanence_c1541_sectors_location(get(), index, &found);
+        return found;
+    }
+
+    std::vector<SectorLocation> locations() const
+    {
+        return detail::records<SectorLocation>(get(), remanence_c1541_sectors_location_count,
+                                               remanence_c1541_sectors_location);
+    }
+
+    std::size_t claim_count() const noexcept { return remanence_c1541_sectors_claim_count(get()); }
+
+    /// One record the recognition read, with the evidence for every
+    /// claim it makes.
+    SectorClaim claim(std::size_t index) const
+    {
+        detail::in_range(index, claim_count(), "sector claim index");
+        SectorClaim found{};
+        remanence_c1541_sectors_claim(get(), index, &found);
+        return found;
+    }
+
+    std::vector<SectorClaim> claims() const
+    {
+        return detail::records<SectorClaim>(get(), remanence_c1541_sectors_claim_count,
+                                            remanence_c1541_sectors_claim);
+    }
+
+    /// Which rule of the sector-layer set stands in the way of this
+    /// claim. **Empty for a claim that reads**, which is the ABI's own
+    /// spelling of "no rule was broken".
+    std::string claim_rule(std::size_t index) const
+    {
+        detail::in_range(index, claim_count(), "sector claim index");
+        return detail::copied(remanence_c1541_sectors_claim_rule(get(), index));
+    }
+
+    /// Why this claim does not read, in the layer's own terms; empty for
+    /// one that does.
+    std::string claim_refusal(std::size_t index) const
+    {
+        detail::in_range(index, claim_count(), "sector claim index");
+        return detail::copied(remanence_c1541_sectors_claim_refusal(get(), index));
+    }
+
+    /// The addresses more than one readable claim states.
+    std::vector<ContestedAddress> contested() const
+    {
+        return detail::records<ContestedAddress>(get(), remanence_c1541_sectors_contested_count,
+                                                 remanence_c1541_sectors_contested);
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_c1541_sectors_declared_loss_count,
+                              remanence_c1541_sectors_declared_loss_code,
+                              remanence_c1541_sectors_declared_loss_detail,
+                              remanence_c1541_sectors_declared_loss_amount);
+    }
+
+    /// The grammar and policy that produced it, and everything the
+    /// bytestream said beneath it, in that order.
+    std::vector<std::string> evidence() const
+    {
+        return detail::lines(get(), remanence_c1541_sectors_evidence_count,
+                             remanence_c1541_sectors_evidence);
+    }
+};
+
+/// The family's encoded bytestream: the bytes a group code resolved out
+/// of the channel, before anything assigns them a meaning.
+///
+/// No byte here is a header, a sector or a file — the layers that decide
+/// that sit above.
+class C1541Bytestream : public detail::Held<RemanenceC1541Bytestream> {
+public:
+    using Held::Held;
+
+    std::string profile_id() const
+    {
+        return detail::copied(remanence_c1541_bytestream_profile_id(get()));
+    }
+
+    /// The group code the stream was resolved under, and its shape.
+    std::string codec_id() const
+    {
+        return detail::copied(remanence_c1541_bytestream_codec_id(get()));
+    }
+
+    std::string codec_name() const
+    {
+        return detail::copied(remanence_c1541_bytestream_codec_name(get()));
+    }
+
+    std::uint32_t symbol_bits() const noexcept
+    {
+        return remanence_c1541_bytestream_symbol_bits(get());
+    }
+
+    std::uint32_t data_bits() const noexcept
+    {
+        return remanence_c1541_bytestream_data_bits(get());
+    }
+
+    std::uint32_t symbols_per_byte() const noexcept
+    {
+        return remanence_c1541_bytestream_symbols_per_byte(get());
+    }
+
+    std::uint64_t backing_bytes() const noexcept
+    {
+        return remanence_c1541_bytestream_backing_bytes(get());
+    }
+
+    std::uint64_t resident_bytes() const noexcept
+    {
+        return remanence_c1541_bytestream_resident_bytes(get());
+    }
+
+    std::size_t location_count() const noexcept
+    {
+        return remanence_c1541_bytestream_location_count(get());
+    }
+
+    BytestreamLocation location(std::size_t index) const
+    {
+        detail::in_range(index, location_count(), "bytestream location index");
+        BytestreamLocation found{};
+        remanence_c1541_bytestream_location(get(), index, &found);
+        return found;
+    }
+
+    std::vector<BytestreamLocation> locations() const
+    {
+        return detail::records<BytestreamLocation>(get(),
+                                                   remanence_c1541_bytestream_location_count,
+                                                   remanence_c1541_bytestream_location);
+    }
+
+    /// How many framed bytes one location holds, addressed in the
+    /// family's own terms — the 1541 numbers its tracks from 1. A track
+    /// the stream does not hold is refused naming what it does hold.
+    std::uint64_t location_bytes(std::uint32_t track) const
+    {
+        detail::Outcome outcome;
+        std::uint64_t bytes = 0;
+        outcome.require(remanence_c1541_bytestream_location_bytes(get(), track, &bytes,
+                                                                  outcome.category(),
+                                                                  outcome.message(),
+                                                                  outcome.rule()),
+                        "the stream holds no such track");
+        return bytes;
+    }
+
+    /// Reads framed bytes of one track, whole or not at all. Bytes
+    /// number from the first framed byte, because nothing before sync is
+    /// a byte at all.
+    void location_read_at(std::uint32_t track, std::uint64_t offset, std::uint8_t* buffer,
+                          std::size_t length) const
+    {
+        detail::Outcome outcome;
+        outcome.require(remanence_c1541_bytestream_location_read_at(get(), track, offset, buffer,
+                                                                    length, outcome.category(),
+                                                                    outcome.message(),
+                                                                    outcome.rule()),
+                        "those bytes do not read");
+    }
+
+    std::vector<std::uint8_t> location_read_at(std::uint32_t track, std::uint64_t offset,
+                                               std::size_t length) const
+    {
+        std::vector<std::uint8_t> buffer(length);
+        if (length > 0) {
+            location_read_at(track, offset, buffer.data(), length);
+        }
+        return buffer;
+    }
+
+    /// Recognizes the recording's own sectors under the family's
+    /// declared record grammar. `cache_bytes` is the working-set bound
+    /// (P27); the bytestream is untouched.
+    C1541Sectors recognize_sectors(std::uint64_t cache_bytes = 0) const
+    {
+        detail::Outcome outcome;
+        RemanenceC1541Sectors* recognized = remanence_c1541_bytestream_recognize_sectors(
+            get(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
+        return C1541Sectors(outcome.require(recognized, "no sectors were recognized"));
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_c1541_bytestream_declared_loss_count,
+                              remanence_c1541_bytestream_declared_loss_code,
+                              remanence_c1541_bytestream_declared_loss_detail,
+                              remanence_c1541_bytestream_declared_loss_amount);
+    }
+
+    /// The codec, the channel beneath it and the medium policy beneath
+    /// that, in that order.
+    std::vector<std::string> evidence() const
+    {
+        return detail::lines(get(), remanence_c1541_bytestream_evidence_count,
+                             remanence_c1541_bytestream_evidence);
+    }
+};
+
+/// The family's hardware bitstream: what the read channel resolved out
+/// of the recording, under the profile's declared mechanics.
+///
+/// **Two doors mint it, and their lifetimes differ.**
+/// `FluxImage::materialize_c1541_bitstream` gives a handle that owns the
+/// stream it materialized. `Medium::bitstream` gives a *view* of the
+/// stream cached in the pooled medium: it stops answering once the
+/// medium is released and **must not outlive its session**. Destroying
+/// either is correct — the view discards only itself — but the second
+/// is a borrow this class cannot enforce, exactly as the ABI cannot.
+class C1541Bitstream : public detail::Held<RemanenceC1541Bitstream> {
+public:
+    using Held::Held;
+
+    /// The drive profile the stream was resolved under, and the frame it
+    /// declares.
+    std::string profile_id() const
+    {
+        return detail::copied(remanence_c1541_bitstream_profile_id(get()));
+    }
+
+    std::string profile_name() const
+    {
+        return detail::copied(remanence_c1541_bitstream_profile_name(get()));
+    }
+
+    std::uint32_t profile_version() const noexcept
+    {
+        return remanence_c1541_bitstream_profile_version(get());
+    }
+
+    std::uint64_t reference_clock_hz() const noexcept
+    {
+        return remanence_c1541_bitstream_reference_clock_hz(get());
+    }
+
+    std::uint64_t cycles_per_rotation() const noexcept
+    {
+        return remanence_c1541_bitstream_cycles_per_rotation(get());
+    }
+
+    std::uint64_t backing_bytes() const noexcept
+    {
+        return remanence_c1541_bitstream_backing_bytes(get());
+    }
+
+    std::uint64_t resident_bytes() const noexcept
+    {
+        return remanence_c1541_bitstream_resident_bytes(get());
+    }
+
+    std::size_t location_count() const noexcept
+    {
+        return remanence_c1541_bitstream_location_count(get());
+    }
+
+    /// One location the stream holds, and what the channel resolved
+    /// there.
+    BitstreamLocation location(std::size_t index) const
+    {
+        detail::in_range(index, location_count(), "bitstream location index");
+        BitstreamLocation found{};
+        remanence_c1541_bitstream_location(get(), index, &found);
+        return found;
+    }
+
+    std::vector<BitstreamLocation> locations() const
+    {
+        return detail::records<BitstreamLocation>(get(), remanence_c1541_bitstream_location_count,
+                                                  remanence_c1541_bitstream_location);
+    }
+
+    /// Materializes the encoded bytestream above this one under its
+    /// declared group code — no policy to pass, because the type carries
+    /// one. The bitstream is untouched.
+    C1541Bytestream materialize_bytestream(std::uint64_t cache_bytes = 0) const
+    {
+        detail::Outcome outcome;
+        RemanenceC1541Bytestream* stream = remanence_c1541_bitstream_materialize_bytestream(
+            get(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
+        return C1541Bytestream(outcome.require(stream, "no bytestream materialized"));
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_c1541_bitstream_declared_loss_count,
+                              remanence_c1541_bitstream_declared_loss_code,
+                              remanence_c1541_bitstream_declared_loss_detail,
+                              remanence_c1541_bitstream_declared_loss_amount);
+    }
+
+    std::vector<std::string> evidence() const
+    {
+        return detail::lines(get(), remanence_c1541_bitstream_evidence_count,
+                             remanence_c1541_bitstream_evidence);
+    }
+};
+
+/// An opened `.remanence` artifact: the claim on the file, and the
+/// points it decoded into private session storage.
+///
+/// There is no device to load a flux artifact into — it is read through
+/// its own type, which is why this stands beside the session rather than
+/// inside it.
+class FluxImage : public detail::Held<RemanenceFluxImage> {
+public:
+    using Held::Held;
+
+    /// Opens the artifact at `path`, claiming the file and decoding the
+    /// image once. The magic, the sentinel and the layout version are
+    /// checked before anything else is believed.
+    ///
+    /// This is a named constructor rather than a free function because
+    /// the ABI spells it that way — `remanence_flux_image_open` names
+    /// its type first, where `remanence_discover_media` names none.
+    static FluxImage open(const std::string& path)
+    {
+        detail::Outcome outcome;
+        RemanenceFluxImage* image = remanence_flux_image_open(
+            path.c_str(), outcome.category(), outcome.message(), outcome.rule());
+        return FluxImage(outcome.require(image, "the image could not be opened"));
+    }
+
+    /// The same under a declared cache bound: at most `cache_bytes` of
+    /// the decoded image stays resident. The bound narrows the working
+    /// set; it never refuses service (P27).
+    static FluxImage open(const std::string& path, std::uint64_t cache_bytes)
+    {
+        detail::Outcome outcome;
+        RemanenceFluxImage* image = remanence_flux_image_open_with_cache(
+            path.c_str(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
+        return FluxImage(outcome.require(image, "the image could not be opened"));
+    }
+
+    std::optional<std::string> path() const
+    {
+        return detail::optional_copied(remanence_flux_image_path(get()));
+    }
+
+    /// The artifact format's stable identifier, `remanence`.
+    std::string format_id() const { return detail::copied(remanence_flux_image_format_id(get())); }
+
+    std::string format_name() const
+    {
+        return detail::copied(remanence_flux_image_format_name(get()));
+    }
+
+    /// Which P7 mode the open obtained on the artifact.
+    AccessMode access_mode() const noexcept
+    {
+        return static_cast<AccessMode>(remanence_flux_image_access_mode(get()));
+    }
+
+    /// The medium's shape in the model's own spelling — `5.25-inch`.
+    std::string form_factor() const
+    {
+        return detail::copied(remanence_flux_image_form_factor(get()));
+    }
+
+    /// The angular unit every angle in the image is stated over — a unit
+    /// rather than a measurement, so equality is exact.
+    std::uint64_t angular_divisions() const noexcept
+    {
+        return remanence_flux_image_angular_divisions(get());
+    }
+
+    std::uint64_t backing_bytes() const noexcept
+    {
+        return remanence_flux_image_backing_bytes(get());
+    }
+
+    /// How much of that backing is resident. The points are never held
+    /// whole.
+    std::uint64_t resident_bytes() const noexcept
+    {
+        return remanence_flux_image_resident_bytes(get());
+    }
+
+    std::vector<FluxHole> holes() const
+    {
+        return detail::records<FluxHole>(get(), remanence_flux_image_hole_count,
+                                         remanence_flux_image_hole);
+    }
+
+    std::vector<std::uint64_t> surfaces() const
+    {
+        return detail::records<std::uint64_t>(get(), remanence_flux_image_surface_count,
+                                              remanence_flux_image_surface);
+    }
+
+    /// One orbit's identity and shape — never its points.
+    std::vector<FluxOrbit> orbits() const
+    {
+        return detail::records<FluxOrbit>(get(), remanence_flux_image_orbit_count,
+                                          remanence_flux_image_orbit);
+    }
+
+    /// How the image came to be known, in human-readable terms.
+    std::vector<std::string> provenance() const
+    {
+        return detail::lines(get(), remanence_flux_image_provenance_count,
+                             remanence_flux_image_provenance);
+    }
+
+    /// Materializes the family's hardware bitstream from what the image
+    /// holds. It takes no policy, because the type carries one (P30);
+    /// `cache_bytes` is the working-set bound. The image is untouched.
+    C1541Bitstream materialize_c1541_bitstream(std::uint64_t cache_bytes = 0) const
+    {
+        detail::Outcome outcome;
+        RemanenceC1541Bitstream* stream = remanence_flux_image_materialize_c1541_bitstream(
+            get(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
+        return C1541Bitstream(outcome.require(stream, "no bitstream materialized"));
+    }
+
+    /// Writes the image into a new `.remanence` artifact. An existing
+    /// destination is a named refusal rather than an overwrite, and an
+    /// interruption leaves the destination absent rather than half an
+    /// artifact.
+    FluxWriteReport write(const std::string& path) const
+    {
+        detail::Outcome outcome;
+        RemanenceFluxWriteReport* report = remanence_flux_image_write(
+            get(), path.c_str(), outcome.category(), outcome.message(), outcome.rule());
+        return FluxWriteReport(outcome.require(report, "the image could not be written"));
+    }
+
+    /// What a d64 rendition would carry, without writing one.
+    D64Report describe_d64() const
+    {
+        detail::Outcome outcome;
+        RemanenceD64Report* report = remanence_flux_image_describe_d64(
+            get(), outcome.category(), outcome.message(), outcome.rule());
+        return D64Report(outcome.require(report, "no d64 rendition describes this image"));
+    }
+
+    D64Report write_d64(const std::string& path) const
+    {
+        detail::Outcome outcome;
+        RemanenceD64Report* report = remanence_flux_image_write_d64(
+            get(), path.c_str(), outcome.category(), outcome.message(), outcome.rule());
+        return D64Report(outcome.require(report, "the d64 rendition could not be written"));
+    }
+
+    G64Report describe_g64() const
+    {
+        detail::Outcome outcome;
+        RemanenceG64Report* report = remanence_flux_image_describe_g64(
+            get(), outcome.category(), outcome.message(), outcome.rule());
+        return G64Report(outcome.require(report, "no g64 rendition describes this image"));
+    }
+
+    G64Report write_g64(const std::string& path) const
+    {
+        detail::Outcome outcome;
+        RemanenceG64Report* report = remanence_flux_image_write_g64(
+            get(), path.c_str(), outcome.category(), outcome.message(), outcome.rule());
+        return G64Report(outcome.require(report, "the g64 rendition could not be written"));
+    }
+
+    P64Report describe_p64() const
+    {
+        detail::Outcome outcome;
+        RemanenceP64Report* report = remanence_flux_image_describe_p64(
+            get(), outcome.category(), outcome.message(), outcome.rule());
+        return P64Report(outcome.require(report, "no p64 container describes this image"));
+    }
+
+    P64Report write_p64(const std::string& path) const
+    {
+        detail::Outcome outcome;
+        RemanenceP64Report* report = remanence_flux_image_write_p64(
+            get(), path.c_str(), outcome.category(), outcome.message(), outcome.rule());
+        return P64Report(outcome.require(report, "the p64 container could not be written"));
+    }
+};
+
+// ---------------------------------------------------------------------
 // Medium — the content handle, and where every content verb lives
 // ---------------------------------------------------------------------
 
@@ -2560,8 +3453,8 @@ class Medium {
 public:
     explicit Medium(RemanenceMedium* borrowed) noexcept : handle_(borrowed) {}
 
-    /// The borrowed handle, for the C functions this header does not
-    /// wrap — the flux doors among them.
+    /// The borrowed handle, for any C function this header does not
+    /// wrap.
     RemanenceMedium* get() const noexcept { return handle_; }
 
     /// This medium's identity in its session's pool.
@@ -2779,6 +3672,33 @@ public:
 
     /// Discards everything buffered; the image is untouched.
     void rollback() noexcept { remanence_medium_rollback(handle_); }
+
+    /// The family's hardware bitstream over this medium's recording,
+    /// materialized once into the pooled medium and answered from then
+    /// on. It answers where the device type's profile bears flux, and
+    /// refuses by name everywhere else — a block medium's recording is
+    /// presented by its format adapter, and the two families are
+    /// disjoint (P13).
+    ///
+    /// **The handle is a view of the pooled stream**, not an owner: it
+    /// stops answering once the medium is released and must not outlive
+    /// the session. Destroying it discards the view alone.
+    C1541Bitstream bitstream()
+    {
+        detail::Outcome outcome;
+        RemanenceC1541Bitstream* stream = remanence_medium_bitstream(
+            handle_, outcome.category(), outcome.message(), outcome.rule());
+        return C1541Bitstream(outcome.require(stream, "this medium bears no bitstream"));
+    }
+
+    /// The encoded bytestream above it, on the same terms.
+    C1541Bytestream bytestream()
+    {
+        detail::Outcome outcome;
+        RemanenceC1541Bytestream* stream = remanence_medium_bytestream(
+            handle_, outcome.category(), outcome.message(), outcome.rule());
+        return C1541Bytestream(outcome.require(stream, "this medium bears no bytestream"));
+    }
 
 private:
     RemanenceMedium* handle_;

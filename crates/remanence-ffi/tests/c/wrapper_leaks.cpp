@@ -25,15 +25,19 @@
  * allocation which is never freed and never should be. A leak is the
  * count rising per cycle after that.
  *
- * It opens no artifact: every cycle makes its own medium through the
- * authorship door.
+ * It fetches nothing: three cycles make their own medium through the
+ * authorship door, and the fourth lays the remanence format's own worked
+ * example on disk and climbs the flux ladder over it.
  */
 
 #include <remanence.hpp>
 
+#include "worked_example.hpp"
+
 #include <cstdint>
 #include <cstdio>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -112,6 +116,47 @@ void released_cycle()
     remanence_session_free(session_raw);
 }
 
+/// Where the flux cycle lays its artifact, given by the caller so the
+/// harness owns the scratch directory.
+std::string artifact_path;
+
+/// The flux ladder, which is the newest set of handles and the one whose
+/// rungs each own private session storage: an image, the bitstream
+/// materialized from it, the bytestream above that, and a rendition
+/// report. Every one of them is released by scope exit alone.
+void flux_cycle()
+{
+    remanence::FluxImage image = remanence::FluxImage::open(artifact_path);
+    (void)image.holes();
+    (void)image.orbits();
+    (void)image.provenance();
+
+    remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+    (void)bits.locations();
+    (void)bits.evidence();
+    (void)bits.declared_losses();
+
+    remanence::C1541Bytestream bytes = bits.materialize_bytestream();
+    (void)bytes.locations();
+    (void)bytes.evidence();
+
+    // Nothing frames a record here, so this refuses — and the refusal's
+    // message and rule are freed on the way into the exception exactly
+    // as any other's are.
+    try {
+        (void)bytes.recognize_sectors();
+    } catch (const remanence::Error&) {
+    }
+
+    try {
+        remanence::P64Report p64 = image.describe_p64();
+        (void)p64.half_tracks();
+        (void)p64.declared_losses();
+        (void)p64.evidence();
+    } catch (const remanence::Error&) {
+    }
+}
+
 void measure(const char* what, void (*cycle)())
 {
     cycle(); /* warm-up: settle whatever initialises lazily */
@@ -137,11 +182,27 @@ void measure(const char* what, void (*cycle)())
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc < 2) {
+        std::printf("usage: wrapper_leaks <scratch-directory>\n");
+        return 2;
+    }
+
     measure("a session and its records, released by scope exit", handles_cycle);
     measure("a refusal's message and rule", refusal_cycle);
     measure("a handle released to a C caller", released_cycle);
+
+    // The flux ladder is the one cycle that needs an artifact, so it
+    // lays one: the format's own worked example, which is built here
+    // rather than fetched and needs no fixture.
+    artifact_path = std::string{argv[1]} + "/leak-cycle.remanence";
+    if (!worked_example::place(artifact_path)) {
+        std::printf("  FAIL cannot lay the artifact at %s\n", artifact_path.c_str());
+        return 1;
+    }
+    measure("the flux ladder, released by scope exit", flux_cycle);
+    std::remove(artifact_path.c_str());
 
     std::printf("  %d failures\n", failures);
     return failures == 0 ? 0 : 1;

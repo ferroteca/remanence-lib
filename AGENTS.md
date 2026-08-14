@@ -495,9 +495,10 @@ ABI, or Python module.
   session owns, refusals as `remanence::Error` carrying the delivered
   category and rule identity, and every handle accessor answering an
   owned `std::string` rather than a view into memory a temporary handle
-  took with it. It wraps the storage model and leaves the flux
-  presentations to the C functions it includes. `examples/identify.cpp`
-  is its example consumer, beside the C one.
+  took with it. **It covers every `remanence_*` function** — the storage
+  model and the flux ladder both — so one that is not wrapped is a
+  defect rather than a boundary (D54). `examples/identify.cpp` is its
+  example consumer, beside the C one.
 - `crates/remanence-py/` — the Python module (PyO3, abi3, Python ≥ 3.10),
   excluded from default workspace members so plain `cargo build`/
   `cargo test` never needs a Python toolchain. Distribution artifacts
@@ -569,11 +570,10 @@ the ABI being the norm. It is not a surface of its own: it claims no
 capability the C ABI lacks, and the S-numbers are unchanged. What
 catches a lapse is `cargo test`, which compiles the header standalone,
 compiles `examples/identify.cpp` against it, and runs a C++ caller
-through it (below). The storage model is what it wraps; the flux
-presentations (`remanence_c1541_*`, `remanence_flux_*`, `remanence_p64_*`,
-`remanence_g64_*`, `remanence_d64_*`) are reached through
-`<remanence.h>`, which it includes — leave them there unless a feature
-pledges otherwise.
+through it (below). **Coverage is total and is meant to stay that way**
+(D54): every `remanence_*` function is wrapped, so a new one that is not
+is a defect rather than a scoping choice, and the answer to "is this
+covered?" is a lookup rather than a judgement.
 
 **S3 has a pytest suite, and it is what the sdist ships** (D48). It runs
 under the ordinary `cargo build && cargo test` (D51, D52) — no wheel, no
@@ -832,12 +832,14 @@ git diff --check
 ```
 
 **`cargo test` needs no downloaded fixture** (D49). Everything it runs
-builds its own images, so a fresh clone is testable immediately. Five
+builds its own images, so a fresh clone is testable immediately. Six
 suites open an artifact `test-fixture-prep/prep_fixtures.py` fetches or
-generates, and they sit behind a feature:
+generates — five in the core crate, and `cpp_flux.rs` in the FFI crate
+(D54) — and they sit behind a feature of that name in each crate:
 
 ```bash
-cargo test --features fixtures
+cargo test --features fixtures                    # the core crate's five
+cargo test -p remanence-ffi --features fixtures   # the C++ flux walk
 ```
 
 Cargo does not build a target whose required features are off, so the
@@ -891,10 +893,22 @@ involved.
 C++ surface can be wrong about — a refusal arriving as
 `remanence::Error` with the delivered category, an owned handle freeing
 itself, a moved-from wrapper freeing nothing, an honest absence staying
-an empty `std::optional`. Every group but one authors its own medium, so
-it needs no fixture; `a_real_artifact_reports_and_reads` walks the
-qcow2 rig because a layered report and a namespace above it are answers
-only a recording has.
+an empty `std::optional`. Every group but one authors its own medium or
+lays the remanence format's own worked example on disk, so it needs no
+fixture; `a_real_artifact_reports_and_reads` walks the qcow2 rig because
+a layered report and a namespace above it are answers only a recording
+has.
+
+**One C++ suite is fixture-gated, and only one** (D54):
+`cpp_flux.rs` walks a real KryoFlux capture up the whole flux ladder,
+because the sector layer needs a recording that frames records and the
+worked example is deliberately two points on one orbit. It sits behind a
+`fixtures` feature on `remanence-ffi` mirroring the core crate's, and
+takes about two and a quarter minutes:
+
+```bash
+cargo test -p remanence-ffi --features fixtures
+```
 
 **And it checks one refusal at compile time** (D53): the wrapper deletes
 every borrowed-record accessor on a temporary, so

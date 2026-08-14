@@ -29,6 +29,15 @@
 
 #include <remanence.hpp>
 
+#include "worked_example.hpp"
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -446,6 +455,285 @@ void group_absences()
     }
 }
 
+/* --------------------------------------------------------- the flux ladder
+ *
+ * The other half of the ABI: a remanence image, the family's hardware
+ * bitstream over it, the encoded bytestream above that, and the sectors
+ * the recording states for itself — each a handle of its own, each
+ * materialized from the one below.
+ *
+ * **The disk is built here rather than fetched**, from the format's own
+ * worked example: one index hole at 3/8 of a turn and one orbit at
+ * 57,150 µm holding two points. Twenty-one bytes of payload, wrapped in
+ * the artifact's magic, sentinel and version — which is the whole
+ * grammar, and which means this group runs on a fresh clone like every
+ * other one here. Two points are far too thin to be a recording, and
+ * that is deliberate: what the ladder does with a disk that holds
+ * nothing to read is *refuse by name*, and a refusal is as much of the
+ * surface as an answer.
+ */
+
+void group_flux(const char* directory)
+{
+    const std::string source = std::string{directory} + "/worked-example.remanence";
+    if (!worked_example::place(source)) {
+        failures += 1;
+        std::printf("  FAIL cannot lay the artifact at %s\n", source.c_str());
+        return;
+    }
+
+    // A missing artifact is a refusal like any other, and the image is
+    // reached through its own type: there is no device to load one into.
+    CHECK_REFUSES("opening an artifact that is not there",
+                  [] { remanence::FluxImage::open("no-such-artifact-anywhere.remanence"); });
+
+    remanence::FluxImage image = remanence::FluxImage::open(source);
+    CHECK(image.format_id() == "remanence", "the artifact is not the remanence format");
+    CHECK(image.path().has_value(), "an image opened by name answered no path");
+    CHECK(image.access_mode() == remanence::AccessMode::ReadOnly,
+          "a read open did not answer read-only");
+    CHECK(image.form_factor() == "5.25-inch", "the form factor is not the one declared");
+    CHECK(image.angular_divisions() == (1ull << 28),
+          "the angular unit is not the format's own");
+    CHECK(image.backing_bytes() > 0, "the decoded points are backed by nothing");
+    CHECK(!image.provenance().empty(), "an image carries no account of what produced it");
+
+    // The shape it reports: one hole, one surface, one orbit — exact
+    // fractions, because nothing here is measured.
+    const std::vector<remanence::FluxHole> holes = image.holes();
+    CHECK(holes.size() == 1, "the worked example does not hold one hole");
+    if (holes.size() == 1) {
+        CHECK(holes[0].center_numerator == 3 && holes[0].center_denominator == 8,
+              "the hole is not at three eighths of a turn");
+        CHECK(holes[0].extent_numerator == 1 && holes[0].extent_denominator == 50,
+              "the hole's extent is not one fiftieth");
+    }
+    CHECK(image.surfaces() == std::vector<std::uint64_t>{0}, "the image is not single-sided");
+
+    const std::vector<remanence::FluxOrbit> orbits = image.orbits();
+    CHECK(orbits.size() == 1, "the worked example does not hold one orbit");
+    if (orbits.size() == 1) {
+        CHECK(orbits[0].radius_microns == 57150, "the orbit is not at the declared radius");
+        CHECK(orbits[0].points == 2, "the orbit does not hold two points");
+        CHECK(orbits[0].coherent_points == 2, "a point lost its sense crossing the boundary");
+    }
+
+    // Writing it back: a new artifact, and an occupied destination
+    // refused rather than overwritten.
+    const std::string destination = std::string{directory} + "/round-trip.remanence";
+    std::remove(destination.c_str());
+    remanence::FluxWriteReport written = image.write(destination);
+    CHECK(written.path().has_value(), "the write report names no artifact");
+    CHECK(written.artifact_bytes() > 0, "the written artifact is empty");
+    CHECK(written.orbits() == 1 && written.points() == 2,
+          "the write did not carry the orbit it was given");
+    CHECK_REFUSES("writing over an artifact that is already there",
+                  [&] { image.write(destination); });
+
+    remanence::FluxImage again = remanence::FluxImage::open(destination);
+    CHECK(again.orbits().size() == image.orbits().size(),
+          "the artifact did not reopen as what was written");
+
+    // The ladder. Two points are not a recording, so what each rung
+    // reports is the shape of nothing having been read — or a refusal
+    // naming why, which is the answer this disk deserves.
+    remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+    CHECK(!bits.profile_id().empty(), "the bitstream names no profile");
+    CHECK(bits.cycles_per_rotation() > 0, "the profile declares no frame");
+    CHECK(!bits.evidence().empty(), "the bitstream carries no evidence");
+    for (const remanence::BitstreamLocation& location : bits.locations()) {
+        CHECK(location.cell_cycles_denominator > 0, "a location has no cell");
+    }
+
+    remanence::C1541Bytestream bytes = bits.materialize_bytestream();
+    CHECK(!bytes.codec_id().empty(), "the bytestream names no group code");
+    CHECK(bytes.symbols_per_byte() > 0, "the codec resolves no byte at all");
+    CHECK(!bytes.evidence().empty(), "the bytestream carries no evidence");
+
+    // A track the stream does not hold is refused naming what it does.
+    CHECK_REFUSES("asking for a track the stream does not hold",
+                  [&] { bytes.location_bytes(99); });
+
+    // **Nothing is manufactured to stand in for a recording.** Two
+    // points frame no byte the record grammar names, so there is no
+    // sector layer to hold and the refusal says exactly that rather
+    // than handing back an empty one. The layer itself is walked over a
+    // real capture in `flux_capture`, which needs a fixture.
+    CHECK_REFUSES("recognizing sectors in a stream that frames no record",
+                  [&] { bytes.recognize_sectors(); });
+
+    // The renditions, each stating what it does not carry. A disk this
+    // thin either renders empty or refuses by name; both are answers,
+    // and what is checked is that the account comes back either way.
+    try {
+        remanence::D64Report d64 = image.describe_d64();
+        CHECK(d64.blocks_defined() > 0, "a d64 rendition defines no blocks at all");
+        CHECK(d64.blocks_read() == 0, "two points filled a d64 block");
+        CHECK(d64.missing().size() == d64.blocks_defined(),
+              "the d64 did not account for every block it defines");
+    } catch (const remanence::Error&) {
+        checks += 1; // refusing to render nothing is equally an answer
+    }
+
+    try {
+        remanence::G64Report g64 = image.describe_g64();
+        CHECK(!g64.half_tracks().empty() || !g64.declared_losses().empty(),
+              "a g64 rendition carried neither a half-track nor an account of what it lost");
+    } catch (const remanence::Error&) {
+        checks += 1;
+    }
+
+    try {
+        remanence::P64Report p64 = image.describe_p64();
+        CHECK(p64.format_id() == "p64", "the p64 container is not the p64 format");
+        CHECK(p64.reference_clock_hz() > 0, "the p64 declares no reference clock");
+    } catch (const remanence::Error&) {
+        checks += 1;
+    }
+
+    std::remove(source.c_str());
+    std::remove(destination.c_str());
+}
+
+/* ------------------------------------------------------- a real capture
+ *
+ * The sector layer needs a recording that actually frames records, which
+ * the worked example above deliberately is not. This walks the whole
+ * ladder over a real KryoFlux capture: the archive, the capture set
+ * gathered out of its namespace, the flux medium loaded from that, and
+ * the bitstream, bytestream, sectors and namespace above it.
+ *
+ * It needs a fixture, so the Rust side gates it behind the `fixtures`
+ * feature exactly as the core suite's flux tests are gated.
+ */
+
+/// This caller's own open, handed to the library with the format it is
+/// declared to be — the library takes ownership of it (P7). The header
+/// wraps no file API of its own, deliberately: whoever opens owns the
+/// lock, and that open is the caller's.
+remanence::NativeHandle open_source(const char* path)
+{
+#ifdef _WIN32
+    HANDLE handle = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    return handle == INVALID_HANDLE_VALUE ? 0 : reinterpret_cast<remanence::NativeHandle>(handle);
+#else
+    const int descriptor = open(path, O_RDONLY);
+    return descriptor < 0 ? 0 : static_cast<remanence::NativeHandle>(descriptor);
+#endif
+}
+
+void group_flux_capture(const char* archive_path)
+{
+    remanence::Session session;
+
+    const remanence::NativeHandle source = open_source(archive_path);
+    if (source == 0) {
+        failures += 1;
+        std::printf("  FAIL cannot open the capture archive at %s\n", archive_path);
+        return;
+    }
+
+    // The archive is a medium like any other; its namespace is its
+    // native vantage.
+    remanence::Medium archive = session.load_media(source, "7z");
+    checks += 1;
+
+    std::optional<remanence::Partition> whole = archive.partition(0);
+    CHECK(whole.has_value(), "an archive medium bears no direct partition");
+    if (!whole.has_value()) {
+        return;
+    }
+
+    // The capture set: every member gathered in one pass, free-standing
+    // and riding the archive's own claim.
+    remanence::Filesystem namespace_ = whole->filesystem();
+    remanence::FileSourceList members = namespace_.files();
+    CHECK(members.size() > 1, "a capture set is more than one stream");
+
+    // One disk, spread over a stream per head per step position. The
+    // format records one device type, so no declaration is needed.
+    remanence::Medium disk = session.load_media_sources(std::move(members), "kryoflux");
+    CHECK(disk.device_type().has_value(), "a capture recorded by nothing");
+    CHECK(!disk.assurance().evidence().empty(),
+          "the reduction carried no account of what it did");
+
+    // The bitstream, from the pooled medium: materialized once, into the
+    // medium itself, and answered from then on.
+    remanence::C1541Bitstream bits = disk.bitstream();
+    CHECK(!bits.locations().empty(), "a real capture resolved no location at all");
+    CHECK(bits.cycles_per_rotation() > 0, "the profile declares no frame");
+
+    remanence::C1541Bytestream bytes = disk.bytestream();
+    CHECK(!bytes.locations().empty(), "the bytestream framed nothing");
+    const std::uint64_t held = bytes.location_bytes(1);
+    CHECK(held > 0, "track one framed no bytes");
+    const std::vector<std::uint8_t> first = bytes.location_read_at(1, 0, 1);
+    CHECK(first.size() == 1, "the first framed byte did not read");
+
+    // The sectors the recording states for itself.
+    remanence::C1541Sectors sectors = bytes.recognize_sectors();
+    CHECK(sectors.payload_bytes() > 0, "the grammar declares no payload size");
+    CHECK(!sectors.grammar_id().empty(), "the sector layer names no grammar");
+    CHECK(sectors.claim_count() > 0, "a real recording stated no record at all");
+    CHECK(!sectors.evidence().empty(), "the sector layer carries no evidence");
+
+    bool readable = false;
+    for (std::size_t at = 0; at < sectors.claim_count(); at += 1) {
+        const remanence::SectorClaim claim = sectors.claim(at);
+        if (claim.readable) {
+            readable = true;
+            // A claim that reads broke no rule, which the layer spells
+            // as an empty rule rather than a rule named "none".
+            CHECK(sectors.claim_rule(at).empty(), "a readable claim named a broken rule");
+            CHECK(sectors.claim_refusal(at).empty(), "a readable claim carried a refusal");
+            break;
+        }
+    }
+    CHECK(readable, "no claim of a real recording reads");
+
+    // The BAM, by the address the recording states for it.
+    const std::vector<std::uint8_t> bam = sectors.read(18, 0);
+    CHECK(bam.size() == sectors.payload_bytes(), "the BAM is not one payload long");
+    CHECK(bam.size() > 2 && bam[0] == 18, "the BAM does not open at its own directory track");
+
+    // The directory CBM DOS wrote across those sectors, through the
+    // recording's own direct partition.
+    std::optional<remanence::Partition> direct = sectors.partition();
+    CHECK(direct.has_value(), "the sector layer bears no direct partition");
+    if (direct.has_value()) {
+        CHECK(direct->is_direct(), "the composed partition is not the direct one");
+        remanence::Filesystem catalog = direct->filesystem_as("cbmdos");
+        CHECK(catalog.has_namespace(), "the declared reading composed no namespace");
+        // The listing is bound to a name because an Entry borrows it —
+        // `catalog.entries().entries()` is deleted for exactly that
+        // reason and does not compile.
+        remanence::EntryList listed = catalog.entries();
+        CHECK(!listed.empty(), "the catalog lists nothing at all");
+        for (const remanence::Entry& entry : listed.entries()) {
+            CHECK(!entry.name().empty(), "a catalog entry has no name");
+        }
+    }
+}
+
+/* ------------------------------------------------- the families are disjoint
+ *
+ * A block medium's recording is presented by its format adapter and a
+ * flux medium's by the ladder above; the two do not meet (P13). What
+ * that has to mean at this surface is that the flux doors on a block
+ * medium refuse by name rather than answering something empty.
+ */
+void group_flux_refusals()
+{
+    remanence::Session session;
+    remanence::Medium blank = blank_disk(session);
+
+    CHECK_REFUSES("asking a block medium for a bitstream",
+                  [&]() mutable { blank.bitstream(); });
+    CHECK_REFUSES("asking a block medium for a bytestream",
+                  [&]() mutable { blank.bytestream(); });
+}
+
 /* ---------------------------------------------------- a real artifact
  *
  * The one group that needs an image, because the report, the composed
@@ -607,6 +895,20 @@ int main(int argc, char** argv)
             group_lifetimes();
         } else if (group == "absences") {
             group_absences();
+        } else if (group == "flux_refusals") {
+            group_flux_refusals();
+        } else if (group == "flux_capture") {
+            if (argc < 3) {
+                std::printf("the flux_capture group needs an artifact path\n");
+                return 2;
+            }
+            group_flux_capture(argv[2]);
+        } else if (group == "flux") {
+            if (argc < 3) {
+                std::printf("the flux group needs a scratch directory\n");
+                return 2;
+            }
+            group_flux(argv[2]);
         } else if (group == "report") {
             if (argc < 3) {
                 std::printf("the report group needs an artifact path\n");

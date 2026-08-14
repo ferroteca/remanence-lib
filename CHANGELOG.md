@@ -35,13 +35,17 @@ rather than bridged. Read every entry below in that light.
   **It is not a fourth surface and adds no reach.** The C ABI remains
   the norm, this derives from it exactly as the generated C header
   derives from the Rust, and it moves with the ABI in the same change.
-  What it wraps is the storage model — sessions, machines, devices,
-  media, discoveries, partitions, volumes, filesystems, files, the
-  inspection report and the DOS drive-letter composition; the flux
-  presentations stay with the C functions, which `<remanence.hpp>`
-  includes. `examples/identify.cpp` is the example consumer beside the C
-  one, and the suite compiles the header standalone, runs a C++ caller
-  through it, and counts what its destructors give back (D53).
+
+  **It covers the whole ABI**: the storage model — sessions, machines,
+  devices, media, discoveries, partitions, volumes, filesystems, files,
+  the inspection report and the DOS drive-letter composition — and the
+  flux ladder beside it, the remanence image with its bitstream,
+  bytestream, recognized sectors and the d64, g64 and p64 renditions,
+  each carrying the account of what it did not carry. A `remanence_*`
+  function that is not wrapped is a defect rather than a boundary.
+  `examples/identify.cpp` is the example consumer beside the C one, and
+  the suite compiles the header standalone, runs a C++ caller through
+  it, and counts what its destructors give back (D53, D54).
 
 - **The sdist carries a pytest suite; the wheel still carries none of
   it.** An sdist is conventionally the artifact a stranger can build

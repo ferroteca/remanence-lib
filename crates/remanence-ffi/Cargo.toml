@@ -17,8 +17,23 @@ crate-type = ["staticlib", "cdylib"]
 # artifact carries neither the counter nor the symbol.
 leak-probe = []
 
+# Test-only, and it gates a test target rather than any code, exactly as
+# the core crate's feature of the same name does (D49): `cpp_flux.rs`
+# walks the flux ladder over a real KryoFlux capture, which
+# `test-fixture-prep/prep_fixtures.py` downloads and git does not track.
+# Everything else the C++ surface is checked by builds its own artifact.
+fixtures = []
+
 [dependencies]
 remanence.workspace = true
 
 [build-dependencies]
 cbindgen = "0.29"
+
+# The one C++ suite that opens a downloaded artifact. Cargo does not
+# build a target whose required features are off, so the default run
+# reports nothing misleading about it; `cargo test --features fixtures`
+# runs it, and it says which script to run when the capture is absent.
+[[test]]
+name = "cpp_flux"
+required-features = ["fixtures"]

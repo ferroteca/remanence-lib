@@ -20,6 +20,8 @@
  * Usage:
  *   identify <path> [device-type]   what an artifact is, and what is on it
  *   identify --author [kind]        author a blank medium and write to it
+ *   identify --remanence <path> [to]  a flux artifact, its renditions and
+ *                                     the ladder above it
  *   identify --devices              the devices and formats this release claims
  */
 
@@ -256,6 +258,105 @@ int author(const std::string& kind)
     return 0;
 }
 
+/// A `.remanence` artifact, read through its own type: there is no
+/// device to load a flux artifact into, so this stands beside the
+/// session rather than inside it.
+int remanence_image(const std::string& path, const std::optional<std::string>& write_to)
+{
+    remanence::FluxImage image = remanence::FluxImage::open(path);
+    std::cout << image.path().value_or(path) << '\n'
+              << "  format: " << image.format_id() << " (" << image.format_name() << ")\n"
+              << "  medium: " << image.form_factor() << ", " << image.surfaces().size()
+              << " surface(s), " << image.orbits().size() << " orbit(s)\n"
+              << "  angles stated over " << image.angular_divisions() << " divisions\n"
+              << "  backing: " << image.backing_bytes() << " bytes, "
+              << image.resident_bytes() << " resident\n";
+
+    for (const remanence::FluxHole& hole : image.holes()) {
+        std::cout << "    index hole at " << hole.center_numerator << '/'
+                  << hole.center_denominator << " of a turn, extent "
+                  << hole.extent_numerator << '/' << hole.extent_denominator << '\n';
+    }
+    for (const remanence::FluxOrbit& orbit : image.orbits()) {
+        std::cout << "    orbit on surface " << orbit.surface << " at "
+                  << orbit.radius_microns << " µm: " << orbit.points << " points, "
+                  << orbit.coherent_points << " coherent, " << orbit.unaligned_spans
+                  << " span(s) declined\n";
+    }
+    for (const std::string& line : image.provenance()) {
+        std::cout << "  provenance: " << line << '\n';
+    }
+
+    // The renditions describe without writing. Each states what it does
+    // not carry, in the source's own terms — a count is not an account.
+    const auto account = [](const std::vector<remanence::DeclaredLoss>& losses) {
+        for (const remanence::DeclaredLoss& loss : losses) {
+            std::cout << "      loses " << loss.code << " (" << loss.amount << "): "
+                      << loss.detail << '\n';
+        }
+    };
+
+    try {
+        remanence::D64Report d64 = image.describe_d64();
+        std::cout << "  d64: " << d64.blocks_read() << " of " << d64.blocks_defined()
+                  << " blocks, " << d64.failed_checksums() << " failed checksum(s)\n";
+        account(d64.declared_losses());
+    } catch (const remanence::Error& refusal) {
+        std::cout << "  d64: refused — " << refusal.what() << '\n';
+    }
+
+    try {
+        remanence::G64Report g64 = image.describe_g64();
+        std::cout << "  g64: " << g64.half_tracks().size() << " half-track(s)\n";
+        account(g64.declared_losses());
+    } catch (const remanence::Error& refusal) {
+        std::cout << "  g64: refused — " << refusal.what() << '\n';
+    }
+
+    try {
+        remanence::P64Report p64 = image.describe_p64();
+        std::cout << "  p64: version " << p64.version() << ", " << p64.half_tracks().size()
+                  << " half-track(s), profile " << p64.profile_id() << '\n';
+        account(p64.declared_losses());
+    } catch (const remanence::Error& refusal) {
+        std::cout << "  p64: refused — " << refusal.what() << '\n';
+    }
+
+    // The ladder above the image: the hardware bitstream, the encoded
+    // bytestream, and the sectors the recording states for itself.
+    // Neither takes a policy — the type carries one.
+    try {
+        remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+        std::cout << "  bitstream: " << bits.profile_name() << ", "
+                  << bits.locations().size() << " location(s), " << bits.resident_bytes()
+                  << " of " << bits.backing_bytes() << " bytes resident\n";
+
+        remanence::C1541Bytestream bytes = bits.materialize_bytestream();
+        std::cout << "  bytestream: " << bytes.codec_name() << ", "
+                  << bytes.locations().size() << " location(s)\n";
+
+        remanence::C1541Sectors sectors = bytes.recognize_sectors();
+        std::cout << "  sectors: " << sectors.grammar_name() << ", "
+                  << sectors.claim_count() << " claim(s), " << sectors.contested().size()
+                  << " contested address(es)\n";
+        account(sectors.declared_losses());
+    } catch (const remanence::Error& refusal) {
+        std::cout << "  ladder: refused — " << refusal.what() << '\n';
+    }
+
+    if (write_to.has_value()) {
+        // An existing destination is a named refusal rather than an
+        // overwrite, and an interruption leaves it absent rather than
+        // half an artifact.
+        remanence::FluxWriteReport written = image.write(*write_to);
+        std::cout << "  wrote " << written.path().value_or(*write_to) << ": "
+                  << written.artifact_bytes() << " bytes, " << written.orbits()
+                  << " orbit(s), " << written.points() << " point(s)\n";
+        account(written.declared_losses());
+    }
+    return 0;
+}
+
 int devices()
 {
     std::cout << "devices:\n";
@@ -300,6 +401,14 @@ int main(int argc, char** argv)
         }
         if (first == "--author") {
             return author(argc > 2 ? std::string{argv[2]} : std::string{"chs-disk"});
+        }
+        if (first == "--remanence") {
+            if (argc < 3) {
+                std::cerr << "--remanence takes the artifact to read\n";
+                return 2;
+            }
+            return remanence_image(argv[2], argc > 3 ? std::optional<std::string>{argv[3]}
+                                                     : std::nullopt);
         }
         return identify(first, argc > 2 ? std::optional<std::string>{argv[2]} : std::nullopt);
     } catch (const remanence::Error& refusal) {
