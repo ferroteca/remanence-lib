@@ -484,6 +484,20 @@ ABI, or Python module.
   header is generated output, never edited by hand.
   `examples/identify.c` is the example C consumer and doubles as the ABI
   smoke test (build instructions in its header comment).
+
+  `include/remanence.hpp` is the **idiomatic C++ presentation of that
+  same ABI** (D53) — header-only, C++17, no compiled artifact of its own,
+  and **written by hand**, which is the one thing that makes it
+  different from the header beside it: nothing regenerates it, so it can
+  fall behind. It is no fourth surface — S2 is the norm and this derives
+  from it, claiming no reach the C ABI lacks. RAII classes over the
+  handles the ABI hands you to free, copyable views over the ones the
+  session owns, refusals as `remanence::Error` carrying the delivered
+  category and rule identity, and every handle accessor answering an
+  owned `std::string` rather than a view into memory a temporary handle
+  took with it. It wraps the storage model and leaves the flux
+  presentations to the C functions it includes. `examples/identify.cpp`
+  is its example consumer, beside the C one.
 - `crates/remanence-py/` — the Python module (PyO3, abi3, Python ≥ 3.10),
   excluded from default workspace members so plain `cargo build`/
   `cargo test` never needs a Python toolchain. Distribution artifacts
@@ -544,8 +558,22 @@ proposals still follow that process rather than being self-approved.
 A public-surface change in `crates/remanence` lands with its C ABI and
 Python reflections in the same change, never deferred: the cbindgen header
 regenerates on build (commit the result), and `remanence-py` mirrors the
-public surface explicitly. The example consumer and tests move in the same
+public surface explicitly. The example consumers and tests move in the same
 change.
+
+**The C++ header is derived from S2 and moves with it** (D53).
+`crates/remanence-ffi/include/remanence.hpp` is hand-maintained, so a
+`remanence_*` function added, renamed or retired moves it in that same
+change — and a disagreement between the two is a defect in the wrapper,
+the ABI being the norm. It is not a surface of its own: it claims no
+capability the C ABI lacks, and the S-numbers are unchanged. What
+catches a lapse is `cargo test`, which compiles the header standalone,
+compiles `examples/identify.cpp` against it, and runs a C++ caller
+through it (below). The storage model is what it wraps; the flux
+presentations (`remanence_c1541_*`, `remanence_flux_*`, `remanence_p64_*`,
+`remanence_g64_*`, `remanence_d64_*`) are reached through
+`<remanence.h>`, which it includes — leave them there unless a feature
+pledges otherwise.
 
 **S3 has a pytest suite, and it is what the sdist ships** (D48). It runs
 under the ordinary `cargo build && cargo test` (D51, D52) — no wheel, no
@@ -823,13 +851,15 @@ builds MBR tables, EBR chains and FAT12/FAT16 volumes, and
 claims before other tests trust it.
 
 When the C ABI changed, rebuild and commit the regenerated header.
-`cargo test` **compiles** the C surface for you (D44): that the header
-stands alone, that `examples/identify.c` still compiles against it, and
-that the header is valid C++, which `cpp_compat = true` claims and
-nothing tested before. It compiles rather than links — a header
-generated from the `extern "C"` signatures cannot declare a symbol the
-library lacks, so linking would add nothing and would need a built
-cdylib.
+`cargo test` **compiles** the C surface for you (D44, D53): that the C
+header stands alone, that `examples/identify.c` still compiles against
+it, that the header is valid C++, which `cpp_compat = true` claims and
+nothing tested before, and — since the C++ presentation landed — that
+`include/remanence.hpp` stands alone and `examples/identify.cpp`
+compiles against it. For the C header, compiling rather than linking is
+enough: generated from the `extern "C"` signatures, it cannot declare a
+symbol the library lacks. **The C++ header is the one that can**, being
+hand-written, which is why it is compiled and then run through (below).
 
 **CMake builds all of it, with MSVC** (D46). CMake is here for one
 reason: `cl.exe` needs the environment `vcvars64.bat` sets, and locating
@@ -856,6 +886,24 @@ caller meets it; the FFI crate's unit tests call the same functions from
 Rust, where no header, no C compiler and no C calling convention are
 involved.
 
+`cargo test` **runs a C++ caller through the wrapper** as well (D53):
+`tests/c/wrapper.cpp`, one group per Rust test, checking what only the
+C++ surface can be wrong about — a refusal arriving as
+`remanence::Error` with the delivered category, an owned handle freeing
+itself, a moved-from wrapper freeing nothing, an honest absence staying
+an empty `std::optional`. Every group but one authors its own medium, so
+it needs no fixture; `a_real_artifact_reports_and_reads` walks the
+qcow2 rig because a layered report and a namespace above it are answers
+only a recording has.
+
+**And it checks one refusal at compile time** (D53): the wrapper deletes
+every borrowed-record accessor on a temporary, so
+`medium.identify().layers()` must *not* compile while the same walk over
+a named handle must. CMake compiles both at configure time and fails if
+either answers wrongly. If you add an accessor that hands back a record
+borrowed from its handle, give it the `const&` / `const&& = delete` pair
+the others have.
+
 **Those need the built library, and `cargo test` does not produce a
 cdylib — `cargo build` does.** Running the two in the order above
 satisfies it. When the library is missing the tests say so and say what
@@ -878,8 +926,16 @@ a target directory rather than a workspace, so that build runs while
 `cargo test` holds the other lock. Cold it adds about twenty seconds;
 warm, a fifth of a second.
 
-If you change what the ABI hands out or who frees it, this is the test
-that notices. Nothing needs enabling.
+**The same probe answers for the C++ wrapper** (D53), and that is where
+it earns the most: `tests/c/wrapper_leaks.cpp` cycles a session, its
+records, a refusal's message and rule, and a handle released back to C —
+a caller who writes no `_free` cannot see a missing one either, there
+being no call site to inspect. It authors its own medium and needs no
+fixture.
+
+If you change what the ABI hands out or who frees it, or what a C++
+destructor discharges, these are the tests that notice. Nothing needs
+enabling.
 
 Running the example against a real image is still by hand, below; that is
 the part neither compiling nor the boundary tests stands in for. When the Python surface changed, **move the type stub with it** (above);
@@ -914,6 +970,12 @@ one that passed; `REMANENCE_SKIP_MYPY=1` skips them deliberately.
 `cargo test` already compiles the example (above). This links and runs
 it, which is the part a compile cannot stand in for: it exercises the
 ABI end to end against a real artifact.
+
+The C++ example is the same journey through `remanence.hpp`, and builds
+the same way with `g++ -std=c++17` over `examples/identify.cpp`. It
+takes `<path> [device-type]`, `--author [kind]` and `--devices`, and is
+worth running beside the C one for the comparison the two make: the same
+work, with the frees and the out-parameters gone.
 
 This recipe uses MSYS2's ucrt64 gcc, which is no longer what the tests
 use (D46 moved those to CMake and MSVC) but still works and is kept

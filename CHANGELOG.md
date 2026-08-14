@@ -20,6 +20,29 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **C++ consumers get an idiomatic header, derived from the C ABI.**
+  `crates/remanence-ffi/include/remanence.hpp` is header-only and
+  C++17: RAII classes over the handles the ABI hands you to free, views
+  over the ones the session owns and documents as never-free, scoped
+  enumerations whose constants *are* the C ones, and refusals as
+  `remanence::Error` — a `std::runtime_error` carrying the delivered
+  category and, where an enumerated rule set owns one, the rule
+  identity. An honest absence comes back as an empty `std::optional`
+  rather than an exception, and every accessor on a handle answers an
+  owned `std::string`, so nothing dangles when the handle was a
+  temporary.
+
+  **It is not a fourth surface and adds no reach.** The C ABI remains
+  the norm, this derives from it exactly as the generated C header
+  derives from the Rust, and it moves with the ABI in the same change.
+  What it wraps is the storage model — sessions, machines, devices,
+  media, discoveries, partitions, volumes, filesystems, files, the
+  inspection report and the DOS drive-letter composition; the flux
+  presentations stay with the C functions, which `<remanence.hpp>`
+  includes. `examples/identify.cpp` is the example consumer beside the C
+  one, and the suite compiles the header standalone, runs a C++ caller
+  through it, and counts what its destructors give back (D53).
+
 - **The sdist carries a pytest suite; the wheel still carries none of
   it.** An sdist is conventionally the artifact a stranger can build
   *and verify* from — distro packagers run the upstream suite at

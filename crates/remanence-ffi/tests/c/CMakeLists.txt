@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Paul Galbraith
 # SPDX-License-Identifier: GPL-3.0-only
 
-# The C surface's tests (S2, D44, D45, D46).
+# The C surface's tests, in C and in C++ (S2, D44, D45, D46, D53).
 #
 # CMake is here for one reason: MSVC. `cl.exe` needs the environment
 # `vcvars64.bat` sets, and locating and sourcing that from a test harness
@@ -73,12 +73,97 @@ file(WRITE "${selfcontained_cpp}"
      "#include <remanence.h>\n\nint main()\n{\n    return 0;\n}\n")
 add_library(header_cpp OBJECT "${selfcontained_cpp}")
 
-# --- the shipped example still compiles --------------------------------
+# --- the C++ header stands alone too -----------------------------------
+#
+# `remanence.hpp` is the derived C++ presentation of the same ABI (D53).
+# It is hand-maintained rather than generated, so unlike the C header it
+# *can* fall behind the Rust — which is what makes compiling it a check
+# rather than a formality. Written here for the same reason as the two
+# above: its whole content is what it omits.
+set(selfcontained_hpp "${CMAKE_BINARY_DIR}/generated/selfcontained_hpp.cpp")
+file(WRITE "${selfcontained_hpp}"
+     "#include <remanence.hpp>\n\nint main()\n{\n    return 0;\n}\n")
+add_library(header_hpp OBJECT "${selfcontained_hpp}")
+
+# --- the dangling one-liner does not compile ---------------------------
+#
+# The header deletes every borrowed-record accessor on an rvalue, so
+# `medium.identify().layers()` — views of a handle that dies at the
+# semicolon — is a compile error rather than a dangling read (D53). A
+# claim that something is *refused* is only worth as much as a check
+# that it still is, so this compiles it and fails when it succeeds.
+#
+# **Compiled, not linked.** A `try_compile` builds an executable by
+# default, which needs the library these snippets never link against —
+# so both would "fail" for a reason that has nothing to do with what
+# they claim, and the refusal would read as a pass. A static library
+# stops at the object file, which is where the answer is.
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+set(dangling_hpp "${CMAKE_BINARY_DIR}/generated/dangling_hpp.cpp")
+file(WRITE "${dangling_hpp}"
+     "#include <remanence.hpp>\n\n"
+     "std::size_t count(remanence::Medium medium)\n"
+     "{\n"
+     "    return medium.identify().layers().size();\n"
+     "}\n")
+try_compile(dangling_compiled "${CMAKE_BINARY_DIR}/generated/dangling"
+    SOURCES "${dangling_hpp}"
+    CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${REMANENCE_INCLUDE}"
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    OUTPUT_VARIABLE dangling_output)
+if(dangling_compiled)
+    message(FATAL_ERROR
+        "a borrowed record taken from a temporary handle compiled: "
+        "remanence.hpp is supposed to delete those overloads, and a "
+        "caller writing `medium.identify().layers()` now reads freed "
+        "memory instead of meeting a compiler error.")
+endif()
+
+# The control, without which the check above is worthless: the same walk
+# over a handle bound to a name, which must compile. A wrong include
+# path, an unusable standard, or a header that does not parse would
+# otherwise fail the file above for a reason that has nothing to do with
+# what it claims — and read as a pass.
+set(bound_hpp "${CMAKE_BINARY_DIR}/generated/bound_hpp.cpp")
+file(WRITE "${bound_hpp}"
+     "#include <remanence.hpp>\n\n"
+     "std::size_t count(remanence::Medium medium)\n"
+     "{\n"
+     "    remanence::Identification what = medium.identify();\n"
+     "    return what.layers().size();\n"
+     "}\n")
+try_compile(bound_compiled "${CMAKE_BINARY_DIR}/generated/bound"
+    SOURCES "${bound_hpp}"
+    CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${REMANENCE_INCLUDE}"
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    OUTPUT_VARIABLE bound_output)
+if(NOT bound_compiled)
+    message(FATAL_ERROR
+        "the same walk over a named handle did not compile, so the "
+        "refusal checked above proves nothing about temporaries:\n"
+        "${bound_output}")
+endif()
+
+unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+
+# --- the shipped examples still compile --------------------------------
 add_library(example_identify OBJECT "${REMANENCE_EXAMPLES}/identify.c")
+add_library(example_identify_cpp OBJECT "${REMANENCE_EXAMPLES}/identify.cpp")
 
 # --- a C caller across the boundary ------------------------------------
 add_executable(abi_boundary abi_boundary.c)
 target_link_libraries(abi_boundary PRIVATE "${REMANENCE_LIB}")
+
+# --- a C++ caller through the wrapper ----------------------------------
+#
+# The same boundary one layer out: what this exercises is the header's
+# own claims — typed refusals, RAII lifetimes, absences that stay
+# absences — which only running a C++ caller can show.
+add_executable(wrapper wrapper.cpp)
+target_link_libraries(wrapper PRIVATE "${REMANENCE_LIB}")
 
 # --- the leak probe ----------------------------------------------------
 #
@@ -87,11 +172,17 @@ target_link_libraries(abi_boundary PRIVATE "${REMANENCE_LIB}")
 # shipped cdylib, and the Rust harness builds it into its own target
 # directory (D50). Its own output directory too — both builds carry the
 # same file name, and Windows loads the copy beside the executable.
+#
+# `wrapper_leaks` is the same measurement for the C++ presentation, and
+# the one that matters most there: a caller who never writes a `_free`
+# cannot see a missing one either (D53).
 if(REMANENCE_PROBE_LIB)
     add_executable(abi_leaks abi_leaks.c)
     target_link_libraries(abi_leaks PRIVATE "${REMANENCE_PROBE_LIB}")
+    add_executable(wrapper_leaks wrapper_leaks.cpp)
+    target_link_libraries(wrapper_leaks PRIVATE "${REMANENCE_PROBE_LIB}")
     foreach(suffix "" _DEBUG _RELEASE _RELWITHDEBINFO _MINSIZEREL)
-        set_target_properties(abi_leaks PROPERTIES
+        set_target_properties(abi_leaks wrapper_leaks PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY${suffix} "${CMAKE_BINARY_DIR}/bin/leak")
     endforeach()
 endif()

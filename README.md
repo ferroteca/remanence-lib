@@ -409,7 +409,7 @@ it holds itself to (P-numbers) — is in [USE-CASES.md](USE-CASES.md) and
 ```
 crates/
   remanence/        # the core library (pure Rust, no runtime dependencies)
-  remanence-ffi/    # C ABI: staticlib + cdylib, cbindgen header for C and C++
+  remanence-ffi/    # C ABI: staticlib + cdylib, cbindgen header, C++ wrapper
   remanence-py/     # Python module (PyO3), built with maturin
 ```
 
@@ -439,6 +439,16 @@ unexercised and unclaimed.
 An example C consumer is at
 [crates/remanence-ffi/examples/identify.c](crates/remanence-ffi/examples/identify.c),
 with build instructions in its header comment.
+
+**C++ consumers have an idiomatic header** —
+[crates/remanence-ffi/include/remanence.hpp](crates/remanence-ffi/include/remanence.hpp),
+header-only and C++17 — which derives from the C ABI rather than adding
+to it: RAII over the handles the ABI hands you to free, views over the
+ones the session owns, and refusals as one exception type carrying the
+stable category. The C ABI is still the norm and still reachable; this
+adds ergonomics, not reach. Its example consumer is
+[examples/identify.cpp](crates/remanence-ffi/examples/identify.cpp),
+beside the C one.
 
 ## Using the library
 
@@ -743,6 +753,57 @@ print(blank.device_type, blank.article, blank.authored_as)  # None authored chs-
 print(blank.geometry.readings[0].source)                    # authorship
 blank.write_sector(0, 0, 1, bytes(510) + b"\x55\xaa")
 blank.commit()                         # session-backed until an encode
+```
+
+```cpp
+#include <remanence.hpp>
+
+#include <iostream>
+
+// One handler for the whole program: every refusal is remanence::Error,
+// carrying the stable category an embedder maps behaviour from and, where
+// an enumerated rule set owns one, the rule identity.
+try {
+    // What an artifact is, before a machine has been configured for it.
+    // The claim it takes travels into the load, which consumes it.
+    remanence::Session session;
+    remanence::Discovery found = remanence::discover_media("disk.h8d");
+    std::cout << found.article().value_or("?") << ' ' << found.size() << '\n';
+
+    remanence::Medium medium = session.load_discovery(std::move(found));
+
+    // A Layer borrows the identification it came from, so the handle is
+    // bound to a name: the one-liner over a temporary does not compile.
+    remanence::Identification what = medium.identify();
+    for (const remanence::Layer& layer : what.layers()) {
+        std::cout << layer.id().value_or("?") << ' ' << unsigned{layer.confidence()} << "%\n";
+    }
+
+    // The recording's own coordinates, and who said what.
+    remanence::Geometry geometry = medium.geometry();
+    if (const std::optional<remanence::Coordinates> settled = geometry.coordinates()) {
+        std::cout << settled->cylinders << '/' << settled->heads << '/'
+                  << settled->sectors_per_track << '\n';
+    }
+
+    // Content is reached through the partition that composes it. Handles
+    // free themselves in reverse order of construction; nothing here has
+    // a `_free` to remember or a status code to check.
+    remanence::Filesystem filesystem = medium.partition(0)->filesystem_as("hdos");
+    for (const remanence::Entry& entry : filesystem.entries().entries()) {
+        std::cout << entry.name() << ' ' << entry.size_bytes() << '\n';
+    }
+    remanence::FileData data = filesystem.read_file("HDOS.SYS");
+
+    // Seating is configuration and destroys nothing; release_media is the
+    // one verb that ends state.
+    remanence::StorageDevice drive = session.add_device("h17");
+    drive.insert(medium.id());
+    drive.eject();
+    session.release_media(medium.id());
+} catch (const remanence::Error& refusal) {
+    std::cerr << static_cast<int>(refusal.category()) << ": " << refusal.what() << '\n';
+}
 ```
 
 ## Changes

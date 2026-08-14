@@ -58,6 +58,141 @@ removes it is the record either way.
 
 ## Decisions
 
+### D53 — The C++ presentation is a hand-maintained header that copies its strings, and it wraps the storage model rather than everything
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-13. **Supports** S2, P5, P10; D44, D45, D46, D47; delivers
+pledged F45, whose number retires with it. `DECISIONS.md` was searched
+first and returned D46, which anticipated a C++ framework here, and D47,
+which named this presentation as the thing its leak probe would serve.
+
+**No surface is issued and none is amended.** `include/remanence.hpp` is
+a derived representation of the C ABI exactly as `include/remanence.h`
+is a derived representation of the Rust `extern "C"` items: it is
+header-only, it links nothing of its own, and every line is a call a
+caller could have made. P5's three presentations stand, S2 stays the
+norm, and the header moves with S2 in the same change. What follows is
+the four rulings F45 left open and the one place its own shape sentence
+could not survive contact with today's ABI.
+
+**Refusals are exceptions, and only exceptions.** F45 left open whether
+they present as exceptions, an `expected`-style result, or both. The
+CMake project compiles at C++17 (D46), which has no `std::expected`, so
+"both" means writing a result type as well as the wrapper and doubling
+the surface a reader has to learn — for a library whose refusals are
+genuinely exceptional and whose C door is still there for a caller who
+wants a status code. `remanence::Error` derives `std::runtime_error` and
+carries the delivered category and the rule identity beside the
+diagnostic (P10), so a caller with one handler at the bottom of `main`
+gets the classification without parsing text.
+
+**The header is hand-maintained, not generated, and compiling it is what
+catches that.** cbindgen generates the C header from the Rust; a second
+generator over the *generated* header would be a tool that reads a file
+another tool owns, and would have to be taught the ABI's conventions —
+the three out-parameters, who frees what, which nulls are answers — none
+of which is expressed in the C declarations it would parse. Those
+conventions are exactly the knowledge a hand-written wrapper carries.
+The cost is real and is paid where it can be seen: unlike the C header,
+this one *can* fall behind the Rust, so `cargo test` compiles it
+standalone and compiles the C++ example against it, and the surface
+tests below run a C++ caller through it.
+
+**Ownership follows the ABI's own division, which is where F45's shape
+sentence bends.** F45 says "one move-only RAII class per node kind ...
+each owning its handle's lifetime through the ABI's free functions". For
+every handle the ABI hands the caller to free — discovery, partition,
+space, file, report, assurance, geometry, listing — that is exactly what
+was built. But `Machine`, `StorageDevice` and `Medium` are documented by
+the ABI as "the session owns this; never free it", and there is no free
+function for a destructor to call: a move-only class over them would
+invent an ownership the ABI does not have and would make a copy an
+error for no reason. They are copyable views instead. F45 was written
+before the media-first model landed, and the sentence describes a shape
+S2 no longer has; the ruling is that the wrapper follows S2 (which F45
+also says: "wraps whatever S2 is when it lands").
+
+**Every accessor on a handle copies its string, and that was not the
+first draft.** The draft returned `std::string_view` into the handle's
+own memory — faithful to the ABI, zero-copy, and documented as
+borrowed. The first example written against it printed
+`blank.assurance().evidence()` as garbage, because the temporary
+assurance died at the end of the full-expression and the views outlived
+it by one line. **That is not a bug a caller can be warned about**: the
+temporary-handle expression is precisely what RAII invites, and a
+wrapper whose ergonomics produce a dangling read has spent its safety on
+performance nobody asked for in a library that reads disks. Handles now
+answer `std::string`; the catalogs still answer `std::string_view`,
+their strings being static for the life of the release, and `get()`
+hands over the raw handle where a caller wants the pointer.
+
+**The one dangle C++ *can* refuse is refused, and the refusal is
+checked.** Copying strings closes the common case, but the records
+handed out of a listing — a `Layer`, an `Entry`, a `ReportRegion` —
+borrow the handle they came from, and `medium.identify().layers()` would
+walk views of a handle that died at the semicolon. Every accessor that
+answers such a record is deleted on an rvalue, so that line does not
+compile and the same line over a named handle does. A refusal is worth
+what its check is worth, so the CMake project compiles both forms:
+the dangling one must fail and the bound one must succeed. **The
+control is not decoration** — the first version of this check compiled
+an *executable*, which failed to link for want of the library and
+reported the refusal as working; the bound form failing is what
+exposed that.
+
+**It wraps the storage model, and says so rather than trailing off.**
+Every node the storage model has is here — session, machines, devices,
+media, discoveries, partitions, volumes, filesystems, files — with the
+records they hand back, the inspection report, and the DOS drive-letter
+composition: 334 of the ABI's 470 functions. The 136 left are the flux
+presentations (`remanence_flux_*`, `remanence_c1541_*`, `remanence_p64_*`,
+`remanence_g64_*`, `remanence_d64_*` and the two medium doors onto them),
+which are not storage-model nodes, carry their own presentation ladder,
+and are reachable unchanged through `<remanence.h>`, which this header
+includes. F45 names the storage model's node kinds and claims no reach
+the C ABI lacks, so this is the feature's scope rather than a shortfall
+against it — but a later pledge could wrap the flux layer, and it would
+need a fresh F-number.
+
+**GoogleTest is declined, which revisits D46 only to record why.** D46
+made it a drop-in and expected it here. `FetchContent_Declare` downloads
+at configure time, and `cargo test` configures this project on every
+run: adopting it would make the default test run need the network, which
+is the property D49 had just finished removing ("a fresh clone is
+testable immediately"), and would turn an outage into a test failure.
+The C tests' own shape — a self-contained program taking a group name,
+one named Rust test per group — needs no dependency and reports failures
+the same way, so `tests/c/wrapper.cpp` follows it. D46's remark stands as
+a statement of availability, not an instruction.
+
+**The `_free` discipline is asserted for the caller who writes no
+frees**, which is what D47 predicted this feature would need:
+`tests/c/wrapper_leaks.cpp` links the probe build and cycles a session,
+its records, a refusal's message and rule, and a handle released back to
+C. **Verified by leaking on purpose**, as D47 was: dropping a
+`release()`d geometry on the floor reported *5 blocks per cycle over 8
+cycles* and named the cycle it was in, while the other two stayed clean.
+RAII is where a missing free is least visible — there is no call site to
+inspect — so this is the check that makes the header's central claim
+falsifiable.
+
+**Name and path, the last thing F45 left open:**
+`crates/remanence-ffi/include/remanence.hpp`, beside the C header and
+installed from the same directory. `.hpp` rather than `.h` because both
+files sit in one directory and the extension is the only thing that
+tells a reader which is which. The example is
+`examples/identify.cpp` beside `examples/identify.c`.
+
+**Weighed and declined:** wrapping every ABI function including the flux
+ladder (it doubles a hand-maintained surface for a layer whose own
+presentations are a separate concern, and F45 asks for the storage
+model); returning `std::string_view` everywhere with the borrow
+documented (above — the documentation was written, and the first
+consumer dangled its own output anyway); a `std::expected`-shaped result
+type alongside exceptions (C++17 has none, so it would be ours to write
+and ours to keep); and generating the header from cbindgen's output
+(above).
+
 ### D52 — Every member is a default member, because two surfaces were being treated differently for no reason a caller could see
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

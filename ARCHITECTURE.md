@@ -80,7 +80,11 @@ never reused.
   `crates/remanence-ffi`, with the generated `include/remanence.h` as its
   consumer-facing representation. Covers naming, ownership rules (who
   frees what), null/out-of-range behavior, and enum values — an ABI
-  change is a surface change even when no Rust type changed.
+  change is a surface change even when no Rust type changed. The
+  hand-maintained `include/remanence.hpp` is a **second derived
+  representation** of the same symbols for C++ consumers, carrying no
+  capability of its own and no number of its own; it moves with the ABI
+  in the same change, and where the two disagree the ABI governs.
 - **S3 — The Python module.** The `remanence` module registered by
   `crates/remanence-py`: its classes, properties, functions, exception
   type and category attribute, and module constants.
