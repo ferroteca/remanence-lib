@@ -5,20 +5,26 @@ members = [
     "crates/remanence-ffi",
     "crates/remanence-py",
 ]
-# Every member is a default member: `cargo test` runs the tests of all
-# three application surfaces, and no surface's checks are reached only by
-# a flag someone has to remember (D52).
+# **Only the core is a default member.** A bare `cargo build` or
+# `cargo test` in a clone therefore needs nothing but rustc: no CMake and
+# C++ compiler for S2's callers, no Python interpreter for PyO3's build
+# script, no uv or mypy for S3's suite. Someone who wants the Rust
+# library alone — a distribution packager, or anyone reading the core —
+# should be able to build and test it without acquiring two other
+# toolchains first, and this is what gives them that.
 #
-# This costs a **Python interpreter to build**, PyO3's build script
-# needing one — a heavier requirement than the C toolchain the C tests
-# want, which is needed only to test. It used to be avoided by leaving
-# remanence-py out here, at the price of S3's checks running by default
-# for nobody. The surfaces are treated alike instead.
-default-members = [
-    "crates/remanence",
-    "crates/remanence-ffi",
-    "crates/remanence-py",
-]
+# **This reverses D52 rather than restoring what came before it.** What
+# D52 objected to was an asymmetry: `remanence-ffi` was in this list and
+# `remanence-py` was not, so S2's checks ran by default and S3's ran for
+# nobody. It removed the asymmetry by adding the Python crate; this
+# removes it by naming neither. The surfaces are still treated alike.
+#
+# **The risk D52 named is real and unchanged**: checks reached only by a
+# flag someone has to remember are checks that rot. So the answer is not
+# that the bindings are optional to check — `cargo build --workspace`
+# and `cargo test --workspace` are required checks, and AGENTS.md says
+# so. What is optional is being the person who runs them.
+default-members = ["crates/remanence"]
 
 [workspace.package]
 version = "0.0.1-alpha.4"

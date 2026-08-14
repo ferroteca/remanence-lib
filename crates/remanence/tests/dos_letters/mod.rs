@@ -24,7 +24,10 @@ use remanence::{
 
 #[path = "../common/mod.rs"]
 mod common;
-pub use common::{ensure_fixture, open_read};
+// `ensure_fixture` was re-exported here and called by nobody. It is
+// gated now, so re-exporting it would be this module declaring a fixture
+// its users do not open.
+pub use common::open_read;
 
 pub fn attach(path: impl AsRef<std::path::Path>, format: Format) -> (Session, MediaId) {
     let mut session = Session::new();

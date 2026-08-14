@@ -21,26 +21,49 @@ readme = "README.md"
 exclude = ["tests/**"]
 
 [features]
-# Test-only, and it gates test targets rather than any code: the suites
-# below open artifacts `test-fixture-prep/prep_fixtures.py` downloads or
-# generates, which git does not track and a fresh clone does not have.
-# Without it `cargo test` runs everything that builds its own images —
-# which is most of the suite — and a clone is testable immediately.
+# Test-only, and they gate test targets rather than any code. Both name
+# artifacts `test-fixture-prep/prep_fixtures.py` provides, which git does
+# not track and a fresh clone does not have. Without them `cargo test`
+# runs everything that builds its own images — which is most of the
+# suite — and a clone is testable immediately.
+#
+# **They are two features because the cost of obtaining them differs in
+# kind.** `fixtures` is what the project acquires from elsewhere: an
+# HDOS distribution zip, a KryoFlux capture of a C64 disk, two more disk
+# images, each downloaded against a pinned SHA-256. The cost is a
+# network round trip, and the reason they are fixtures at all is that
+# their authenticity is the point — nothing this library generates could
+# stand in for them.
+#
+# `rigs` is what the project generates: `freedos-parttest.qcow2`, which
+# reliquary produces by booting a machine from a LiveCD and installing
+# FreeDOS onto a disk. That needs reliquary, its Python environment and
+# an emulator, and it takes as long as an operating system takes to
+# install — a cost that grows with the system, so a larger one aimed at
+# the same path is a much longer wait for a much bigger file. Someone
+# who has downloaded the fixtures should not have to own that toolchain
+# to run everything the downloads reach.
 fixtures = []
+rigs = []
 
 [dependencies]
 # Intentionally none: the library is dependency-free, including its own
 # ZIP central-directory and 7z header readers and its RFC 1951 (DEFLATE)
 # and LZMA/LZMA2 decompressors.
 
-# The suites that open a downloaded or generated artifact. `cargo test`
+# The suites that open an artifact the prep script provides. `cargo test`
 # skips them entirely — cargo does not build a target whose required
 # features are off, so they cost nothing and report nothing misleading.
-# `cargo test --features fixtures` runs them, and `ensure_fixture` says
-# which script to run if the artifact is not there.
+# `ensure_fixture` says which script to run if the artifact is not there,
+# and it is gated on these features too, so a target that reaches for a
+# fixture without declaring one fails to compile rather than failing on
+# whichever machine has not run the prep.
+#
+# The generated rig is the one entry under `rigs`; everything else here
+# opens a download.
 [[test]]
 name = "freedos_qcow2"
-required-features = ["fixtures"]
+required-features = ["rigs"]
 
 [[test]]
 name = "geometry_fixtures"
@@ -56,4 +79,15 @@ required-features = ["fixtures"]
 
 [[test]]
 name = "identify_hdos_image"
+required-features = ["fixtures"]
+
+# These two were not declared and ran by default, so a fresh clone met
+# `ensure_fixture`'s panic rather than the claim D49 makes for it: one
+# opens the HDOS distribution zip, the other the KryoFlux capture.
+[[test]]
+name = "media_sources"
+required-features = ["fixtures"]
+
+[[test]]
+name = "sevenzip_catalog"
 required-features = ["fixtures"]

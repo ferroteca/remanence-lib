@@ -31,19 +31,26 @@ decisions are recorded — is mapped in [planning/README.md](planning/README.md)
 
 ## Development setup
 
-remanence-lib is a Cargo workspace; a stable Rust toolchain is all the core
-needs.
+remanence-lib is a Cargo workspace, pinned to one toolchain by
+`rust-toolchain.toml` so every host formats and lints alike. A stable
+Rust toolchain is all the core needs.
 
 ```bash
-cargo build      # core + C FFI; regenerates crates/remanence-ffi/include/remanence.h
-cargo test      # the full suite
+cargo build                 # the Rust core alone, and nothing else is needed
+cargo test
+cargo build --workspace     # every surface; regenerates include/remanence.h
+cargo test --workspace      # what a contributor runs
 ```
 
-The Python bindings (`crates/remanence-py`) are excluded from default
-workspace builds; building them needs Python 3.10+. Distributable
-artifacts are built with uv (`uv build crates/remanence-py`), which
-drives the maturin build backend in an isolated environment. See
-[README.md](README.md).
+Only `crates/remanence` is a default member, so the bare commands ask
+nothing of you but rustc. **A contributor runs the `--workspace` pair**:
+it is what checks the C ABI and the Python module, and what regenerates
+`crates/remanence-ffi/include/remanence.h`, the build script that writes
+it running only when its own crate is built. That needs CMake and a C
+and C++ compiler for the C surface, and Python 3.10+ with uv for the
+Python one. Distributable Python artifacts are built with
+`uv build crates/remanence-py`, which drives the maturin build backend
+in an isolated environment. See [README.md](README.md).
 
 Some `remanence` unit tests need fixtures that are not checked in;
 `test-fixture-prep/prep_fixtures.py` prepares them (Python 3.12+, via uv):

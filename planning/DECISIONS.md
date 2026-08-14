@@ -58,6 +58,85 @@ removes it is the record either way.
 
 ## Decisions
 
+### D56 — Only the core is a default member, because the audience stopped being contributors alone
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-14. **Supports** S1, S2, S3; P3. **Reverses D52** and annotates
+it. `DECISIONS.md` was searched first and returned D52, which set what
+this reverses, and D44, D45, D49, D50 and D51, which are the sequence
+D52 completed; D49's claim is corrected here as well.
+
+**D52 was right about its audience and that audience has widened.** Its
+acceptance rested on one answer given directly (Paul, 2026-08-13):
+*anyone contributing is expected to run the tests*. A contributor needs
+whatever the suite needs, so a toolchain the build alone could have
+avoided bought them nothing. That is still true, and nothing below
+disputes it. What has changed is that a contributor is no longer the
+only person who builds this tree. `remanence` and `remanence-ffi` go to
+crates.io as source; a distribution packager fetches the tarball and
+builds it, and so does anyone who wants to read or use the Rust core
+without touching the C ABI or the Python module. Asking that person for
+CMake, a C++ compiler, a Python interpreter, uv and mypy is asking for
+four toolchains to compile one dependency-free library.
+
+**D52 weighed this option and declined it, on a ground that no longer
+holds.** It declined "documenting `cargo test --workspace` as the
+run-everything command and changing nothing", because such flags do not
+get typed. The flag now has somewhere to be typed that a person cannot
+skip and still claim to have run the checks: `cargo build --workspace`
+and `cargo test --workspace` are two of the six *required checks* in
+AGENTS.md, and CONTRIBUTING.md says the `--workspace` pair is what a
+contributor runs. D52's objection was to a flag documented in prose as
+an option; this is a flag that is the obligation.
+
+**The asymmetry D52 removed stays removed.** Its complaint was that
+`remanence-ffi` sat in `default-members` and `remanence-py` did not, so
+S2's checks ran for everyone and S3's for nobody. That is not repaired
+by restoring the old list. It is repaired by naming neither: both
+surfaces are reached the same way, by the same command, and neither is
+privileged over the other.
+
+**What it costs, stated rather than hidden.** A bare `cargo build` no
+longer regenerates `crates/remanence-ffi/include/remanence.h`, the
+build script that writes it running only when its own crate is built —
+so the workspace build is what carries that, and the required checks say
+so. And the risk D52 named is real and unchanged: a check reached only
+by a flag is a check that stops being run. Nothing here disproves that;
+the answer is the obligation above, and if it turns out flags are not
+typed even when required, this entry is the wrong one rather than the
+requirement.
+
+**D49's claim is corrected in the same change**, having been false when
+made and false for the same kind of reason. It held that a fresh clone
+is testable immediately; `media_sources` and `sevenzip_catalog` called
+the fixture helper while declaring no feature, and seven tests inside
+`crates/remanence/src/` did the same, so a clone met a panic on eight
+suites. All are declared now, and `ensure_fixture` is itself gated on
+the features that declare a fixture is wanted, so a target that reaches
+for one without saying so fails to compile in the default run rather
+than failing on whichever machine has not downloaded. The declaration
+can no longer drift from the fact silently, which is the part worth
+keeping.
+
+**The fixture feature splits in two while the tiers are being drawn.**
+`fixtures` names what the project acquires from elsewhere against pinned
+SHA-256s; `rigs` names the one artifact it generates,
+`freedos-parttest.qcow2`, which reliquary produces by booting a machine
+and installing FreeDOS. The costs differ in kind — a network round trip
+against an emulator, a Python toolchain and an operating-system install
+— and the gap widens with the system installed, so holding the
+downloads does not oblige owning the rig toolchain.
+
+**Weighed and declined:** leaving `default-members` alone and telling
+the core-only reader to type `-p remanence` (it works today, and it
+makes the narrow run the thing you must know to ask for, when it is the
+one more people want); and gating the bindings' heavy test targets
+behind features instead (it hides the requirement inside the crates that
+own it, where `default-members` states it in one place a reader of the
+workspace meets first).
+
+**No changelog entry.** How the suite is invoked is not release-facing.
+
 ### D55 — U22 rested on a false premise about DOS, and is struck rather than amended
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -382,6 +461,14 @@ and ours to keep); and generating the header from cbindgen's output
 2026-08-13. **Supports** S1, S2, S3; D44, D51. `DECISIONS.md` was
 searched first and returned D44, which recorded the asymmetry this
 removes and defended it at the time.
+
+> **Reversed by D56**, which takes both bindings out of
+> `default-members` rather than putting one back. The reasoning below
+> stands as written and its answer about contributors is still true;
+> what it did not weigh is a reader who is not a contributor — a
+> distribution packager building the published source, or anyone
+> wanting the Rust core alone — for whom the cost this entry accepts
+> buys nothing at all.
 
 D51 put the Python suite under `cargo test -p remanence-py`, and the
 question that followed was whether it therefore runs "when we run all

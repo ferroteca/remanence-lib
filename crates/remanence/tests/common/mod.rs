@@ -41,7 +41,19 @@ pub fn fixtures_dir() -> PathBuf {
 }
 
 /// Returns the path to a requested test fixture from `tests/fixtures/`.
-/// If the fixture is missing, panics with diagnostic instructions to run `python test-fixture-prep/prep_fixtures.py`.
+/// If the fixture is missing, panics with diagnostic instructions to run
+/// the prep script.
+///
+/// **Gated on the features that declare a fixture is wanted**, which is
+/// what keeps a suite from reaching for one without saying so. The
+/// panic below is the right answer for a target that declared `fixtures`
+/// or `rigs` and has not run the prep, and the wrong one for a target
+/// that never declared either — there it would fail on whichever machine
+/// had not downloaded, which is invisible on every machine that had.
+/// Two suites drifted that way. A target that calls this without the
+/// declaration now fails to compile, in the default run, on the first
+/// machine to build it.
+#[cfg(any(feature = "fixtures", feature = "rigs"))]
 pub fn ensure_fixture(name: &str) -> PathBuf {
     let target = fixtures_dir().join(name);
     if target.exists() {

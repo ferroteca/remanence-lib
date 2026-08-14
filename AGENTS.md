@@ -868,11 +868,22 @@ It names no consuming project, like every other library-side document
 ## Required checks
 
 ```bash
-cargo build      # also regenerates crates/remanence-ffi/include/remanence.h
+cargo build                 # the core alone, and nothing but rustc is needed
 cargo test
+cargo build --workspace     # every surface; regenerates include/remanence.h
+cargo test --workspace      # needs CMake, a C++ compiler, Python and uv
 cargo fmt --all -- --check
 git diff --check
 ```
+
+**All six are required, and the first pair is not a subset anyone may
+stop at.** Only `crates/remanence` is a default member, so the bare
+commands build and test the Rust core and nothing else — which is what
+lets a reader of the core, or a packager, work without acquiring two
+further toolchains. A contributor is not that reader: the `--workspace`
+pair is what checks S2 and S3, and it is also what regenerates
+`crates/remanence-ffi/include/remanence.h`, since the build script that
+writes it runs only when its own crate is built.
 
 **The formatting check is here because nothing was asking.** It went
 unrun long enough for 21 files to drift, and the drift was invisible:
@@ -896,14 +907,32 @@ F59 folded the verb they exercised into the declared load and they reach
 `#[cfg(feature = "fixtures")]` for the same reason the suites below
 carry `required-features` — the feature is what marks the tier, not the
 directory — and they cost the default run nothing, having been most of
-its wall clock. Six suites open such an artifact too — five in the core
-crate, and `cpp_flux.rs` in the FFI crate (D54) — and they sit behind
-the same feature in each crate:
+its wall clock. Eight suites open such an artifact too — seven in the
+core crate, and `cpp_flux.rs` in the FFI crate (D54):
 
 ```bash
-cargo test --features fixtures                    # the core crate's five
+cargo test --features fixtures                    # what was downloaded
+cargo test --features rigs                        # what reliquary built
 cargo test -p remanence-ffi --features fixtures   # the C++ flux walk
 ```
+
+**Two features, because what it costs to obtain them differs in kind.**
+`fixtures` names what the project acquires from elsewhere, downloaded
+against pinned SHA-256s; `rigs` names the one artifact it generates,
+`freedos-parttest.qcow2`, which reliquary produces by booting a machine
+and installing FreeDOS onto a disk — needing that toolchain, an
+emulator, and as long as the install takes. Someone holding the
+downloads should not have to own the rig toolchain to run everything the
+downloads reach, and the gap widens with the operating system being
+installed.
+
+**`ensure_fixture` is gated on those features too**, which is what stops
+the declaration drifting from the fact. `media_sources` and
+`sevenzip_catalog` reached for the HDOS zip and the KryoFlux capture
+while declaring neither, so they passed on machines that had run the
+prep and would have panicked on a clone — invisible precisely where it
+mattered. A target that calls the helper without declaring a feature now
+fails to compile, in the default run, on the first machine to build it.
 
 Cargo does not build a target whose required features are off, so the
 default run reports nothing misleading about them. What stays there are
