@@ -111,7 +111,11 @@ fn parse_module(source: &str) -> Module {
                 );
                 cursor += 1;
             }
-            assert!(cursor < lines.len(), "unterminated `#[pyclass]` at line {}", at + 1);
+            assert!(
+                cursor < lines.len(),
+                "unterminated `#[pyclass]` at line {}",
+                at + 1
+            );
             let name = declared_type(lines[cursor]).unwrap().to_owned();
 
             let mut members = BTreeSet::new();
@@ -271,7 +275,9 @@ fn parse_stub(source: &str) -> Stub {
             continue;
         }
 
-        let Some(class) = current.clone() else { continue };
+        let Some(class) = current.clone() else {
+            continue;
+        };
         let text = line.trim();
         // Only members directly inside the class body, indented four.
         if !line.starts_with("    ") || line.starts_with("     ") {
@@ -285,7 +291,10 @@ fn parse_stub(source: &str) -> Stub {
             }
         } else if let Some((name, _)) = text.split_once(": ") {
             if name.chars().all(|c| c.is_alphanumeric() || c == '_') && !name.starts_with("__") {
-                stub.classes.entry(class).or_default().insert(name.to_owned());
+                stub.classes
+                    .entry(class)
+                    .or_default()
+                    .insert(name.to_owned());
             }
         }
     }
@@ -295,14 +304,23 @@ fn parse_stub(source: &str) -> Stub {
 
 // ------------------------------------------------------ the comparison
 
-fn report(problems: &mut Vec<String>, what: &str, module: &BTreeSet<String>, stub: &BTreeSet<String>) {
+fn report(
+    problems: &mut Vec<String>,
+    what: &str,
+    module: &BTreeSet<String>,
+    stub: &BTreeSet<String>,
+) {
     let missing: Vec<_> = module.difference(stub).cloned().collect();
     let extra: Vec<_> = stub.difference(module).cloned().collect();
     if !missing.is_empty() {
-        problems.push(format!("{what}: the module has, the stub lacks -> {missing:?}"));
+        problems.push(format!(
+            "{what}: the module has, the stub lacks -> {missing:?}"
+        ));
     }
     if !extra.is_empty() {
-        problems.push(format!("{what}: the stub has, the module lacks -> {extra:?}"));
+        problems.push(format!(
+            "{what}: the stub has, the module lacks -> {extra:?}"
+        ));
     }
 }
 

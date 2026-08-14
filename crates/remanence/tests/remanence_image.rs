@@ -208,8 +208,8 @@ fn the_header_is_gated_before_anything_is_believed() {
     // guessed at (P8): the layout is implicit, so a reader that guesses
     // does not fail, it misreads.
     let future = placed("future-version", &artifact(&EXAMPLE_PAYLOAD, VERSION + 1));
-    let refusal = FluxImage::open(&future)
-        .expect_err("a layout version this build does not know is refused");
+    let refusal =
+        FluxImage::open(&future).expect_err("a layout version this build does not know is refused");
     assert!(
         refusal.to_string().contains("version"),
         "the refusal names the version: {refusal}"

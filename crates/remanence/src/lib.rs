@@ -224,9 +224,7 @@ pub use crate::flux::c1541::sectors::{
 };
 pub use crate::flux::p64::{P64HalfTrack, P64Report};
 pub use crate::flux::remanence::format::FluxWriteReport;
-pub use crate::flux::remanence::image::{
-    FluxHole, FluxImage, FluxImageReport, FluxOrbit,
-};
+pub use crate::flux::remanence::image::{FluxHole, FluxImage, FluxImageReport, FluxOrbit};
 pub use crate::io::cache::DEFAULT_CACHE_BYTES;
 pub use crate::io::device::{AccessIntent, AccessMode, Claim};
 pub use crate::io::source::FileSource;
@@ -239,10 +237,10 @@ pub use crate::model::geometry::{
     Geometry, GeometryReading, GeometryRule, GeometrySource, GeometryState, RecordingGeometry,
 };
 pub use crate::model::machine::{Machine, MachineView, Session};
-pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
 pub use crate::model::machine_report::{
     BootCandidate, BootOutcome, MachineDisk, MachineReport, MachineVolume,
 };
+pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
 pub use crate::model::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,

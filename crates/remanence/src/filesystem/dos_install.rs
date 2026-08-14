@@ -495,7 +495,9 @@ fn read_command_banner(medium: &mut Medium, offset: u64) -> Result<Option<Versio
             .map(|byte| *byte as char)
             .collect();
         if let Some((major, minor)) = parse_version(&tail) {
-            let stated = tail.trim_end_matches(|c: char| !c.is_ascii_digit()).to_owned();
+            let stated = tail
+                .trim_end_matches(|c: char| !c.is_ascii_digit())
+                .to_owned();
             return Ok(Some(VersionReading::new(
                 VersionSource::CommandBanner,
                 major,
@@ -559,8 +561,10 @@ fn read_conditions(
     let mut conditions = Vec::new();
     let mut optical = None;
 
-    for (candidates, is_config) in [(kernel.config_files(), true), (kernel.autoexec_files(), false)]
-    {
+    for (candidates, is_config) in [
+        (kernel.config_files(), true),
+        (kernel.autoexec_files(), false),
+    ] {
         // The first file present is the one this DOS reads; the rest are
         // not read, so they are not merged in behind it.
         let mut found = None;
@@ -675,9 +679,9 @@ fn autoexec_condition(upper: &str) -> Option<ResidentCondition> {
         // With `/L:` the machine records the placement exactly, and that
         // reading is the answer rather than a reason to doubt every
         // letter.
-        "MSCDEX" | "MSCDEX.EXE" => {
-            mscdex_letter(upper).is_none().then_some(ResidentCondition::BlockDeviceDriver)
-        }
+        "MSCDEX" | "MSCDEX.EXE" => mscdex_letter(upper)
+            .is_none()
+            .then_some(ResidentCondition::BlockDeviceDriver),
         other => NETWORK_REDIRECTORS
             .contains(&other.trim_end_matches(".EXE").trim_end_matches(".COM"))
             .then_some(ResidentCondition::NetworkRedirector),
@@ -753,9 +757,12 @@ mod tests {
     #[test]
     fn freedos_letters_by_its_kernel_rather_than_its_version() {
         assert_eq!(
-            installed(DosKernel::FreeDos, DosVersion::Settled { major: 1, minor: 3 })
-                .assignment_rule()
-                .expect("FreeDOS letters as MS-DOS 5 does"),
+            installed(
+                DosKernel::FreeDos,
+                DosVersion::Settled { major: 1, minor: 3 }
+            )
+            .assignment_rule()
+            .expect("FreeDOS letters as MS-DOS 5 does"),
             DosAssignmentRule::MsDos5
         );
         assert_eq!(
@@ -774,7 +781,10 @@ mod tests {
             DosKernel::FreeDos.config_files(),
             &["FDCONFIG.SYS", "CONFIG.SYS"]
         );
-        assert_eq!(DosKernel::FreeDos.autoexec_files(), &["FDAUTO.BAT", "AUTOEXEC.BAT"]);
+        assert_eq!(
+            DosKernel::FreeDos.autoexec_files(),
+            &["FDAUTO.BAT", "AUTOEXEC.BAT"]
+        );
         assert_eq!(DosKernel::MsDos.config_files(), &["CONFIG.SYS"]);
         assert_eq!(DosKernel::PcDos.autoexec_files(), &["AUTOEXEC.BAT"]);
     }
@@ -814,7 +824,10 @@ mod tests {
             autoexec_condition("C:\\DOS\\SUBST.EXE D: C:\\WORK"),
             Some(ResidentCondition::Subst)
         );
-        assert_eq!(autoexec_condition("JOIN D: C:\\DRIVED"), Some(ResidentCondition::Join));
+        assert_eq!(
+            autoexec_condition("JOIN D: C:\\DRIVED"),
+            Some(ResidentCondition::Join)
+        );
         assert_eq!(autoexec_condition("SUBSTITUTE.EXE"), None);
         assert_eq!(
             autoexec_condition("NETX"),
@@ -865,9 +878,12 @@ mod tests {
             DosAssignmentRule::MsDos5
         );
 
-        let error = DosVersion::Settled { major: 3, minor: 30 }
-            .assignment_rule()
-            .expect_err("3.30 is outside the claim");
+        let error = DosVersion::Settled {
+            major: 3,
+            minor: 30,
+        }
+        .assignment_rule()
+        .expect_err("3.30 is outside the claim");
         assert_eq!(error.rule(), Some(InstallRule::VersionNotClaimed.as_str()));
         assert!(
             error.to_string().contains("3.30"),

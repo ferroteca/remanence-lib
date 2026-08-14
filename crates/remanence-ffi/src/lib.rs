@@ -8720,44 +8720,43 @@ pub struct RemanenceMachineReport {
 }
 
 fn machine_report_view(report: &MachineReport) -> RemanenceMachineReport {
-    let (boot, boot_attachment, boot_system, boot_declared, version_state, version) = match &report
-        .boot
-    {
-        BootOutcome::Booted {
-            attachment,
-            installation,
-            declared,
-        } => {
-            let settled = match installation.version {
-                DosVersion::Settled { major, minor } => Some((major, minor)),
-                _ => None,
-            };
-            (
-                RemanenceBootOutcome::Booted,
-                Some(to_cstring(attachment)),
-                Some(to_cstring(installation.kernel.name())),
-                *declared,
-                Some(to_cstring(installation.version.name())),
-                settled,
-            )
-        }
-        BootOutcome::Ambiguous { .. } => (
-            RemanenceBootOutcome::Ambiguous,
-            None,
-            None,
-            false,
-            None,
-            None,
-        ),
-        BootOutcome::NothingBootable => (
-            RemanenceBootOutcome::NothingBootable,
-            None,
-            None,
-            false,
-            None,
-            None,
-        ),
-    };
+    let (boot, boot_attachment, boot_system, boot_declared, version_state, version) =
+        match &report.boot {
+            BootOutcome::Booted {
+                attachment,
+                installation,
+                declared,
+            } => {
+                let settled = match installation.version {
+                    DosVersion::Settled { major, minor } => Some((major, minor)),
+                    _ => None,
+                };
+                (
+                    RemanenceBootOutcome::Booted,
+                    Some(to_cstring(attachment)),
+                    Some(to_cstring(installation.kernel.name())),
+                    *declared,
+                    Some(to_cstring(installation.version.name())),
+                    settled,
+                )
+            }
+            BootOutcome::Ambiguous { .. } => (
+                RemanenceBootOutcome::Ambiguous,
+                None,
+                None,
+                false,
+                None,
+                None,
+            ),
+            BootOutcome::NothingBootable => (
+                RemanenceBootOutcome::NothingBootable,
+                None,
+                None,
+                false,
+                None,
+                None,
+            ),
+        };
 
     let mappings = report
         .drives
@@ -8833,7 +8832,11 @@ fn machine_report_view(report: &MachineReport) -> RemanenceMachineReport {
             })
             .collect(),
         mappings,
-        provenance: report.provenance.iter().map(|line| to_cstring(line)).collect(),
+        provenance: report
+            .provenance
+            .iter()
+            .map(|line| to_cstring(line))
+            .collect(),
     }
 }
 
@@ -8845,7 +8848,9 @@ pub unsafe extern "C" fn remanence_machine_report_free(report: *mut RemanenceMac
     }
 }
 
-unsafe fn report_ref<'a>(report: *const RemanenceMachineReport) -> Option<&'a RemanenceMachineReport> {
+unsafe fn report_ref<'a>(
+    report: *const RemanenceMachineReport,
+) -> Option<&'a RemanenceMachineReport> {
     unsafe { report.as_ref() }
 }
 
@@ -8864,7 +8869,8 @@ pub unsafe extern "C" fn remanence_machine_report_identity(
 pub unsafe extern "C" fn remanence_machine_report_boot(
     report: *const RemanenceMachineReport,
 ) -> RemanenceBootOutcome {
-    unsafe { report_ref(report) }.map_or(RemanenceBootOutcome::NothingBootable, |report| report.boot)
+    unsafe { report_ref(report) }
+        .map_or(RemanenceBootOutcome::NothingBootable, |report| report.boot)
 }
 
 /// The attachment identity of the device that booted, or null where
@@ -8919,8 +8925,7 @@ pub unsafe extern "C" fn remanence_machine_report_boot_version(
     major_out: *mut u8,
     minor_out: *mut u8,
 ) -> bool {
-    let Some((major, minor)) =
-        unsafe { report_ref(report) }.and_then(|report| report.boot_version)
+    let Some((major, minor)) = unsafe { report_ref(report) }.and_then(|report| report.boot_version)
     else {
         return false;
     };
@@ -9105,10 +9110,9 @@ pub unsafe extern "C" fn remanence_machine_report_drive_outcome(
     report: *const RemanenceMachineReport,
     index: usize,
 ) -> RemanenceLetterOutcome {
-    unsafe { mapping_view(report, index) }
-        .map_or(RemanenceLetterOutcome::Undetermined, |mapping| {
-            mapping.outcome
-        })
+    unsafe { mapping_view(report, index) }.map_or(RemanenceLetterOutcome::Undetermined, |mapping| {
+        mapping.outcome
+    })
 }
 
 /// The attachment identity of the drive the letter at `index` names, or
@@ -9400,13 +9404,17 @@ pub unsafe extern "C" fn remanence_flux_image_free(image: *mut RemanenceFluxImag
 
 /// The artifact the image was opened from.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_path(image: *const RemanenceFluxImage) -> *const c_char {
+pub unsafe extern "C" fn remanence_flux_image_path(
+    image: *const RemanenceFluxImage,
+) -> *const c_char {
     unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.view.path.as_ptr())
 }
 
 /// The artifact format's stable identifier: `"remanence"`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_format_id(image: *const RemanenceFluxImage) -> *const c_char {
+pub unsafe extern "C" fn remanence_flux_image_format_id(
+    image: *const RemanenceFluxImage,
+) -> *const c_char {
     unsafe { image.as_ref() }.map_or(ptr::null(), |image| image.view.format_id.as_ptr())
 }
 
@@ -9443,26 +9451,34 @@ pub unsafe extern "C" fn remanence_flux_image_form_factor(
 /// The angular unit every angle in the image is stated over — a unit
 /// rather than a measurement, so equality is exact.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_angular_divisions(image: *const RemanenceFluxImage) -> u64 {
+pub unsafe extern "C" fn remanence_flux_image_angular_divisions(
+    image: *const RemanenceFluxImage,
+) -> u64 {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.angular_divisions)
 }
 
 /// How many bytes of private session storage the decoded points occupy.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_backing_bytes(image: *const RemanenceFluxImage) -> u64 {
+pub unsafe extern "C" fn remanence_flux_image_backing_bytes(
+    image: *const RemanenceFluxImage,
+) -> u64 {
     unsafe { image.as_ref() }.map_or(0, |image| image.image.backing_bytes())
 }
 
 /// How much of that backing is currently resident. The points are never
 /// held whole.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_resident_bytes(image: *const RemanenceFluxImage) -> u64 {
+pub unsafe extern "C" fn remanence_flux_image_resident_bytes(
+    image: *const RemanenceFluxImage,
+) -> u64 {
     unsafe { image.as_ref() }.map_or(0, |image| image.image.resident_bytes())
 }
 
 /// How many index holes the image holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_hole_count(image: *const RemanenceFluxImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_hole_count(
+    image: *const RemanenceFluxImage,
+) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.holes.len())
 }
 
@@ -9494,7 +9510,9 @@ pub unsafe extern "C" fn remanence_flux_image_hole(
 
 /// How many surfaces carry orbits.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_surface_count(image: *const RemanenceFluxImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_surface_count(
+    image: *const RemanenceFluxImage,
+) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.surfaces.len())
 }
 
@@ -9520,7 +9538,9 @@ pub unsafe extern "C" fn remanence_flux_image_surface(
 
 /// How many orbits the image holds, across every surface.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_orbit_count(image: *const RemanenceFluxImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_orbit_count(
+    image: *const RemanenceFluxImage,
+) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.report.orbits.len())
 }
 
@@ -9554,7 +9574,9 @@ pub unsafe extern "C" fn remanence_flux_image_orbit(
 
 /// How the image came to be known, in human-readable terms.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_provenance_count(image: *const RemanenceFluxImage) -> usize {
+pub unsafe extern "C" fn remanence_flux_image_provenance_count(
+    image: *const RemanenceFluxImage,
+) -> usize {
     unsafe { image.as_ref() }.map_or(0, |image| image.view.provenance.len())
 }
 

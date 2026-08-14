@@ -11,8 +11,7 @@
 //! `python test-fixture-prep/prep_fixtures.py` to have run.
 
 use remanence::{
-    ErrorCategory, Format, GeometrySource, GeometryState, MediaId,
-    RecordingGeometry, Session,
+    ErrorCategory, Format, GeometrySource, GeometryState, MediaId, RecordingGeometry, Session,
 };
 
 mod common;

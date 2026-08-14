@@ -904,12 +904,9 @@ impl MachineReport {
                 .iter()
                 .map(|mapping| {
                     let (attachment, volume, phantom_of, reason) = match &mapping.outcome {
-                        remanence::LetterOutcome::Volume { attachment, volume } => (
-                            Some(attachment.clone()),
-                            Some(volume.value()),
-                            None,
-                            None,
-                        ),
+                        remanence::LetterOutcome::Volume { attachment, volume } => {
+                            (Some(attachment.clone()), Some(volume.value()), None, None)
+                        }
                         remanence::LetterOutcome::OpticalDrive { placed_by } => {
                             (None, None, None, Some(placed_by.clone()))
                         }
@@ -4111,7 +4108,8 @@ impl C1541Bitstream {
     /// How many locations the bitstream claims.
     #[getter]
     fn location_count(&self) -> PyResult<u64> {
-        self.provider.with(|bitstream| Ok(bitstream.location_count()))
+        self.provider
+            .with(|bitstream| Ok(bitstream.location_count()))
     }
 
     #[getter]
@@ -4138,8 +4136,7 @@ impl C1541Bitstream {
     #[pyo3(signature = (*, cache_bytes = None))]
     fn materialize_bytestream(&self, cache_bytes: Option<u64>) -> PyResult<C1541Bytestream> {
         let inner = self.provider.with(|bitstream| {
-            bitstream
-                .materialize_bytestream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+            bitstream.materialize_bytestream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
         })?;
         let report = BytestreamReport::new(inner.inspect());
         Ok(C1541Bytestream {
@@ -4251,8 +4248,7 @@ impl C1541Bytestream {
     #[pyo3(signature = (*, cache_bytes = None))]
     fn recognize_sectors(&self, cache_bytes: Option<u64>) -> PyResult<C1541Sectors> {
         let inner = self.provider.with(|bytestream| {
-            bytestream
-                .recognize_sectors(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+            bytestream.recognize_sectors(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
         })?;
         let report = SectorReport::new(inner.inspect());
         Ok(C1541Sectors {

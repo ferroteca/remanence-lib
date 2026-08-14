@@ -20,8 +20,8 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AttachmentId, DeviceSlot, DeviceType, EntryKind, ErrorCategory, FloppyDrive,
-    Format, HardDrive, MediaId, Session,
+    AttachmentId, DeviceSlot, DeviceType, EntryKind, ErrorCategory, FloppyDrive, Format, HardDrive,
+    MediaId, Session,
 };
 
 mod common;
@@ -205,10 +205,16 @@ fn the_archive_slot_is_a_device_like_any_other() {
     // And a namespace composer passes it over **by family**, which is
     // what makes the visibility harmless: an archive has no partition or
     // volume for an assignment rule to reach.
-    let report = session.anonymous_mut().inspect().expect("the machine reads");
+    let report = session
+        .anonymous_mut()
+        .inspect()
+        .expect("the machine reads");
     assert!(
         report.disks.iter().any(|disk| disk.attachment == "arc0"
-            && disk.note.as_deref().is_some_and(|note| note.contains("bears a namespace"))),
+            && disk
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("bears a namespace"))),
         "the archive slot is passed over and said so: {:?}",
         report.disks
     );

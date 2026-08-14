@@ -36,8 +36,8 @@ use crate::flux::analysis::{
 };
 use crate::flux::capture::{FluxCapture, TrackKey};
 use crate::flux::remanence::image::{
-    ANGULAR_DIVISIONS, Hole, Magnetization, MediaFormFactor, OrbitKey, OrbitPoint, REMANENCE,
-    FluxImage, FluxImageBuilder, WriteWidths,
+    ANGULAR_DIVISIONS, FluxImage, FluxImageBuilder, Hole, Magnetization, MediaFormFactor, OrbitKey,
+    OrbitPoint, REMANENCE, WriteWidths,
 };
 
 /// The capture rig's radial lattice: the reference 5.25-inch rig steps

@@ -456,7 +456,14 @@ pub fn synthetic_rig_disk() -> Vec<u8> {
     // The master table: two data primaries and the extended container.
     table_entry(&mut disk, 0, 0, 0x06, primary_one as u32, span as u32);
     table_entry(&mut disk, 0, 1, 0x06, primary_two as u32, span as u32);
-    table_entry(&mut disk, 0, 2, 0x05, extended as u32, (2 * link_span) as u32);
+    table_entry(
+        &mut disk,
+        0,
+        2,
+        0x05,
+        extended as u32,
+        (2 * link_span) as u32,
+    );
     disk[510] = 0x55;
     disk[511] = 0xaa;
 
@@ -466,7 +473,14 @@ pub fn synthetic_rig_disk() -> Vec<u8> {
     // is the classic way to build a chain nothing can walk.
     let ebr_one = extended * 512;
     table_entry(&mut disk, ebr_one, 0, 0x06, GAP as u32, span as u32);
-    table_entry(&mut disk, ebr_one, 1, 0x05, link_span as u32, link_span as u32);
+    table_entry(
+        &mut disk,
+        ebr_one,
+        1,
+        0x05,
+        link_span as u32,
+        link_span as u32,
+    );
     disk[ebr_one + 510] = 0x55;
     disk[ebr_one + 511] = 0xaa;
 

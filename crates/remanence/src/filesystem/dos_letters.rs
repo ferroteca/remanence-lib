@@ -177,7 +177,9 @@ pub(crate) enum DriveKind {
 impl fmt::Display for DriveSlot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
-            DriveKind::Floppy => write!(f, "the floppy in slot {} ({})", self.index, self.attachment),
+            DriveKind::Floppy => {
+                write!(f, "the floppy in slot {} ({})", self.index, self.attachment)
+            }
             DriveKind::FixedDisk => {
                 write!(f, "fixed disk {} ({})", self.index, self.attachment)
             }
@@ -286,11 +288,13 @@ impl ResidentCondition {
             Self::NetworkRedirector => "the machine loaded a network redirector, which no claimed \
                  rule models: it claims letters from a source no image holds"
                 .to_owned(),
-            Self::AlternateLetterOrder => "the kernel was configured to assign letters in an order \
+            Self::AlternateLetterOrder => {
+                "the kernel was configured to assign letters in an order \
                  no claimed rule models: it letters each disk whole before \
                  moving to the next, rather than taking the first primary of \
                  every disk ahead of any logical drive"
-                .to_owned(),
+                    .to_owned()
+            }
         }
     }
 
@@ -452,7 +456,11 @@ impl<'a> DosComposer<'a> {
             kind: DriveKind::FixedDisk,
             index: order,
         };
-        if self.fixed_disks.iter().any(|(taken, _)| taken.index == order) {
+        if self
+            .fixed_disks
+            .iter()
+            .any(|(taken, _)| taken.index == order)
+        {
             return Err(occupied(&drive));
         }
         self.fixed_disks.push((drive, report));
@@ -859,9 +867,12 @@ fn leading_primary(report: &DiskReport) -> Option<(&RegionInfo, &'static str)> {
     if let Some(active) = dos_primaries(report).find(|region| region.declared_active) {
         return Some((active, "the bootable primary DOS partition"));
     }
-    dos_primaries(report)
-        .next()
-        .map(|region| (region, "the first primary DOS partition, no primary being flagged bootable"))
+    dos_primaries(report).next().map(|region| {
+        (
+            region,
+            "the first primary DOS partition, no primary being flagged bootable",
+        )
+    })
 }
 
 /// The primary DOS partitions of one disk, in the schema's own declared
@@ -1013,5 +1024,4 @@ mod tests {
         assert_eq!(fixed_letter(23), Some('Z'));
         assert_eq!(fixed_letter(24), None, "there is no letter past Z:");
     }
-
 }

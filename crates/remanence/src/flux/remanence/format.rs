@@ -37,8 +37,8 @@ use crate::error::{Error, Result};
 use crate::evidence::{DeclaredLoss, Provenance};
 use crate::flux::capture::{ByteSink, CHUNK_RECORDS, SessionBacking, read_varint, write_varint};
 use crate::flux::remanence::image::{
-    Hole, Magnetization, MediaFormFactor, MemorySource, OrbitKey, OrbitPoint, REMANENCE,
-    FluxImage, FluxImageBuilder, TurnFraction, WriteWidths,
+    FluxImage, FluxImageBuilder, Hole, Magnetization, MediaFormFactor, MemorySource, OrbitKey,
+    OrbitPoint, REMANENCE, TurnFraction, WriteWidths,
 };
 use crate::io::device::{self, AccessIntent, AccessMode};
 

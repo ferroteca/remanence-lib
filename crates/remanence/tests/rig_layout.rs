@@ -55,7 +55,12 @@ fn the_built_disk_carries_two_primaries_and_two_logicals() {
         .filter(|region| region.declared_placement == "logical" && region.role == RegionRole::Data)
         .collect();
 
-    assert_eq!(primaries.len(), 2, "two DOS primaries: {:?}", report.regions);
+    assert_eq!(
+        primaries.len(),
+        2,
+        "two DOS primaries: {:?}",
+        report.regions
+    );
     assert_eq!(logicals.len(), 2, "an extended chain of two logicals");
 
     drop(session);

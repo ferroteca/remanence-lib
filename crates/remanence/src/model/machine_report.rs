@@ -170,10 +170,14 @@ impl MachineReport {
     /// The letter established for one volume, where the rules established
     /// one.
     pub fn letter_of(&self, volume: VolumeId) -> Option<char> {
-        self.drives.iter().find_map(|mapping| match &mapping.outcome {
-            LetterOutcome::Volume { volume: named, .. } if *named == volume => Some(mapping.letter),
-            _ => None,
-        })
+        self.drives
+            .iter()
+            .find_map(|mapping| match &mapping.outcome {
+                LetterOutcome::Volume { volume: named, .. } if *named == volume => {
+                    Some(mapping.letter)
+                }
+                _ => None,
+            })
     }
 }
 
@@ -261,7 +265,9 @@ impl crate::model::machine::MachineView<'_> {
             for volume in &report.volumes {
                 let active = match &volume.origin {
                     crate::VolumeOrigin::Regions(regions) => regions.iter().any(|id| {
-                        report.region(*id).is_some_and(|region| region.declared_active)
+                        report
+                            .region(*id)
+                            .is_some_and(|region| region.declared_active)
                     }),
                     crate::VolumeOrigin::WholeDevice => false,
                 };
@@ -363,7 +369,9 @@ fn settle_boot(
     // which is what the boot sector follows: the active partition is the
     // one that loaded. Only where nothing is flagged does the tie stand.
     if on_first.len() > 1 {
-        let mut flagged = on_first.iter().filter(|(_, install)| install.on_active_region);
+        let mut flagged = on_first
+            .iter()
+            .filter(|(_, install)| install.on_active_region);
         if let (Some((at, install)), None) = (flagged.next(), flagged.next()) {
             return BootOutcome::Booted {
                 attachment: at.clone(),

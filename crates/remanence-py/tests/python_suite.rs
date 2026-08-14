@@ -23,7 +23,7 @@
 
 mod common;
 
-use common::{crate_dir, python, skipping, target_dir, workspace_dir, SKIP_PYTEST};
+use common::{SKIP_PYTEST, crate_dir, python, skipping, target_dir, workspace_dir};
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -31,7 +31,11 @@ use std::process::Command;
 /// The compiled module, under whichever name this platform builds.
 fn built_module() -> PathBuf {
     let dir = target_dir();
-    for name in ["remanence_py.dll", "libremanence_py.so", "libremanence_py.dylib"] {
+    for name in [
+        "remanence_py.dll",
+        "libremanence_py.so",
+        "libremanence_py.dylib",
+    ] {
         let path = dir.join(name);
         if path.exists() {
             return path;

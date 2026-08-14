@@ -90,7 +90,10 @@ fn the_flux_ladder_answers_and_refuses_over_a_built_artifact() {
     // `cpp_flux.rs`, which needs a fixture.
     let scratch = std::env::temp_dir().join(format!("remanence-cpp-flux-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("the scratch directory is made");
-    print!("{}", run_c("wrapper", &["flux", &scratch.to_string_lossy()]));
+    print!(
+        "{}",
+        run_c("wrapper", &["flux", &scratch.to_string_lossy()])
+    );
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
@@ -129,6 +132,9 @@ fn destructors_give_back_what_constructors_took() {
     // harness owns that somewhere rather than the C++ caller guessing.
     let scratch = std::env::temp_dir().join(format!("remanence-cpp-leak-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("the scratch directory is made");
-    print!("{}", run_c_probe("wrapper_leaks", &[&scratch.to_string_lossy()]));
+    print!(
+        "{}",
+        run_c_probe("wrapper_leaks", &[&scratch.to_string_lossy()])
+    );
     let _ = std::fs::remove_dir_all(&scratch);
 }

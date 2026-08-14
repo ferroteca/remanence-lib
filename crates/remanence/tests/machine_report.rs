@@ -121,7 +121,10 @@ fn a_machine_reads_its_own_dos_and_letters_from_it() {
 #[test]
 fn a_machine_with_no_system_establishes_no_letters() {
     let volume = fat16_volume("DATA", &[("README", "TXT", b"no kernel here")]);
-    let path = write_image("no-system", synthetic_multi_mbr_active(&[(0x06, &volume)], 0));
+    let path = write_image(
+        "no-system",
+        synthetic_multi_mbr_active(&[(0x06, &volume)], 0),
+    );
 
     let mut session = Session::new();
     session.add_machine("pc").expect("a fresh identity");
@@ -229,10 +232,7 @@ fn a_boot_declaration_names_this_machines_own_device() {
     session.add_machine("other").expect("a fresh identity");
     seat_disk(&mut session, "other", &path);
 
-    let elsewhere = session
-        .machine_mut("other")
-        .expect("there")
-        .attachments()[0];
+    let elsewhere = session.machine_mut("other").expect("there").attachments()[0];
     let error = session
         .machine_mut("pc")
         .expect("there")

@@ -294,9 +294,7 @@ impl Format {
     pub fn device_type(self) -> Option<DeviceType> {
         match self {
             Self::Raw { device, .. } => Some(device),
-            Self::Qcow2 { device } | Self::Vdi { device } => {
-                Some(DeviceType::HardDrive(device))
-            }
+            Self::Qcow2 { device } | Self::Vdi { device } => Some(DeviceType::HardDrive(device)),
             Self::H8d => Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
             Self::KryoFlux { device } => Some(DeviceType::Floppy(device)),
             Self::P64 => Some(DeviceType::Floppy(FloppyDrive::Commodore1541)),
@@ -916,7 +914,13 @@ impl Medium {
     /// **buffered until [`commit`](Self::commit)** like every other
     /// write (P2), under the same rules
     /// [`read_sector`](Self::read_sector) answers by.
-    pub fn write_sector(&mut self, cylinder: u32, head: u32, sector: u32, data: &[u8]) -> Result<()> {
+    pub fn write_sector(
+        &mut self,
+        cylinder: u32,
+        head: u32,
+        sector: u32,
+        data: &[u8],
+    ) -> Result<()> {
         let offset = self.sector_offset("write_sector", cylinder, head, sector, data.len())?;
         self.write_space_at(offset, data)
     }

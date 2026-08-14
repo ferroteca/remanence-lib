@@ -1567,8 +1567,7 @@ mod tests {
             Hole::new(eighth, extent).unwrap(),
         ];
         assert!(
-            FluxImageBuilder::in_memory(MediaFormFactor::Inch525, disordered, policy())
-                .is_err()
+            FluxImageBuilder::in_memory(MediaFormFactor::Inch525, disordered, policy()).is_err()
         );
         assert!(Hole::new(TurnFraction::new(5, 4).unwrap(), extent).is_err());
         assert!(Hole::new(quarter, TurnFraction::new(0, 1).unwrap()).is_err());

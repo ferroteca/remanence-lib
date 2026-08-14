@@ -25,7 +25,7 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::evidence::{DeclaredLoss, LossAccount, Provenance};
 use crate::flux::analysis::cell_of;
-use crate::flux::remanence::image::{ANGULAR_DIVISIONS, Orbit, REMANENCE, FluxImage};
+use crate::flux::remanence::image::{ANGULAR_DIVISIONS, FluxImage, Orbit, REMANENCE};
 use crate::io::device;
 
 /// The 1541's reference frame, as the delivered P64 adapter declares

@@ -48,7 +48,11 @@ fn one_floppy_and_one_disk_map_to_a_b_and_c() {
         .inspect()
         .expect("the machine reads");
 
-    assert_eq!(attachment_at(&report, 'A'), "floppy0", "the floppy in slot 0");
+    assert_eq!(
+        attachment_at(&report, 'A'),
+        "floppy0",
+        "the floppy in slot 0"
+    );
     assert!(
         matches!(
             report.letter('B').expect("B: exists").outcome,
@@ -87,7 +91,10 @@ fn primaries_of_every_disk_precede_the_logical_drives_of_any() {
     let mut chain = synthetic_extended_disk(&system, 0x05, 0x06);
     chain[446] = 0x80; // the primary is the one that boots
     let first = write_image("chain-0", chain);
-    let second = write_image("chain-1", synthetic_extended_disk(&synthetic_fat16(), 0x05, 0x06));
+    let second = write_image(
+        "chain-1",
+        synthetic_extended_disk(&synthetic_fat16(), 0x05, 0x06),
+    );
     let (_session, report) = machine_of(&[first.clone(), second.clone()]);
 
     assert_eq!(attachment_at(&report, 'C'), "hdd0", "first disk's primary");
@@ -111,7 +118,10 @@ fn the_bootable_primary_takes_c_ahead_of_the_first_row() {
     let path = write_image(
         "active-second",
         synthetic_multi_mbr_active(
-            &[(0x06, &synthetic_fat16()), (0x06, &dos_volume("SYSTEM", "5.00", ""))],
+            &[
+                (0x06, &synthetic_fat16()),
+                (0x06, &dos_volume("SYSTEM", "5.00", "")),
+            ],
             1,
         ),
     );
@@ -159,7 +169,10 @@ fn a_type_outside_the_dos_set_takes_no_letter() {
     let path = write_image(
         "hidden",
         synthetic_multi_mbr_active(
-            &[(0x16, &synthetic_fat16()), (0x06, &dos_volume("SYSTEM", "5.00", ""))],
+            &[
+                (0x16, &synthetic_fat16()),
+                (0x06, &dos_volume("SYSTEM", "5.00", "")),
+            ],
             1,
         ),
     );
@@ -173,7 +186,9 @@ fn a_type_outside_the_dos_set_takes_no_letter() {
     // the one volume that exists is the one that took the letter.
     let disk = report.disks[0].report.as_ref().expect("a medium is in it");
     assert!(
-        disk.regions.iter().any(|region| region.declared_type == 0x16),
+        disk.regions
+            .iter()
+            .any(|region| region.declared_type == 0x16),
         "the hidden region is still reported"
     );
     assert_eq!(report.volumes().len(), 1);
@@ -212,8 +227,14 @@ fn an_unclaimed_extended_partition_letters_none_of_its_logicals() {
 #[test]
 fn a_lastdrive_ceiling_read_from_config_sys_unsettles_the_letters_above_it() {
     let system = dos_volume("SYSTEM", "5.00", "LASTDRIVE=C\r\nFILES=30\r\n");
-    let first = write_image("ceiling-0", synthetic_multi_mbr_active(&[(0x06, &system)], 0));
-    let second = write_image("ceiling-1", synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]));
+    let first = write_image(
+        "ceiling-0",
+        synthetic_multi_mbr_active(&[(0x06, &system)], 0),
+    );
+    let second = write_image(
+        "ceiling-1",
+        synthetic_multi_mbr(&[(0x06, &synthetic_fat16())]),
+    );
     let (_session, report) = machine_of(&[first.clone(), second.clone()]);
 
     // C: sits at the ceiling and stands; D: sits above it and does not.
@@ -228,9 +249,11 @@ fn a_lastdrive_ceiling_read_from_config_sys_unsettles_the_letters_above_it() {
     let BootOutcome::Booted { installation, .. } = &report.boot else {
         panic!("the disk holds a system");
     };
-    assert!(installation
-        .conditions
-        .contains(&ResidentCondition::LastDrive('C')));
+    assert!(
+        installation
+            .conditions
+            .contains(&ResidentCondition::LastDrive('C'))
+    );
 
     std::fs::remove_file(&first).ok();
     std::fs::remove_file(&second).ok();
@@ -248,7 +271,11 @@ fn a_subst_read_from_autoexec_unsettles_every_letter() {
             ("IO", "SYS", b"kernel"),
             ("MSDOS", "SYS", b"kernel"),
             ("COMMAND", "COM", &banner),
-            ("AUTOEXEC", "BAT", b"@ECHO OFF\r\nC:\\DOS\\SUBST.EXE E: C:\\WORK\r\n"),
+            (
+                "AUTOEXEC",
+                "BAT",
+                b"@ECHO OFF\r\nC:\\DOS\\SUBST.EXE E: C:\\WORK\r\n",
+            ),
         ],
     );
     let path = write_image("subst", synthetic_multi_mbr_active(&[(0x06, &system)], 0));
@@ -274,7 +301,11 @@ fn an_optical_drive_takes_the_letter_its_mscdex_line_placed_it_at() {
             ("IO", "SYS", b"kernel"),
             ("MSDOS", "SYS", b"kernel"),
             ("COMMAND", "COM", &banner),
-            ("AUTOEXEC", "BAT", b"@ECHO OFF\r\nC:\\DOS\\MSCDEX.EXE /D:MSCD001 /L:R\r\n"),
+            (
+                "AUTOEXEC",
+                "BAT",
+                b"@ECHO OFF\r\nC:\\DOS\\MSCDEX.EXE /D:MSCD001 /L:R\r\n",
+            ),
         ],
     );
     let path = write_image("mscdex", synthetic_multi_mbr_active(&[(0x06, &system)], 0));
@@ -449,7 +480,10 @@ fn a_family_no_rule_letters_is_passed_over_and_said_so() {
         .find(|disk| disk.attachment.starts_with("cbmfloppy"))
         .expect("the 1541 is in the report");
     assert!(
-        empty.note.as_deref().is_some_and(|note| note.contains("holds no medium")),
+        empty
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains("holds no medium")),
         "an empty drive is configuration in its own right: {:?}",
         empty.note
     );
