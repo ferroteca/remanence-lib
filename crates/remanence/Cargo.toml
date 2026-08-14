@@ -5,6 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+# The crates.io page renders this, and without it the page has no body
+# at all. It is the crate's own README rather than the repository's: the
+# root README is a whole-repo document whose relative links would all
+# break off GitHub, and whose build instructions are about the cargo
+# workspace rather than this crate.
+readme = "README.md"
 # A released artifact carries what a consumer runs and nothing else.
 # maturin builds the Python sdist from cargo's package listing, so
 # without this the whole integration suite ships — it did, in the

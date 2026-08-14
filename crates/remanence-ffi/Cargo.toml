@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+# As in the core crate: the registry page needs a body, and this crate's
+# own README is the one whose links survive off GitHub. It addresses the
+# C and C++ consumer, who is not the reader either other README has.
+readme = "README.md"
 
 [lib]
 name = "remanence_ffi"

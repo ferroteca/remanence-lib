@@ -7,6 +7,12 @@ SPDX-PackageSupplier = "Paul Galbraith <paul@galbraiths.ca>"
 path = [
     ".gitignore",
     "README.md",
+    # Each distributable crate carries its own README, because it is what
+    # the registry page renders and the root README's relative links do
+    # not survive off GitHub.
+    "crates/remanence/README.md",
+    "crates/remanence-ffi/README.md",
+    "crates/remanence-py/README.md",
     "AGENTS.md",
     "CLAUDE.md",
     "CONTRIBUTING.md",

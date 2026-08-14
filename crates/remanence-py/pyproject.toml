@@ -5,6 +5,11 @@ build-backend = "maturin"
 [project]
 name = "remanence"
 description = "Self-contained disk image analysis library"
+# The PyPI project page renders this. It is the package's own README,
+# not the repository's: the root README is a whole-repo document whose
+# relative links would all break off GitHub, and whose build
+# instructions are about the cargo workspace rather than the wheel.
+readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
@@ -25,7 +30,14 @@ classifiers = [
 test = ["pytest>=8"]
 
 [project.urls]
+# PyPI renders these as the sidebar links. The repository is the one
+# home everything else on the project page points back into, so each
+# entry is a place in it rather than a separate site to maintain.
+Homepage = "https://github.com/ferroteca/remanence-lib"
 Repository = "https://github.com/ferroteca/remanence-lib"
+Documentation = "https://github.com/ferroteca/remanence-lib/blob/main/README.md"
+Changelog = "https://github.com/ferroteca/remanence-lib/blob/main/CHANGELOG.md"
+Issues = "https://github.com/ferroteca/remanence-lib/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

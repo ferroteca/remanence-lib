@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 # The sdist carries the Python suite — a stranger who unpacks it can
 # verify what they built, which is what an sdist is conventionally for.
