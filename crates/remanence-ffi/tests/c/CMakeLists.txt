@@ -10,6 +10,12 @@
 # that — the toolchain search, the generator, the warning flags per
 # compiler, and the C/C++ split.
 #
+# The compiler is the library's, not this file's. Where the cdylib is
+# MSVC-built the search above is the native match; where a windows-gnu
+# rustc built it instead, the harness names gcc, because MSVC cannot
+# link a MinGW import library and the two disagree about the C runtime
+# besides. Either way what arrives here is a compiler already chosen.
+#
 # The Rust tests in `crates/remanence-ffi/tests/` drive this. It is not
 # meant to be configured by hand, though nothing stops it: it needs
 # REMANENCE_LIB pointing at the built import library or shared object.
@@ -25,7 +31,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT DEFINED REMANENCE_LIB)
     message(FATAL_ERROR
         "REMANENCE_LIB is not set. It must point at the built library: "
-        "target/<profile>/remanence_ffi.dll.lib on MSVC, or the .so/.dylib "
+        "target/<profile>/remanence_ffi.dll.lib on MSVC, "
+        "libremanence_ffi.dll.a on a MinGW toolchain, or the .so/.dylib "
         "elsewhere. `cargo build` produces it; `cargo test` does not.")
 endif()
 

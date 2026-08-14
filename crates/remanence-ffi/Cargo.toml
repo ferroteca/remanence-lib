@@ -35,6 +35,14 @@ remanence.workspace = true
 [build-dependencies]
 cbindgen = "0.29"
 
+# Test-only, and only to read cargo's own `--message-format=json` report
+# of what it just built: the C tests link a file whose name and directory
+# are the toolchain's to choose, and asking is exact where searching a
+# directory for a plausible name is right only on the host it was written
+# on. Nothing shipped depends on it, and cbindgen already builds it.
+[dev-dependencies]
+serde_json = "1"
+
 # The one C++ suite that opens a downloaded artifact. Cargo does not
 # build a target whose required features are off, so the default run
 # reports nothing misleading about it; `cargo test --features fixtures`

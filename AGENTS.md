@@ -914,9 +914,21 @@ import library the same toolchain produced. `crates/remanence-ffi/tests/c/CMakeL
 is the build; the Rust tests drive it and it is not meant to be
 configured by hand.
 
+**The rule underneath that is the match, not MSVC.** A C caller is built
+by whichever toolchain built the library it links, and on a `windows-gnu`
+rustc that is not MSVC: cargo writes `libremanence_ffi.dll.a`, which
+`cl.exe` cannot link and whose C runtime is not MSVC's, so the harness
+names gcc and a generator that can drive it (Ninja, or `mingw32-make`)
+rather than letting CMake pick MSVC and fail at the link. Nothing is
+inferred from the host: the harness reads the file names out of cargo's
+own `--message-format=json` report of the build it just ran, which is
+also what stops an artifact left behind by a *previous* toolchain being
+linked — cargo does not delete a file it has stopped writing, and a
+search of `target/<profile>` for a plausible name would find it.
+
 Overrides, all optional: `REMANENCE_CC` / `REMANENCE_CXX` set CMake's
-compilers (MinGW's gcc still works — it is one variable away, just no
-longer the default), and `REMANENCE_CMAKE_GENERATOR` sets the generator.
+compilers and win over the choice above, so another compiler is still
+one variable away), and `REMANENCE_CMAKE_GENERATOR` sets the generator.
 **No CMake or no compiler is a test failure, not a skip** —
 `REMANENCE_SKIP_CC=1` skips deliberately, and plain `cargo test` needs
 both because of it.
