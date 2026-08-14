@@ -1,10 +1,13 @@
 /target
-dist/
 .venv/
 *.pyd
 __pycache__/
 .idea/
 .vscode/
+# The one build output directory, and deliberately the only `dist/`
+# ignored: `uv build` run from the repository root instead of against
+# the crate drops artifacts in a root `dist/`, and leaving that path
+# untracked-and-visible is what makes the mistake show up.
 crates/remanence-py/dist/
 # Downloaded and generated test fixtures are named by
 # crates/remanence/tests/fixtures/.gitignore, beside the files.
