@@ -7,6 +7,16 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+# **PyPI is this crate's only registry.** What cargo would publish is
+# source no Rust caller can use: the module is a `cdylib` with no `rlib`,
+# so nothing can depend on it, and pyo3's `extension-module` leaves it
+# unlinked against libpython, so nothing can build it into anything but a
+# Python extension. The sdist below is the same source with the packaging
+# that makes it buildable around it, which is what a source-building
+# consumer actually wants. The core crate and the C ABI go to crates.io;
+# this one does not.
+publish = false
+
 # The sdist carries the Python suite — a stranger who unpacks it can
 # verify what they built, which is what an sdist is conventionally for.
 # What stays out is the part that tests *this repository* rather than the
