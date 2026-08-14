@@ -54,6 +54,19 @@ fn accessors_answer_on_a_null_handle() {
     group("nulls", &[]);
 }
 
+/// The machine reading, as a C caller meets it: a machine with nothing in
+/// it reads and says nothing booted, a boot device it does not hold is
+/// refused naming the attachment asked for, and every accessor answers on
+/// a null report rather than dereferencing it.
+///
+/// The surface this replaced was never called from C at all — it compiled
+/// and nothing exercised it — so this group exists to keep the new one
+/// out of that position.
+#[test]
+fn a_machine_reads_across_the_boundary() {
+    group("machine", &[]);
+}
+
 #[test]
 fn a_real_artifact_discovers_and_releases() {
     if skipping() {

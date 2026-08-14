@@ -228,9 +228,16 @@ enum class VolumeOrigin : std::int32_t {
 /// What one drive letter turned out to name.
 enum class LetterOutcome : std::int32_t {
     Volume = REMANENCE_LETTER_OUTCOME_VOLUME,
-    DeclaredDevice = REMANENCE_LETTER_OUTCOME_DECLARED_DEVICE,
+    OpticalDrive = REMANENCE_LETTER_OUTCOME_OPTICAL_DRIVE,
     Phantom = REMANENCE_LETTER_OUTCOME_PHANTOM,
     Undetermined = REMANENCE_LETTER_OUTCOME_UNDETERMINED,
+};
+
+/// Which volume a machine booted, and what settled it.
+enum class BootOutcome : std::int32_t {
+    Booted = REMANENCE_BOOT_OUTCOME_BOOTED,
+    Ambiguous = REMANENCE_BOOT_OUTCOME_AMBIGUOUS,
+    NothingBootable = REMANENCE_BOOT_OUTCOME_NOTHING_BOOTABLE,
 };
 
 /// The caller's own open file, as the ABI takes it: a Windows `HANDLE`
@@ -468,15 +475,11 @@ struct Release<RemanenceDiskReport> {
     void operator()(RemanenceDiskReport* handle) const noexcept { remanence_report_free(handle); }
 };
 template <>
-struct Release<RemanenceDosMachine> {
-    void operator()(RemanenceDosMachine* handle) const noexcept
+struct Release<RemanenceMachineReport> {
+    void operator()(RemanenceMachineReport* handle) const noexcept
     {
-        remanence_dos_machine_free(handle);
+        remanence_machine_report_free(handle);
     }
-};
-template <>
-struct Release<RemanenceDriveMap> {
-    void operator()(RemanenceDriveMap* handle) const noexcept { remanence_drive_map_free(handle); }
 };
 template <>
 struct Release<RemanenceFluxImage> {
@@ -3787,109 +3790,264 @@ private:
 // ---------------------------------------------------------------------
 
 /// One letter of a composed mapping.
+/// One letter of a machine's mapping, borrowed from the report that
+/// issued it.
 class DriveMapEntry {
 public:
-    DriveMapEntry(const RemanenceDriveMap* map, std::size_t index) noexcept
-        : map_(map), index_(index)
+    DriveMapEntry(const RemanenceMachineReport* report, std::size_t index) noexcept
+        : report_(report), index_(index)
     {
     }
 
-    std::size_t index() const noexcept { return index_; }
-
-    /// The letter, without its colon.
-    char letter() const noexcept { return remanence_drive_map_letter(map_, index_); }
+    /// The letter itself, without its colon.
+    char letter() const noexcept
+    {
+        return remanence_machine_report_drive_letter(report_, index_);
+    }
 
     LetterOutcome outcome() const noexcept
     {
-        return static_cast<LetterOutcome>(remanence_drive_map_outcome(map_, index_));
+        return static_cast<LetterOutcome>(
+            remanence_machine_report_drive_outcome(report_, index_));
     }
 
-    /// The asserted device this letter names — `floppy`, `fixed-disk`,
-    /// `cd-rom` — absent where the outcome names no device.
-    std::optional<std::string> device_kind() const
+    /// The attachment identity of the drive this letter names, present
+    /// only where the outcome is a volume.
+    std::optional<std::string> attachment() const
     {
-        return detail::optional_copied(remanence_drive_map_device_kind(map_, index_));
+        return detail::optional_copied(
+            remanence_machine_report_drive_attachment(report_, index_));
     }
 
-    /// The slot or attachment order the caller asserted for it.
-    std::optional<std::uint32_t> device_index() const noexcept
-    {
-        std::uint32_t value = 0;
-        if (!remanence_drive_map_device_index(map_, index_, &value)) {
-            return std::nullopt;
-        }
-        return value;
-    }
-
-    /// The volume this letter names, by its inspection report's identity.
+    /// The volume identity this letter names — the value a file verb
+    /// takes. Absent for every outcome but a volume, which is an honest
+    /// absence rather than an identity of zero.
     std::optional<std::uint64_t> volume() const noexcept
     {
         std::uint64_t value = 0;
-        if (!remanence_drive_map_volume(map_, index_, &value)) {
+        if (!remanence_machine_report_drive_volume(report_, index_, &value)) {
             return std::nullopt;
         }
         return value;
     }
 
-    /// The letter a phantom drive stands for, absent where this is none.
+    /// The letter a phantom drive stands for.
     std::optional<char> phantom_of() const noexcept
     {
-        const char letter = remanence_drive_map_phantom_of(map_, index_);
+        const char letter = remanence_machine_report_drive_phantom_of(report_, index_);
         if (letter == '\0') {
             return std::nullopt;
         }
         return letter;
     }
 
-    /// Why the claimed rules could not settle this letter, absent where
-    /// they did.
+    /// Why an undetermined letter could not be settled, or what placed an
+    /// optical drive here.
     std::optional<std::string> reason() const
     {
-        return detail::optional_copied(remanence_drive_map_reason(map_, index_));
+        return detail::optional_copied(remanence_machine_report_drive_reason(report_, index_));
     }
 
 private:
-    const RemanenceDriveMap* map_;
+    const RemanenceMachineReport* report_;
     std::size_t index_;
 };
 
-/// A composed drive-letter mapping.
-///
-/// A letter absent from it is a letter the machine had no drive at,
-/// which is different from one that exists and could not be settled.
-class DriveMap : public detail::Held<RemanenceDriveMap> {
+/// One volume a machine holds, with the letter it was given.
+class MachineVolume {
 public:
-    using Held::Held;
-
-    /// The rules applied: one where the caller stated the variant, every
-    /// claimed rule where they did not.
-    std::vector<std::string> applied_rules() const
+    MachineVolume(const RemanenceMachineReport* report, std::size_t index) noexcept
+        : report_(report), index_(index)
     {
-        const std::size_t count = remanence_drive_map_applied_rule_count(get());
-        std::vector<std::string> rules;
-        rules.reserve(count);
-        for (std::size_t at = 0; at < count; at += 1) {
-            rules.push_back(detail::copied(remanence_drive_map_applied_rule(get(), at)));
+    }
+
+    /// The attachment identity of the drive it sits on.
+    std::string attachment() const
+    {
+        return detail::copied(remanence_machine_report_volume_attachment(report_, index_));
+    }
+
+    /// **This is the handle** — the letter beside it is what a user is
+    /// shown.
+    std::uint64_t volume() const noexcept
+    {
+        return remanence_machine_report_volume_id(report_, index_);
+    }
+
+    /// The letter its operating system gave it, absent where the rules
+    /// established none.
+    std::optional<char> letter() const noexcept
+    {
+        const char letter = remanence_machine_report_volume_letter(report_, index_);
+        if (letter == '\0') {
+            return std::nullopt;
         }
-        return rules;
+        return letter;
     }
 
-    std::size_t size() const noexcept { return remanence_drive_map_count(get()); }
-    bool empty() const noexcept { return size() == 0; }
+private:
+    const RemanenceMachineReport* report_;
+    std::size_t index_;
+};
 
-    /// How many letters the rules established — the count that excludes
-    /// every undetermined one.
-    std::size_t established_count() const noexcept
+/// One device of a machine, and what the medium in it turned out to be.
+class MachineDisk {
+public:
+    MachineDisk(const RemanenceMachineReport* report, std::size_t index) noexcept
+        : report_(report), index_(index)
     {
-        return remanence_drive_map_established_count(get());
     }
 
-    // Deleted on a temporary, for the reason `Identification::layer`
-    // states: these records borrow the handle they came from.
+    std::string attachment() const
+    {
+        return detail::copied(remanence_machine_report_disk_attachment(report_, index_));
+    }
+
+    /// The device type's own name, absent for a slot recording none.
+    std::optional<std::string> device_type() const
+    {
+        return detail::optional_copied(
+            remanence_machine_report_disk_device_type(report_, index_));
+    }
+
+    /// The device class — `floppy` or `hard-drive` — which decides
+    /// whether a claimed letter rule reaches this drive.
+    std::optional<std::string> family() const
+    {
+        return detail::optional_copied(remanence_machine_report_disk_family(report_, index_));
+    }
+
+    /// Whether the medium in it composed a reading.
+    bool has_report() const noexcept
+    {
+        return remanence_machine_report_disk_has_report(report_, index_);
+    }
+
+    /// Why it composed none, where it composed none. An empty drive is
+    /// configuration in its own right, not a failure.
+    std::optional<std::string> note() const
+    {
+        return detail::optional_copied(remanence_machine_report_disk_note(report_, index_));
+    }
+
+private:
+    const RemanenceMachineReport* report_;
+    std::size_t index_;
+};
+
+/// What a machine's own disks say it is: its devices, which one booted,
+/// and the drive letters its operating system gave.
+///
+/// **Nothing here is asserted.** The caller states a machine and every
+/// fact below is read from the media in it — the one exception being a
+/// declared boot device, which `boot_declared()` reports as such.
+class MachineReport : public detail::Held<RemanenceMachineReport> {
+public:
+    explicit MachineReport(RemanenceMachineReport* adopted) noexcept : Held(adopted) {}
+
+    /// The machine's identity, absent for the session's anonymous one.
+    std::optional<std::string> machine() const
+    {
+        return detail::optional_copied(remanence_machine_report_identity(get()));
+    }
+
+    BootOutcome boot() const noexcept
+    {
+        return static_cast<BootOutcome>(remanence_machine_report_boot(get()));
+    }
+
+    /// The attachment identity of the device that booted.
+    std::optional<std::string> boot_attachment() const
+    {
+        return detail::optional_copied(remanence_machine_report_boot_attachment(get()));
+    }
+
+    /// The operating system that booted, by its stable spelling.
+    std::optional<std::string> boot_system() const
+    {
+        return detail::optional_copied(remanence_machine_report_boot_system(get()));
+    }
+
+    /// Whether the machine's own declaration settled which device booted
+    /// rather than the evidence. A declaration is configuration, never
+    /// evidence.
+    bool boot_declared() const noexcept
+    {
+        return remanence_machine_report_boot_declared(get());
+    }
+
+    /// What the version sources settled: `settled`, `undetermined` or
+    /// `unstated`.
+    std::optional<std::string> boot_version_state() const
+    {
+        return detail::optional_copied(remanence_machine_report_boot_version_state(get()));
+    }
+
+    /// The settled version as `(major, minor)`, absent where the sources
+    /// disagreed or none spoke.
+    std::optional<std::pair<std::uint8_t, std::uint8_t>> boot_version() const noexcept
+    {
+        std::uint8_t major = 0;
+        std::uint8_t minor = 0;
+        if (!remanence_machine_report_boot_version(get(), &major, &minor)) {
+            return std::nullopt;
+        }
+        return std::make_pair(major, minor);
+    }
+
+    std::size_t disk_count() const noexcept
+    {
+        return remanence_machine_report_disk_count(get());
+    }
+
+    MachineDisk disk(std::size_t index) const&& = delete;
+    MachineDisk disk(std::size_t index) const&
+    {
+        return MachineDisk(get(), index);
+    }
+
+    std::vector<MachineDisk> disks() const&& = delete;
+    std::vector<MachineDisk> disks() const&
+    {
+        const std::size_t count = disk_count();
+        std::vector<MachineDisk> found;
+        found.reserve(count);
+        for (std::size_t at = 0; at < count; ++at) {
+            found.push_back(MachineDisk(get(), at));
+        }
+        return found;
+    }
+
+    std::size_t volume_count() const noexcept
+    {
+        return remanence_machine_report_volume_count(get());
+    }
+
+    /// Every volume the machine holds, lettered or not: a volume with no
+    /// letter is still a volume, and it appears here rather than being
+    /// dropped to keep a list tidy.
+    std::vector<MachineVolume> volumes() const&& = delete;
+    std::vector<MachineVolume> volumes() const&
+    {
+        const std::size_t count = volume_count();
+        std::vector<MachineVolume> found;
+        found.reserve(count);
+        for (std::size_t at = 0; at < count; ++at) {
+            found.push_back(MachineVolume(get(), at));
+        }
+        return found;
+    }
+
+    /// How many letters the machine had a drive at — undetermined ones
+    /// included.
+    std::size_t size() const noexcept
+    {
+        return remanence_machine_report_drive_count(get());
+    }
+
     DriveMapEntry at(std::size_t index) const&& = delete;
     DriveMapEntry at(std::size_t index) const&
     {
-        detail::in_range(index, size(), "drive map index");
         return DriveMapEntry(get(), index);
     }
 
@@ -3899,116 +4057,39 @@ public:
         const std::size_t count = size();
         std::vector<DriveMapEntry> found;
         found.reserve(count);
-        for (std::size_t at = 0; at < count; at += 1) {
+        for (std::size_t at = 0; at < count; ++at) {
             found.push_back(DriveMapEntry(get(), at));
         }
         return found;
     }
 
-    /// The entry for one letter, absent where the machine had no drive
-    /// there.
+    /// What this letter names, absent where the machine had no drive at
+    /// it — which is a different answer from a letter that exists and is
+    /// undetermined.
     std::optional<DriveMapEntry> find(char letter) const&& = delete;
     std::optional<DriveMapEntry> find(char letter) const&
     {
         std::size_t index = 0;
-        if (!remanence_drive_map_find(get(), letter, &index)) {
+        if (!remanence_machine_report_find_letter(get(), letter, &index)) {
             return std::nullopt;
         }
         return DriveMapEntry(get(), index);
     }
 
+    /// The rule applied, what it was applied to, and what was read to
+    /// choose it. **This is not evidence.**
     std::vector<std::string> provenance() const
     {
-        const std::size_t count = remanence_drive_map_provenance_count(get());
+        const std::size_t count = remanence_machine_report_provenance_count(get());
         std::vector<std::string> lines;
         lines.reserve(count);
-        for (std::size_t at = 0; at < count; at += 1) {
-            lines.push_back(detail::copied(remanence_drive_map_provenance(get(), at)));
+        for (std::size_t at = 0; at < count; ++at) {
+            lines.push_back(detail::copied(remanence_machine_report_provenance(get(), at)));
         }
         return lines;
     }
 };
 
-/// The machine facts a caller asserts, where they hold them instead of
-/// the session — the other door onto the same composition.
-class DosMachine : public detail::Held<RemanenceDosMachine> {
-public:
-    /// A machine with nothing asserted about it yet.
-    DosMachine() : Held(remanence_dos_machine_new())
-    {
-        if (get() == nullptr) {
-            throw std::bad_alloc();
-        }
-    }
-
-    explicit DosMachine(RemanenceDosMachine* adopted) noexcept : Held(adopted) {}
-
-    /// Asserts that the medium `report` inspects occupies floppy slot
-    /// `slot`, 0 being `A:`. The report is copied.
-    void assert_floppy(std::uint32_t slot, const DiskReport& report)
-    {
-        detail::Outcome outcome;
-        outcome.require(remanence_dos_machine_assert_floppy(get(), slot, report.get(),
-                                                            outcome.category(), outcome.message(),
-                                                            outcome.rule()),
-                        "the floppy could not be asserted");
-    }
-
-    /// Asserts the fixed disk attached at `order`, 0 being the first
-    /// attached — the order DOS assigned letters in.
-    void assert_fixed_disk(std::uint32_t order, const DiskReport& report)
-    {
-        detail::Outcome outcome;
-        outcome.require(remanence_dos_machine_assert_fixed_disk(get(), order, report.get(),
-                                                                outcome.category(),
-                                                                outcome.message(), outcome.rule()),
-                        "the fixed disk could not be asserted");
-    }
-
-    /// Asserts a CD-ROM drive. `driver_letter` is where the caller
-    /// declares the resident driver placed it; `'\0'` declares no
-    /// placement, and an undeclared CD-ROM takes no letter rather than a
-    /// guessed one.
-    void assert_cdrom(std::uint32_t order, char driver_letter = '\0')
-    {
-        detail::Outcome outcome;
-        outcome.require(remanence_dos_machine_assert_cdrom(get(), order, driver_letter,
-                                                           outcome.category(), outcome.message(),
-                                                           outcome.rule()),
-                        "the CD-ROM could not be asserted");
-    }
-
-    /// Declares a runtime condition outside every claimed rule, by its
-    /// stable spelling. The letters it could have changed come back
-    /// undetermined.
-    void declare_condition(const std::string& condition)
-    {
-        detail::Outcome outcome;
-        outcome.require(remanence_dos_machine_declare_condition(get(), condition.c_str(),
-                                                                outcome.category(),
-                                                                outcome.message(), outcome.rule()),
-                        "that condition is not claimed");
-    }
-
-    /// Composes the mapping. Naming no rule applies every claimed one,
-    /// and a letter they disagree on comes back undetermined.
-    DriveMap compose(const std::optional<std::string>& rule = std::nullopt) const
-    {
-        detail::Outcome outcome;
-        RemanenceDriveMap* composed =
-            remanence_dos_machine_compose(get(), detail::pointer(rule), outcome.category(),
-                                          outcome.message(), outcome.rule());
-        return DriveMap(outcome.require(composed, "the letters could not be composed"));
-    }
-};
-
-// ---------------------------------------------------------------------
-// Machine — one device set, with its own attachment identities
-// ---------------------------------------------------------------------
-
-/// One machine in a session: configuration, and nothing about state.
-///
-/// **A view.** The session owns it and it stays valid until the session
 /// is freed or the machine released.
 class Machine {
 public:
@@ -4063,16 +4144,40 @@ public:
                         "the device could not be released");
     }
 
-    /// The letters this machine's own device set produces. Naming no
-    /// rule applies every claimed one.
-    DriveMap compose_dos_letters(const std::optional<std::string>& rule = std::nullopt)
+    /// Reads this machine: its devices, what the medium in each turned
+    /// out to be, which one it booted, and the drive letters its
+    /// operating system gave.
+    ///
+    /// The caller states the machine and nothing else; everything above
+    /// is read from the media in it.
+    MachineReport inspect()
     {
         detail::Outcome outcome;
-        RemanenceDriveMap* composed =
-            remanence_machine_compose_dos_letters(handle_, detail::pointer(rule),
-                                                  outcome.category(), outcome.message(),
-                                                  outcome.rule());
-        return DriveMap(outcome.require(composed, "the letters could not be composed"));
+        RemanenceMachineReport* read = remanence_machine_inspect(
+            handle_, outcome.category(), outcome.message(), outcome.rule());
+        return MachineReport(outcome.require(read, "the machine could not be read"));
+    }
+
+    /// Declares which device this machine's firmware booted, overriding
+    /// what the disks make look bootable.
+    ///
+    /// This is the one machine fact no artifact holds. It is
+    /// configuration, and a report marks it as such rather than as
+    /// evidence.
+    void declare_boot_device(const std::string& attachment)
+    {
+        detail::Outcome outcome;
+        outcome.require(remanence_machine_declare_boot_device(handle_, attachment.c_str(),
+                                                              outcome.category(),
+                                                              outcome.message(), outcome.rule()),
+                        "the boot device could not be declared");
+    }
+
+    /// Withdraws a declared boot device, returning this machine to the
+    /// evidence on its own disks. Answers whether one had been declared.
+    bool clear_boot_device() noexcept
+    {
+        return remanence_machine_clear_boot_device(handle_);
     }
 
     std::size_t device_count() const noexcept { return remanence_machine_device_count(handle_); }

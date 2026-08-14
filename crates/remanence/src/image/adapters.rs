@@ -105,6 +105,17 @@ pub(crate) static RECORDED_HARD_DRIVES: [DeviceType; 2] = [
     DeviceType::HardDrive(HardDrive::MbrBlock),
 ];
 
+/// What a raw image may be declared as. Bytes record no ecosystem, so a
+/// raw reading is available to every sector- or block-addressed device
+/// this release claims — the floppy included, which is what lets a
+/// machine hold one in a drive rather than a caller asserting it into a
+/// slot beside the model.
+pub(crate) static RAW_RECORDED_DEVICES: [DeviceType; 3] = [
+    DeviceType::HardDrive(HardDrive::MbrSector),
+    DeviceType::HardDrive(HardDrive::MbrBlock),
+    DeviceType::Floppy(FloppyDrive::Sector),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImageFormatDescriptor {
     pub(crate) id: &'static str,
@@ -901,11 +912,18 @@ static RAW_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     extensions: &[],
     authoritative_layer: ImageLayer::Block,
     initial_active_layer: ActiveLayer::Block,
+    // The **nominal** article, and the one place a format's own answer is
+    // not the last word: a raw reading fixes no article, so a load
+    // presents the article its *declared device* is served and this
+    // stands only where nothing declared one. Every other format fixes
+    // one, and the invariant below holds them to it.
     media: &LOGICAL_BLOCK_512,
     // A raw image is bytes and nothing else: it records no ecosystem, so
-    // it declares no drive. This is the ordinary shape of `None`, not a
-    // gap waiting to be filled in.
-    devices: &RECORDED_HARD_DRIVES,
+    // which device wrote it is the caller's declaration rather than
+    // anything the artifact says. That is why the list here is wider than
+    // the container formats' — those record a drive, and this records
+    // nothing to contradict one.
+    devices: &RAW_RECORDED_DEVICES,
     disk: None,
 };
 
@@ -1094,20 +1112,39 @@ mod tests {
                 descriptor.id
             );
             for device in descriptor.devices {
-                assert_eq!(
-                    device.article_profile().id,
-                    descriptor.media.id,
-                    "{} says it records a {}, which is served {} rather than \
-                     the {} the format loads",
+                // A format that *fixes* an article must record only
+                // devices served it: naming a drive its own article
+                // would never be served describes two different disks,
+                // and every load of it would be a lie.
+                //
+                // The raw reading fixes none, which is the whole of what
+                // "bytes and nothing else" means: its article is the
+                // declared device's own, so it legitimately records
+                // devices served different articles and its `media` is
+                // the nominal one a discovery would report.
+                if descriptor.id != "raw" {
+                    assert_eq!(
+                        device.article_profile().id,
+                        descriptor.media.id,
+                        "{} says it records a {}, which is served {} rather than \
+                         the {} the format loads",
+                        descriptor.id,
+                        device.id(),
+                        device.article_profile().id,
+                        descriptor.media.id
+                    );
+                }
+                // Whichever article the load ends up presenting, the
+                // device catalog must derive this device from that
+                // article's own declarations rather than the format
+                // supplying a second answer beside it.
+                assert!(
+                    DeviceType::accepting(device.article_profile()).contains(device),
+                    "{} records {}, which the device catalog does not derive \
+                     from the {} it is served",
                     descriptor.id,
                     device.id(),
-                    device.article_profile().id,
-                    descriptor.media.id
-                );
-                assert!(
-                    DeviceType::accepting(descriptor.media).contains(device),
-                    "a recorded device is one the device catalog derives from \
-                     its own declarations, never a second answer"
+                    device.article_profile().id
                 );
             }
         }
@@ -1120,7 +1157,18 @@ mod tests {
             H8D_DESCRIPTOR.devices,
             &[DeviceType::Floppy(FloppyDrive::HeathH17)]
         );
-        assert_eq!(RAW_DESCRIPTOR.devices.len(), 2);
+        // The raw reading records a class rather than a product, and it
+        // reaches across families because bytes belong to none: the two
+        // MBR hard drives and the sector floppy, which is what lets a
+        // machine hold a floppy in a drive rather than a caller
+        // asserting one into a slot beside the model.
+        assert_eq!(RAW_DESCRIPTOR.devices.len(), 3);
+        assert!(
+            RAW_DESCRIPTOR
+                .devices
+                .contains(&DeviceType::Floppy(FloppyDrive::Sector)),
+            "a raw reading of a floppy is declarable"
+        );
         assert!(
             !RAW_DESCRIPTOR
                 .devices

@@ -336,7 +336,7 @@ fn an_image_past_the_hdos_bound_is_refused_by_size_never_loaded() {
         .load_media(
             open_read(&path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )

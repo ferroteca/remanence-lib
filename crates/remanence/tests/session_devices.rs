@@ -43,7 +43,7 @@ fn seat(session: &mut Session, path: &PathBuf) -> remanence::Result<(MediaId, At
         .load_media(
             open_read(path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )?
@@ -65,7 +65,7 @@ fn a_medium_is_loaded_unlinked_and_answers_before_any_device_exists() {
         .load_media(
             open_read(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -94,7 +94,7 @@ fn a_device_is_added_empty_and_the_medium_is_inserted_into_it() {
         .load_media(
             open_read(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -200,7 +200,7 @@ fn an_occupied_device_is_refused_a_second_medium() {
         .load_media(
             open_read(&b),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -286,7 +286,7 @@ fn ejecting_severs_and_the_medium_stays_in_the_pool() {
         .load_media(
             open_read(&b),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -379,7 +379,7 @@ fn release_media_is_the_one_state_destroying_verb() {
         .load_media(
             open_write(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -429,7 +429,7 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
         .load_media(
             open_read(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -544,7 +544,7 @@ fn the_partition_pool_populates_under_the_device_types_spec() {
         .load_media(
             open_read(&a),
             Format::Raw {
-                device: HardDrive::MbrBlock,
+                device: HardDrive::MbrBlock.into(),
                 block_bytes: 512,
             },
         )
@@ -650,7 +650,7 @@ fn a_medium_is_claimed_by_the_callers_own_open() {
         .load_media(
             open_write(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -673,7 +673,7 @@ fn a_medium_is_claimed_by_the_callers_own_open() {
         .load_media(
             open_read(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -712,7 +712,7 @@ fn a_declaration_the_evidence_cannot_bear_is_refused_by_name() {
         .load_media(
             open_read(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -739,7 +739,7 @@ fn a_flux_family_artifact_is_refused_whatever_was_declared() {
         .load_media(
             open_read(&path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )

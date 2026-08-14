@@ -22,7 +22,7 @@
 //! session loads the medium
 //! ([`Session::load_media`](crate::Session::load_media)), and
 //! [`DeviceView::insert`] links them. That is what makes an *empty*
-//! device first-class configuration: the drive U22 letters whether or not
+//! device first-class configuration: a drive is lettered whether or not
 //! a disk is in it, and "insert the disk" cannot hang off the disk.
 //!
 //! **The edge crosses configuration into state, and only in one
@@ -136,7 +136,7 @@ pub struct StorageDevice {
 
 impl StorageDevice {
     /// A device in its slot, empty. **An empty device is first-class
-    /// configuration** — the drive U22 letters whether or not a disk is
+    /// configuration** — a drive is lettered whether or not a disk is
     /// in it — so this is the only way one is made, and linking a medium
     /// is a separate act.
     pub(crate) fn new(slot: DeviceSlot, attachment: AttachmentId) -> Self {

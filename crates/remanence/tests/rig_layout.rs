@@ -25,7 +25,7 @@ fn pooled(path: &std::path::PathBuf) -> (Session, remanence::MediaId) {
         .load_media(
             std::fs::File::open(path).expect("the built image opens"),
             Format::Raw {
-                device: HardDrive::MbrBlock,
+                device: HardDrive::MbrBlock.into(),
                 block_bytes: 512,
             },
         )

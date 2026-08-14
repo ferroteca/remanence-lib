@@ -212,6 +212,111 @@ static void group_nulls(void)
     remanence_string_free(NULL);
 }
 
+/* --------------------------------------------- the machine reading
+ *
+ * The machine report is the journey a consumer actually takes: build a
+ * machine, put a medium in it, ask what it is. Nothing about the DOS on
+ * it is asserted, so what this checks is that the answer *arrives* --
+ * that a machine with nothing in it reads cleanly, that the accessors
+ * answer on a null report rather than dereferencing it, and that a
+ * boot device this machine does not hold is refused by name.
+ *
+ * The old caller-asserted surface was never exercised from C at all: it
+ * compiled and nothing called it. This group exists so the surface that
+ * replaced it is not in the same position.
+ */
+static void group_machine(void)
+{
+    RemanenceErrorCategory category = REMANENCE_ERROR_CATEGORY_IO;
+    char *message = NULL;
+    char *rule = NULL;
+
+    RemanenceSession *session = remanence_session_new();
+    CHECK(session != NULL, "a session could not be created");
+
+    RemanenceMachine *machine =
+        remanence_session_add_machine(session, "pc", &category, &message, &rule);
+    CHECK(machine != NULL, "a machine could not be added");
+
+    /* A machine holding no device reads, and says nothing booted. */
+    RemanenceMachineReport *report =
+        remanence_machine_inspect(machine, &category, &message, &rule);
+    CHECK(report != NULL, "an empty machine did not read");
+    if (report != NULL) {
+        CHECK(remanence_machine_report_boot(report)
+                  == REMANENCE_BOOT_OUTCOME_NOTHING_BOOTABLE,
+              "an empty machine claimed something booted");
+        CHECK(remanence_machine_report_drive_count(report) == 0,
+              "an empty machine was given drive letters");
+        CHECK(remanence_machine_report_volume_count(report) == 0,
+              "an empty machine held a volume");
+        CHECK(remanence_machine_report_disk_count(report) == 0,
+              "an empty machine held a device");
+        /* The identity is the one we gave it. */
+        const char *identity = remanence_machine_report_identity(report);
+        CHECK(identity != NULL && strcmp(identity, "pc") == 0,
+              "the report did not carry the machine's own identity");
+        /* Absence is an answer, not a zero. */
+        uint8_t major = 0;
+        uint8_t minor = 0;
+        CHECK(!remanence_machine_report_boot_version(report, &major, &minor),
+              "a machine that booted nothing answered a version");
+        CHECK(remanence_machine_report_boot_attachment(report) == NULL,
+              "a machine that booted nothing named a device");
+        /* Provenance says why, rather than leaving the emptiness bare. */
+        CHECK(remanence_machine_report_provenance_count(report) > 0,
+              "the report carried no provenance");
+        remanence_machine_report_free(report);
+    }
+
+    /* A boot device this machine does not hold is refused by name. */
+    CHECK(!remanence_machine_declare_boot_device(machine, "hdd0", &category, &message,
+                                                &rule),
+          "declaring a device the machine lacks was accepted");
+    CHECK(message != NULL, "the refusal carried no message");
+    if (message != NULL) {
+        CHECK(strstr(message, "hdd0") != NULL,
+              "the refusal did not name the attachment asked for");
+        remanence_string_free(message);
+        message = NULL;
+    }
+    remanence_string_free(rule);
+    rule = NULL;
+
+    /* Nothing was declared, so withdrawing one answers false. */
+    CHECK(!remanence_machine_clear_boot_device(machine),
+          "withdrawing an undeclared boot device claimed to have withdrawn one");
+
+    /* Every accessor answers on null rather than dereferencing it. */
+    CHECK(remanence_machine_report_identity(NULL) == NULL,
+          "a null report answered an identity");
+    CHECK(remanence_machine_report_drive_count(NULL) == 0,
+          "a null report answered a drive count");
+    CHECK(remanence_machine_report_volume_count(NULL) == 0,
+          "a null report answered a volume count");
+    CHECK(remanence_machine_report_disk_count(NULL) == 0,
+          "a null report answered a disk count");
+    CHECK(remanence_machine_report_boot_attachment(NULL) == NULL,
+          "a null report answered a boot attachment");
+    CHECK(remanence_machine_report_drive_letter(NULL, 0) == 0,
+          "a null report answered a letter");
+    CHECK(!remanence_machine_report_boot_declared(NULL),
+          "a null report claimed a declared boot");
+    remanence_machine_report_free(NULL);
+
+    /* And the claimed rules are still an enumerated claim. */
+    CHECK(remanence_dos_rule_count() == 2, "the claimed rule count changed");
+    CHECK(remanence_dos_rule_name(0) != NULL, "the first claimed rule has no name");
+    CHECK(remanence_dos_rule_reading(0) != NULL, "the first claimed rule says nothing");
+    CHECK(remanence_dos_rule_name(99) == NULL, "an out-of-range rule answered a name");
+    CHECK(remanence_dos_condition_is_claimed("lastdrive=E"),
+          "a claimed condition was refused");
+    CHECK(!remanence_dos_condition_is_claimed("dblspace"),
+          "an unclaimed condition was accepted");
+
+    remanence_session_free(session);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -228,6 +333,8 @@ int main(int argc, char **argv)
         group_refusal();
     } else if (strcmp(group, "nulls") == 0) {
         group_nulls();
+    } else if (strcmp(group, "machine") == 0) {
+        group_machine();
     } else if (strcmp(group, "discovery") == 0) {
         if (argc < 3) {
             printf("the discovery group needs an artifact path\n");

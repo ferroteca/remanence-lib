@@ -58,6 +58,94 @@ removes it is the record either way.
 
 ## Decisions
 
+### D55 — U22 rested on a false premise about DOS, and is struck rather than amended
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-14. **Supports** S1, S2, S3; P3, P4, P19, P32. Retires **T7**,
+whose number evaporates with it, and amends in-force P19 and pledged
+U16. `DECISIONS.md` was searched first and returned D23, which settled
+the machine/letters relationship and was annotated on F53's delivery;
+nothing there adjudicated letter *detection*, and nothing forecloses it.
+
+**The premise.** In-force U22 held that "DOS persists nothing, so the
+mapping is a *rule* applied to machine facts", and split itself from
+U13/U16 on exactly that: those journeys read a persisted mapping, this
+one could not. Its exclusion list refused "inferring one from a
+`CONFIG.SYS` the images may not even hold", and its composer therefore
+asked the caller to assert the DOS variant, the `LASTDRIVE` ceiling, and
+every resident condition.
+
+**The premise is false, and its falsity is not a detail.** DOS persists
+no drive-letter *map* — nothing records "C: was this volume" — but it
+persists every input the map was derived from: the kernel files that say
+which DOS is installed, and the startup files that say what it was told.
+`CONFIG.SYS` is to DOS what the registry is to Windows. A composer asking
+its caller for a fact recorded on the disk in front of it contradicted
+U22's own second constraint, that evidence outranks a rule; the seam had
+been reading past its own evidence and calling the result an assertion.
+
+**Struck, not amended.** Once the premise goes, nothing holds U22 apart
+from pledged U16, which already describes this journey for Windows and
+Unix — seat the disks, inspect, detect installation candidates, compose
+the namespace the installed system's own configuration establishes. The
+DOS case is that journey with a DOS adapter, not a second journey beside
+it. And two of U22's three sections were already duplicated into in-force
+entries: its label policy is U4's ("the label is one whole answer,
+decided where the format is known"), its 8.3 name rules are U3's. Only
+the letters were uniquely U22's, and they relocate. Striking loses no
+in-force claim; amending would have left a third journey asserting what
+the other two read.
+
+**U-22 retires and is never reissued.** The four in-force cross-references
+to it now name the capability rather than the handle, because the journey
+they point at is pledged and an in-force document citing a pledged one
+cites upward.
+
+**P19 is amended rather than left to drift.** Its namespace-mapping
+paragraph said the composer derives from "the machine facts its caller
+asserts" and "opens nothing"; both are now false. The amended text says
+what the caller states is the *machine*, that every input to the rule is
+read from the media it holds, and — added as its own clause — that
+evidence outranks a rule *including the rule's own inputs*, so a future
+composer asking for a persisted fact is violating the principle rather
+than serving it.
+
+**One assertion survives, and it moved.** Which device the firmware
+booted is set by a stopped machine's host and recorded on no disk, so it
+is a property of the machine model (`declare_boot_device`) rather than an
+argument to a composer, and a report marks it configuration rather than
+evidence. Pledged U16 is softened to match: it had forbidden the active
+flag and attachment order from selecting a candidate at all, which was
+written for two Windows installs and is wrong for an era whose boot order
+is simple enough to state as a rule. Applying a named rule is not
+guessing; what stays excluded is reaching for a tie-breaker no rule
+authorized.
+
+**FreeDOS is claimed, from its own source rather than from write-ups.**
+Two secondary sources described `DLASORT` as a `CONFIG.SYS` directive;
+the kernel's own directive table has no such entry, and `SYS CONFIG`
+patches it into `KERNEL.SYS`. The implementation that had been written
+against those write-ups would never have fired. What ships instead reads
+nothing for it and records that it did not, the kernel's documented
+default being the order applied.
+
+**Weighed and declined:** amending U22 in place (it would have kept a
+third journey beside U13/U16 with no premise left to justify the split);
+keeping `DosMachine` beside the machine reading for facts a session
+cannot hold (the gap was `Format::Raw` refusing a floppy, which is fixed
+where it was rather than worked around); reading `DLASORT` out of
+`KERNEL.SYS` (its layout is version-specific and the default is near
+universal, so the honest answer is a stated omission rather than a
+fragile read); and inferring a raw floppy's article from image size (a
+1.44M and a 720K image are both bytes, and deriving the article from the
+length is the guess this project refuses — the declared device carries
+it instead).
+
+**Reopens if:** a claimed DOS is found whose letter order its own
+installation does not determine, or a second operating-system family is
+given a recognition seam, at which point whether `dos_install.rs`
+generalizes or is joined by a sibling is a live question.
+
 ### D54 — The C++ header covers the whole ABI, so an unwrapped function is a defect rather than a boundary
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

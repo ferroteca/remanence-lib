@@ -87,42 +87,6 @@ C++ `lib/`. Work on the front-ends lands in that repository; any
 surface gap the rewiring exposes lands here as an S2 change under
 the landing rules.
 
-### T7 — The DOS letter composer asserts what it could read
-
-`filesystem/dos_letters.rs` opens on "there is no evidence to read",
-which holds for the drive-letter map and not for the rule's inputs.
-The DOS variant is readable from the boot volume's `IO.SYS` /
-`MSDOS.SYS` / `COMMAND.COM`, and every `ResidentCondition` —
-`LASTDRIVE`, `SUBST`, `JOIN`, `ASSIGN`, a block-device driver, a
-network redirector — is declared in `CONFIG.SYS` or `AUTOEXEC.BAT`:
-text files on a FAT volume this library already reads. Making the
-caller assert them contradicts the module's own second constraint,
-that evidence outranks a rule.
-
-What the caller states is a **machine**: devices, their slots and
-attachment order, and the media in them. Everything else is derived.
-Which device boots is not an exception — bootability is evidence (the
-boot signature, the active partition, a kernel in the root directory),
-and the era's firmware order is a claimed rule like any other. From
-the booting volume follow the DOS version and what its `CONFIG.SYS`
-declares, and from those the letters. `DosAssignmentRule` becomes what
-was detected plus an explicit override, and undetermined narrows to a
-machine with nothing bootable or a version outside the claim.
-Detection is itself an enumerated claim (P3), wanting its own
-recognition vocabulary and named refusals.
-
-One assertion survives, and it moves rather than stays: an emulated
-machine's boot order is set by its host — reliquary declares `boot` in
-a blueprint and mutates it with `set-boot-order`, so a machine can
-boot its fixed disk with a bootable floppy in the slot. That is a
-property of the machine model, defaulting to the claimed firmware
-rule, and not an argument to the composer. Separately: no claimed rule
-names FreeDOS.
-
-The composer is public surface, so the landing rules bind. If the
-reshaping proves larger than a task it is a feature, and this entry
-retires into it.
-
 ## Rejected
 
 A thin index into [DECISIONS.md](DECISIONS.md) — what was refused,

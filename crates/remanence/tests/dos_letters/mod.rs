@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! What both drive-letter suites ask of a composed map.
+//! What the drive-letter suites ask of a machine's report.
 //!
 //! `dos_drive_letters.rs` builds its disks and runs by default;
-//! `dos_drive_letters_rig.rs` opens the FreeDOS artifact and runs
-//! behind the `fixtures` feature. The questions they ask of a
-//! `DriveMap` are the same, so they are asked from one place.
+//! `machine_report.rs` walks the whole journey. The questions they ask of
+//! a `MachineReport` are the same, so they are asked from one place.
+//!
+//! **The letters come from a machine, never from an assertion.** A disk
+//! that is to be lettered carries the DOS that letters it, because that
+//! is where the rule is read from — [`dos_volume`] is what puts one
+//! there.
 
 // Each suite uses a different part of this module, and an unused
 // re-export is not a finding.
@@ -15,8 +19,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    DiskReport, Format, HardDrive, LetterOutcome, MachineDevice, MediaId, Session,
-    VolumeId,
+    DiskReport, Format, HardDrive, LetterOutcome, MachineReport, MediaId, Session, VolumeId,
 };
 
 #[path = "../common/mod.rs"]
@@ -54,8 +57,8 @@ pub fn inspect(path: &PathBuf, format: Format) -> (Session, DiskReport) {
     (session, report)
 }
 
-pub fn volume_at(map: &remanence::DriveMap, letter: char) -> VolumeId {
-    match &map
+pub fn volume_at(report: &MachineReport, letter: char) -> VolumeId {
+    match &report
         .letter(letter)
         .unwrap_or_else(|| panic!("{letter}: is mapped"))
         .outcome
@@ -65,19 +68,20 @@ pub fn volume_at(map: &remanence::DriveMap, letter: char) -> VolumeId {
     }
 }
 
-pub fn device_at(map: &remanence::DriveMap, letter: char) -> MachineDevice {
-    match &map
+/// Which drive the volume at `letter` sits on, by its attachment identity.
+pub fn attachment_at(report: &MachineReport, letter: char) -> String {
+    match &report
         .letter(letter)
         .unwrap_or_else(|| panic!("{letter}: is mapped"))
         .outcome
     {
-        LetterOutcome::Volume { device, .. } | LetterOutcome::DeclaredDevice { device } => *device,
-        other => panic!("{letter}: names a device, not {}", other.name()),
+        LetterOutcome::Volume { attachment, .. } => attachment.clone(),
+        other => panic!("{letter}: names a drive, not {}", other.name()),
     }
 }
 
-pub fn reason_at(map: &remanence::DriveMap, letter: char) -> String {
-    match &map
+pub fn reason_at(report: &MachineReport, letter: char) -> String {
+    match &report
         .letter(letter)
         .unwrap_or_else(|| panic!("{letter}: is mapped"))
         .outcome
@@ -87,6 +91,45 @@ pub fn reason_at(map: &remanence::DriveMap, letter: char) -> String {
     }
 }
 
+/// A COMMAND.COM whose banner states `version`, which is the source the
+/// installed DOS's assignment rule is settled from.
+pub fn command_com(version: &str) -> Vec<u8> {
+    format!("\x00\x00MS-DOS Version {version}\r\n$\x00\x00").into_bytes()
+}
+
+/// A FAT16 volume with MS-DOS installed on it — the kernel files that
+/// recognize it, a shell whose banner states `version`, and whatever
+/// `CONFIG.SYS` the test wants the machine to have declared.
+pub fn dos_volume(label: &str, version: &str, config_sys: &str) -> Vec<u8> {
+    let banner = command_com(version);
+    let mut files: Vec<(&str, &str, &[u8])> = vec![
+        ("IO", "SYS", b"kernel"),
+        ("MSDOS", "SYS", b"kernel"),
+        ("COMMAND", "COM", &banner),
+    ];
+    if !config_sys.is_empty() {
+        files.push(("CONFIG", "SYS", config_sys.as_bytes()));
+    }
+    fat16_volume(label, &files)
+}
+
+/// Builds a machine holding `disks` in order, and reads it. Every disk is
+/// a hard disk, in the order given, which is the attachment order the
+/// letter rules reason over.
+pub fn machine_of(disks: &[PathBuf]) -> (Session, MachineReport) {
+    let mut session = Session::new();
+    session.add_machine("pc").expect("a fresh identity");
+    for path in disks {
+        seat(&mut session, Some("pc"), path);
+    }
+    let report = session
+        .machine_mut("pc")
+        .expect("still here")
+        .inspect()
+        .expect("the machine reads");
+    (session, report)
+}
+
 /// Pools an image and seats it in a fresh hard disk of `machine` — the
 /// device set a composer reads its facts from.
 pub fn seat(session: &mut Session, machine: Option<&str>, path: &PathBuf) {
@@ -94,7 +137,7 @@ pub fn seat(session: &mut Session, machine: Option<&str>, path: &PathBuf) {
         .load_media(
             open_read(path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -106,6 +149,33 @@ pub fn seat(session: &mut Session, machine: Option<&str>, path: &PathBuf) {
     };
     view.add_device(HardDrive::MbrSector)
         .expect("a hard disk is added")
+        .insert(media)
+        .expect("the disk goes in");
+}
+
+/// Pools a floppy image and seats it in a fresh floppy drive of
+/// `machine`. The slot is the order floppy drives were added, which is
+/// what tells `A:` from `B:`.
+///
+/// A raw reading records no ecosystem, so declaring the drive is how the
+/// caller says these bytes were a floppy — the same declaration a hard
+/// disk's raw reading makes, and the only thing either says.
+pub fn seat_floppy(session: &mut Session, machine: &str, path: &PathBuf) {
+    let media = session
+        .load_media(
+            open_read(path),
+            Format::Raw {
+                device: remanence::FloppyDrive::Sector.into(),
+                block_bytes: 512,
+            },
+        )
+        .expect("the image loads")
+        .id();
+    session
+        .machine_mut(machine)
+        .expect("is there")
+        .add_device(remanence::FloppyDrive::Sector)
+        .expect("a floppy drive is added")
         .insert(media)
         .expect("the disk goes in");
 }
@@ -175,6 +245,16 @@ pub fn synthetic_fat12_floppy() -> Vec<u8> {
 }
 
 /// An MBR disk with one primary slot per entry, placed consecutively.
+/// The same disk, with the primary in `active_slot` carrying the table's
+/// boot flag. The claimed variants letter a disk's *bootable* primary
+/// first, so a disk whose active partition is not its first one is what
+/// tells that rule apart from "the first row wins".
+pub fn synthetic_multi_mbr_active(entries: &[(u8, &[u8])], active_slot: usize) -> Vec<u8> {
+    let mut disk = synthetic_multi_mbr(entries);
+    disk[446 + active_slot * 16] = 0x80;
+    disk
+}
+
 pub fn synthetic_multi_mbr(entries: &[(u8, &[u8])]) -> Vec<u8> {
     let mut start_lba = 2048usize;
     let mut layout = Vec::new();

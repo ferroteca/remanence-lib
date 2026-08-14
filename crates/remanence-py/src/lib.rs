@@ -473,10 +473,6 @@ pub struct DiskReport {
     pub volumes: Vec<VolumeInfo>,
     #[pyo3(get)]
     pub filesystems: Vec<FilesystemInfo>,
-    /// The report as the core issued it, kept so a `DosMachine` can be
-    /// asserted over the report a caller already holds rather than over a
-    /// flattened copy of it. Not part of the Python surface.
-    source: remanence::DiskReport,
 }
 
 #[pymethods]
@@ -717,7 +713,7 @@ fn dos_assignment_rules() -> Vec<DosAssignmentRule> {
 
 /// One drive letter and what it names.
 ///
-/// `outcome` is `"volume"`, `"declared-device"`, `"phantom"` or
+/// `outcome` is `"volume"`, `"optical-drive"`, `"phantom"` or
 /// `"undetermined"`. A `"volume"` names it by the opaque identity its own
 /// inspection report issued — the same identity `Partition.volume_id` and
 /// `StorageSpace.volume_id` answer with, so a letter and the partition
@@ -730,15 +726,15 @@ pub struct DriveMapping {
     /// The letter, without its colon.
     pub letter: String,
     pub outcome: String,
-    /// `"floppy"`, `"fixed-disk"` or `"cd-rom"`, where the outcome names a
-    /// device.
-    pub device_kind: Option<String>,
-    /// The slot or attachment order the caller asserted for it.
-    pub device_index: Option<u32>,
+    /// The attachment identity of the drive the volume sits on — `hdd0`,
+    /// `floppy0` — where the outcome names a volume.
+    pub attachment: Option<String>,
     /// Opaque, library-owned. Pass it back; never parse or build one.
     pub volume: Option<u64>,
     /// The letter a phantom drive stands for.
     pub phantom_of: Option<String>,
+    /// Why an undetermined letter could not be settled, or what placed an
+    /// optical drive here.
     pub reason: Option<String>,
 }
 
@@ -752,44 +748,170 @@ impl DriveMapping {
     }
 }
 
-/// The mapping a rule established over asserted machine facts.
+/// One volume a machine holds, named the way its operating system named
+/// it.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct MachineVolume {
+    /// The attachment identity of the drive it sits on.
+    pub attachment: String,
+    /// Opaque, library-owned. **This is the handle** — the letter beside
+    /// it is what a user is shown.
+    pub volume: u64,
+    /// The letter its operating system gave it, or `None` where the rules
+    /// established none.
+    pub letter: Option<String>,
+}
+
+#[pymethods]
+impl MachineVolume {
+    fn __repr__(&self) -> String {
+        format!(
+            "MachineVolume(attachment={:?}, letter={:?})",
+            self.attachment, self.letter
+        )
+    }
+}
+
+/// One device of the machine, and what the medium in it turned out to be.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct MachineDisk {
+    /// The attachment identity — `hdd0`, `floppy0`.
+    pub attachment: String,
+    /// The device type's own name, or `None` for a slot recording none.
+    pub device_type: Option<String>,
+    /// The device class — `"floppy"` or `"hard-drive"` — which is what
+    /// decides whether a claimed letter rule reaches this drive.
+    pub family: Option<String>,
+    /// Whether the medium in it composed a reading.
+    pub has_report: bool,
+    /// Why it composed none, where it composed none. An empty drive is
+    /// configuration in its own right, not a failure.
+    pub note: Option<String>,
+}
+
+#[pymethods]
+impl MachineDisk {
+    fn __repr__(&self) -> String {
+        format!(
+            "MachineDisk(attachment={:?}, family={:?})",
+            self.attachment, self.family
+        )
+    }
+}
+
+/// What a machine's own disks say it is.
 ///
-/// A letter absent from `mappings` is a letter the machine had no drive
-/// at, which is different from a letter that exists and could not be
-/// settled — that one is present and `"undetermined"`.
+/// **Nothing here is asserted.** The caller states a machine — devices,
+/// the order they attach, the media in them — and which operating system
+/// is installed, which volume booted, what its startup files declared and
+/// the letters that follow are all read from those media.
+///
+/// `boot` is `"booted"`, `"ambiguous"` or `"nothing-bootable"`. A letter
+/// absent from `drives` is a letter the machine had no drive at, which is
+/// different from a letter that exists and could not be settled — that
+/// one is present and `"undetermined"`.
 #[pyclass(frozen, get_all, module = "remanence")]
-pub struct DriveMap {
-    /// The rules applied: one where the caller stated the variant, and
-    /// every claimed rule where it did not.
-    pub applied_rules: Vec<String>,
-    pub mappings: Vec<DriveMapping>,
-    /// The asserted facts and the applied rules, travelling with the
-    /// answer. **This is not evidence**: nothing here was read off a disk.
+pub struct MachineReport {
+    /// The machine's identity, or `None` for the session's anonymous one.
+    pub machine: Option<String>,
+    /// Every device, in the order the machine attached them.
+    pub disks: Vec<MachineDisk>,
+    /// Which volume booted, and what settled it.
+    pub boot: String,
+    /// The attachment identity of the device that booted, where one did.
+    pub boot_attachment: Option<String>,
+    /// The operating system that booted, by its stable spelling —
+    /// `"ms-dos"`, `"pc-dos"`, `"freedos"`.
+    pub boot_system: Option<String>,
+    /// Whether the machine's own declaration settled which device booted
+    /// rather than the evidence. A declaration is configuration, never
+    /// evidence.
+    pub boot_declared: bool,
+    /// What the version sources settled: `"settled"`, `"undetermined"` or
+    /// `"unstated"`.
+    pub boot_version_state: Option<String>,
+    /// The settled version, as `(major, minor)`, or `None` where the
+    /// sources disagreed or none spoke.
+    pub boot_version: Option<(u8, u8)>,
+    /// Every volume the machine holds, lettered or not.
+    pub volumes: Vec<MachineVolume>,
+    /// Every letter the machine had a drive at, in letter order.
+    pub drives: Vec<DriveMapping>,
+    /// The rule applied, what it was applied to, and what was read to
+    /// choose it. **This is not evidence.**
     pub provenance: Vec<String>,
 }
 
-impl DriveMap {
-    /// Mirrors one composed mapping. Both composers — the asserted
-    /// machine and the machine that reads its own device set — answer
-    /// with the same records, because they answered with the same core
-    /// type.
-    fn new(map: &remanence::DriveMap) -> Self {
+impl MachineReport {
+    fn new(report: &remanence::MachineReport) -> Self {
+        let (boot, boot_attachment, boot_system, boot_declared, version_state, version) =
+            match &report.boot {
+                remanence::BootOutcome::Booted {
+                    attachment,
+                    installation,
+                    declared,
+                } => (
+                    "booted".to_owned(),
+                    Some(attachment.clone()),
+                    Some(installation.kernel.name().to_owned()),
+                    *declared,
+                    Some(installation.version.name().to_owned()),
+                    match installation.version {
+                        remanence::DosVersion::Settled { major, minor } => Some((major, minor)),
+                        _ => None,
+                    },
+                ),
+                remanence::BootOutcome::Ambiguous { .. } => {
+                    ("ambiguous".to_owned(), None, None, false, None, None)
+                }
+                remanence::BootOutcome::NothingBootable => {
+                    ("nothing-bootable".to_owned(), None, None, false, None, None)
+                }
+            };
+
         Self {
-            applied_rules: map
-                .applied_rules
+            machine: report.machine.clone(),
+            disks: report
+                .disks
                 .iter()
-                .map(|rule| rule.name().to_owned())
+                .map(|disk| MachineDisk {
+                    attachment: disk.attachment.clone(),
+                    device_type: disk.device_type.clone(),
+                    family: disk.family.clone(),
+                    has_report: disk.report.is_some(),
+                    note: disk.note.clone(),
+                })
                 .collect(),
-            mappings: map
-                .mappings
+            boot,
+            boot_attachment,
+            boot_system,
+            boot_declared,
+            boot_version_state: version_state,
+            boot_version: version,
+            volumes: report
+                .volumes()
+                .iter()
+                .map(|volume| MachineVolume {
+                    attachment: volume.attachment.clone(),
+                    volume: volume.volume.value(),
+                    letter: volume.letter.map(|letter| letter.to_string()),
+                })
+                .collect(),
+            drives: report
+                .drives
                 .iter()
                 .map(|mapping| {
-                    let (device, volume, phantom_of, reason) = match &mapping.outcome {
-                        remanence::LetterOutcome::Volume { device, volume } => {
-                            (Some(*device), Some(volume.value()), None, None)
-                        }
-                        remanence::LetterOutcome::DeclaredDevice { device } => {
-                            (Some(*device), None, None, None)
+                    let (attachment, volume, phantom_of, reason) = match &mapping.outcome {
+                        remanence::LetterOutcome::Volume { attachment, volume } => (
+                            Some(attachment.clone()),
+                            Some(volume.value()),
+                            None,
+                            None,
+                        ),
+                        remanence::LetterOutcome::OpticalDrive { placed_by } => {
+                            (None, None, None, Some(placed_by.clone()))
                         }
                         remanence::LetterOutcome::Phantom { of } => {
                             (None, None, Some(of.to_string()), None)
@@ -801,35 +923,41 @@ impl DriveMap {
                     DriveMapping {
                         letter: mapping.letter.to_string(),
                         outcome: mapping.outcome.name().to_owned(),
-                        device_kind: device.map(|device| device.kind().to_owned()),
-                        device_index: device.map(remanence::MachineDevice::index),
+                        attachment,
                         volume,
                         phantom_of,
                         reason,
                     }
                 })
                 .collect(),
-            provenance: map.provenance.clone(),
+            provenance: report.provenance.clone(),
         }
     }
 }
 
 #[pymethods]
-impl DriveMap {
-    /// What this letter names, or `None` where the machine had no drive at
-    /// it. `"C"` and `"c"` ask the same question.
+impl MachineReport {
+    /// What this letter names, or `None` where the machine had no drive
+    /// at it. `"C"`, `"c"` and `"C:"` ask the same question.
     fn letter(&self, letter: &str) -> Option<DriveMapping> {
         let wanted = letter.trim_end_matches(':').to_uppercase();
-        self.mappings
+        self.drives
             .iter()
             .find(|mapping| mapping.letter == wanted)
             .cloned()
     }
 
+    /// The volume identity this letter names, or `None` where the letter
+    /// names no volume — undetermined, a phantom, an optical drive, or a
+    /// letter the machine has no drive at.
+    fn volume_at(&self, letter: &str) -> Option<u64> {
+        self.letter(letter).and_then(|mapping| mapping.volume)
+    }
+
     /// How many letters the rules established — the count that excludes
     /// every undetermined one.
     fn established_count(&self) -> usize {
-        self.mappings
+        self.drives
             .iter()
             .filter(|mapping| mapping.outcome != "undetermined")
             .count()
@@ -837,174 +965,11 @@ impl DriveMap {
 
     fn __repr__(&self) -> String {
         format!(
-            "DriveMap(applied_rules={:?}, letters={})",
-            self.applied_rules,
-            self.mappings.len()
+            "MachineReport(machine={:?}, boot={:?}, letters={})",
+            self.machine,
+            self.boot,
+            self.drives.len()
         )
-    }
-}
-
-enum AssertedDevice {
-    Floppy {
-        slot: u32,
-        report: remanence::DiskReport,
-    },
-    FixedDisk {
-        order: u32,
-        report: remanence::DiskReport,
-    },
-    CdRom {
-        order: u32,
-        driver_letter: Option<char>,
-    },
-}
-
-/// The machine facts a caller asserts, and the composer that maps DOS
-/// drive letters over them.
-///
-/// A DOS machine persists no drive-letter map: its letters were assigned
-/// at boot by a rule over the machine's own configuration, and nothing on
-/// the disks records the result. So this composes the mapping from one
-/// named assignment rule and the facts asserted here — medium, slot and
-/// attachment order — over the inspection reports the caller already
-/// holds. It opens no artifact, and every report stays the caller's.
-#[pyclass(module = "remanence")]
-pub struct DosMachine {
-    devices: Vec<AssertedDevice>,
-    conditions: Vec<remanence::ResidentCondition>,
-}
-
-impl DosMachine {
-    /// Rebuilds the core machine over the stored facts. Every rule about
-    /// what may be asserted lives in the core, so the assertions are
-    /// replayed through it rather than re-checked here.
-    fn build(&self) -> remanence::Result<remanence::DosMachine<'_>> {
-        let mut machine = remanence::DosMachine::new();
-        for device in &self.devices {
-            match device {
-                AssertedDevice::Floppy { slot, report } => machine.assert_floppy(*slot, report)?,
-                AssertedDevice::FixedDisk { order, report } => {
-                    machine.assert_fixed_disk(*order, report)?
-                }
-                AssertedDevice::CdRom {
-                    order,
-                    driver_letter,
-                } => machine.assert_cdrom(*order, *driver_letter)?,
-            }
-        }
-        for condition in &self.conditions {
-            machine.declare(*condition);
-        }
-        Ok(machine)
-    }
-
-    /// Adds a fact and keeps it only if the core accepts it, so a refused
-    /// assertion never half-lands.
-    fn assert_device(&mut self, device: AssertedDevice) -> PyResult<()> {
-        self.devices.push(device);
-        match self.build() {
-            Ok(_) => Ok(()),
-            Err(error) => {
-                self.devices.pop();
-                Err(to_py_err(error))
-            }
-        }
-    }
-}
-
-#[pymethods]
-impl DosMachine {
-    /// A machine with nothing asserted about it yet.
-    #[new]
-    fn new() -> Self {
-        Self {
-            devices: Vec::new(),
-            conditions: Vec::new(),
-        }
-    }
-
-    /// Asserts that the medium `report` inspects occupies floppy slot
-    /// `slot` — 0 being `A:`. DOS letters two floppy slots, so a slot
-    /// above 1 is refused by name, as is a slot already asserted.
-    fn assert_floppy(&mut self, slot: u32, report: &DiskReport) -> PyResult<()> {
-        self.assert_device(AssertedDevice::Floppy {
-            slot,
-            report: report.source.clone(),
-        })
-    }
-
-    /// Asserts that the medium `report` inspects is the fixed disk
-    /// attached at `order` — 0 being the first attached, which is the
-    /// order DOS assigned letters in.
-    fn assert_fixed_disk(&mut self, order: u32, report: &DiskReport) -> PyResult<()> {
-        self.assert_device(AssertedDevice::FixedDisk {
-            order,
-            report: report.source.clone(),
-        })
-    }
-
-    /// Asserts a CD-ROM drive at attachment order `order`. `letter` is
-    /// where the caller declares the resident driver placed it; nothing on
-    /// the disks records that, so an undeclared CD-ROM takes no letter
-    /// rather than a guessed one.
-    #[pyo3(signature = (order, *, letter = None))]
-    fn assert_cdrom(&mut self, order: u32, letter: Option<&str>) -> PyResult<()> {
-        let driver_letter = match letter {
-            None => None,
-            Some(letter) => {
-                let mut letters = letter.chars();
-                match (letters.next(), letters.next()) {
-                    (Some(letter), None) => Some(letter),
-                    _ => {
-                        return Err(categorized_py_err(
-                            remanence::ErrorCategory::Unsupported,
-                            &format!(
-                                "'{letter}' is not a drive letter; one is a \
-                                 single letter A through Z"
-                            ),
-                        ));
-                    }
-                }
-            }
-        };
-        self.assert_device(AssertedDevice::CdRom {
-            order,
-            driver_letter,
-        })
-    }
-
-    /// Declares a runtime condition outside every claimed rule, by its
-    /// stable spelling: `"lastdrive=<letter>"`, `"subst"`, `"join"`,
-    /// `"assign"`, `"block-device-driver"`, `"network-redirector"`. The
-    /// letters it could have changed come back undetermined.
-    fn declare_condition(&mut self, condition: &str) -> PyResult<()> {
-        let condition = remanence::ResidentCondition::parse(condition).map_err(to_py_err)?;
-        if !self.conditions.contains(&condition) {
-            self.conditions.push(condition);
-        }
-        Ok(())
-    }
-
-    /// Composes the mapping. `rule` names the variant the machine ran —
-    /// one of `dos_assignment_rules()` — or is `None` where the caller
-    /// states none, in which case every claimed rule is applied and a
-    /// letter they disagree on comes back undetermined rather than settled
-    /// by choosing the most common one.
-    #[pyo3(signature = (rule = None))]
-    fn compose(&self, rule: Option<&str>) -> PyResult<DriveMap> {
-        let rule = rule
-            .map(remanence::DosAssignmentRule::from_name)
-            .transpose()
-            .map_err(to_py_err)?;
-        let map = self
-            .build()
-            .and_then(|machine| machine.compose(rule))
-            .map_err(to_py_err)?;
-        Ok(DriveMap::new(&map))
-    }
-
-    fn __repr__(&self) -> String {
-        format!("DosMachine(devices={})", self.devices.len())
     }
 }
 
@@ -2066,26 +2031,54 @@ impl Machine {
             .map_err(to_py_err)
     }
 
-    /// Composes this machine's DOS drive-letter mapping from its **own
-    /// device set**, reading attachment order from the order its devices
-    /// were added rather than from an assertion (P32, P35).
+    /// Reads this machine: every device, what the medium in each turned
+    /// out to be, which one it booted, and the drive letters its
+    /// operating system gave (P32, P35).
     ///
-    /// `rule` is a claimed rule's name, or `None` to apply every claimed
-    /// rule and leave a letter they disagree on undetermined. Families no
-    /// claimed rule letters are passed over by family, and the mapping's
+    /// **The caller states the machine and nothing else.** Which system
+    /// is installed, which volume boots, and what its startup files
+    /// declared are all read from the disks the machine holds. Families
+    /// no claimed rule letters are passed over by family, and the
     /// provenance says which.
-    #[pyo3(signature = (rule = None))]
-    fn compose_dos_letters(&self, rule: Option<&str>) -> PyResult<DriveMap> {
-        let rule = rule
-            .map(remanence::DosAssignmentRule::from_name)
-            .transpose()
-            .map_err(to_py_err)?;
+    fn inspect(&self) -> PyResult<MachineReport> {
         let mut session = self.lock();
-        let map = self
-            .get(&mut session)?
-            .compose_dos_letters(rule, &[])
-            .map_err(to_py_err)?;
-        Ok(DriveMap::new(&map))
+        let report = self.get(&mut session)?.inspect().map_err(to_py_err)?;
+        Ok(MachineReport::new(&report))
+    }
+
+    /// Declares which device this machine's firmware booted, overriding
+    /// what the disks make look bootable.
+    ///
+    /// This is the one machine fact no artifact holds: a stopped
+    /// machine's host set its boot order, so declaring it says "the
+    /// firmware booted something other than the default". It is
+    /// configuration, and a report marks it as such rather than as
+    /// evidence. An attachment this machine does not hold is refused by
+    /// name.
+    fn declare_boot_device(&self, attachment: &str) -> PyResult<()> {
+        let mut session = self.lock();
+        let mut machine = self.get(&mut session)?;
+        let Some(id) = machine
+            .attachments()
+            .into_iter()
+            .find(|id| id.to_string() == attachment)
+        else {
+            return Err(categorized_py_err(
+                remanence::ErrorCategory::NotFound,
+                &format!(
+                    "no device is attached at {attachment}, so this machine \
+                     cannot be declared to boot it"
+                ),
+            ));
+        };
+        machine.declare_boot_device(id).map_err(to_py_err)
+    }
+
+    /// Withdraws a declared boot device, returning this machine to the
+    /// evidence on its own disks. Answers whether one had been declared.
+    fn clear_boot_device(&self) -> PyResult<bool> {
+        let mut session = self.lock();
+        Ok(self.get(&mut session)?.clear_boot_device())
     }
 
     /// This machine's attachment identities, in slot-fill order — the
@@ -3077,7 +3070,6 @@ fn disk_report(report: remanence::DiskReport) -> DiskReport {
                 issues: issues(&filesystem.issues),
             })
             .collect(),
-        source: report,
     }
 }
 
@@ -5315,8 +5307,9 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StorageSpace>()?;
     m.add_class::<File>()?;
     m.add_class::<FileSource>()?;
-    m.add_class::<DosMachine>()?;
-    m.add_class::<DriveMap>()?;
+    m.add_class::<MachineReport>()?;
+    m.add_class::<MachineDisk>()?;
+    m.add_class::<MachineVolume>()?;
     m.add_class::<DriveMapping>()?;
     m.add_class::<DosAssignmentRule>()?;
     m.add_function(wrap_pyfunction!(assurance_conditions, m)?)?;

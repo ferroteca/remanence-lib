@@ -131,10 +131,10 @@ fn the_convenience_adds_the_declared_drive_and_loads_the_medium() {
 #[test]
 fn a_format_recording_several_devices_refuses_by_name_toward_the_declaration() {
     // P3: a declaration nobody makes is a refusal, not a guess. Nothing
-    // in a raw image says which hard drive wrote it, so discovery
-    // reports what the artifact is and asserts no device — and every
-    // path that would need one refuses, naming the types a declaration
-    // may state.
+    // in a raw image says which drive wrote it — not even which family,
+    // bytes belonging to none — so discovery reports what the artifact
+    // is and asserts no device, and every path that would need one
+    // refuses, naming the types a declaration may state.
     let image = write_raw("no-declaration");
     let mut session = Session::new();
 
@@ -150,8 +150,8 @@ fn a_format_recording_several_devices_refuses_by_name_toward_the_declaration() {
             .iter()
             .map(|device| device.id())
             .collect::<Vec<_>>(),
-        vec!["mbr-sector-hd", "mbr-block-hd"],
-        "and the format says which declarations it accepts"
+        vec!["mbr-sector-hd", "mbr-block-hd", "sector-floppy"],
+        "and the format says which declarations it accepts, across families"
     );
     assert_eq!(
         discovery
@@ -232,7 +232,7 @@ fn a_format_recording_several_devices_refuses_by_name_toward_the_declaration() {
         .load_media(
             open_read(&image),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )

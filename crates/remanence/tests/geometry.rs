@@ -152,7 +152,7 @@ fn pool(source: std::fs::File, format: Format) -> (Session, MediaId) {
 
 fn raw_sector_hd() -> Format {
     Format::Raw {
-        device: HardDrive::MbrSector,
+        device: HardDrive::MbrSector.into(),
         block_bytes: 512,
     }
 }
@@ -439,7 +439,7 @@ fn the_loads_own_block_size_is_a_source_and_disagreeing_with_the_table_settles_n
     let (session, id) = pool(
         open_read(&path),
         Format::Raw {
-            device: HardDrive::MbrSector,
+            device: HardDrive::MbrSector.into(),
             block_bytes: 1_024,
         },
     );
@@ -531,7 +531,7 @@ fn a_block_addressed_drive_has_no_cylinder_or_head_to_be_told() {
     let (mut session, id) = pool(
         open_write(&path),
         Format::Raw {
-            device: HardDrive::MbrBlock,
+            device: HardDrive::MbrBlock.into(),
             block_bytes: 512,
         },
     );

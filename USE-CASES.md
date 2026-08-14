@@ -58,8 +58,8 @@ reading where nothing declares one, and what answers is the one type
 carrying file verbs; a path within it names the file. It states the
 volume identity this disk's inspection report issued, so the volume I
 worked through and the volume I reported are the same one. Where the
-guest was DOS, U22's composer maps that same volume identity to the
-drive letter I show a user. All of
+guest was DOS, asking the machine to read itself maps that same volume
+identity to the drive letter I show a user. All of
 this without booting the guest and without any external helper
 process: the library does
 the format work itself. Reading never changes the image. Writing is
@@ -156,8 +156,8 @@ if let Err(error) = fat.write_file("OUT/report.2026.txt", &bytes) {
 
 My automation layer's drive reporting runs on host-side facts about a
 stopped machine's disk images, and this library is where those facts come
-from (the guest's own drive letters are U22's mapping, over the same
-facts). For each disk — qcow2, VDI or
+from (the guest's own drive letters come from asking the machine to read
+itself, over these same disks). For each disk — qcow2, VDI or
 raw — one inspection answers, keeping each fact at the seam that owns
 it rather than flattening them into one snapshot.
 
@@ -253,8 +253,8 @@ a medium is session state, and only the insert crosses. Ejecting severs
 that link and leaves the disk in the pool with its claim and its
 buffered writes intact; releasing the machine takes the configuration
 down and never the media. The same device set, in the same order, is
-what U22's composer reads to answer which letter this machine's DOS
-would have shown — I assert nothing twice. And every fact above comes
+what the machine reads to answer which letter its own DOS would have
+shown — I assert nothing twice. And every fact above comes
 off the image alone: nothing boots, and reading changes no byte.
 
 I need what the disk turned out to be, *stated*: blank, a recognized
@@ -281,8 +281,8 @@ I need two counts, not one: how many volumes composed, and how many
 carry a filesystem the host read. A disk holding none is a disk I show as
 holding none, and an unreadable volume stays in the report rather than
 vanishing to keep that number right. Which volume a guest's drive letter
-named is not a count and not mine to derive: that is U22's composer, over
-a rule this library owns. A disk that cannot be read answers with the reason it could not
+named is not a count and not mine to derive: that is the machine's own
+reading, over a rule this library owns. A disk that cannot be read answers with the reason it could not
 be read, never the symptom.
 
 For one disk layout, an identity names exactly the same region, volume,
@@ -346,98 +346,6 @@ image identifies as the container it is, qcow2 or VDI. This entry is
 about the attached medium reaching through the chain — the write
 half is where the consumer's stopped-machine workflow lives today
 and cannot move here without it.)*
-
-## U22 — I present a stopped DOS machine's drives without reimplementing DOS
-
-I automate a stopped DOS machine from the host, and I hold its
-configuration: which image sits in which floppy slot, which images are its
-hard disks and in what order they are attached, and whether a CD-ROM is
-present. I show a user the drives that machine's DOS would have
-presented — `A:`, `C:`, `D:` — each with the label DOS would have shown,
-and then write `A:\OUT\X.TXT` into one of them.
-
-The facts I own are machine configuration: medium, slot, and attachment
-order. Every other fact in that sentence is a rule of the format or of DOS
-— whether a volume has a label at all, what a file may be called, and which
-letter a volume takes — and each is read from the disk by the same library
-that reads the disk. All three are the library's: I ask a volume for its
-label and get one answer, I hand over the name I have and get back the rule
-any refusal broke, and I assert my machine facts and get back the mapping.
-
-### The label is the filesystem's own reading
-
-I ask a volume for its label and get one answer: the label, or the fact
-that it has none. FAT spells "no label was given" as `NO NAME`, so that
-string is absence, not a label, and the distinction is made where the
-format is known rather than by a string comparison in my code.
-
-The two places FAT records a label — the boot record's field and the root
-directory's volume-ID entry — can disagree, and choosing between them is a
-policy about a format, not about my application. The answer applies that
-policy; both readings stay beside it as evidence, so a caller with a
-different need can see the literal bytes without opening a sector.
-
-### The name is the file-access seam's own rule
-
-A read matches a name the way DOS matched it — without regard to case —
-and gives me back the name as stored, so what I show the user is what the
-directory holds. A write validates and normalizes at the same seam: I hand
-over `out\x.txt` and the library stores `X.TXT`, because uppercasing is
-part of what writing a DOS name means and doing it in my code is doing the
-library's job badly.
-
-When a name cannot be a DOS name, the refusal names the rule it broke —
-too long a base, a second dot, a character the format excludes, a reserved
-device name — so I can tell the user which rule, in their words, and can
-branch on the rule without reading a sentence. A generic "invalid name"
-leaves me guessing, and guessing here means reimplementing the rule set to
-produce a message.
-
-### The letter is a mapping derived from a declared rule
-
-I supply the machine facts — medium, slot, attachment order — and the
-library returns the mapping: which volume each drive letter names. It
-returns letters it can establish and says plainly which it cannot, rather
-than filling the gap with an order that happens to look right. A machine
-with one floppy still has two floppy letters, the second being the phantom
-drive rather than a second volume; a machine with none has neither.
-
-This is not the Windows case. Windows persists its own mapping, and reading
-that mapping is a separate journey; DOS persists nothing, so the mapping is
-a *rule* applied to machine facts, and the rule is what has to be named. The
-answer therefore states which assignment rule produced it and treats what
-the rule cannot settle — a resident driver's letters, a `LASTDRIVE`
-ceiling, an assignment a DOS variant makes differently — as undetermined
-rather than assumed. I state which DOS the machine ran and the mapping is
-settled by that variant's rule; I state none and a letter the claimed
-variants disagree on comes back undetermined with each rule's answer in the
-reason, never averaged into one that is nobody's.
-
-I address the result by the identity the report gave me, not by the letter:
-the letter is what I show a user, and the identity is what I pass back to
-the library.
-
-### What I keep
-
-Parsing a guest address is mine: `A:\OUT\X.TXT` splits into a letter and
-path segments because the address is my user's input, not the disk's
-content. Naming which image occupies which slot is mine, because it is a
-fact about the machine I configured and not evidence in any image.
-Restating a named refusal in my own words is mine. Everything between those
-two ends belongs to the library.
-
-*(Deliberately outside this entry: booting or emulating the guest, DOS
-itself, its drivers or its firmware; long file names, VFAT and FAT32, this
-journey being the 8.3 namespace; reconstructing a mapping a resident
-driver, `SUBST`, `JOIN`, `ASSIGN` or a network redirector would have
-changed at runtime, or inferring one from a `CONFIG.SYS` the images may not
-even hold; claiming every DOS variant's assignment order at once, the
-applied rule being a named claim like any other (P3) and disagreement
-between variants being reported rather than averaged; inferring slot or
-attachment order from filename, array position, or image content; guessing
-a label from a directory name, a filesystem kind, or a file inside the
-volume; and repairing a name the caller supplied, which is refused rather
-than truncated, transliterated, or renamed to fit.)*
 
 ## The media-first walks
 

@@ -18,6 +18,86 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Changed
+
+- **A machine reads its own DOS, and the caller stops asserting one.**
+  Building a machine, adding drives and loading media into them is now
+  the whole of what a caller states. `MachineView::inspect()` answers
+  with the machine: every device and what the medium in it turned out to
+  be, which device booted, the operating system installed on the volume
+  it booted, and the drive letters that system gave.
+
+  **The facts that used to be asserted are read**, because DOS persists
+  every one of them. The kernel files in a root directory say which DOS
+  it is — `IO.SYS` with `MSDOS.SYS` for MS-DOS, `IBMBIO.COM` with
+  `IBMDOS.COM` for PC DOS, `KERNEL.SYS` for FreeDOS, the *set* being the
+  evidence rather than any one file. The version is settled the way
+  geometry is: from ordered sources, each kept with where it was taken,
+  `Undetermined` where two disagree and `Unstated` where none spoke.
+  `CONFIG.SYS` and `AUTOEXEC.BAT` — or `FDCONFIG.SYS` and `FDAUTO.BAT`,
+  which FreeDOS prefers — declare `LASTDRIVE`, the block-device drivers,
+  the network redirectors, and `SUBST`, `JOIN` and `ASSIGN`. An
+  `MSCDEX /L:` line places an optical drive exactly, rather than leaving
+  every letter in doubt.
+
+  **One fact stays the caller's, because no disk holds it**: which
+  device the firmware booted. `MachineView::declare_boot_device` is
+  where a stopped machine's host states that its BIOS booted something
+  other than the default, and a report marks it as configuration rather
+  than as evidence. Declaring nothing leaves the era's firmware order to
+  settle it — the first attached bootable device — with the partition
+  table's own boot flag settling a tie inside one disk.
+
+  **FreeDOS is claimed** and letters as MS-DOS 5 and 6 do, by its
+  kernel's documented default. Its order is a setting patched into
+  `KERNEL.SYS` by `SYS CONFIG` rather than declared in any configuration
+  file, so this release does not read it and a recognition says so
+  rather than leaving the gap silent.
+
+  **Removed with the assertions**: `DosMachine` and its `assert_floppy`,
+  `assert_fixed_disk`, `assert_cdrom` and `declare` verbs; `DriveMap`;
+  `MachineDevice`; `MachineView::compose_dos_letters`; the
+  `LetterOutcome::DeclaredDevice` outcome, replaced by `OpticalDrive`;
+  and in the C ABI the eight `remanence_dos_machine_*` functions,
+  `remanence_machine_compose_dos_letters` and the sixteen
+  `remanence_drive_map_*` accessors. In Python, `DosMachine` and
+  `DriveMap` go the same way. What replaces them is
+  `remanence_machine_inspect` with the `remanence_machine_report_*`
+  accessors, `remanence::MachineReport` in C++, and `Machine.inspect()`
+  in Python, each answering the same reading.
+
+  The claimed assignment rules stay an enumerated claim (P3) — a DOS
+  outside MS-DOS 4.0 through 6.22 is refused by name rather than served
+  by the nearest rule — and what a report applied is named in its
+  provenance, which remains provenance and not evidence.
+
+- **Drive letters go to the bootable partition, not the first one.**
+  Both claimed rules letter a disk's *bootable* primary DOS partition
+  ahead of the rest, falling back to the first row only where the table
+  flags none. This is a correctness fix independent of the reshaping
+  above: on a disk whose active partition is not its first primary, the
+  previous behaviour handed `C:` to a volume DOS never gave it to, and
+  said nothing about having done so. `RegionInfo` gained
+  `declared_active` — the boot flag exactly as the table records it — so
+  the evidence the rule now turns on is visible in the report as well.
+
+- **A raw image may be declared as any device it could have been
+  recorded by, not only a hard drive.** `Format::Raw` carries a
+  `DeviceType`, so a floppy image loads into a floppy drive and a
+  machine's `A:` and `B:` are drives it holds rather than facts asserted
+  beside it. Bytes record no ecosystem, which is why the raw reading's
+  device list reaches across families while the container formats' do
+  not.
+
+  **A block medium's article now follows its declared device**, falling
+  back to the format's own where nothing declares one. Every existing
+  pairing is unchanged — each claimed hard drive is served the same
+  logical-block article the block formats declare — and what it fixes is
+  a floppy image being enrolled as a logical-block medium and then
+  refused by the drive it was loaded for. `From<HardDrive>` and
+  `From<FloppyDrive>` conversions into `DeviceType` land beside the ones
+  `DeviceSlot` already had.
+
 ### Added
 
 - **C++ consumers get an idiomatic header, derived from the C ABI.**

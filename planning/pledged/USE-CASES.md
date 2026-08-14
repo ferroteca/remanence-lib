@@ -120,16 +120,35 @@ therefore cannot claim which installed operating system the stopped machine
 would actually have booted.
 
 Instead, Remanence reports every supported operating-system installation it
-can establish from the supplied storage. When more than one exists, caller
-selection substitutes for the missing firmware-and-bootloader decision. That
-selection is recorded as an assertion in the result's provenance; it is not
-promoted into evidence recovered from the images.
+can establish from the supplied storage, and **settles which one booted
+wherever the evidence and the era's own claimed rules settle it**. Where
+they do not, caller selection substitutes for the missing
+firmware-and-bootloader decision. Either way the result records which of
+the two answered: a selection is an assertion in the result's provenance
+and is not promoted into evidence recovered from the images.
 
-The `hdd0` placement, an MBR active flag, an EFI System Partition, EFI boot
-files, or a bootloader configuration may help identify and describe
-candidates. None selects one candidate on the caller's behalf. The singleton
-convenience is safe only because there is no competing candidate in the
-report, and it still makes no claim about historical boot behavior.
+**A caller may override the answer, and that override is machine
+configuration.** A stopped machine's host set its boot order — an emulator
+declares it in a blueprint and can boot a fixed disk with a bootable floppy
+still in the slot — so declaring the boot device is how a caller says the
+firmware booted something other than the default. It governs over the
+evidence, and the result marks it as declared rather than as read.
+
+An MBR active flag, an EFI System Partition, EFI boot files, or a
+bootloader configuration are evidence about which installation booted and
+may settle it where a claimed rule says how. What none of them does is
+select an installation the caller asked to choose: where two candidates
+remain evidenced and no claimed rule distinguishes them, the report names
+both with their evidence and composes nothing. The `hdd0` placement is not
+that kind of evidence at all for the systems whose firmware order is
+unmodelled; where an era's order *is* a claimed rule, applying it is
+applying a rule and the result says which rule it applied.
+
+This softening is deliberate and narrow. It does not claim BIOS/UEFI
+NVRAM, one-time overrides, chain-loading or a bootloader menu's saved
+selection, all of which remain outside this entry. It claims only that an
+era whose boot order is simple enough to state as a rule may have that
+rule stated, named, and applied like any other.
 
 ### Discovery stops where evidence stops
 
@@ -260,7 +279,11 @@ current single-disk surfaces continue to bind.
 - Inferring an omitted `hddN` placement from array order, filename, image
   contents, or the selected installation.
 - Treating an EFI System Partition, active MBR partition, Unix `/boot`, or
-  first disk in the supplied array as the installation selector.
+  first disk in the supplied array as the installation selector **where no
+  claimed rule says it is one**. Where an era's boot order is itself a
+  claimed rule, applying that rule is not guessing, and the result names
+  the rule it applied; what stays excluded is reaching for one of these as
+  a tie-breaker no rule authorized.
 - Inventing Windows drive letters or Unix mount points from partition order,
   filesystem labels, directory names, or host conventions.
 - Live host attachment, concurrent mutation, network shares, removable media,

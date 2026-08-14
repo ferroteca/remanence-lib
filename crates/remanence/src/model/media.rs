@@ -38,7 +38,7 @@ use crate::filesystem::catalog::FilesystemAdapter;
 use crate::filesystem::fat::FatEntry;
 use crate::flux::c1541::presentation::{C1541Bitstream, C1541Bytestream};
 use crate::flux::c1541::sectors::C1541Sectors;
-use crate::image::adapters::RECORDED_HARD_DRIVES;
+use crate::image::adapters::{RAW_RECORDED_DEVICES, RECORDED_HARD_DRIVES};
 use crate::io::device::AccessMode;
 use crate::io::source::FileSource;
 use crate::model::assurance::Assurance;
@@ -89,7 +89,10 @@ pub enum Format {
     ///
     /// The block size is the caller's too: a raw image records no
     /// addressable unit, and bytes have no block meaning without one.
-    Raw { device: HardDrive, block_bytes: u64 },
+    Raw {
+        device: DeviceType,
+        block_bytes: u64,
+    },
     /// QEMU copy-on-write, versions 2 and 3, backing chains composed.
     Qcow2 { device: HardDrive },
     /// VirtualBox disk image, differencing chains composed.
@@ -188,7 +191,7 @@ static CLAIMED: [FormatClaim; 8] = [
     FormatClaim {
         id: "raw",
         name: "Raw disk image",
-        devices: &RECORDED_HARD_DRIVES,
+        devices: &RAW_RECORDED_DEVICES,
         block_bytes: true,
         collection: false,
     },
@@ -290,7 +293,8 @@ impl Format {
     /// grammar — an archive was recorded by no device.
     pub fn device_type(self) -> Option<DeviceType> {
         match self {
-            Self::Raw { device, .. } | Self::Qcow2 { device } | Self::Vdi { device } => {
+            Self::Raw { device, .. } => Some(device),
+            Self::Qcow2 { device } | Self::Vdi { device } => {
                 Some(DeviceType::HardDrive(device))
             }
             Self::H8d => Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
@@ -372,6 +376,25 @@ impl Format {
             (None, Some(bare)) => Some(bare),
             (given, _) => given,
         };
+        // A raw reading records no ecosystem, so it takes any device the
+        // catalog says it records — the class check the container formats
+        // need does not apply, and the pairing check below is what
+        // narrows it to the recorded set.
+        let any_device = |device: Option<DeviceType>| -> Result<DeviceType> {
+            device.ok_or_else(|| {
+                Error::unsupported(format!(
+                    "the {} records more than one device type, so a load \
+                     declares which: it records {}",
+                    claim.name,
+                    claim
+                        .devices
+                        .iter()
+                        .map(|device| device.id())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })
+        };
         let hard_drive = |device: Option<DeviceType>| -> Result<HardDrive> {
             match device {
                 Some(DeviceType::HardDrive(drive)) => Ok(drive),
@@ -428,7 +451,7 @@ impl Format {
 
         let declaration = match claim.id {
             "raw" => Self::Raw {
-                device: hard_drive(device)?,
+                device: any_device(device)?,
                 block_bytes: block_bytes.ok_or_else(|| {
                     Error::unsupported(
                         "a raw image records no addressable unit, so its \
@@ -1412,7 +1435,7 @@ mod tests {
     fn the_block_size_is_declared_where_and_only_where_it_is_recorded() {
         assert_eq!(
             Format::Raw {
-                device: hd(),
+                device: hd().into(),
                 block_bytes: 512
             }
             .block_bytes(),
@@ -1453,7 +1476,7 @@ mod tests {
         );
         for format in [
             Format::Raw {
-                device: hd(),
+                device: hd().into(),
                 block_bytes: 512,
             },
             Format::Qcow2 { device: hd() },

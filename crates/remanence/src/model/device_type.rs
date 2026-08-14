@@ -587,6 +587,18 @@ impl DeviceSlot {
 /// The receiver's slot prefix, stated once.
 const ARCHIVE_SLOT_PREFIX: &str = "arc";
 
+impl From<FloppyDrive> for DeviceType {
+    fn from(drive: FloppyDrive) -> Self {
+        Self::Floppy(drive)
+    }
+}
+
+impl From<HardDrive> for DeviceType {
+    fn from(drive: HardDrive) -> Self {
+        Self::HardDrive(drive)
+    }
+}
+
 impl From<DeviceType> for DeviceSlot {
     fn from(device: DeviceType) -> Self {
         Self::Recorded(device)

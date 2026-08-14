@@ -27,6 +27,7 @@ pub(crate) mod discovery;
 pub(crate) mod disk;
 pub(crate) mod geometry;
 pub(crate) mod machine;
+pub(crate) mod machine_report;
 pub(crate) mod media;
 pub(crate) mod media_profile;
 pub(crate) mod report;

@@ -250,6 +250,15 @@ pub struct RegionInfo {
     pub declared_placement: String,
     /// Whether the schema declares this region as data or as structure.
     pub role: RegionRole,
+    /// Whether the schema flags this region active — the boot flag,
+    /// exactly as it records it.
+    ///
+    /// It is a declared fact of the region like the type beside it, and
+    /// it is evidence about which volume a machine booted: the assignment
+    /// rules letter a disk's *bootable* primary ahead of the rest, and
+    /// which one that is is this flag's answer rather than a position in
+    /// the table.
+    pub declared_active: bool,
     /// The type value exactly as the schema records it.
     pub declared_type: u8,
     /// What that value *declares*, in a sentence fit to quote in a refusal
@@ -436,8 +445,8 @@ impl DiskReport {
     /// unrecognized volume stays in the report rather than vanishing to
     /// keep one number correct. It is a count and not a drive-letter
     /// rule — which volume a guest's letter named is
-    /// [`DosMachine`](crate::DosMachine)'s answer, over a rule this
-    /// library owns.
+    /// [`MachineView::inspect`](crate::MachineView::inspect)'s answer,
+    /// over a rule this library owns and a machine it reads.
     pub fn readable_filesystem_volume_count(&self) -> usize {
         self.filesystems
             .iter()

@@ -69,7 +69,7 @@ fn attach(
         .load_media(
             source,
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )?
@@ -1508,7 +1508,7 @@ fn an_empty_partition_table_inspects_as_a_schema_with_no_volumes() {
     std::fs::remove_file(&path).ok();
 }
 
-// The DOS 8.3 namespace at the file-access seam (U3, U22): what a read
+// The DOS 8.3 namespace at the file-access seam (U3): what a read
 // matches, what a write stores, and which rule a refused name broke.
 
 /// Returns the rule a refused name broke, insisting the refusal names one.

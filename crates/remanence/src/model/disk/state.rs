@@ -601,6 +601,7 @@ impl MediaState {
                 declared_number: partition.ordinal(),
                 declared_placement: partition.placement().to_owned(),
                 role: partition.role(),
+                declared_active: partition.active(),
                 declared_type: partition.type_byte().unwrap_or(0),
                 declared_type_reading: partition.type_reading().unwrap_or_default().to_owned(),
                 claimed: partition.is_claimed(),

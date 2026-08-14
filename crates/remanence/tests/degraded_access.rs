@@ -128,7 +128,7 @@ fn build_floppy(path: &Path) {
         .load_media(
             open_write(path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -194,7 +194,7 @@ fn truncated(tag: &str, afford: Afford) -> (PathBuf, Session, MediaId) {
         .load_media(
             source,
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -222,7 +222,7 @@ fn a_whole_source_is_verified_and_keeps_its_write_authority() {
         .load_media(
             open_write(&path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -472,7 +472,7 @@ fn a_source_too_short_for_the_leading_structures_says_so_and_still_inspects() {
         .load_media(
             open_read(&path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -585,7 +585,7 @@ fn contradictory_metadata_beneath_a_shortfall_is_refused_not_degraded() {
         .load_media(
             open_read(&path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -619,7 +619,7 @@ fn the_gate_is_narrow_and_claims_no_rule_beyond_the_raw_direct_volume() {
         .load_media(
             open_write(&path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )

@@ -20,7 +20,7 @@
 use std::path::PathBuf;
 
 use remanence::{
-    AttachmentId, DeviceSlot, DeviceType, DosAssignmentRule, EntryKind, ErrorCategory, FloppyDrive,
+    AttachmentId, DeviceSlot, DeviceType, EntryKind, ErrorCategory, FloppyDrive,
     Format, HardDrive, MediaId, Session,
 };
 
@@ -183,7 +183,7 @@ fn the_archive_slot_is_a_device_like_any_other() {
         .load_media(
             open_read(&image),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -205,16 +205,12 @@ fn the_archive_slot_is_a_device_like_any_other() {
     // And a namespace composer passes it over **by family**, which is
     // what makes the visibility harmless: an archive has no partition or
     // volume for an assignment rule to reach.
-    let map = session
-        .anonymous_mut()
-        .compose_dos_letters(Some(DosAssignmentRule::MsDos5), &[])
-        .expect("composes");
+    let report = session.anonymous_mut().inspect().expect("the machine reads");
     assert!(
-        map.provenance
-            .iter()
-            .any(|line| line.contains("passed over by family") && line.contains("arc0")),
+        report.disks.iter().any(|disk| disk.attachment == "arc0"
+            && disk.note.as_deref().is_some_and(|note| note.contains("bears a namespace"))),
         "the archive slot is passed over and said so: {:?}",
-        map.provenance
+        report.disks
     );
 
     drop(session);
@@ -234,7 +230,7 @@ fn a_medium_in_the_wrong_device_is_refused_naming_both_sides() {
         .load_media(
             open_read(&image),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )
@@ -598,7 +594,7 @@ fn a_file_on_a_volume_is_refused_as_an_artifact_by_name() {
         .load_media(
             open_write(&path),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )

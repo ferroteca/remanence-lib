@@ -63,7 +63,7 @@ fn load(
         .load_media(
             source,
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )?
@@ -256,7 +256,7 @@ fn attachment_order_is_each_machines_own_fact() {
         .load_media(
             open_read(&a),
             Format::Raw {
-                device: HardDrive::MbrSector,
+                device: HardDrive::MbrSector.into(),
                 block_bytes: 512,
             },
         )

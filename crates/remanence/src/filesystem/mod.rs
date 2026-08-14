@@ -78,6 +78,7 @@
 // machine's whole device set derives.
 pub(crate) mod catalog;
 pub(crate) mod cbm_dos;
+pub(crate) mod dos_install;
 pub(crate) mod dos_letters;
 pub(crate) mod dos_name;
 pub(crate) mod fat;

@@ -205,9 +205,11 @@ mod io;
 mod model;
 mod partition;
 
+pub use crate::filesystem::dos_install::{
+    DosInstallation, DosKernel, DosVersion, InstallRule, VersionReading, VersionSource,
+};
 pub use crate::filesystem::dos_letters::{
-    DosAssignmentRule, DosMachine, DriveMap, DriveMapping, LetterOutcome, MachineDevice,
-    ResidentCondition,
+    DosAssignmentRule, DriveMapping, LetterOutcome, ResidentCondition,
 };
 pub use crate::filesystem::dos_name::DosNameRule;
 pub use crate::filesystem::fat::FatKind;
@@ -238,6 +240,9 @@ pub use crate::model::geometry::{
 };
 pub use crate::model::machine::{Machine, MachineView, Session};
 pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
+pub use crate::model::machine_report::{
+    BootCandidate, BootOutcome, MachineDisk, MachineReport, MachineVolume,
+};
 pub use crate::model::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,

@@ -242,7 +242,17 @@ impl Recognition {
             cache_bytes,
             format: self.format,
             descriptor: self.descriptor,
-            media: self.descriptor.media,
+            // The article is the **declared device's**, not the
+            // format's: a raw image is bytes, and what article those
+            // bytes were recorded on is the device's own declaration.
+            // Where nothing declares a device the format's own article
+            // stands, which is every archive grammar. For every existing
+            // pairing the two agree — each claimed hard drive declares
+            // the same logical-block article the block formats do — so
+            // this changes only what a newly declarable device brings.
+            media: self
+                .device
+                .map_or(self.descriptor.media, |device| device.article_profile()),
             device: self.device,
             declared_sector_bytes: self.declared_sector_bytes,
             device_identity: DeviceIdentity::first(),

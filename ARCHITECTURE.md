@@ -73,7 +73,7 @@ never reused.
   `Identification` and the layer/layout types,
   `Assurance` and the outcome, condition and byte-range types beside it,
   `Error`/`ErrorCategory`/`Result` and the rule sets refusals name,
-  `DosMachine` and the drive-letter mapping it composes, and
+  `MachineReport` and the drive-letter mapping a machine reads, and
   the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo
   doc` output is a representation of it.
 - **S2 — The C ABI.** Every `remanence_*` symbol exported by
@@ -508,27 +508,40 @@ a storage graph, or by several mounted filesystems.
 
 A **namespace-mapping composer** *derives* the mapping the third form
 consumes, from composed volumes with their identities plus the machine
-facts its caller asserts, applying one named assignment rule. It opens
-nothing and takes reports the caller already holds. Producing a mapping
-and composing a namespace over it are separate acts: the mapping
-answers on its own, and a composer that can establish only part of one
-still answers with that part. Three constraints keep the derivation from
-becoming a guess:
+whose devices hold them, applying one named assignment rule. **What the
+caller states is the machine** — its devices, the order they attach, and
+the media in them — and every input to the rule is read from those
+media. Producing a mapping and composing a namespace over it are
+separate acts: the mapping answers on its own, and a composer that can
+establish only part of one still answers with that part. Three
+constraints keep the derivation from becoming a guess:
 
 - **The rule is an enumerated claim (P3).** The composer names the rule it
   applied, claims the system variants it implements and refuses the rest
   by name, and reports a mapping the claimed variants disagree on as
   undetermined rather than settling it by the more common rule.
-- **Evidence outranks a rule.** Where a system persists its own mapping,
-  that mapping governs. This form is for systems which persist nothing,
-  and never becomes a fallback for a persisted mapping that could not be
-  read.
-- **A derived mapping is not evidence.** The asserted facts and the
-  applied rule travel with the result as provenance, keeping a
-  caller-selected fact out of the evidence a seam carries (P4). Whatever
-  the rule cannot settle is undetermined at the granularity it failed to
-  establish, never filled from position, size, order, label, or which
-  volume happened to read cleanly.
+- **Evidence outranks a rule, including the rule's own inputs.** Where a
+  system persists its own mapping, that mapping governs. Where it
+  persists the *configuration the mapping was derived from* — which
+  system is installed, what it was told at startup — that configuration
+  is read rather than asserted, and a composer that asked its caller for
+  a fact recorded on the disk in front of it would be violating this
+  constraint rather than serving it. This form remains for systems which
+  persist no mapping, and never becomes a fallback for a persisted
+  mapping that could not be read.
+- **A derived mapping is not evidence.** The applied rule and what it was
+  applied to travel with the result as provenance, keeping a derivation
+  out of the evidence a seam carries (P4). Whatever the rule cannot
+  settle is undetermined at the granularity it failed to establish, never
+  filled from position, size, order, label, or which volume happened to
+  read cleanly.
+
+**One machine fact is no artifact's to hold, and it is asserted.** Which
+device a stopped machine's firmware booted is set by its host and
+recorded nowhere on its disks, so a caller may declare it; where none is
+declared, the era's own firmware order is a claimed rule like any other.
+A declaration governs over what the disks make look bootable, and travels
+into the result marked as configuration rather than as something read.
 
 The namespace view is not a disk representation and declares no image
 layer, media, geometry, partition layout, or volume semantics. Raw

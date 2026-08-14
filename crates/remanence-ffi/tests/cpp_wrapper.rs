@@ -54,6 +54,15 @@ fn an_authored_medium_makes_the_whole_journey() {
     group("authorship", &[]);
 }
 
+/// The machine reading through the wrapper: an owned report that frees
+/// itself, absences that stay empty optionals, and a boot declaration
+/// refused as a typed exception. The surface this replaced was never
+/// called through the wrapper at all.
+#[test]
+fn a_machine_reads_through_the_wrapper() {
+    group("machine", &[]);
+}
+
 #[test]
 fn a_session_owned_view_owns_nothing_itself() {
     group("views", &[]);

@@ -79,6 +79,20 @@ ABI, or Python module.
   all, and `MachineView`/`DeviceView` are the borrows that hold a node
   and the pool at once, since linking is the one act that crosses.
 
+  `machine_report.rs` is what the machine **answers**: `inspect()` over
+  the whole device set — each device and what the medium in it turned
+  out to be, which one booted, and the letters the booting system gave,
+  with a volume-first view beside the letter-first one. Everything in it
+  is read from the media the machine holds save one fact no artifact
+  holds, which is why `declare_boot_device` is the machine's own
+  configuration rather than an argument to a verb: a stopped machine's
+  host set its boot order, a declaration governs over what the disks
+  make look bootable, and the report marks it as declared. Where nothing
+  declares one the era's firmware order settles it — first attached
+  bootable device, with the partition table's boot flag settling a tie
+  inside one disk — and a tie nothing settles stays `Ambiguous` with
+  every candidate's evidence rather than being resolved by position.
+
   `storage_device.rs` is the **slot**: its attachment identity (`hdd0`),
   the acts that fill it (`add_device` on the machine view, then
   `insert`/`eject`, with an empty device first-class configuration, a
@@ -275,11 +289,25 @@ ABI, or Python module.
   matching one without regard to case, storing a caller's, and the
   seven-rule set a refusal names; `dos_letters.rs` the DOS drive-letter
   composer — P19's namespace-mapping form, which derives a mapping
-  rather than consuming one: the machine facts, asserted by the caller
-  or read from a machine's own device set in attachment order, the
-  variant-by-variant assignment rules it claims, the conditions it
-  refuses to model, and the mapping it answers with, undetermined
-  letters included; `hdos.rs` the HDOS directory lister and file
+  rather than consuming one: the variant-by-variant assignment rules it
+  claims (each lettering a disk's *bootable* primary ahead of the rest,
+  the first row standing only where the table flags none), the
+  conditions no rule models, and the mapping it answers with,
+  undetermined letters included. **It is crate-private and takes no
+  assertion** — the machine supplies its own devices in attachment
+  order, and `dos_install.rs` beside it is where the rule comes from:
+  DOS installation recognition, which is the seam that reads what DOS
+  persists. The kernel *set* in a root directory names the DOS (one file
+  of a pair recognizes nothing); the version is settled the way geometry
+  is, from ordered sources each kept with where it was taken, with
+  `Undetermined` where two disagree and `Unstated` where none spoke; and
+  the startup files each DOS actually reads — `FDCONFIG.SYS` ahead of
+  `CONFIG.SYS` for FreeDOS, first-one-present rather than merged — give
+  the conditions and the `MSCDEX /L:` placement. Its refusals are its
+  own enumerated set (`InstallRule`), and what it declines to read it
+  says out loud: FreeDOS's letter order lives inside `KERNEL.SYS` rather
+  than in any configuration file, and a recognition records that it was
+  not read; `hdos.rs` the HDOS directory lister and file
   extractor with the `Catalog` adapter over it, private behind the
   namespace node; and `cbm_dos.rs` the P18
   adapter at the top of the flux ladder — the directory CBM DOS wrote,
@@ -526,7 +554,7 @@ ABI, or Python module.
   handle. `planning/TASKS.md` is the pre-approved task queue: **agents
   do not add tasks on their own initiative, and ask before editing that
   file at all**; anyone may pick up what is already there.
-- **The vision is in force.** Use cases U1–U6, U22, U25, U26, U32, U33 and U34
+- **The vision is in force.** Use cases U1–U6, U25, U26, U32, U33 and U34
   (root [USE-CASES.md](USE-CASES.md)) and architectural principles
   (root [ARCHITECTURE.md](ARCHITECTURE.md)) are armed: every entry is
   met or honored by the code today, and a divergence is a bug. Triage

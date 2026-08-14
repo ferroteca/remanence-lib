@@ -874,6 +874,67 @@ void group_report(const char* path)
 
 } // namespace
 
+// The machine reading through the wrapper: what only the C++ surface can
+// be wrong about. The report is an owned handle that frees itself, an
+// absence stays an empty std::optional rather than becoming a zero, and a
+// refusal arrives as remanence::Error carrying its category.
+//
+// The surface this replaced was never called through the wrapper at all,
+// which is exactly how a hand-written wrapper falls behind unnoticed.
+void group_machine()
+{
+    remanence::Session session;
+    remanence::Machine machine = session.add_machine("pc");
+
+    // A machine holding nothing reads, and says nothing booted rather
+    // than refusing.
+    remanence::MachineReport report = machine.inspect();
+    CHECK(report.boot() == remanence::BootOutcome::NothingBootable,
+          "an empty machine claimed something booted");
+    CHECK(report.size() == 0, "an empty machine was given drive letters");
+    CHECK(report.volume_count() == 0, "an empty machine held a volume");
+    CHECK(report.disk_count() == 0, "an empty machine held a device");
+
+    // The identity crosses as an owned string, and an absence as an
+    // empty optional rather than an empty one.
+    std::optional<std::string> identity = report.machine();
+    CHECK(identity.has_value() && *identity == "pc",
+          "the report did not carry the machine's own identity");
+    CHECK(!report.boot_attachment().has_value(),
+          "a machine that booted nothing named a device");
+    CHECK(!report.boot_system().has_value(),
+          "a machine that booted nothing named a system");
+    CHECK(!report.boot_version().has_value(),
+          "a machine that booted nothing answered a version");
+    CHECK(!report.boot_declared(), "an unread machine claimed a declared boot");
+
+    // A letter the machine has no drive at is an empty optional, which is
+    // a different answer from a letter that exists and is undetermined.
+    CHECK(!report.find('C').has_value(), "an empty machine answered for C:");
+
+    // Provenance says why it is empty rather than leaving it bare.
+    CHECK(!report.provenance().empty(), "the report carried no provenance");
+
+    // A boot device this machine does not hold is refused as a typed
+    // exception carrying its category, not a bool a caller may ignore.
+    bool refused = false;
+    try {
+        machine.declare_boot_device("hdd0");
+    } catch (const remanence::Error& error) {
+        refused = true;
+        CHECK(std::string(error.what()).find("hdd0") != std::string::npos,
+              "the refusal did not name the attachment asked for");
+        CHECK(error.category() != remanence::ErrorCategory::Io
+                  || std::string(error.what()).length() > 0,
+              "the refusal carried no message");
+    }
+    CHECK(refused, "declaring a device the machine lacks did not throw");
+
+    // Nothing was declared, so withdrawing one answers false.
+    CHECK(!machine.clear_boot_device(),
+          "withdrawing an undeclared boot device claimed to have withdrawn one");
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2) {
@@ -895,6 +956,8 @@ int main(int argc, char** argv)
             group_lifetimes();
         } else if (group == "absences") {
             group_absences();
+        } else if (group == "machine") {
+            group_machine();
         } else if (group == "flux_refusals") {
             group_flux_refusals();
         } else if (group == "flux_capture") {

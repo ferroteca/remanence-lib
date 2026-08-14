@@ -3,39 +3,33 @@
 
 //! The DOS drive-letter composer: a namespace-mapping composer (P19).
 //!
-//! A DOS machine persists no drive-letter map. Its letters were assigned
-//! at boot by a rule over the machine's own configuration — which media
-//! occupied which slots, in which order the disks were attached — and
-//! nothing on the disks records the result. There is no evidence to read,
-//! so this seam *derives* the mapping from one named assignment rule and
-//! the machine facts the caller asserts, and everything below exists to
-//! keep that derivation from becoming a guess.
+//! A DOS machine persists no drive-letter *map* — nothing on any disk
+//! records "C: was this volume". What it does persist is everything the
+//! map was derived from: which DOS is installed, in the kernel files of
+//! the volume that boots, and what that DOS was told at startup, in its
+//! `CONFIG.SYS` and `AUTOEXEC.BAT`. So the letters are derived rather
+//! than read, and every input to the derivation *is* read.
 //!
-//! The facts are the caller's, and they are read from wherever the caller
-//! holds them. [`DosMachine`] takes them as assertions, which is the only
-//! way to state a PC floppy slot or a CD-ROM drive this release claims no
-//! device family for. [`MachineView::compose_dos_letters`] takes them from a
-//! machine's own device set instead — attachment order being the order
-//! its devices were added — and passes over the families no claimed rule
-//! understands. Nothing else about the composer changes with that: it
-//! still opens no artifact, still names the rules it applied, and still
-//! reports what they cannot settle as undetermined.
+//! This module owns the rules. [`dos_install`](super::dos_install) reads
+//! the installation those rules are chosen by, and
+//! [`MachineView::inspect`] is the door: a caller states a machine —
+//! devices, the order they attach, the media in them — and everything
+//! below follows from what is on those media.
 //!
-//! [`MachineView::compose_dos_letters`]: crate::MachineView::compose_dos_letters
+//! [`MachineView::inspect`]: crate::MachineView::inspect
 //!
 //! Three constraints govern the derivation:
 //!
-//! - **The rule is an enumerated claim (P3).** The map names the rules
-//!   applied to produce it, and a DOS variant outside
-//!   [`DosAssignmentRule`] is refused by name rather than approximated by
-//!   the nearest claimed one.
-//! - **Evidence outranks a rule.** This form exists for a system that
-//!   persists nothing. It is never a fallback for a persisted mapping
-//!   that could not be read.
-//! - **A derived mapping is not evidence.** The asserted facts and the
-//!   applied rules travel with the answer as
+//! - **The rule is an enumerated claim (P3).** The map names the rule
+//!   applied to produce it, and a DOS outside [`DosAssignmentRule`] is
+//!   refused by name rather than approximated by the nearest claimed one.
+//! - **Evidence outranks a rule.** Where the machine states something —
+//!   a `LASTDRIVE` ceiling, an `MSCDEX` placement — that reading governs
+//!   the rule's own arithmetic, and where the two disagree both stand.
+//! - **A derived mapping is not evidence.** The rule and what it was
+//!   applied to travel with the answer as
 //!   [`provenance`](DriveMap::provenance) — deliberately not called
-//!   evidence — and whatever the rules cannot settle is
+//!   evidence — and whatever the rule cannot settle is
 //!   [`Undetermined`](LetterOutcome::Undetermined) at the granularity of
 //!   the letter it failed to establish, never filled in from position,
 //!   size, order, label, or which volume happened to read cleanly.
@@ -74,14 +68,19 @@ const LAST_LETTER: char = 'Z';
 /// name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DosAssignmentRule {
-    /// MS-DOS 4.0 and 4.01: the first primary DOS partition of each disk
-    /// in attachment order, then the logical drives of each disk's
-    /// extended partition in the same order. A further primary DOS
-    /// partition on a disk receives no letter at all.
+    /// MS-DOS 4.0 and 4.01: the **bootable** primary DOS partition of
+    /// each disk in attachment order — the first one where the table
+    /// flags none — then the logical drives of each disk's extended
+    /// partition in the same order. A further primary DOS partition on a
+    /// disk receives no letter at all.
     MsDos4,
     /// MS-DOS 5.0 through 6.22, and PC DOS of the same generation: as
     /// `MsDos4`, and then each remaining primary DOS partition, again by
     /// disk in attachment order.
+    ///
+    /// FreeDOS letters this way too, by its kernel's documented default:
+    /// its three passes are the bootable primaries, then the extended
+    /// chains, then the remaining primaries.
     MsDos5,
 }
 
@@ -102,16 +101,18 @@ impl DosAssignmentRule {
     pub fn reading(self) -> &'static str {
         match self {
             Self::MsDos4 => {
-                "MS-DOS 4.0 and 4.01: the first primary DOS partition of each \
-                 disk in attachment order, then the logical drives of each \
-                 disk's extended partition in the same order; a further \
-                 primary DOS partition receives no letter"
+                "MS-DOS 4.0 and 4.01: the bootable primary DOS partition of \
+                 each disk in attachment order — the first one where the table \
+                 flags none — then the logical drives of each disk's extended \
+                 partition in the same order; a further primary DOS partition \
+                 receives no letter"
             }
             Self::MsDos5 => {
-                "MS-DOS 5.0 through 6.22: the first primary DOS partition of \
-                 each disk in attachment order, then the logical drives of \
-                 each disk's extended partition in the same order, then each \
-                 remaining primary DOS partition by disk in that order"
+                "MS-DOS 5.0 through 6.22: the bootable primary DOS partition of \
+                 each disk in attachment order — the first one where the table \
+                 flags none — then the logical drives of each disk's extended \
+                 partition in the same order, then each remaining primary DOS \
+                 partition by disk in that order"
             }
         }
     }
@@ -152,47 +153,34 @@ impl fmt::Display for DosAssignmentRule {
     }
 }
 
-/// One device in the machine the caller is describing.
+/// One drive the composer letters, as it names it in provenance.
 ///
-/// This is caller-asserted machine configuration, not evidence: which
-/// medium sits in which slot, and in what order the disks were attached,
-/// are facts about the machine and appear in no image.
+/// This is not a caller assertion and not a public type. The machine
+/// supplies its own devices in its own attachment order, and this is only
+/// how a provenance line spells one of them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct DriveSlot {
+    /// The attachment identity the machine gave it — `hdd0`, `fd0`.
+    pub(crate) attachment: String,
+    /// Which of the composer's two orders it belongs to, and its position
+    /// in that order.
+    pub(crate) kind: DriveKind,
+    pub(crate) index: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MachineDevice {
-    /// A floppy drive, by slot. A PC has at most two, so only slots 0 and
-    /// 1 are claimed.
-    Floppy(u32),
-    /// A fixed disk, by attachment order — 0 is the first attached.
-    FixedDisk(u32),
-    /// A CD-ROM drive, by attachment order. It takes a letter only where
-    /// the caller declares where the resident driver placed it.
-    CdRom(u32),
+pub(crate) enum DriveKind {
+    Floppy,
+    FixedDisk,
 }
 
-impl MachineDevice {
-    /// The device kind's stable cross-language spelling.
-    pub fn kind(self) -> &'static str {
-        match self {
-            Self::Floppy(_) => "floppy",
-            Self::FixedDisk(_) => "fixed-disk",
-            Self::CdRom(_) => "cd-rom",
-        }
-    }
-
-    /// The slot or attachment order the caller asserted.
-    pub fn index(self) -> u32 {
-        match self {
-            Self::Floppy(index) | Self::FixedDisk(index) | Self::CdRom(index) => index,
-        }
-    }
-}
-
-impl fmt::Display for MachineDevice {
+impl fmt::Display for DriveSlot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Floppy(slot) => write!(f, "floppy slot {slot}"),
-            Self::FixedDisk(order) => write!(f, "fixed disk {order}"),
-            Self::CdRom(order) => write!(f, "cd-rom drive {order}"),
+        match self.kind {
+            DriveKind::Floppy => write!(f, "the floppy in slot {} ({})", self.index, self.attachment),
+            DriveKind::FixedDisk => {
+                write!(f, "fixed disk {} ({})", self.index, self.attachment)
+            }
         }
     }
 }
@@ -221,6 +209,12 @@ pub enum ResidentCondition {
     BlockDeviceDriver,
     /// A network redirector was loaded.
     NetworkRedirector,
+    /// The kernel was configured to assign letters in an order no claimed
+    /// rule models. FreeDOS's `DLASORT`/`DLA` is the case this release
+    /// reaches: set to its alternate mode it letters every partition of
+    /// one disk before moving to the next, rather than taking the first
+    /// primary of every disk ahead of any logical drive.
+    AlternateLetterOrder,
 }
 
 impl ResidentCondition {
@@ -234,6 +228,7 @@ impl ResidentCondition {
             Self::Assign => "assign".to_owned(),
             Self::BlockDeviceDriver => "block-device-driver".to_owned(),
             Self::NetworkRedirector => "network-redirector".to_owned(),
+            Self::AlternateLetterOrder => "alternate-letter-order".to_owned(),
         }
     }
 
@@ -255,10 +250,12 @@ impl ResidentCondition {
             "assign" => Ok(Self::Assign),
             "block-device-driver" => Ok(Self::BlockDeviceDriver),
             "network-redirector" => Ok(Self::NetworkRedirector),
+            "alternate-letter-order" => Ok(Self::AlternateLetterOrder),
             other => Err(Error::unsupported(format!(
                 "no machine condition named '{other}' is claimed; this \
                  release claims 'lastdrive=<letter>', 'subst', 'join', \
-                 'assign', 'block-device-driver' and 'network-redirector'"
+                 'assign', 'block-device-driver', 'network-redirector' and \
+                 'alternate-letter-order'"
             ))),
         }
     }
@@ -289,6 +286,11 @@ impl ResidentCondition {
             Self::NetworkRedirector => "the machine loaded a network redirector, which no claimed \
                  rule models: it claims letters from a source no image holds"
                 .to_owned(),
+            Self::AlternateLetterOrder => "the kernel was configured to assign letters in an order \
+                 no claimed rule models: it letters each disk whole before \
+                 moving to the next, rather than taking the first primary of \
+                 every disk ahead of any logical drive"
+                .to_owned(),
         }
     }
 
@@ -306,13 +308,18 @@ pub enum LetterOutcome {
     /// device. The volume is named by the identity its own report issued
     /// — the value a caller passes back into a file verb.
     Volume {
-        device: MachineDevice,
+        /// The attachment identity of the drive the volume sits on.
+        attachment: String,
         volume: VolumeId,
     },
-    /// The letter names a device the caller declared a resident driver
-    /// placed here. The library composes no volume for such a device, so
-    /// there is no identity to name and none is invented.
-    DeclaredDevice { device: MachineDevice },
+    /// The letter an optical drive took, as the machine's own startup
+    /// files record it — `MSCDEX /L:`. The library composes no volume for
+    /// such a drive, so there is no identity to name and none is
+    /// invented.
+    OpticalDrive {
+        /// The startup line that placed it, quoted as evidence.
+        placed_by: String,
+    },
     /// DOS's phantom second floppy: on a single-floppy machine the second
     /// letter exists and names the same drive as `of`, prompting for a
     /// disk swap rather than naming a second volume.
@@ -328,7 +335,7 @@ impl LetterOutcome {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Volume { .. } => "volume",
-            Self::DeclaredDevice { .. } => "declared-device",
+            Self::OpticalDrive { .. } => "optical-drive",
             Self::Phantom { .. } => "phantom",
             Self::Undetermined { .. } => "undetermined",
         }
@@ -350,17 +357,17 @@ pub struct DriveMapping {
 /// could not be settled, which is present and
 /// [`Undetermined`](LetterOutcome::Undetermined).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DriveMap {
+pub(crate) struct DriveMap {
     /// The rules applied — one where the caller stated the variant, and
     /// every claimed rule where it did not.
-    pub applied_rules: Vec<DosAssignmentRule>,
+    pub(crate) applied_rules: Vec<DosAssignmentRule>,
     /// Every letter the machine had a drive at, in letter order.
-    pub mappings: Vec<DriveMapping>,
+    pub(crate) mappings: Vec<DriveMapping>,
     /// The asserted facts and the applied rules, travelling with the
     /// answer. **This is not evidence**: nothing here was read off a
     /// disk, and calling it evidence would put a derivation beside the
     /// observations that identification carries (P4).
-    pub provenance: Vec<String>,
+    pub(crate) provenance: Vec<String>,
 }
 
 impl DriveMap {
@@ -382,121 +389,108 @@ impl DriveMap {
     }
 }
 
-/// The machine facts a caller asserts, and the composer that maps letters
-/// over them.
+/// The composer that maps letters over a machine's own drives.
 ///
-/// The composer opens no artifact: it takes the inspection reports the
-/// caller already holds, and every report stays the caller's. It composes
-/// no namespace over the result either — the letter is what a
+/// It is **not** public and takes no assertion. The machine supplies its
+/// devices in its own attachment order and the booting installation
+/// supplies the rule and the conditions; this turns those into letters.
+/// It composes no namespace over the result either — the letter is what a
 /// consumer shows a user, and the volume identity is what it passes back
 /// into a file verb.
 #[derive(Debug, Default)]
-pub struct DosMachine<'a> {
-    floppies: Vec<(u32, &'a DiskReport)>,
-    fixed_disks: Vec<(u32, &'a DiskReport)>,
-    cd_roms: Vec<(u32, Option<char>)>,
+pub(crate) struct DosComposer<'a> {
+    floppies: Vec<(DriveSlot, &'a DiskReport)>,
+    fixed_disks: Vec<(DriveSlot, &'a DiskReport)>,
     conditions: Vec<ResidentCondition>,
+    /// The letter the machine's own startup files placed an optical drive
+    /// at, where they placed one.
+    optical: Option<(char, String)>,
 }
 
-impl<'a> DosMachine<'a> {
-    /// A machine with nothing asserted about it yet.
-    pub fn new() -> Self {
+impl<'a> DosComposer<'a> {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Asserts that the medium `report` inspects occupies floppy slot
-    /// `slot`. Slot 0 is `A:`; a PC has at most two floppy drives, so a
-    /// slot above 1 is refused by name.
-    pub fn assert_floppy(&mut self, slot: u32, report: &'a DiskReport) -> Result<()> {
+    /// Adds the floppy the machine holds at `slot`. Slot 0 is `A:`; DOS
+    /// letters two floppy slots, so a slot above 1 is refused by name.
+    pub(crate) fn add_floppy(
+        &mut self,
+        slot: u32,
+        attachment: impl Into<String>,
+        report: &'a DiskReport,
+    ) -> Result<()> {
         if slot > 1 {
             return Err(Error::unsupported(format!(
                 "floppy slot {slot} is outside the claim; DOS letters two \
                  floppy slots, 0 as A: and 1 as B:"
             )));
         }
-        if self.floppies.iter().any(|(taken, _)| *taken == slot) {
-            return Err(occupied(MachineDevice::Floppy(slot)));
+        let drive = DriveSlot {
+            attachment: attachment.into(),
+            kind: DriveKind::Floppy,
+            index: slot,
+        };
+        if self.floppies.iter().any(|(taken, _)| taken.index == slot) {
+            return Err(occupied(&drive));
         }
-        self.floppies.push((slot, report));
-        self.floppies.sort_by_key(|(slot, _)| *slot);
+        self.floppies.push((drive, report));
+        self.floppies.sort_by_key(|(drive, _)| drive.index);
         Ok(())
     }
 
-    /// Asserts that the medium `report` inspects is the fixed disk
-    /// attached at `order` — 0 being the first attached, which is the
-    /// order DOS assigned letters in.
-    pub fn assert_fixed_disk(&mut self, order: u32, report: &'a DiskReport) -> Result<()> {
-        if self.fixed_disks.iter().any(|(taken, _)| *taken == order) {
-            return Err(occupied(MachineDevice::FixedDisk(order)));
+    /// Adds the fixed disk attached at `order` — 0 being the first
+    /// attached, which is the order DOS assigned letters in.
+    pub(crate) fn add_fixed_disk(
+        &mut self,
+        order: u32,
+        attachment: impl Into<String>,
+        report: &'a DiskReport,
+    ) -> Result<()> {
+        let drive = DriveSlot {
+            attachment: attachment.into(),
+            kind: DriveKind::FixedDisk,
+            index: order,
+        };
+        if self.fixed_disks.iter().any(|(taken, _)| taken.index == order) {
+            return Err(occupied(&drive));
         }
-        self.fixed_disks.push((order, report));
-        self.fixed_disks.sort_by_key(|(order, _)| *order);
+        self.fixed_disks.push((drive, report));
+        self.fixed_disks.sort_by_key(|(drive, _)| drive.index);
         Ok(())
     }
 
-    /// Asserts a CD-ROM drive at attachment order `order`.
-    ///
-    /// `driver_letter` is where the caller declares the resident driver
-    /// placed it. Nothing on the disks records that placement and the
-    /// driver could put it anywhere, so an undeclared CD-ROM takes no
-    /// letter rather than a guessed one.
-    pub fn assert_cdrom(&mut self, order: u32, driver_letter: Option<char>) -> Result<()> {
-        if self.cd_roms.iter().any(|(taken, _)| *taken == order) {
-            return Err(occupied(MachineDevice::CdRom(order)));
-        }
-        let driver_letter = driver_letter.map(drive_letter).transpose()?;
-        if let Some(letter) = driver_letter {
-            if let Some((other, _)) = self
-                .cd_roms
-                .iter()
-                .find(|(_, taken)| *taken == Some(letter))
-            {
-                return Err(Error::unsupported(format!(
-                    "{letter}: is already declared for {}; two drives cannot \
-                     be declared at one letter",
-                    MachineDevice::CdRom(*other)
-                )));
-            }
-        }
-        self.cd_roms.push((order, driver_letter));
-        self.cd_roms.sort_by_key(|(order, _)| *order);
-        Ok(())
-    }
-
-    /// Declares a runtime condition of the machine that sits outside
-    /// every claimed rule. The letters it could have changed come back
-    /// undetermined.
-    pub fn declare(&mut self, condition: ResidentCondition) {
+    /// Records a condition the machine's own startup files declared, which
+    /// sits outside every claimed rule. The letters it could have changed
+    /// come back undetermined.
+    pub(crate) fn declare(&mut self, condition: ResidentCondition) {
         if !self.conditions.contains(&condition) {
             self.conditions.push(condition);
         }
     }
 
-    /// Composes the drive-letter mapping.
-    ///
-    /// `rule` is the variant the caller states the machine ran. Where it
-    /// states none, every claimed rule is applied and a letter the rules
-    /// disagree on comes back undetermined rather than settled by
-    /// choosing the most common one.
-    pub fn compose(&self, rule: Option<DosAssignmentRule>) -> Result<DriveMap> {
-        let applied_rules: Vec<DosAssignmentRule> = match rule {
-            Some(rule) => vec![rule],
-            None => DosAssignmentRule::CLAIMED.to_vec(),
-        };
+    /// Records the letter the machine's `MSCDEX` line placed an optical
+    /// drive at. This is read from the machine, not asserted.
+    pub(crate) fn place_optical(
+        &mut self,
+        letter: char,
+        placed_by: impl Into<String>,
+    ) -> Result<()> {
+        self.optical = Some((drive_letter(letter)?, placed_by.into()));
+        Ok(())
+    }
+
+    /// Composes the drive-letter mapping under the rule the booting
+    /// installation established.
+    pub(crate) fn compose(&self, rule: DosAssignmentRule) -> Result<DriveMap> {
+        let applied_rules = vec![rule];
 
         let mut provenance = vec![
-            "this mapping is derived from an assignment rule applied to \
-             caller-asserted machine facts; it is provenance, not evidence \
-             read off a disk"
+            "this mapping is derived from an assignment rule applied to the \
+             machine's own devices and the installation read off the volume it \
+             booted; it is provenance, not evidence read off a disk"
                 .to_owned(),
         ];
-        if rule.is_none() {
-            provenance.push(
-                "the caller stated no DOS variant, so every claimed rule was \
-                 applied and a letter they disagree on is undetermined"
-                    .to_owned(),
-            );
-        }
         for applied in &applied_rules {
             provenance.push(format!("rule {}: {}", applied.name(), applied.reading()));
         }
@@ -504,13 +498,13 @@ impl<'a> DosMachine<'a> {
         // A machine whose only floppy sits in the second slot is not a
         // machine: DOS's first floppy is slot 0, which is exactly why a
         // single-floppy machine's second letter is the phantom of A:.
-        if self.floppies.iter().any(|(slot, _)| *slot == 1)
-            && !self.floppies.iter().any(|(slot, _)| *slot == 0)
+        if self.floppies.iter().any(|(drive, _)| drive.index == 1)
+            && !self.floppies.iter().any(|(drive, _)| drive.index == 0)
         {
             return Err(Error::unsupported(
-                "floppy slot 1 was asserted without slot 0; DOS's first \
-                 floppy drive is slot 0, and a machine whose only floppy is \
-                 the second drive has no assignment rule to apply",
+                "this machine holds a floppy in slot 1 and none in slot 0; DOS's \
+                 first floppy drive is slot 0, and a machine whose only floppy \
+                 is the second drive has no assignment rule to apply",
             ));
         }
 
@@ -524,7 +518,7 @@ impl<'a> DosMachine<'a> {
         self.describe_fixed_disks(&mut provenance);
         merge_fixed_claims(&applied_rules, &claimed, &mut letters, &mut provenance);
 
-        self.map_cd_roms(&mut letters, &mut provenance)?;
+        self.map_optical(&mut letters, &mut provenance);
         self.apply_conditions(&mut letters, &mut provenance);
 
         Ok(DriveMap {
@@ -545,34 +539,39 @@ impl<'a> DosMachine<'a> {
         letters: &mut BTreeMap<char, LetterOutcome>,
         provenance: &mut Vec<String>,
     ) {
-        for (slot, report) in &self.floppies {
-            let device = MachineDevice::Floppy(*slot);
-            let letter = if *slot == 0 { 'A' } else { 'B' };
+        for (drive, report) in &self.floppies {
+            let letter = if drive.index == 0 { 'A' } else { 'B' };
             match whole_device_volume(report) {
                 Some(volume) => {
-                    letters.insert(letter, LetterOutcome::Volume { device, volume });
-                    provenance.push(format!("{letter}: is {device}, as asserted"));
+                    letters.insert(
+                        letter,
+                        LetterOutcome::Volume {
+                            attachment: drive.attachment.clone(),
+                            volume,
+                        },
+                    );
+                    provenance.push(format!("{letter}: is {drive}"));
                 }
                 None => {
                     letters.insert(
                         letter,
                         LetterOutcome::Undetermined {
                             reason: format!(
-                                "{device} holds a medium no volume composed from, \
+                                "{drive} holds a medium no volume composed from, \
                                  so the letter DOS gave the drive names nothing \
                                  this library can hand back"
                             ),
                         },
                     );
                     provenance.push(format!(
-                        "{letter}: is {device}, whose medium composed no \
+                        "{letter}: is {drive}, whose medium composed no \
                          whole-device volume"
                     ));
                 }
             }
         }
 
-        if self.floppies.len() == 1 && self.floppies[0].0 == 0 {
+        if self.floppies.len() == 1 && self.floppies[0].0.index == 0 {
             letters.insert('B', LetterOutcome::Phantom { of: 'A' });
             provenance.push(
                 "B: is the phantom drive: a single-floppy machine still has \
@@ -583,14 +582,13 @@ impl<'a> DosMachine<'a> {
         }
     }
 
-    /// What each asserted fixed disk contributes, said once rather than
-    /// once per applied rule.
+    /// What each fixed disk contributes, said once rather than once per
+    /// applied rule.
     fn describe_fixed_disks(&self, provenance: &mut Vec<String>) {
-        for (order, report) in &self.fixed_disks {
-            let device = MachineDevice::FixedDisk(*order);
+        for (drive, report) in &self.fixed_disks {
             if report.partition_schema.is_none() {
                 provenance.push(format!(
-                    "{device} declares no partition schema ({}), and no claimed \
+                    "{drive} declares no partition schema ({}), and no claimed \
                      rule letters a fixed disk without one",
                     report.content.name()
                 ));
@@ -599,12 +597,12 @@ impl<'a> DosMachine<'a> {
             let primaries = dos_primaries(report).count();
             let logicals = dos_logicals(report).count();
             provenance.push(format!(
-                "{device} declares {primaries} primary and {logicals} logical \
+                "{drive} declares {primaries} primary and {logicals} logical \
                  DOS partition(s) a claimed rule letters"
             ));
             if logicals > 0 && !follows_extended_chain(report) {
                 provenance.push(format!(
-                    "{device}'s extended partition is not type 0x{DOS_EXTENDED_TYPE:02x}, \
+                    "{drive}'s extended partition is not type 0x{DOS_EXTENDED_TYPE:02x}, \
                      which no claimed variant follows, so its logical drives \
                      take no letter"
                 ));
@@ -613,29 +611,24 @@ impl<'a> DosMachine<'a> {
     }
 
     /// The letters one rule assigns to the fixed disks, in the order it
-    /// assigns them: first primaries, then logicals, then — where the
-    /// variant does so at all — the remaining primaries.
+    /// assigns them: the bootable primaries, then the logicals, then —
+    /// where the variant does so at all — the remaining primaries.
     fn fixed_disk_claims(&self, rule: DosAssignmentRule) -> Vec<Claim> {
         let mut claims = Vec::new();
 
-        for (order, report) in &self.fixed_disks {
-            if let Some(region) = dos_primaries(report).next() {
-                claims.push(Claim::of(
-                    MachineDevice::FixedDisk(*order),
-                    report,
-                    region,
-                    "the first primary DOS partition",
-                ));
+        for (drive, report) in &self.fixed_disks {
+            if let Some((region, clause)) = leading_primary(report) {
+                claims.push(Claim::of(drive, report, region, clause));
             }
         }
 
-        for (order, report) in &self.fixed_disks {
+        for (drive, report) in &self.fixed_disks {
             if !follows_extended_chain(report) {
                 continue;
             }
             for region in dos_logicals(report) {
                 claims.push(Claim::of(
-                    MachineDevice::FixedDisk(*order),
+                    drive,
                     report,
                     region,
                     "a logical drive of the extended partition",
@@ -644,10 +637,11 @@ impl<'a> DosMachine<'a> {
         }
 
         if rule.letters_remaining_primaries() {
-            for (order, report) in &self.fixed_disks {
-                for region in dos_primaries(report).skip(1) {
+            for (drive, report) in &self.fixed_disks {
+                let led = leading_primary(report).map(|(region, _)| region.id);
+                for region in dos_primaries(report).filter(|region| Some(region.id) != led) {
                     claims.push(Claim::of(
-                        MachineDevice::FixedDisk(*order),
+                        drive,
                         report,
                         region,
                         "a further primary DOS partition",
@@ -659,36 +653,46 @@ impl<'a> DosMachine<'a> {
         claims
     }
 
-    /// The letters the caller declared a resident CD-ROM driver placed.
-    fn map_cd_roms(
+    /// The letter the machine's own startup files placed an optical drive
+    /// at. Where the rule already assigned that letter, both readings
+    /// stand and the letter is undetermined: two readings of one machine
+    /// disagreeing is a fact about the machine, not an error in either.
+    fn map_optical(
         &self,
         letters: &mut BTreeMap<char, LetterOutcome>,
         provenance: &mut Vec<String>,
-    ) -> Result<()> {
-        for (order, declared) in &self.cd_roms {
-            let device = MachineDevice::CdRom(*order);
-            let Some(letter) = declared else {
-                provenance.push(format!(
-                    "{device} takes no letter: nothing on the disks records \
-                     where its driver placed it, and the caller declared no \
-                     placement"
-                ));
-                continue;
-            };
-            if letters.contains_key(letter) {
-                return Err(Error::unsupported(format!(
-                    "{letter}: was declared for {device}, and the applied rule \
-                     assigns that letter as well; the asserted facts \
-                     contradict each other"
-                )));
-            }
-            letters.insert(*letter, LetterOutcome::DeclaredDevice { device });
+    ) {
+        let Some((letter, placed_by)) = &self.optical else {
+            return;
+        };
+        if letters.contains_key(letter) {
+            letters.insert(
+                *letter,
+                LetterOutcome::Undetermined {
+                    reason: format!(
+                        "the machine's startup files place an optical drive at \
+                         {letter}: ('{placed_by}'), and the applied rule assigns \
+                         that letter to a volume as well; both readings stand \
+                         and neither is preferred"
+                    ),
+                },
+            );
             provenance.push(format!(
-                "{letter}: is {device}, where the caller declares its resident \
-                 driver placed it"
+                "{letter}: the applied rule and the machine's own MSCDEX line \
+                 disagree"
             ));
+            return;
         }
-        Ok(())
+        letters.insert(
+            *letter,
+            LetterOutcome::OpticalDrive {
+                placed_by: placed_by.clone(),
+            },
+        );
+        provenance.push(format!(
+            "{letter}: is an optical drive, where the machine's own startup \
+             files placed it ('{placed_by}')"
+        ));
     }
 
     /// Turns every letter a declared condition could have changed
@@ -701,8 +705,9 @@ impl<'a> DosMachine<'a> {
         if self.conditions.is_empty() {
             provenance.push(
                 "no LASTDRIVE ceiling, SUBST, JOIN, ASSIGN, resident \
-                 block-device driver or network redirector was declared; the \
-                 claimed rules assign without any of them"
+                 block-device driver, network redirector or alternate \
+                 kernel letter order was declared; the claimed rules assign \
+                 without any of them"
                     .to_owned(),
             );
             return;
@@ -716,6 +721,10 @@ impl<'a> DosMachine<'a> {
             for (letter, outcome) in letters.iter_mut() {
                 let unsettled = match condition {
                     ResidentCondition::LastDrive(ceiling) => letter > ceiling,
+                    // The kernel's assignment order governs the disks it
+                    // letters and not the floppy slots, which every
+                    // claimed rule and every alternate order agree on.
+                    ResidentCondition::AlternateLetterOrder => *letter >= FIRST_FIXED_LETTER,
                     other => other.unbounds_every_letter(),
                 };
                 if unsettled && !matches!(outcome, LetterOutcome::Undetermined { .. }) {
@@ -732,7 +741,7 @@ impl<'a> DosMachine<'a> {
 /// rules are set beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Claim {
-    device: MachineDevice,
+    attachment: String,
     volume: Option<VolumeId>,
     /// What the rule matched, as the phrase a reason or a provenance line
     /// quotes.
@@ -740,12 +749,12 @@ struct Claim {
 }
 
 impl Claim {
-    fn of(device: MachineDevice, report: &DiskReport, region: &RegionInfo, clause: &str) -> Self {
+    fn of(drive: &DriveSlot, report: &DiskReport, region: &RegionInfo, clause: &str) -> Self {
         Self {
-            device,
+            attachment: drive.attachment.clone(),
             volume: volume_on_region(report, region.id),
             reading: format!(
-                "{clause} of {device} (region {}, type 0x{:02x})",
+                "{clause} of {drive} (region {}, type 0x{:02x})",
                 region.declared_number, region.declared_type
             ),
         }
@@ -809,7 +818,7 @@ fn merge_fixed_claims(
 fn established(claim: &Claim) -> LetterOutcome {
     match claim.volume {
         Some(volume) => LetterOutcome::Volume {
-            device: claim.device,
+            attachment: claim.attachment.clone(),
             volume,
         },
         None => LetterOutcome::Undetermined {
@@ -832,6 +841,27 @@ fn fixed_letter(position: usize) -> Option<char> {
         return None;
     }
     char::from_u32(letter)
+}
+
+/// The primary DOS partition a disk is lettered from first, and the
+/// clause naming why it was that one.
+///
+/// Every claimed variant letters a disk's **bootable** primary ahead of
+/// the rest — the flag the table itself records, not a position in it.
+/// The two coincide on most disks, which is exactly what makes the
+/// difference easy to miss: a disk whose active partition is its second
+/// primary letters that one `C:`, and taking the first would hand the
+/// letter to a volume DOS never gave it to.
+///
+/// Where the table flags nothing active there is no such evidence, and
+/// the schema's own order stands in for it.
+fn leading_primary(report: &DiskReport) -> Option<(&RegionInfo, &'static str)> {
+    if let Some(active) = dos_primaries(report).find(|region| region.declared_active) {
+        return Some((active, "the bootable primary DOS partition"));
+    }
+    dos_primaries(report)
+        .next()
+        .map(|region| (region, "the first primary DOS partition, no primary being flagged bootable"))
 }
 
 /// The primary DOS partitions of one disk, in the schema's own declared
@@ -900,120 +930,10 @@ fn unclaimed_letter(text: &str) -> Error {
     ))
 }
 
-fn occupied(device: MachineDevice) -> Error {
+fn occupied(drive: &DriveSlot) -> Error {
     Error::unsupported(format!(
-        "{device} was already asserted; a machine fact is stated once"
+        "{drive} was already added; one drive fills one slot"
     ))
-}
-
-impl crate::model::machine::MachineView<'_> {
-    /// Composes this machine's DOS drive-letter mapping, reading the
-    /// machine facts from its **own device set** rather than from an
-    /// assertion.
-    ///
-    /// This is P32's other half. In-force P19 has the caller assert
-    /// medium, slot and attachment order because before the device tier
-    /// nothing in a session held them; now a machine does, and the order
-    /// its devices were added in *is* the attachment order the rule
-    /// reasons over. Nothing else about the composer changes: it names
-    /// the rules it applied, it opens no artifact beyond inspecting the
-    /// media already loaded, and what the rules cannot settle comes back
-    /// undetermined.
-    ///
-    /// **Devices a claimed rule does not understand are passed over by
-    /// device type**, not refused and not omitted silently: the rules
-    /// letter the hard-drive class, so a `cbmfloppy0` in this machine
-    /// legitimately receives no DOS letter and the provenance says so.
-    /// An empty device contributes no volume for the same reason a drive
-    /// with no disk in it lettered nothing past its slot. No PC floppy
-    /// drive is claimed by this release, so the floppy slots are stated
-    /// through [`DosMachine::assert_floppy`] and nowhere else.
-    pub fn compose_dos_letters(
-        &mut self,
-        rule: Option<DosAssignmentRule>,
-        conditions: &[ResidentCondition],
-    ) -> Result<DriveMap> {
-        let mut fixed = Vec::new();
-        let mut passed_over = Vec::new();
-        let mut empty = Vec::new();
-        for attachment in self.attachments() {
-            let device = self
-                .device(attachment)
-                .expect("an attachment this machine just listed");
-            if !matches!(device.device_type(), Some(crate::DeviceType::HardDrive(_))) {
-                passed_over.push(format!("{attachment} ({})", device.slot().name()));
-                continue;
-            }
-            if !device.is_occupied() {
-                empty.push(attachment.to_string());
-                continue;
-            }
-            fixed.push(attachment);
-        }
-
-        let reports: Vec<DiskReport> = fixed
-            .iter()
-            .map(|attachment| {
-                self.device_mut(*attachment)
-                    .expect("a device this machine just listed")
-                    .medium_mut()
-                    .expect("a device this machine just found occupied")
-                    .inspect()
-            })
-            .collect::<Result<_>>()?;
-
-        let mut machine = DosMachine::new();
-        for (order, report) in reports.iter().enumerate() {
-            machine.assert_fixed_disk(order as u32, report)?;
-        }
-        for condition in conditions {
-            machine.declare(*condition);
-        }
-
-        let mut map = machine.compose(rule)?;
-        let identity = match self.identity() {
-            Some(identity) => format!("the machine identified '{identity}'"),
-            None => "the session's anonymous machine".to_owned(),
-        };
-        // The facts came from a device set rather than an assertion, so
-        // the line that says where they came from is restated rather
-        // than contradicted by a second one below it.
-        for line in map.provenance.iter_mut() {
-            if line.contains("caller-asserted machine facts") {
-                *line = format!(
-                    "this mapping is derived from an assignment rule applied to \
-                     the machine facts {identity} holds — its device set, in the \
-                     order its devices were added, rather than an assertion; it \
-                     is provenance, not evidence read off a disk"
-                );
-            }
-        }
-        map.provenance.push(match fixed.is_empty() {
-            true => "no device in it is a hard disk, so no fixed disk was lettered".to_owned(),
-            false => format!(
-                "the fixed disks lettered, in attachment order: {}",
-                fixed
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        });
-        if !empty.is_empty() {
-            map.provenance.push(format!(
-                "these devices hold no medium and contributed no volume: {}",
-                empty.join(", ")
-            ));
-        }
-        if !passed_over.is_empty() {
-            map.provenance.push(format!(
-                "these devices were passed over by family, no claimed DOS rule \
-                 lettering them: {}",
-                passed_over.join(", ")
-            ));
-        }
-        Ok(map)
-    }
 }
 
 #[cfg(test)]
@@ -1063,6 +983,7 @@ mod tests {
             ResidentCondition::Assign,
             ResidentCondition::BlockDeviceDriver,
             ResidentCondition::NetworkRedirector,
+            ResidentCondition::AlternateLetterOrder,
         ] {
             assert_eq!(
                 ResidentCondition::parse(&condition.name()).expect("parses"),
@@ -1093,12 +1014,4 @@ mod tests {
         assert_eq!(fixed_letter(24), None, "there is no letter past Z:");
     }
 
-    #[test]
-    fn a_machine_device_spells_its_kind_and_index() {
-        assert_eq!(MachineDevice::Floppy(1).kind(), "floppy");
-        assert_eq!(MachineDevice::FixedDisk(2).kind(), "fixed-disk");
-        assert_eq!(MachineDevice::CdRom(0).kind(), "cd-rom");
-        assert_eq!(MachineDevice::FixedDisk(2).index(), 2);
-        assert_eq!(MachineDevice::Floppy(0).to_string(), "floppy slot 0");
-    }
 }
