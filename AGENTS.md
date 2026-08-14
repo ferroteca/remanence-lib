@@ -682,6 +682,20 @@ SPDX-License-Identifier: GPL-3.0-only
 Use the appropriate comment syntax for the file type. Files that cannot or
 should not carry headers must be covered by `REUSE.toml`.
 
+The licence text is present three times, each copy answering a different
+requirement, and **the three must not be allowed to drift**:
+
+- `LICENSE` at the root — what GitHub reads to identify the licence.
+- `LICENSES/GPL-3.0-only.txt` — where the REUSE specification requires
+  it. Byte-identical to the root copy.
+- `crates/remanence-py/LICENSE` — what the wheel carries, because
+  `license-files` in pyproject resolves relative to pyproject's own
+  directory and cannot reach the root. Same text, CRLF line endings.
+
+Nothing checks that they agree, so a change to one is a change to all
+three. `uvx --from "reuse[charset-normalizer]" reuse lint` is the
+whole-repository check; it must report compliance before a release.
+
 ### The relicensing reservation, and what it constrains
 
 Paul holds copyright in the whole work and **reserves the right to

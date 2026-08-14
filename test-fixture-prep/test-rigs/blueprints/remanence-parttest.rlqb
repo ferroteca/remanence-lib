@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Paul Galbraith
+// SPDX-License-Identifier: GPL-3.0-only
+
 // The remanence-lib partition-test rig: FreeDOS 1.4 installed onto a
 // disk deliberately cut into multiple primaries plus an extended chain
 // of logicals, so remanence's disk stack has a real, QEMU-authored
