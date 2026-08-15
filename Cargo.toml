@@ -27,7 +27,7 @@ members = [
 default-members = ["crates/remanence"]
 
 [workspace.package]
-version = "0.0.1-alpha.4"
+version = "0.0.1-alpha.5"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/ferroteca/remanence-lib"
@@ -37,4 +37,4 @@ repository = "https://github.com/ferroteca/remanence-lib"
 homepage = "https://github.com/ferroteca/remanence-lib"
 
 [workspace.dependencies]
-remanence = { path = "crates/remanence", version = "0.0.1-alpha.4" }
+remanence = { path = "crates/remanence", version = "0.0.1-alpha.5" }
