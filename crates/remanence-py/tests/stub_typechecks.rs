@@ -74,7 +74,10 @@ struct Run {
 }
 
 fn run_mypy(argv: &[&str], fixture: &Path) -> Run {
-    let target = crate_dir().join("../../target/mypy-cache");
+    let target = crate_dir()
+        .join("../../target/mypy-cache")
+        .join(fixture.file_stem().expect("fixture has a name"));
+
     let output = Command::new(argv[0])
         .args(&argv[1..])
         .arg("--strict")
