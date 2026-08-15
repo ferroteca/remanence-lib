@@ -18,6 +18,8 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+## 0.0.1-alpha.4 - 2026-08-15
+
 ### Changed
 
 - **A machine reads its own DOS, and the caller stops asserting one.**
