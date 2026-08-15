@@ -18,6 +18,7 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+## 0.0.1-alpha.5 - 2026-08-15
 ## 0.0.1-alpha.4 - 2026-08-15
 
 ### Changed
