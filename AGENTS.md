@@ -907,13 +907,14 @@ F59 folded the verb they exercised into the declared load and they reach
 `#[cfg(feature = "fixtures")]` for the same reason the suites below
 carry `required-features` — the feature is what marks the tier, not the
 directory — and they cost the default run nothing, having been most of
-its wall clock. Eight suites open such an artifact too — seven in the
-core crate, and `cpp_flux.rs` in the FFI crate (D54):
+its wall clock. Nine suites open such an artifact too — seven in the
+core crate, and `cpp_flux.rs` and `c_abi_rig.rs` in the FFI crate (D54):
 
 ```bash
 cargo test --features fixtures                    # what was downloaded
 cargo test --features rigs                        # what reliquary built
 cargo test -p remanence-ffi --features fixtures   # the C++ flux walk
+cargo test -p remanence-ffi --features rigs       # the C ABI over the rig
 ```
 
 **Two features, because what it costs to obtain them differs in kind.**
@@ -933,6 +934,17 @@ while declaring neither, so they passed on machines that had run the
 prep and would have panicked on a clone — invisible precisely where it
 mattered. A target that calls the helper without declaring a feature now
 fails to compile, in the default run, on the first machine to build it.
+
+**The guard only reaches targets that call the helper**, which is how
+the same bug survived once more in the FFI crate. `c_abi_boundary.rs`
+checked `freedos-parttest.qcow2` with its own `Path::exists`, so nothing
+made it declare `rigs`, and `cargo test --workspace` — a required check
+— wanted the generated rig on every machine. It passed on every host
+that had run the prep and failed on the first fresh checkout to try it,
+which was a release build. The test is now
+`c_abi_rig.rs` behind the feature. When a test reaches an artifact
+without going through `ensure_fixture`, the declaration is the only
+thing standing, so write it first.
 
 Cargo does not build a target whose required features are off, so the
 default run reports nothing misleading about them. What stays there are

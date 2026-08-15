@@ -18,14 +18,14 @@
 //! **These need the built library, which `cargo test` does not produce.**
 //! `cargo build` does, and AGENTS.md orders it first, so the ordinary
 //! flow satisfies it.
+//!
+//! **Everything here builds what it needs or asks the library about
+//! itself**, so a fresh clone runs the whole file. The one group that
+//! wanted a generated disk is `c_abi_rig.rs`, behind the `rigs` feature.
 
 mod common;
 
-use common::{run_c, skipping, workspace_dir};
-
-/// The artifact the discovery group claims. A real one, because the
-/// point is to cross the boundary with something that has answers.
-const FIXTURE: &str = "crates/remanence/tests/fixtures/freedos-parttest.qcow2";
+use common::{run_c, skipping};
 
 fn group(name: &str, args: &[&str]) {
     if skipping() {
@@ -65,19 +65,4 @@ fn accessors_answer_on_a_null_handle() {
 #[test]
 fn a_machine_reads_across_the_boundary() {
     group("machine", &[]);
-}
-
-#[test]
-fn a_real_artifact_discovers_and_releases() {
-    if skipping() {
-        return;
-    }
-    let fixture = workspace_dir().join(FIXTURE);
-    assert!(
-        fixture.exists(),
-        "the fixture {} is missing, so the boundary was not crossed with \
-         anything that has answers",
-        fixture.display()
-    );
-    group("discovery", &[FIXTURE]);
 }

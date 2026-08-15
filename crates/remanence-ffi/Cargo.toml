@@ -40,6 +40,15 @@ leak-probe = []
 # Everything else the C++ surface is checked by builds its own artifact.
 fixtures = []
 
+# The other half of the core crate's split, for the same reason it draws
+# one (D49): `rigs` is what the project *generates* rather than
+# downloads. `c_abi_rig.rs` crosses the boundary with
+# `freedos-parttest.qcow2`, which reliquary builds by installing FreeDOS
+# onto a disk — a second toolchain, an emulator, and as long as the
+# install takes. Someone holding the downloads should not need any of
+# that to run what the downloads reach.
+rigs = []
+
 [dependencies]
 remanence.workspace = true
 
@@ -61,3 +70,13 @@ serde_json = "1"
 [[test]]
 name = "cpp_flux"
 required-features = ["fixtures"]
+
+# The one C suite that opens a generated one, and the reason it is its
+# own target: `required-features` gates a whole target, and the other
+# five groups in `c_abi_boundary.rs` need no artifact at all. Its test
+# lived there and declared nothing, so `cargo test --workspace` wanted
+# the rig on every machine — passing wherever the prep had run, failing
+# on a fresh clone.
+[[test]]
+name = "c_abi_rig"
+required-features = ["rigs"]
