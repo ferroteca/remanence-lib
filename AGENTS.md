@@ -535,7 +535,25 @@ ABI, or Python module.
   isolated environment; publishing is `uv publish` and is owner-gated.
   **The Python package claims Windows only** (the tested host; the
   classifiers state it) — keep POSIX paths correct but never state or
-  imply support the project has not tested. `uv build
+  imply support the project has not tested. **And it claims the native
+  CPython, not MSYS2's**, which `build.rs` enforces by refusing a MinGW
+  interpreter before anything compiles. pyo3 names a MinGW Python's
+  import library `libpython3` rather than `python3`, which puts it
+  outside the subset `raw-dylib` linking covers, so the module links
+  `libpython3.dll` — a DLL that exists only inside MSYS2. Nothing
+  downstream noticed: 0.0.1a4 built, published, and failed at `import`
+  for every consumer of it. `uv build` supplies its own native
+  interpreter and never reaches the refusal; a `cargo build` from an
+  MSYS2 shell does, and the message names the remedy —
+  `export PYO3_PYTHON=$(uv python find)`. The Python suite
+  (`tests/python_suite.rs`) shares the same concern from the other
+  side: if `pytest` is not installed for the interpreter on `PATH`, it
+  falls back to `uv run --with pytest`, which by default picks an
+  interpreter of `uv`'s own choosing — possibly not the one the module
+  was built against, which is the same class of mismatch showing up as
+  a bare `DLL load failed` on import. `common::python::pytest` pins
+  that fallback to `REMANENCE_BUILD_INTERPRETER` (the interpreter
+  `build.rs` recorded) so it can't drift. `uv build
   crates/remanence-py` produces the sdist and abi3 wheel in its
   `dist/`; publishing is `uv publish`.  `test-fixture-prep/` is a
   separate uv project with its own `pyproject.toml` and lock file,

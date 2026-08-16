@@ -51,30 +51,39 @@ pub fn skipping(variable: &str) -> bool {
 pub mod python {
     use super::Command;
 
-    /// How a Python tool might be reachable, cheapest first.
-    fn candidates(tool: &'static str) -> Vec<(String, Vec<String>)> {
+    /// How a Python tool might be reachable, cheapest first. `interpreter`,
+    /// when known, pins the `uv` fallback to it: without this, `uv` picks
+    /// an interpreter of its own for an auto-installed tool, which need
+    /// not be the one a compiled extension under test was built against —
+    /// the same mismatch a `DLL load failed` on import is a symptom of.
+    fn candidates(tool: &'static str, interpreter: Option<&str>) -> Vec<(String, Vec<String>)> {
+        let mut uv_argv = vec!["uv".into(), "run".into()];
+        let mut uv_label = "uv run".to_owned();
+        if let Some(interpreter) = interpreter {
+            uv_argv.push("--python".into());
+            uv_argv.push(interpreter.into());
+            uv_label += &format!(" --python {interpreter}");
+        }
+        uv_argv.extend([
+            "--with".into(),
+            tool.into(),
+            "--no-project".into(),
+            tool.into(),
+        ]);
+        uv_label += &format!(" --with {tool}");
+
         vec![
             (
                 format!("python -m {tool}"),
                 vec!["python".into(), "-m".into(), tool.into()],
             ),
             (tool.to_owned(), vec![tool.into()]),
-            (
-                format!("uv run --with {tool}"),
-                vec![
-                    "uv".into(),
-                    "run".into(),
-                    "--with".into(),
-                    tool.into(),
-                    "--no-project".into(),
-                    tool.into(),
-                ],
-            ),
+            (uv_label, uv_argv),
         ]
     }
 
-    fn find(tool: &'static str) -> Option<(String, Vec<String>)> {
-        for (label, argv) in candidates(tool) {
+    fn find(tool: &'static str, interpreter: Option<&str>) -> Option<(String, Vec<String>)> {
+        for (label, argv) in candidates(tool, interpreter) {
             let probe = Command::new(&argv[0])
                 .args(&argv[1..])
                 .arg("--version")
@@ -86,8 +95,12 @@ pub mod python {
         None
     }
 
-    fn require(tool: &'static str, skip: &str) -> Option<(String, Vec<String>)> {
-        let found = find(tool);
+    fn require(
+        tool: &'static str,
+        skip: &str,
+        interpreter: Option<&str>,
+    ) -> Option<(String, Vec<String>)> {
+        let found = find(tool, interpreter);
         assert!(
             found.is_some(),
             "{tool} is not reachable, so that check went unrun. This fails \
@@ -102,11 +115,14 @@ pub mod python {
         found
     }
 
-    pub fn pytest() -> Option<(String, Vec<String>)> {
-        require("pytest", super::SKIP_PYTEST)
+    /// `interpreter` pins the `uv` fallback to the Python a compiled
+    /// module under test was built against (see `candidates`); pass
+    /// `REMANENCE_BUILD_INTERPRETER` where one is being tested.
+    pub fn pytest(interpreter: Option<&str>) -> Option<(String, Vec<String>)> {
+        require("pytest", super::SKIP_PYTEST, interpreter)
     }
 
     pub fn mypy() -> Option<(String, Vec<String>)> {
-        require("mypy", super::SKIP_MYPY)
+        require("mypy", super::SKIP_MYPY, None)
     }
 }

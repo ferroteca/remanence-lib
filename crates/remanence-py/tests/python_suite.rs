@@ -28,6 +28,14 @@ use common::{SKIP_PYTEST, crate_dir, python, skipping, target_dir, workspace_dir
 use std::path::PathBuf;
 use std::process::Command;
 
+/// The interpreter pyo3 built the staged module against, recorded by
+/// `build.rs`. The tool that runs the suite is found separately and need
+/// not be the same Python, so a failure names both: an extension links
+/// one interpreter's DLL and is imported by another's process, and when
+/// those disagree the error is a bare `DLL load failed` that says
+/// nothing about why.
+const BUILT_AGAINST: Option<&str> = option_env!("REMANENCE_BUILD_INTERPRETER");
+
 /// The compiled module, under whichever name this platform builds.
 fn built_module() -> PathBuf {
     let dir = target_dir();
@@ -80,7 +88,7 @@ fn the_python_suite_passes_against_what_was_just_built() {
     if skipping(SKIP_PYTEST) {
         return;
     }
-    let Some((label, argv)) = python::pytest() else {
+    let Some((label, argv)) = python::pytest(BUILT_AGAINST) else {
         return;
     };
     let staged = stage();
@@ -102,9 +110,16 @@ fn the_python_suite_passes_against_what_was_just_built() {
     );
     assert!(
         output.status.success(),
-        "the Python suite failed (pytest via {label}), against the module \
-         staged from this build in {}:\n{text}",
-        staged.display()
+        "the Python suite failed against the module staged from this build \
+         in {}.\n\n  \
+         built against: {}\n  \
+         run by:        {label}\n\n\
+         Those two are found independently, so check they are the same \
+         Python before reading further: a `DLL load failed while importing \
+         remanence` below means they are not, and nothing in the suite \
+         itself is wrong.\n\n{text}",
+        staged.display(),
+        BUILT_AGAINST.unwrap_or("<not recorded>")
     );
     print!("{text}");
     let _ = workspace_dir();
