@@ -291,31 +291,37 @@ fn a_subst_read_from_autoexec_unsettles_every_letter() {
 }
 
 /// An optical drive takes the letter the machine's own `MSCDEX` line
-/// placed it at — read from `AUTOEXEC.BAT`, not declared by a caller.
+/// placed it at — read from `AUTOEXEC.BAT`, not declared by a caller —
+/// and the letter names the drive the machine holds.
+///
+/// The two halves are different facts: the device says there is a drive,
+/// and the startup line says which letter it took.
 #[test]
 fn an_optical_drive_takes_the_letter_its_mscdex_line_placed_it_at() {
-    let banner = dos_letters::command_com("6.22");
-    let system = dos_letters::fat16_volume(
-        "SYSTEM",
-        &[
-            ("IO", "SYS", b"kernel"),
-            ("MSDOS", "SYS", b"kernel"),
-            ("COMMAND", "COM", &banner),
-            (
-                "AUTOEXEC",
-                "BAT",
-                b"@ECHO OFF\r\nC:\\DOS\\MSCDEX.EXE /D:MSCD001 /L:R\r\n",
-            ),
-        ],
+    let path = write_image(
+        "mscdex",
+        synthetic_multi_mbr_active(&[(0x06, &mscdex_system("/D:MSCD001 /L:R"))], 0),
     );
-    let path = write_image("mscdex", synthetic_multi_mbr_active(&[(0x06, &system)], 0));
-    let (_session, report) = machine_of(&[path.clone()]);
 
-    let outcome = &report.letter('R').expect("R: was placed").outcome;
+    let mut session = Session::new();
+    session.add_machine("pc").expect("a fresh identity");
+    dos_letters::seat(&mut session, Some("pc"), &path);
+    let drive = dos_letters::add_optical_drive(&mut session, "pc");
+    let report = session
+        .machine_mut("pc")
+        .expect("still here")
+        .inspect()
+        .expect("the machine reads");
+
+    let (attachment, placed_by) = dos_letters::optical_at(&report, 'R');
+    assert_eq!(
+        attachment.as_deref(),
+        Some(drive.as_str()),
+        "R: names the drive the machine holds, not a letter standing alone"
+    );
     assert!(
-        matches!(outcome, LetterOutcome::OpticalDrive { .. }),
-        "R: is the optical drive MSCDEX placed: {}",
-        outcome.name()
+        placed_by.contains("MSCDEX"),
+        "and says what placed it: {placed_by}"
     );
     assert!(
         report.volume_at('R').is_none(),
@@ -323,6 +329,91 @@ fn an_optical_drive_takes_the_letter_its_mscdex_line_placed_it_at() {
     );
 
     std::fs::remove_file(&path).ok();
+}
+
+/// A drive the machine holds that no `MSCDEX` line places takes **no**
+/// letter, and is accounted for in provenance rather than left unsaid.
+///
+/// `MSCDEX` without `/L:` takes the first free letter, which depends on
+/// what the rest of the machine took — so the silence establishes
+/// nothing, and nothing is inferred from it.
+#[test]
+fn an_optical_drive_no_line_places_takes_no_letter_and_is_accounted_for() {
+    let path = write_image(
+        "no-mscdex",
+        synthetic_multi_mbr_active(&[(0x06, &dos_volume("SYSTEM", "6.22", ""))], 0),
+    );
+
+    let mut session = Session::new();
+    session.add_machine("pc").expect("a fresh identity");
+    dos_letters::seat(&mut session, Some("pc"), &path);
+    let drive = dos_letters::add_optical_drive(&mut session, "pc");
+    let report = session
+        .machine_mut("pc")
+        .expect("still here")
+        .inspect()
+        .expect("the machine reads");
+
+    assert!(
+        report
+            .drives
+            .iter()
+            .all(|mapping| !matches!(mapping.outcome, LetterOutcome::OpticalDrive { .. })),
+        "no letter is guessed for a drive nothing placed"
+    );
+    assert!(
+        report
+            .provenance
+            .iter()
+            .any(|line| line.contains(&drive) && line.contains("takes no letter")),
+        "and the drive the machine holds is accounted for: {:?}",
+        report.provenance
+    );
+    assert!(
+        report
+            .disks
+            .iter()
+            .any(|disk| disk.attachment == drive && disk.family.as_deref() == Some("optical")),
+        "the drive appears in the device set as the optical device it is"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// A machine whose startup files place an optical drive it does not hold
+/// keeps both readings: the letter stands, and it names no device.
+#[test]
+fn a_placement_with_no_drive_behind_it_names_no_device() {
+    let path = write_image(
+        "mscdex-no-drive",
+        synthetic_multi_mbr_active(&[(0x06, &mscdex_system("/D:MSCD001 /L:R"))], 0),
+    );
+    let (_session, report) = machine_of(&[path.clone()]);
+
+    let (attachment, _) = dos_letters::optical_at(&report, 'R');
+    assert_eq!(
+        attachment, None,
+        "the line was written by the machine that ran, and the device set is \
+         the caller's; neither is preferred"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// A FAT16 system volume whose `AUTOEXEC.BAT` runs `MSCDEX` with the
+/// switches given.
+fn mscdex_system(switches: &str) -> Vec<u8> {
+    let banner = dos_letters::command_com("6.22");
+    let autoexec = format!("@ECHO OFF\r\nC:\\DOS\\MSCDEX.EXE {switches}\r\n").into_bytes();
+    dos_letters::fat16_volume(
+        "SYSTEM",
+        &[
+            ("IO", "SYS", b"kernel"),
+            ("MSDOS", "SYS", b"kernel"),
+            ("COMMAND", "COM", &banner),
+            ("AUTOEXEC", "BAT", &autoexec),
+        ],
+    )
 }
 
 /// The installed version chooses the rule, and the two claimed variants

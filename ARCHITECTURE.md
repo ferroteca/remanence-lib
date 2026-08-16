@@ -384,8 +384,8 @@ entry already showed.
 
 **The recording side is the device type, and it is a catalog of its
 own.** A medium carries one — the device its content is assumed recorded
-by — enumerated in two levels: the **class** (`Floppy`, `HardDrive`, with
-`Optical` and `Tape` reserved for the coming families), then the
+by — enumerated in two levels: the **class** (`Floppy`, `HardDrive` and
+`Optical`, with `Tape` reserved for the coming family), then the
 **concrete type** within it. A type the library does not know fails to
 compile; its display string survives in provenance, refusals and the
 cross-language spellings. Archives were recorded by no device, and

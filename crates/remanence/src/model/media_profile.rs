@@ -31,14 +31,15 @@
 //! catalog entry that could choose any of those would be a language for
 //! behavior wearing a table's clothes.
 //!
-//! **Families own their representation.** Flexible magnetic media and
-//! logical-block media have no fact in common — a coercivity is
-//! meaningless for the second and a block size for the first — so the
-//! facts are family-specific by construction rather than one schema with
-//! most of its fields empty. Three families are claimed (P3) and a media
-//! type outside them is refused by name.
+//! **Families own their representation.** Flexible magnetic media,
+//! optical media and logical-block media have no fact in common — a
+//! coercivity is meaningless for the last two, a track pitch in
+//! nanometres for the other two, and a block size for the first two — so
+//! the facts are family-specific by construction rather than one schema
+//! with most of its fields empty. Four families are claimed (P3) and a
+//! media type outside them is refused by name.
 //!
-//! **The third is virtual, and it proves the rule rather than bending
+//! **The fourth is virtual, and it proves the rule rather than bending
 //! it.** An archive is independent recorded state with no physical
 //! article behind it, held by no drive — which is exactly what P14's own
 //! sentence describes, media being the independent mutable state
@@ -77,6 +78,16 @@ pub(crate) enum MediaFamily {
     /// number, with no cylinder, head, track, recording or mechanism
     /// claim (P23).
     LogicalBlock,
+    /// Optical media — the disc a drive's laser reads, whose
+    /// compatibility is a matter of optics rather than of magnetism.
+    ///
+    /// **The family declares the article and nothing recorded on it.**
+    /// Sessions, tracks, index points, audio and subchannels are what
+    /// was *recorded*, which belongs to the instance and to the optical
+    /// state model this release does not claim; what a blank disc in
+    /// its sleeve carries is its size, the spiral it was manufactured
+    /// to, and whether anything can write it.
+    Optical,
     /// **Virtual** media — independent recorded state with no physical
     /// article behind it, held by no drive. P14's own definition already
     /// describes it: media is the independent mutable state between
@@ -91,6 +102,7 @@ impl MediaFamily {
         match self {
             Self::FlexibleMagnetic => "flexible-magnetic",
             Self::LogicalBlock => "logical-block",
+            Self::Optical => "optical",
             Self::Virtual => "virtual",
         }
     }
@@ -178,6 +190,53 @@ pub(crate) struct LogicalBlock {
     pub(crate) block_bytes: u64,
 }
 
+/// The nominal diameter of an optical disc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiscSize {
+    Millimetre120,
+}
+
+impl DiscSize {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Millimetre120 => "120 mm",
+        }
+    }
+}
+
+/// How the article came to carry marks, and therefore whether anything
+/// can put more there.
+///
+/// It is the optical family's answer to the flexible one's write-protect
+/// notch, and it differs in kind rather than in degree: a notch is a
+/// mechanism whose sense a drive reads and a user can defeat with tape,
+/// where a pressed disc has no write mechanism at all. Recordable and
+/// rewritable articles exist and are not enrolled — the catalog is an
+/// enumerated claim (P3), and this release is served the pressed one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiscRecording {
+    /// Stamped from a glass master at manufacture. There is nothing to
+    /// write with and nothing to erase.
+    Pressed,
+}
+
+/// The passive compatibility facts of one optical media type.
+///
+/// The two dimensions below are the optical family's coercivity: they
+/// are why a drive built for one article cannot read another of the same
+/// diameter, and they are published facts about a manufactured disc
+/// rather than anything an image or a capture may establish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Optical {
+    pub(crate) disc_size: DiscSize,
+    /// The pitch of the manufactured spiral, in nanometres — what a
+    /// drive's optics have to track.
+    pub(crate) track_pitch_nm: u32,
+    /// The wavelength the article is made to be read at, in nanometres.
+    pub(crate) read_wavelength_nm: u32,
+    pub(crate) recording: DiscRecording,
+}
+
 /// The passive facts of one virtual media type.
 ///
 /// There is exactly one fact, and it is not a physical one: a virtual
@@ -197,6 +256,7 @@ pub(crate) struct Virtual {
 pub(crate) enum MediaFacts {
     FlexibleMagnetic(FlexibleMagnetic),
     LogicalBlock(LogicalBlock),
+    Optical(Optical),
     Virtual(Virtual),
 }
 
@@ -205,6 +265,7 @@ impl MediaFacts {
         match self {
             Self::FlexibleMagnetic(_) => MediaFamily::FlexibleMagnetic,
             Self::LogicalBlock(_) => MediaFamily::LogicalBlock,
+            Self::Optical(_) => MediaFamily::Optical,
             Self::Virtual(_) => MediaFamily::Virtual,
         }
     }
@@ -243,6 +304,13 @@ impl MediaProfile {
     pub(crate) fn logical_block(&self) -> Option<&LogicalBlock> {
         match &self.facts {
             MediaFacts::LogicalBlock(facts) => Some(facts),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn optical(&self) -> Option<&Optical> {
+        match &self.facts {
+            MediaFacts::Optical(facts) => Some(facts),
             _ => None,
         }
     }
@@ -312,6 +380,30 @@ pub(crate) static LOGICAL_BLOCK_512: MediaProfile = MediaProfile {
     facts: MediaFacts::LogicalBlock(LogicalBlock { block_bytes: 512 }),
 };
 
+/// The pressed 120 mm optical disc: what a CD-ROM drive is served.
+///
+/// **It declares the disc and not the disc's content.** How many
+/// sessions were burned, where the tracks begin, which of them carry
+/// audio and what the subchannels say are facts about a recording, and
+/// they belong to the instance and to the optical state model this
+/// release does not claim — the same line the flexible entries draw when
+/// they decline to state a track count.
+pub(crate) static OPTICAL_120_PRESSED: MediaProfile = MediaProfile {
+    id: "optical-120-pressed",
+    name: "120 mm pressed optical disc",
+    provenance: "declared from the published compact-disc physical specification: \
+                 a 120-millimetre disc carrying a spiral of 1.6-micrometre pitch \
+                 stamped at manufacture and read at 780 nanometres, with no \
+                 session, track, index, audio or subchannel fact of any kind, \
+                 those being what was recorded rather than what the disc is",
+    facts: MediaFacts::Optical(Optical {
+        disc_size: DiscSize::Millimetre120,
+        track_pitch_nm: 1600,
+        read_wavelength_nm: 780,
+        recording: DiscRecording::Pressed,
+    }),
+};
+
 /// The virtual article: independent recorded state with no physical
 /// substrate behind it, whose content is reached by name and not by
 /// position — an archive's.
@@ -358,10 +450,11 @@ pub(crate) static AUTHORED: MediaProfile = MediaProfile {
 /// The enrolled articles. Adding one changes its declaration, its
 /// tests, and this list — nothing else, because there is no behavior
 /// here to wire up.
-static ENROLLED: [&MediaProfile; 5] = [
+static ENROLLED: [&MediaProfile; 6] = [
     &FLEXIBLE_5_25_SOFT,
     &FLEXIBLE_5_25_HARD_10,
     &LOGICAL_BLOCK_512,
+    &OPTICAL_120_PRESSED,
     &VIRTUAL,
     &AUTHORED,
 ];
@@ -470,9 +563,45 @@ mod tests {
             &FLEXIBLE_5_25_SOFT,
             &FLEXIBLE_5_25_HARD_10,
             &LOGICAL_BLOCK_512,
+            &OPTICAL_120_PRESSED,
         ] {
             assert_ne!(physical.family(), MediaFamily::Virtual, "{}", physical.id);
         }
+    }
+
+    #[test]
+    fn the_optical_article_declares_the_disc_and_nothing_recorded_on_it() {
+        // D19's test for an article fact: it holds of a blank disc in
+        // its sleeve. A pressed disc's size, spiral and stamping do; a
+        // session, a track and an audio flag are what somebody put on
+        // it, and the family declares none of them.
+        let disc = OPTICAL_120_PRESSED
+            .optical()
+            .expect("its own family's facts");
+        assert_eq!(disc.disc_size, DiscSize::Millimetre120);
+        assert_eq!(disc.track_pitch_nm, 1600);
+        assert_eq!(disc.read_wavelength_nm, 780);
+        assert_eq!(
+            disc.recording,
+            DiscRecording::Pressed,
+            "a pressed disc has no write mechanism at all, where a flexible \
+             disk has one whose sense the family declares"
+        );
+        assert_eq!(OPTICAL_120_PRESSED.family(), MediaFamily::Optical);
+
+        // Families own their representation: a disc answers no
+        // coercivity question, and no block-size one either — what a
+        // recording addresses in belongs to the recording.
+        assert!(
+            OPTICAL_120_PRESSED.flexible_magnetic().is_none()
+                && OPTICAL_120_PRESSED.logical_block().is_none()
+                && OPTICAL_120_PRESSED.virtual_media().is_none(),
+            "an optical disc answers only its own family's questions"
+        );
+        assert!(
+            LOGICAL_BLOCK_512.optical().is_none(),
+            "and a logical-block medium answers no optical one"
+        );
     }
 
     #[test]

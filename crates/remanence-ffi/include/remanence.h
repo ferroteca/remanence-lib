@@ -173,8 +173,10 @@ typedef enum {
   // its own report issued.
   REMANENCE_LETTER_OUTCOME_VOLUME = 0,
   // An optical drive the machine's own startup files placed here —
-  // `MSCDEX /L:`. The library composes no volume for it and invents
-  // no identity.
+  // `MSCDEX /L:`. The drive itself is one the machine holds, named by
+  // `remanence_machine_report_drive_attachment`, and null there means
+  // the machine as stated holds none. The library composes no volume
+  // for an optical drive and invents no identity.
   REMANENCE_LETTER_OUTCOME_OPTICAL_DRIVE = 1,
   // DOS's phantom second floppy: the same drive as the letter before
   // it, not a second volume.
@@ -565,8 +567,9 @@ const char *remanence_device_slot_name(size_t index);
 // archive receiver, which declares no recording.
 const char *remanence_device_slot_provenance(size_t index);
 
-// The class of slot `index`'s device type — `floppy` or `hard-drive`,
-// the first of the catalog's two levels. Null for the archive receiver.
+// The class of slot `index`'s device type — `floppy`, `hard-drive` or
+// `optical`, the first of the catalog's two levels. Null for the
+// archive receiver.
 const char *remanence_device_slot_class(size_t index);
 
 // The article slot `index`'s device type is served (P14), by stable
@@ -2789,9 +2792,9 @@ const char *remanence_machine_report_disk_attachment(const RemanenceMachineRepor
 const char *remanence_machine_report_disk_device_type(const RemanenceMachineReport *report,
                                                       size_t index);
 
-// The device class of device `index` — `floppy` or `hard-drive` — which
-// is what decides whether a claimed letter rule reaches it. Null where
-// the slot records no device type.
+// The device class of device `index` — `floppy`, `hard-drive` or
+// `optical` — which is what decides whether a claimed letter rule
+// reaches it, and how. Null where the slot records no device type.
 const char *remanence_machine_report_disk_family(const RemanenceMachineReport *report,
                                                  size_t index);
 
@@ -2836,8 +2839,10 @@ bool remanence_machine_report_find_letter(const RemanenceMachineReport *report,
 RemanenceLetterOutcome remanence_machine_report_drive_outcome(const RemanenceMachineReport *report,
                                                               size_t index);
 
-// The attachment identity of the drive the letter at `index` names, or
-// null for every outcome but a volume.
+// The attachment identity of the drive the letter at `index` names —
+// the drive a volume sits on, or the optical drive the machine holds.
+// Null for a phantom, an undetermined letter, and an optical placement
+// the machine holds no drive for.
 const char *remanence_machine_report_drive_attachment(const RemanenceMachineReport *report,
                                                       size_t index);
 

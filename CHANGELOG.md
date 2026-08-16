@@ -18,6 +18,62 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **The storage model has an optical drive, and a machine's optical
+  letter is placed on it.** `DeviceType` gains a third class,
+  `Optical`, with `OpticalDrive::CdRom` (`cdrom`) in it: a device
+  configured like every other one, taking the bay `cdrom0`, served the
+  pressed 120 mm disc, and addressing what it reads by logical block.
+  The article catalog gains that disc as `optical-120-pressed` in an
+  optical family of its own, whose facts are the ones a blank disc in
+  its sleeve carries — its size, the spiral it was manufactured to, the
+  wavelength it is read at, and that nothing can write it.
+
+  **The disc is loaded as bytes through a declared block size**, which
+  is what an ISO-like artifact is: the raw reading now records the
+  CD-ROM drive alongside the two MBR hard drives and the sector floppy,
+  so `Format::Raw { device: OpticalDrive::CdRom.into(), block_bytes:
+  2048 }` pools a medium the drive takes and every other drive refuses
+  by name. An optical spec declares no partition scheme, so the medium
+  bears the direct partition, as a schemeless floppy's does.
+
+  **Reading ISO 9660 is a separate claim and is not in this release**,
+  and the gap has a visible shape rather than a quiet one: the
+  schemeless content classifier reads sector 0, and ISO 9660 puts its
+  first descriptor at sector 16 behind a system area that is normally
+  zero — so a data disc carrying a whole filesystem inspects as
+  `blank`. That is what an ISO 9660 recognition would have to fix, and
+  the suite asserts the current answer so that landing one is a
+  visible change rather than a silent one.
+
+  **What the disc is *not* is the optical state model.** Sessions,
+  tracks, gaps, audio and subchannels are a recording's facts; nothing
+  here claims them, no optical active layer exists, and the article
+  declares none of them.
+
+### Changed
+
+- **An optical drive letter now names the drive the machine holds.**
+  `LetterOutcome::OpticalDrive` carries an `attachment` beside the
+  startup line that placed it, and the two are separate facts: **the
+  device says there is a drive and the `MSCDEX /L:` line says which
+  letter it took**, so neither is inferred from the other. A drive the
+  machine holds that no `MSCDEX` line places takes **no** letter —
+  `MSCDEX` without `/L:` takes the first free letter, which depends on
+  what the rest of the machine took — and is accounted for in the
+  report's provenance rather than left unmentioned. A placement the
+  machine holds no drive for keeps both readings: the letter stands
+  with `attachment` absent, because the line was written by the machine
+  that ran and the device set is the caller's.
+
+  In the C ABI and the Python module this is the existing
+  `attachment` on a drive mapping, now non-null for an optical letter
+  the machine holds a drive for; no symbol was added.
+
+- The device class a slot and a machine's disk report — `class`,
+  `device_class`, `family` — now also answers `optical`.
+
 ## 0.0.1-alpha.5 - 2026-08-15
 ## 0.0.1-alpha.4 - 2026-08-15
 

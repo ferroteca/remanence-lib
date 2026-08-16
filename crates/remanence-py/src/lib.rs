@@ -552,9 +552,10 @@ pub struct DeviceSlot {
     pub name: String,
     /// The recording device type, or `None` for the archive receiver.
     pub device_type: Option<String>,
-    /// `"floppy"` or `"hard-drive"` — the catalog's first level. `None`
-    /// for the receiver. Spelled `device_class` because `class` is a
-    /// Python keyword and would be unreachable as an attribute.
+    /// `"floppy"`, `"hard-drive"` or `"optical"` — the catalog's first
+    /// level. `None` for the receiver. Spelled `device_class` because
+    /// `class` is a Python keyword and would be unreachable as an
+    /// attribute.
     pub device_class: Option<String>,
     /// Where this device type's declaration came from. `None` for the
     /// receiver, which declares no recording.
@@ -719,15 +720,19 @@ fn dos_assignment_rules() -> Vec<DosAssignmentRule> {
 /// `StorageSpace.volume_id` answer with, so a letter and the partition
 /// beneath it are matched by identity rather than by position — and an
 /// `"undetermined"` letter says in `reason` why the claimed rules could
-/// not settle it.
+/// not settle it. An `"optical-drive"` names the drive the machine holds
+/// in `attachment` and the startup line that placed the letter in
+/// `reason`.
 #[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
 #[derive(Clone)]
 pub struct DriveMapping {
     /// The letter, without its colon.
     pub letter: String,
     pub outcome: String,
-    /// The attachment identity of the drive the volume sits on — `hdd0`,
-    /// `floppy0` — where the outcome names a volume.
+    /// The attachment identity of the drive this letter names — `hdd0`,
+    /// `floppy0`, `cdrom0`. The drive a volume sits on, or the optical
+    /// drive the machine holds; `None` for a phantom, an undetermined
+    /// letter, and an optical placement the machine holds no drive for.
     pub attachment: Option<String>,
     /// Opaque, library-owned. Pass it back; never parse or build one.
     pub volume: Option<u64>,
@@ -781,8 +786,9 @@ pub struct MachineDisk {
     pub attachment: String,
     /// The device type's own name, or `None` for a slot recording none.
     pub device_type: Option<String>,
-    /// The device class — `"floppy"` or `"hard-drive"` — which is what
-    /// decides whether a claimed letter rule reaches this drive.
+    /// The device class — `"floppy"`, `"hard-drive"` or `"optical"` —
+    /// which is what decides whether a claimed letter rule reaches this
+    /// drive, and how.
     pub family: Option<String>,
     /// Whether the medium in it composed a reading.
     pub has_report: bool,
@@ -907,9 +913,10 @@ impl MachineReport {
                         remanence::LetterOutcome::Volume { attachment, volume } => {
                             (Some(attachment.clone()), Some(volume.value()), None, None)
                         }
-                        remanence::LetterOutcome::OpticalDrive { placed_by } => {
-                            (None, None, None, Some(placed_by.clone()))
-                        }
+                        remanence::LetterOutcome::OpticalDrive {
+                            attachment,
+                            placed_by,
+                        } => (attachment.clone(), None, None, Some(placed_by.clone())),
                         remanence::LetterOutcome::Phantom { of } => {
                             (None, None, Some(of.to_string()), None)
                         }

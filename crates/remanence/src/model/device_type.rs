@@ -5,9 +5,10 @@
 //! device its content is assumed recorded by.
 //!
 //! **The catalog speaks in device types, and it is a hierarchy in two
-//! levels**: the *class* — [`DeviceType::Floppy`] and
-//! [`DeviceType::HardDrive`] today, with `Optical` and `Tape` reserved
-//! for the coming families — and the *concrete type* within it.
+//! levels**: the *class* — [`DeviceType::Floppy`],
+//! [`DeviceType::HardDrive`] and [`DeviceType::Optical`] today, with
+//! `Tape` reserved for the coming family — and the *concrete type*
+//! within it.
 //! `Commodore1541` is a [`FloppyDrive`], and is a [`DeviceType`]. A type
 //! the library does not know **fails to compile**; the display strings
 //! (`c1541`, `mbr-block-hd`) survive in provenance, refusals, and the C
@@ -56,7 +57,7 @@ use std::fmt;
 use crate::error::{Error, Result};
 use crate::flux::drive_profile::{self, DriveProfile};
 use crate::model::media_profile::{
-    FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile,
+    FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile, OPTICAL_120_PRESSED,
 };
 use crate::partition::PartitionScheme;
 
@@ -93,12 +94,28 @@ pub enum HardDrive {
     Gpt,
 }
 
+/// The concrete types of the optical class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OpticalDrive {
+    /// The CD-ROM drive: the read-only data drive a machine of the DOS
+    /// era held beside its disks, served the pressed 120 mm disc and
+    /// addressing what it reads by logical block.
+    ///
+    /// **It is claimed at the block vantage and no further.** A data
+    /// disc's user blocks are what this release reads and what its
+    /// letter is placed on; the disc's sessions, tracks, gaps, audio and
+    /// subchannels are the optical state model, which this release does
+    /// not claim and this type does not stand in for.
+    CdRom,
+}
+
 /// One device type: the device a medium's content is assumed recorded
 /// by, enumerated in two levels — the class, then the concrete type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeviceType {
     Floppy(FloppyDrive),
     HardDrive(HardDrive),
+    Optical(OpticalDrive),
 }
 
 /// How a type addresses its recording: by the recording's own cylinder,
@@ -182,6 +199,22 @@ struct HardDriveSpec {
     article: &'static MediaProfile,
     slot_prefix: &'static str,
     scheme: DeclaredScheme,
+    addressing: Addressing,
+}
+
+/// The spec shape of the optical class, which carries no scheme: an
+/// optical drive's disc is mastered whole rather than partitioned, so
+/// the class bears the direct partition as the schemeless floppies do.
+struct OpticalSpec {
+    id: &'static str,
+    name: &'static str,
+    provenance: &'static str,
+    article: &'static MediaProfile,
+    slot_prefix: &'static str,
+    /// How this type addresses its recording. Every optical drive in the
+    /// catalog is block-addressed — a disc is one spiral, and the drive
+    /// is told a block number rather than a cylinder and a head — which
+    /// is also why no optical medium answers the sector verbs.
     addressing: Addressing,
 }
 
@@ -275,6 +308,19 @@ static GPT_HD_SPEC: HardDriveSpec = HardDriveSpec {
     addressing: Addressing::Block,
 };
 
+static CDROM_SPEC: OpticalSpec = OpticalSpec {
+    id: "cdrom",
+    name: "CD-ROM drive",
+    provenance: "declared from the published compact-disc data conventions the \
+                 drive's block reads are defined against: a drive served the \
+                 pressed 120-millimetre disc, addressing the user data of a \
+                 data track by logical block, and reading rather than writing \
+                 the article it holds",
+    article: &OPTICAL_120_PRESSED,
+    slot_prefix: "cdrom",
+    addressing: Addressing::Block,
+};
+
 impl FloppyDrive {
     fn spec(self) -> &'static FloppySpec {
         match self {
@@ -313,9 +359,17 @@ impl HardDrive {
     }
 }
 
+impl OpticalDrive {
+    fn spec(self) -> &'static OpticalSpec {
+        match self {
+            Self::CdRom => &CDROM_SPEC,
+        }
+    }
+}
+
 impl DeviceType {
     /// Every device type this release claims, class by class.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Floppy(FloppyDrive::Commodore1541),
         Self::Floppy(FloppyDrive::HeathH17),
         Self::Floppy(FloppyDrive::HeathH37),
@@ -323,6 +377,7 @@ impl DeviceType {
         Self::HardDrive(HardDrive::MbrSector),
         Self::HardDrive(HardDrive::MbrBlock),
         Self::HardDrive(HardDrive::Gpt),
+        Self::Optical(OpticalDrive::CdRom),
     ];
 
     /// The stable cross-language spelling — what survives in provenance,
@@ -331,6 +386,7 @@ impl DeviceType {
         match self {
             Self::Floppy(floppy) => floppy.spec().id,
             Self::HardDrive(drive) => drive.spec().id,
+            Self::Optical(drive) => drive.spec().id,
         }
     }
 
@@ -339,6 +395,7 @@ impl DeviceType {
         match self {
             Self::Floppy(floppy) => floppy.spec().name,
             Self::HardDrive(drive) => drive.spec().name,
+            Self::Optical(drive) => drive.spec().name,
         }
     }
 
@@ -349,16 +406,18 @@ impl DeviceType {
         match self {
             Self::Floppy(floppy) => floppy.spec().provenance,
             Self::HardDrive(drive) => drive.spec().provenance,
+            Self::Optical(drive) => drive.spec().provenance,
         }
     }
 
     /// The class this type belongs to, by its stable spelling —
-    /// `floppy` or `hard-drive`, with `optical` and `tape` reserved for
-    /// the coming families.
+    /// `floppy`, `hard-drive` or `optical`, with `tape` reserved for the
+    /// coming family.
     pub fn class(self) -> &'static str {
         match self {
             Self::Floppy(_) => "floppy",
             Self::HardDrive(_) => "hard-drive",
+            Self::Optical(_) => "optical",
         }
     }
 
@@ -373,6 +432,7 @@ impl DeviceType {
         match self {
             Self::Floppy(floppy) => floppy.spec().article,
             Self::HardDrive(drive) => drive.spec().article,
+            Self::Optical(drive) => drive.spec().article,
         }
     }
 
@@ -382,6 +442,7 @@ impl DeviceType {
         match self {
             Self::Floppy(floppy) => floppy.spec().slot_prefix,
             Self::HardDrive(drive) => drive.spec().slot_prefix,
+            Self::Optical(drive) => drive.spec().slot_prefix,
         }
     }
 
@@ -390,7 +451,7 @@ impl DeviceType {
     pub fn flux_path(self) -> Option<&'static str> {
         match self {
             Self::Floppy(floppy) => floppy.spec().flux_path.map(|profile| profile.id),
-            Self::HardDrive(_) => None,
+            Self::HardDrive(_) | Self::Optical(_) => None,
         }
     }
 
@@ -400,7 +461,7 @@ impl DeviceType {
     /// which bear the direct partition.
     pub fn scheme(self) -> Option<&'static str> {
         match self {
-            Self::Floppy(_) => None,
+            Self::Floppy(_) | Self::Optical(_) => None,
             Self::HardDrive(drive) => Some(drive.spec().scheme.name()),
         }
     }
@@ -422,6 +483,7 @@ impl DeviceType {
         match self {
             Self::Floppy(floppy) => floppy.spec().addressing,
             Self::HardDrive(drive) => drive.spec().addressing,
+            Self::Optical(drive) => drive.spec().addressing,
         }
     }
 
@@ -435,7 +497,7 @@ impl DeviceType {
     /// promise where a refusal is an answer (P6).
     pub(crate) fn readable_scheme(self) -> Option<Result<PartitionScheme>> {
         match self {
-            Self::Floppy(_) => None,
+            Self::Floppy(_) | Self::Optical(_) => None,
             Self::HardDrive(drive) => Some(match drive.spec().scheme {
                 DeclaredScheme::Mbr => Ok(PartitionScheme::Mbr),
                 DeclaredScheme::Gpt => Err(Error::unsupported(format!(
@@ -599,6 +661,12 @@ impl From<HardDrive> for DeviceType {
     }
 }
 
+impl From<OpticalDrive> for DeviceType {
+    fn from(drive: OpticalDrive) -> Self {
+        Self::Optical(drive)
+    }
+}
+
 impl From<DeviceType> for DeviceSlot {
     fn from(device: DeviceType) -> Self {
         Self::Recorded(device)
@@ -614,6 +682,12 @@ impl From<FloppyDrive> for DeviceSlot {
 impl From<HardDrive> for DeviceSlot {
     fn from(drive: HardDrive) -> Self {
         Self::Recorded(DeviceType::HardDrive(drive))
+    }
+}
+
+impl From<OpticalDrive> for DeviceSlot {
+    fn from(drive: OpticalDrive) -> Self {
+        Self::Recorded(DeviceType::Optical(drive))
     }
 }
 
@@ -674,11 +748,13 @@ mod tests {
             "floppy"
         );
         assert_eq!(DeviceType::HardDrive(HardDrive::Gpt).class(), "hard-drive");
+        assert_eq!(DeviceType::Optical(OpticalDrive::CdRom).class(), "optical");
         assert_eq!(DeviceType::Floppy(FloppyDrive::Commodore1541).id(), "c1541");
         assert_eq!(
             DeviceType::HardDrive(HardDrive::MbrBlock).id(),
             "mbr-block-hd"
         );
+        assert_eq!(DeviceType::Optical(OpticalDrive::CdRom).id(), "cdrom");
         assert_eq!(HardDrive::MbrSector.id(), "mbr-sector-hd");
     }
 
@@ -703,6 +779,32 @@ mod tests {
         for drive in [HardDrive::MbrSector, HardDrive::MbrBlock, HardDrive::Gpt] {
             assert_eq!(DeviceType::HardDrive(drive).article(), "logical-block-512");
         }
+        assert_eq!(
+            DeviceType::Optical(OpticalDrive::CdRom).article(),
+            "optical-120-pressed",
+            "the drive is served a disc, and what the disc is stays in the \
+             article catalog"
+        );
+    }
+
+    #[test]
+    fn the_optical_class_is_block_addressed_and_schemeless() {
+        // The granularity rule's two halves: the drive fixes that it is
+        // told a block number rather than a cylinder and a head, and how
+        // many blocks the disc holds is per-media evidence. A disc is
+        // mastered whole rather than partitioned, so the class bears the
+        // direct partition as the schemeless floppies do.
+        let cdrom = DeviceType::Optical(OpticalDrive::CdRom);
+        assert_eq!(cdrom.addressing(), "block");
+        assert_eq!(cdrom.scheme(), None);
+        assert!(cdrom.readable_scheme().is_none());
+        assert_eq!(cdrom.slot_prefix(), "cdrom");
+        assert_eq!(
+            cdrom.flux_path(),
+            None,
+            "the optical family's own recording path is no claim of this \
+             release"
+        );
     }
 
     #[test]
@@ -796,6 +898,12 @@ mod tests {
             .collect();
         assert_eq!(hard, vec!["h17"]);
 
+        let discs: Vec<&str> = DeviceType::accepting(&OPTICAL_120_PRESSED)
+            .iter()
+            .map(|device| device.id())
+            .collect();
+        assert_eq!(discs, vec!["cdrom"]);
+
         assert_eq!(
             DeviceType::accepting(&crate::model::media_profile::VIRTUAL).len(),
             0,
@@ -848,24 +956,29 @@ mod tests {
             DeviceType::Floppy(FloppyDrive::HeathH17).slot_prefix()
         );
         assert_eq!(DeviceSlot::claimed_prefix("hdd"), Some("hdd"));
-        assert_eq!(DeviceSlot::claimed_prefix("cdrom"), None);
+        assert_eq!(DeviceSlot::claimed_prefix("tape"), None);
         assert!(DeviceSlot::prefixes().contains(&"arc"));
+        assert!(DeviceSlot::prefixes().contains(&"cdrom"));
     }
 
     #[test]
     fn an_unclaimed_type_is_refused_by_name() {
-        // P3: the catalog is an enumerated claim. An optical drive is
-        // the obvious next class and naming one must refuse rather than
+        // P3: the catalog is an enumerated claim. A tape drive is the
+        // obvious next class and naming one must refuse rather than
         // approximate it from a floppy declaration.
-        let error = DeviceType::from_id("cdrom").expect_err("refused");
+        let error = DeviceType::from_id("tape").expect_err("refused");
         let message = error.to_string();
-        assert!(message.contains("cdrom"), "names what was asked: {message}");
+        assert!(message.contains("tape"), "names what was asked: {message}");
         assert!(
             message.contains("c1541"),
             "names what is claimed: {message}"
         );
         assert!(
             message.contains("mbr-block-hd"),
+            "names the whole catalog: {message}"
+        );
+        assert!(
+            message.contains("cdrom"),
             "names the whole catalog: {message}"
         );
     }

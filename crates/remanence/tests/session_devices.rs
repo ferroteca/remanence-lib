@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use remanence::{
     AttachmentId, DeviceSlot, DeviceType, ErrorCategory, FloppyDrive, Format, HardDrive, MediaId,
-    Session,
+    OpticalDrive, Session,
 };
 
 mod common;
@@ -471,6 +471,122 @@ fn a_medium_belonging_in_another_drive_is_refused_naming_both_sides() {
 
     drop(session);
     std::fs::remove_file(&a).ok();
+}
+
+#[test]
+fn an_optical_drive_takes_a_disc_and_refuses_a_disk() {
+    // The device and the medium it takes, both stated the way every
+    // other device and medium in the model are: the declaration says
+    // which drive the bytes were read by and what unit they are
+    // addressed in, the article follows from the drive, and the insert
+    // check is the same device-type equality it is everywhere.
+    let disc = write_iso9660("disc");
+    let mut session = Session::new();
+
+    let media = session
+        .load_media(
+            open_read(&disc),
+            Format::Raw {
+                device: OpticalDrive::CdRom.into(),
+                block_bytes: 2048,
+            },
+        )
+        .expect("an ISO-like artifact is the user data of a data track")
+        .id();
+    let medium = session.medium(media).expect("pooled");
+    assert_eq!(
+        medium.device_type(),
+        Some(DeviceType::Optical(OpticalDrive::CdRom))
+    );
+    assert_eq!(
+        medium.article(),
+        "optical-120-pressed",
+        "a raw reading fixes no article, so the load presents the declared \
+         drive's own"
+    );
+
+    // A disc goes in the drive that is served it, and in no other.
+    let error = session
+        .add_device(HardDrive::MbrBlock)
+        .expect("the drive is added")
+        .insert(media)
+        .expect_err("a hard drive is not served a pressed disc");
+    let message = error.to_string();
+    assert!(message.contains("CD-ROM drive"), "names it: {message}");
+    assert!(message.contains("hdd0"), "and the slot: {message}");
+
+    let mut drive = session
+        .add_device(OpticalDrive::CdRom)
+        .expect("the drive is added");
+    assert_eq!(drive.attachment().to_string(), "cdrom0");
+    drive.insert(media).expect("the disc goes in");
+
+    // Block-addressed, which is the type's own declaration: there is no
+    // cylinder or head to be told about, so the sector verbs refuse by
+    // name rather than inventing coordinates.
+    let error = session
+        .medium_mut(media)
+        .expect("pooled")
+        .read_sector(0, 0, 1, &mut [0u8; 2048])
+        .expect_err("a block-addressed drive has no such coordinates");
+    assert_eq!(error.category(), ErrorCategory::Unsupported);
+
+    // What is *on* the disc is a separate claim and this release does
+    // not make it. The optical spec declares no partition scheme, so the
+    // medium bears the direct partition and composes no volume — the
+    // schemeless answer, reached the same way a floppy's is.
+    let report = session
+        .medium_mut(media)
+        .expect("pooled")
+        .inspect()
+        .expect("a disc still inspects");
+    assert_eq!(report.partition_schema, None, "a disc records no scheme");
+    assert!(
+        report.regions.is_empty(),
+        "the direct partition declares no region, having no schema to declare \
+         one in"
+    );
+    assert!(
+        report.volumes.is_empty(),
+        "no filesystem this release claims recognized the disc, so no volume \
+         composed"
+    );
+
+    // **Said out loud rather than left as a silence.** The schemeless
+    // classifier reads sector 0, and ISO 9660 puts its first descriptor
+    // at sector 16 behind a system area that is normally zero — so a
+    // data disc carrying a whole filesystem is reported *blank* here.
+    // That is the shape of what reading the disc's namespace is owed:
+    // this release claims no ISO 9660 reader, and the content outcome
+    // shows exactly where the gap is rather than being papered over.
+    assert_eq!(
+        report.content.name(),
+        "blank",
+        "if this ever answers otherwise, an ISO 9660 recognition landed and \
+         this test should assert what it recognized"
+    );
+
+    drop(session);
+    std::fs::remove_file(&disc).ok();
+}
+
+/// A 1 MiB image carrying an ISO 9660 primary volume descriptor where the
+/// standard puts one — logical sector 16, `CD001` behind the type byte.
+///
+/// It is deliberately no more than that: nothing here reads ISO 9660, so
+/// what the test needs is a disc that is recognizably not blank and not
+/// something else.
+fn write_iso9660(tag: &str) -> PathBuf {
+    const PVD_SECTOR: usize = 16;
+    const SECTOR_BYTES: usize = 2048;
+    let mut image = vec![0u8; 1024 * 1024];
+    let at = PVD_SECTOR * SECTOR_BYTES;
+    image[at] = 0x01; // a primary volume descriptor
+    image[at + 1..at + 6].copy_from_slice(b"CD001");
+    image[at + 6] = 0x01; // the standard's version
+    let path = temp_path(tag);
+    std::fs::write(&path, image).expect("image writes");
+    path
 }
 
 #[test]

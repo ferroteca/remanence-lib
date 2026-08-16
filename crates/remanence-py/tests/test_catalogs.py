@@ -69,6 +69,29 @@ def test_device_slots_carry_the_prefix_their_attachments_use():
         assert slot.slot_prefix, f"{slot.id} has no attachment prefix"
 
 
+def test_the_optical_class_is_in_the_catalog_and_takes_its_own_bay():
+    optical = [
+        slot for slot in remanence.device_slots() if slot.device_class == "optical"
+    ]
+    assert optical, "no slot is an optical device, so a machine cannot state one"
+    for slot in optical:
+        assert slot.addressing == "block", (
+            f"{slot.id} is told a block number rather than a cylinder and a head"
+        )
+        assert slot.scheme is None, (
+            f"{slot.id} bears the direct partition; a disc is mastered whole"
+        )
+        assert slot.article, f"{slot.id} names no article it is served"
+
+    session = remanence.Session()
+    device = session.add_device("cdrom")
+    assert device.attachment == "cdrom0"
+    assert not device.is_occupied, (
+        "an empty drive is configuration in its own right — a drive is "
+        "lettered whether or not a disc is in it"
+    )
+
+
 def test_the_archive_receiver_is_a_slot_that_is_no_device_type():
     archive = [slot for slot in remanence.device_slots() if slot.device_type is None]
     assert archive, (

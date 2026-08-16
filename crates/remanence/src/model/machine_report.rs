@@ -34,9 +34,9 @@ pub struct MachineDisk {
     /// nothing.
     pub device_type: Option<String>,
     /// The device class, in its stable cross-language spelling —
-    /// `"floppy"` or `"hard-drive"` — which is what decides whether a
-    /// claimed letter rule reaches this drive at all, and which of its
-    /// two orders it belongs to.
+    /// `"floppy"`, `"hard-drive"` or `"optical"` — which is what decides
+    /// whether a claimed letter rule reaches this drive at all, and
+    /// which of its orders it belongs to.
     pub family: Option<String>,
     /// The inspection of the medium in it, or `None` where the device
     /// holds none.
@@ -210,13 +210,7 @@ impl crate::model::machine::MachineView<'_> {
                 .device(attachment)
                 .expect("an attachment this machine just listed");
             let device_type = device.device_type().map(|kind| kind.name().to_owned());
-            let family = device.device_type().map(|kind| {
-                match kind {
-                    crate::DeviceType::Floppy(_) => "floppy",
-                    crate::DeviceType::HardDrive(_) => "hard-drive",
-                }
-                .to_owned()
-            });
+            let family = device.device_type().map(|kind| kind.class().to_owned());
             let slot = device.slot().name().to_owned();
 
             if !device.is_occupied() {
@@ -460,6 +454,13 @@ fn compose_letters(
     let mut composer = DosComposer::new();
     let (mut floppy_slot, mut fixed_order) = (0u32, 0u32);
     for disk in disks {
+        // An optical drive is lettered as a drive rather than as a
+        // volume, so it is taken whether or not a disc is in it: the
+        // machine held the drive, and `MSCDEX` lettered the drive.
+        if disk.family.as_deref() == Some("optical") {
+            composer.add_optical_drive(&disk.attachment);
+            continue;
+        }
         let Some(report) = &disk.report else {
             continue;
         };

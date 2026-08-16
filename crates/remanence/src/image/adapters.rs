@@ -21,7 +21,7 @@ use crate::image::vdi::{
 };
 use crate::io::device::{Device, MediumDevice};
 use crate::io::source::{Evidence, SourceDevice};
-use crate::model::device_type::{DeviceType, FloppyDrive, HardDrive};
+use crate::model::device_type::{DeviceType, FloppyDrive, HardDrive, OpticalDrive};
 use crate::model::disk::DiskFormat;
 use crate::model::media::Format;
 use crate::model::media_profile::{FLEXIBLE_5_25_HARD_10, LOGICAL_BLOCK_512, MediaProfile};
@@ -107,13 +107,19 @@ pub(crate) static RECORDED_HARD_DRIVES: [DeviceType; 2] = [
 
 /// What a raw image may be declared as. Bytes record no ecosystem, so a
 /// raw reading is available to every sector- or block-addressed device
-/// this release claims — the floppy included, which is what lets a
-/// machine hold one in a drive rather than a caller asserting it into a
-/// slot beside the model.
-pub(crate) static RAW_RECORDED_DEVICES: [DeviceType; 3] = [
+/// this release claims — the floppy and the CD-ROM drive included, which
+/// is what lets a machine hold one in a drive rather than a caller
+/// asserting it into a slot beside the model.
+///
+/// The CD-ROM entry is how an ISO-like artifact is loaded: it is the
+/// user data of a data track and nothing else, so it is bytes read
+/// through a declared block size exactly as every other raw image is,
+/// and the declaration is what says which drive holds it.
+pub(crate) static RAW_RECORDED_DEVICES: [DeviceType; 4] = [
     DeviceType::HardDrive(HardDrive::MbrSector),
     DeviceType::HardDrive(HardDrive::MbrBlock),
     DeviceType::Floppy(FloppyDrive::Sector),
+    DeviceType::Optical(OpticalDrive::CdRom),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1159,15 +1165,22 @@ mod tests {
         );
         // The raw reading records a class rather than a product, and it
         // reaches across families because bytes belong to none: the two
-        // MBR hard drives and the sector floppy, which is what lets a
-        // machine hold a floppy in a drive rather than a caller
-        // asserting one into a slot beside the model.
-        assert_eq!(RAW_DESCRIPTOR.devices.len(), 3);
+        // MBR hard drives, the sector floppy and the CD-ROM drive, which
+        // is what lets a machine hold each of them in a drive rather
+        // than a caller asserting one into a slot beside the model.
+        assert_eq!(RAW_DESCRIPTOR.devices.len(), 4);
         assert!(
             RAW_DESCRIPTOR
                 .devices
                 .contains(&DeviceType::Floppy(FloppyDrive::Sector)),
             "a raw reading of a floppy is declarable"
+        );
+        assert!(
+            RAW_DESCRIPTOR
+                .devices
+                .contains(&DeviceType::Optical(OpticalDrive::CdRom)),
+            "an ISO-like artifact is the user data of a data track, which is \
+             bytes read through a declared block size"
         );
         assert!(
             !RAW_DESCRIPTOR

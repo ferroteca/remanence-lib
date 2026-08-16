@@ -228,6 +228,8 @@ enum class VolumeOrigin : std::int32_t {
 /// What one drive letter turned out to name.
 enum class LetterOutcome : std::int32_t {
     Volume = REMANENCE_LETTER_OUTCOME_VOLUME,
+    /// An optical drive the machine's own startup files placed here; the
+    /// drive it names is in `attachment()`.
     OpticalDrive = REMANENCE_LETTER_OUTCOME_OPTICAL_DRIVE,
     Phantom = REMANENCE_LETTER_OUTCOME_PHANTOM,
     Undetermined = REMANENCE_LETTER_OUTCOME_UNDETERMINED,
@@ -678,7 +680,8 @@ struct DeviceSlot {
     /// Where the device-type declaration came from; absent for the
     /// archive receiver.
     std::optional<std::string_view> provenance;
-    /// `floppy` or `hard-drive`; absent for the archive receiver.
+    /// `floppy`, `hard-drive` or `optical`; absent for the archive
+    /// receiver.
     std::optional<std::string_view> device_class;
     /// The article this device type is served; absent as above.
     std::optional<std::string_view> article;
@@ -3811,8 +3814,10 @@ public:
             remanence_machine_report_drive_outcome(report_, index_));
     }
 
-    /// The attachment identity of the drive this letter names, present
-    /// only where the outcome is a volume.
+    /// The attachment identity of the drive this letter names — the
+    /// drive a volume sits on, or the optical drive the machine holds.
+    /// Absent for a phantom, an undetermined letter, and an optical
+    /// placement the machine holds no drive for.
     std::optional<std::string> attachment() const
     {
         return detail::optional_copied(
@@ -3910,8 +3915,8 @@ public:
             remanence_machine_report_disk_device_type(report_, index_));
     }
 
-    /// The device class — `floppy` or `hard-drive` — which decides
-    /// whether a claimed letter rule reaches this drive.
+    /// The device class — `floppy`, `hard-drive` or `optical` — which
+    /// decides whether a claimed letter rule reaches this drive, and how.
     std::optional<std::string> family() const
     {
         return detail::optional_copied(remanence_machine_report_disk_family(report_, index_));

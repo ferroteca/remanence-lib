@@ -394,13 +394,17 @@ mod tests {
 
     #[test]
     fn an_unclaimed_slot_is_refused_by_name() {
-        // P3: the device catalog is an enumerated claim. An optical
-        // drive is the obvious next entry and naming its slot must
-        // refuse rather than pretend.
-        let error = AttachmentId::parse("cdrom0").expect_err("refused");
+        // P3: the device catalog is an enumerated claim. A tape drive is
+        // the obvious next entry and naming its slot must refuse rather
+        // than pretend.
+        let error = AttachmentId::parse("tape0").expect_err("refused");
         let message = error.to_string();
-        assert!(message.contains("cdrom"), "names what was asked: {message}");
+        assert!(message.contains("tape"), "names what was asked: {message}");
         assert!(message.contains("hdd"), "names what is claimed: {message}");
+        assert!(
+            message.contains("cdrom"),
+            "names what is claimed: {message}"
+        );
     }
 
     #[test]

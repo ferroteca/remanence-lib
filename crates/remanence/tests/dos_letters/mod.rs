@@ -83,6 +83,22 @@ pub fn attachment_at(report: &MachineReport, letter: char) -> String {
     }
 }
 
+/// What an optical letter names: the drive the machine holds, where it
+/// holds one, and the startup line that placed the letter.
+pub fn optical_at(report: &MachineReport, letter: char) -> (Option<String>, String) {
+    match &report
+        .letter(letter)
+        .unwrap_or_else(|| panic!("{letter}: is mapped"))
+        .outcome
+    {
+        LetterOutcome::OpticalDrive {
+            attachment,
+            placed_by,
+        } => (attachment.clone(), placed_by.clone()),
+        other => panic!("{letter}: is an optical drive, not {}", other.name()),
+    }
+}
+
 pub fn reason_at(report: &MachineReport, letter: char) -> String {
     match &report
         .letter(letter)
@@ -181,6 +197,23 @@ pub fn seat_floppy(session: &mut Session, machine: &str, path: &PathBuf) {
         .expect("a floppy drive is added")
         .insert(media)
         .expect("the disk goes in");
+}
+
+/// Adds a CD-ROM drive to `machine`, holding nothing, and answers its
+/// attachment identity.
+///
+/// **An empty drive is configuration in its own right**, which is the
+/// whole reason the letter composition can reach it: the machine held the
+/// drive whether or not a disc was in it on the day, and `MSCDEX`
+/// lettered the drive.
+pub fn add_optical_drive(session: &mut Session, machine: &str) -> String {
+    session
+        .machine_mut(machine)
+        .expect("is there")
+        .add_device(remanence::OpticalDrive::CdRom)
+        .expect("a CD-ROM drive is added")
+        .attachment()
+        .to_string()
 }
 
 /// A minimal FAT16 volume: 512-byte sectors, 1 sector/cluster, 2 FATs of

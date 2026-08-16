@@ -150,7 +150,7 @@ fn a_format_recording_several_devices_refuses_by_name_toward_the_declaration() {
             .iter()
             .map(|device| device.id())
             .collect::<Vec<_>>(),
-        vec!["mbr-sector-hd", "mbr-block-hd", "sector-floppy"],
+        vec!["mbr-sector-hd", "mbr-block-hd", "sector-floppy", "cdrom"],
         "and the format says which declarations it accepts, across families"
     );
     assert_eq!(

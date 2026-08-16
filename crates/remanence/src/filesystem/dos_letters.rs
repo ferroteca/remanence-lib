@@ -316,11 +316,21 @@ pub enum LetterOutcome {
         attachment: String,
         volume: VolumeId,
     },
-    /// The letter an optical drive took, as the machine's own startup
-    /// files record it — `MSCDEX /L:`. The library composes no volume for
-    /// such a drive, so there is no identity to name and none is
-    /// invented.
+    /// The letter an optical drive took: the drive is one the machine
+    /// holds, and the letter is the one its own startup files record —
+    /// `MSCDEX /L:`. **The device states that there is a drive and the
+    /// startup line states which letter**, so neither half is inferred
+    /// from the other.
+    ///
+    /// The library composes no volume for an optical drive, so there is
+    /// no volume identity to name and none is invented.
     OpticalDrive {
+        /// The attachment identity of the drive the letter names —
+        /// `cdrom0` — or `None` where the machine as stated holds no
+        /// optical drive and only its startup files say there was one.
+        /// Both readings stand in that case: the line was written by the
+        /// machine that ran, and the device set is the caller's.
+        attachment: Option<String>,
         /// The startup line that placed it, quoted as evidence.
         placed_by: String,
     },
@@ -406,6 +416,12 @@ pub(crate) struct DosComposer<'a> {
     floppies: Vec<(DriveSlot, &'a DiskReport)>,
     fixed_disks: Vec<(DriveSlot, &'a DiskReport)>,
     conditions: Vec<ResidentCondition>,
+    /// The optical drives the machine holds, in attachment order.
+    ///
+    /// A drive is configuration rather than content, so it is added
+    /// whether or not a disc is in it: an empty CD-ROM drive still took
+    /// its letter, exactly as an empty floppy drive still had one.
+    optical_drives: Vec<String>,
     /// The letter the machine's own startup files placed an optical drive
     /// at, where they placed one.
     optical: Option<(char, String)>,
@@ -475,6 +491,16 @@ impl<'a> DosComposer<'a> {
         if !self.conditions.contains(&condition) {
             self.conditions.push(condition);
         }
+    }
+
+    /// Adds an optical drive the machine holds, in attachment order.
+    ///
+    /// It carries no report: an optical drive is lettered as a *drive*
+    /// rather than as a volume — `MSCDEX` letters the drive, and the
+    /// disc in it changes nothing about which letter that is — so what
+    /// the composer needs is that the machine bears one, and where.
+    pub(crate) fn add_optical_drive(&mut self, attachment: impl Into<String>) {
+        self.optical_drives.push(attachment.into());
     }
 
     /// Records the letter the machine's `MSCDEX` line placed an optical
@@ -661,8 +687,19 @@ impl<'a> DosComposer<'a> {
         claims
     }
 
-    /// The letter the machine's own startup files placed an optical drive
-    /// at. Where the rule already assigned that letter, both readings
+    /// The optical drives the machine holds, and the letter its own
+    /// startup files placed one at.
+    ///
+    /// **The two halves are different facts and neither stands in for
+    /// the other.** The device the machine bears is what says there is a
+    /// drive; the `MSCDEX /L:` line is what says which letter it took.
+    /// So a drive nothing places takes no letter — `MSCDEX` without
+    /// `/L:` takes the first free letter, which depends on what the rest
+    /// of the machine took, and inferring one from the silence would be
+    /// a guess — and it is accounted for in provenance rather than left
+    /// unmentioned.
+    ///
+    /// Where the rule already assigned the placed letter, both readings
     /// stand and the letter is undetermined: two readings of one machine
     /// disagreeing is a fact about the machine, not an error in either.
     fn map_optical(
@@ -671,8 +708,32 @@ impl<'a> DosComposer<'a> {
         provenance: &mut Vec<String>,
     ) {
         let Some((letter, placed_by)) = &self.optical else {
+            for drive in &self.optical_drives {
+                provenance.push(format!(
+                    "the optical drive at {drive} takes no letter: nothing in \
+                     the machine's startup files places one, and MSCDEX \
+                     without /L: takes the first free letter, which depends on \
+                     what the rest of the machine took"
+                ));
+            }
             return;
         };
+
+        // MSCDEX's /L: names the letter the *first* drive it handled
+        // took. Which further drives that same driver handled is
+        // recorded in no file this release reads, so the letters behind
+        // the first are not assigned from the count.
+        let mut held = self.optical_drives.iter();
+        let first = held.next();
+        for further in held {
+            provenance.push(format!(
+                "the optical drive at {further} takes no letter: the startup \
+                 files place one drive at {letter}: ('{placed_by}'), and which \
+                 further drives that driver handled is recorded in no file this \
+                 release reads"
+            ));
+        }
+
         if letters.contains_key(letter) {
             letters.insert(
                 *letter,
@@ -691,16 +752,25 @@ impl<'a> DosComposer<'a> {
             ));
             return;
         }
+
         letters.insert(
             *letter,
             LetterOutcome::OpticalDrive {
+                attachment: first.cloned(),
                 placed_by: placed_by.clone(),
             },
         );
-        provenance.push(format!(
-            "{letter}: is an optical drive, where the machine's own startup \
-             files placed it ('{placed_by}')"
-        ));
+        provenance.push(match first {
+            Some(drive) => format!(
+                "{letter}: is the optical drive at {drive}, where the machine's \
+                 own startup files placed it ('{placed_by}')"
+            ),
+            None => format!(
+                "{letter}: is an optical drive the machine's own startup files \
+                 placed there ('{placed_by}'), and the machine as stated holds \
+                 no optical drive for it to name; both readings stand"
+            ),
+        });
     }
 
     /// Turns every letter a declared condition could have changed

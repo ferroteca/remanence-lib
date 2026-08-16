@@ -151,8 +151,9 @@ ABI, or Python module.
   into state over the very claim already held.
 
   **Declaration configures**: `device_type.rs` is the P14 recording
-  seam — the **device-type catalog** in its two levels (the class, then
-  the concrete type), one spec shape per class and one instance per
+  seam — the **device-type catalog** in its two levels (the class —
+  floppy, hard-drive and optical, with tape reserved — then the
+  concrete type), one spec shape per class and one instance per
   concrete type, the granularity rule that cuts it, the article each
   type composes, the flux path it claims, the partition scheme the
   hard-drive specs carry, and the **addressing** every type declares —
@@ -161,8 +162,10 @@ ABI, or Python module.
   which is a device type or the archive receiver, the receiver being no
   recording device at all. `media_profile.rs` is the P14 substrate
   seam — the passive compatibility facts of an **article**,
-  family-specific by construction (flexible magnetic and logical-block
-  are claimed, with no fact in common), and the declarative article
+  family-specific by construction (flexible magnetic, logical-block and
+  optical are claimed, with no fact in common — a coercivity, a block
+  size and a track pitch in nanometres each mean nothing to the other
+  two), and the declarative article
   catalog they are enrolled in, which holds no recognition, no grammar
   and no behavior; every medium the library holds names one entry, a
   block medium from the image-format adapter that loaded its state, a
@@ -170,7 +173,15 @@ ABI, or Python module.
   served, and an authored one from the kind its author declared — the
   virtual family holding two entries for the two things nobody
   manufactured, the archive whose native vantage is a namespace and the
-  **authored** article whose vantage is a space.
+  **authored** article whose vantage is a space. The optical entry is
+  the pressed 120 mm disc, and it **declares the disc rather than
+  anything recorded on it**: sessions, tracks, gaps, audio and
+  subchannels are a recording's facts and belong to the optical state
+  model, which is proposed and unclaimed. Nothing reads ISO 9660
+  either, and the gap is visible rather than quiet: the schemeless
+  content classifier reads sector 0, ISO 9660's first descriptor is at
+  sector 16 behind a normally-zero system area, so a data disc inspects
+  as `blank` and `session_devices.rs` asserts that it does.
 
   **Authorship creates media whole**: `authored.rs` is the third fact
   class, where discovery reads and declaration configures — the
@@ -293,7 +304,13 @@ ABI, or Python module.
   claims (each lettering a disk's *bootable* primary ahead of the rest,
   the first row standing only where the table flags none), the
   conditions no rule models, and the mapping it answers with,
-  undetermined letters included. **It is crate-private and takes no
+  undetermined letters included. An **optical** drive is lettered as a
+  drive rather than as a volume, and its two halves are separate facts:
+  the device the machine holds is what says there is a drive, and the
+  `MSCDEX /L:` line is what says which letter it took — so a held drive
+  no line places takes no letter and is accounted for in provenance, and
+  a placement the machine holds no drive for keeps both readings. **It
+  is crate-private and takes no
   assertion** — the machine supplies its own devices in attachment
   order, and `dos_install.rs` beside it is where the rule comes from:
   DOS installation recognition, which is the seam that reads what DOS

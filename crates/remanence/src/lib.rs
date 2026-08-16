@@ -230,7 +230,7 @@ pub use crate::io::device::{AccessIntent, AccessMode, Claim};
 pub use crate::io::source::FileSource;
 pub use crate::model::assurance::{Assurance, AssuranceCondition, AssuranceOutcome, ByteRange};
 pub use crate::model::authored::{NewMedia, NewMediaClaim};
-pub use crate::model::device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive};
+pub use crate::model::device_type::{DeviceSlot, DeviceType, FloppyDrive, HardDrive, OpticalDrive};
 pub use crate::model::discovery::{Discovery, discover_media};
 pub use crate::model::disk::DiskFormat;
 pub use crate::model::geometry::{
