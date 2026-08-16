@@ -40,9 +40,10 @@ claim. The adapter for that one format checks the claim against what is
 actually in the file and refuses, by name, if it does not hold up. It does
 not go looking through every format it knows to find one that fits.
 
-**A session holds two things: disks and machines.** Disks are state;
-machines are configuration. The disk is the handle you keep — everything
-about a recording is answered by asking the disk.
+**A session holds two things: disks and drives.** Disks are state;
+drives are configuration. The disk is the handle you keep — everything
+about a recording is answered by asking the disk, whether or not a drive
+holds it.
 
 **Nothing is guessed and nothing is repaired.** When two sources of
 information disagree, you are told they disagree and shown both, rather
@@ -318,7 +319,7 @@ the C one.
 ## Using the library
 
 ```rust
-// A session holds disks (state) and machines (configuration). The disk
+// A session holds disks (state) and drives (configuration). The disk
 // is the handle you keep. You open the file yourself, and you say what
 // format it is — that one format's adapter checks you were right.
 // Some formats record exactly one kind of drive, so naming the format
@@ -647,7 +648,7 @@ blank.commit()                         # lives in the session until you
 // remanence::Error, carrying a stable category code you can branch on
 // and, where a named rule was broken, the name of that rule.
 try {
-    // What a file is, before any machine is set up for it. The lock it
+    // What a file is, before any drive is set up for it. The lock it
     // takes goes into the load, which takes it over.
     remanence::Session session;
     remanence::Discovery found = remanence::discover_media("disk.h8d");
