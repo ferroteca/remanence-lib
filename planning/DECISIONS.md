@@ -62,14 +62,14 @@ removes it is the record either way.
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
 2026-08-16. **Supports** S1, S2, S3; in-force P19, U3, U4. Strikes
-pledged **U16**, **U30** and **P35**, the pledged P19 amendment that
-re-homed the composer, and proposed **U13**; retires **D55**.
+pledged **U16**, **U30** and **P35**, and the pledged P19 amendment that
+re-homed the composer; retires **D55**.
 
 **The claim was that this library could say what a guest called a
 volume.** In-force P19 carried a namespace-mapping composer with three
-constraints; pledged P35 owned the machine namespace it fed; pledged U16
-and U30 were the consumed and derived journeys over it, and proposed U13
-was the Windows one. The delivered half was DOS: an assignment rule
+constraints; pledged P35 owned the machine namespace it fed; and pledged
+U16 and U30 were the consumed and derived journeys over it. The
+delivered half was DOS: an assignment rule
 chosen from the installation read off the booting volume, applied over a
 machine's device set, answering letters with provenance.
 
@@ -112,12 +112,20 @@ git history holds it); and answering every letter `Undetermined`
 (that is a claim about a guest wearing a refusal's clothes, and it is
 the reading this entry specifically refuses).
 
+**What this withdraws is a pledge, not an argument.** Proposed **U13**
+stands, and the owner kept it there deliberately: it is the Windows form
+of the case for reading a *persisted* mapping — a hive that records the
+assignment outright, which is a different claim from the derivation
+struck here and was never the reason for striking it. `proposed/` is
+where a live argument belongs, and one contradicting the amended vision
+is exactly what that shelf is for. U15 is its pair and is unchanged.
+
 **Reopens if:** a use case arrives that cannot be served by the volume
 identity plus the consumer's own mapping — the case to make is that the
-correspondence is unavailable to the caller, not merely inconvenient
-for it. Proposed U13 and U15 are where the Windows form of that argument
-was written; U15 stands, and it now reads as the general rule rather
-than as the case that lacked a hive.
+correspondence is unavailable to the caller, not merely inconvenient for
+it. U13 is where that argument would be won or lost; pledging it would
+put back a machine-namespace seam, so it takes the surface-change rule's
+hard route rather than following from this entry.
 
 ### D56 — Only the core is a default member, because the audience stopped being contributors alone
 

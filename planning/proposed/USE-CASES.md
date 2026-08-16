@@ -1230,6 +1230,156 @@ or flux callback is added beside the common hardware interface.
 - A standalone public SCP, marker, recovered-bit, controller-byte, or CHS
   interface inside this hardware journey.
 
+## U13 — I read a file from an offline Windows 11 VHDX
+
+I have `<machine-name>.vhdx`, a self-contained virtual hard disk containing
+a complete, unencrypted Windows 11 installation. It uses the ordinary UEFI
+layout: a GPT with an EFI System Partition, a Microsoft Reserved Partition,
+the main NTFS Windows partition, and a Windows Recovery partition. I want to
+read `C:\Users\Paul\Documents\example.txt` without attaching the VHDX to
+Windows, booting the guest, choosing a partition number, or pretending that
+the largest NTFS partition is necessarily `C:`.
+
+I open the artifact read-only and ask for the uniquely evidenced offline
+Windows namespace. Remanence opens the VHDX as logical-block media, applies
+the GPT partition schema, forms the applicable volumes, recognizes their
+filesystems, recognizes the Windows installation, reconstructs its persisted
+drive-letter mapping, and returns the file through the P19 file-container
+interface.
+
+### The exact semantic interface
+
+The smallest useful public operation is one ordinary file read after opening
+the composed namespace:
+
+```rust
+let artifact = Artifact::open(
+    windows_vhdx,
+    AccessIntent::Read,
+)?;
+
+let windows = artifact.open_file_container(
+    FileContainerTarget::WindowsInstallation {
+        selection: Selection::Unique,
+    },
+)?;
+
+let requested_path = WindowsPath::parse(path_from_caller)?;
+let contents = windows.read_file(requested_path)?;
+```
+
+The names are semantic pseudocode, not a pledge of literal Rust layout.
+The C and Python presentations preserve the same two-stage operation: open a
+uniquely identified Windows file-container view, then read a path from it.
+They do not expose a generic untyped layer bag or make the caller repeat
+library-assigned device identities.
+
+`Artifact::open` takes the P7 claim for the VHDX and every required backing
+artifact for the open lifetime. This journey uses a standalone VHDX with no
+parent. Read intent protects the host artifact and every durable layer from
+mutation.
+
+### The composed interpretation
+
+The successful composition is:
+
+1. The VHDX image-format adapter validates the VHDX structures and exposes
+   one geometry-opaque logical-block device. Block is the P23 active durable
+   layer; VHDX allocation, metadata, and logging are its artifact encoding.
+2. The GPT partition-schema adapter validates the primary and backup GPT,
+   reconciles their evidence, and exposes addressed regions with their GPT
+   identities, type GUIDs, attributes, names, and bounds.
+3. Volume composition offers direct volumes only where the region semantics
+   permit one. The EFI System Partition's direct volume may expose a FAT
+   file-container view; the Windows and recovery direct volumes may expose
+   distinct NTFS file-container views. The Microsoft Reserved Partition
+   remains a valid region with no invented volume, filesystem, or
+   file-container result.
+4. The NTFS adapter exposes each recognized NTFS volume through its own P19
+   file-container view. Those views remain distinct; neither GPT order,
+   partition size, filesystem label, nor the Basic Data type GUID assigns a
+   Windows drive letter.
+5. A Windows-installation namespace adapter identifies candidate installations
+   from claimed filesystem evidence, reads the selected installation's
+   offline SYSTEM registry hive, and interprets the Mount Manager's persistent
+   `MountedDevices` mappings. It correlates the evidenced `\DosDevices\C:`
+   identity with one discovered volume and maps that volume's file-container
+   view at `C:`.
+6. The composed Windows namespace is another P19 file-container view. It
+   resolves the requested Windows path under the mapped `C:` root and asks the
+   underlying NTFS view for the file bytes.
+
+Every layer and interpretation remains reportable. The result identifies the
+VHDX artifact, block device, GPT schema and partition, direct volume, NTFS
+filesystem, Windows installation, `C:` mapping evidence, and final file. The
+logical path does not erase the EFI, MSR, recovery, or unallocated regions.
+
+### `C:` is namespace evidence, not storage geometry
+
+GPT establishes partition regions and their schema-owned identifiers. NTFS
+establishes a filesystem namespace on a volume. Neither establishes a drive
+letter. `C:` belongs to the Windows namespace composed above those
+file-container views.
+
+If the SYSTEM hive is absent, unreadable, or inconsistent; its persisted
+identifier cannot be correlated with a discovered volume; or several Windows
+installations remain equally supported, `Selection::Unique` returns a named
+ambiguity or refusal with the competing evidence. Remanence does not fall
+back to the first Basic Data partition, the largest NTFS volume, a volume
+label, or the presence of a `Windows` directory alone.
+
+The caller may separately request a specific GPT region, volume, filesystem,
+or file-container view by an identity already reported by Remanence. That is
+explicit lower-level selection, not an alternate meaning of `C:` and not a
+requirement for this transparent unique journey.
+
+### What “container” means here
+
+This journey does not form a hierarchy of generic containers:
+
+- the VHDX is an image artifact encoding a logical-block device, not a file
+  container;
+- GPT is a partition schema which exposes addressed regions, not a partition
+  container;
+- a partition is a region and a volume is addressed logical storage; neither
+  is a file container merely because another adapter may interpret it;
+- NTFS supplies a file-container view over one volume; and
+- the Windows namespace adapter composes one or more file-container views
+  into another file-container view whose roots include drive letters.
+
+ZIP reaches the same P19 result by a different route: its serialized named
+entries decode directly into file-container state without disk media, GPT,
+volumes, or a filesystem. Conversely, selecting a VHDX file from a ZIP
+creates a separate image instance whose inner composition follows this
+journey; it does not turn the outer ZIP into disk media.
+
+### Completion and refusals
+
+The journey succeeds when the exact bytes of
+`C:\Users\Paul\Documents\example.txt` are returned through the composed
+file-container interface and the layer report accounts for every selection
+and mapping without a caller-supplied partition number or device identity.
+
+Recognition remains evidence-bearing throughout. A known but unsupported
+VHDX feature, invalid GPT, unsupported NTFS feature required by the requested
+file, corrupt registry hive, missing file, or ambiguous Windows installation
+is reported at the owning seam. A later weaker interpretation never hides a
+stronger known refusal.
+
+### Deliberately outside this use case
+
+- Booting or emulating Windows, Hyper-V, UEFI, a storage controller, or disk
+  hardware.
+- Writing the VHDX, filesystem, registry, namespace mapping, or file.
+- VHDX differencing chains, checkpoints, live host attachment, or concurrent
+  mutation by another process.
+- BitLocker, EFS, guest credentials, ACL-policy emulation, reparse points that
+  escape the composed namespace, and network shares.
+- Guessing `C:` from partition order, size, GPT type, NTFS label, or directory
+  names.
+- Treating the ESP, MSR, Windows, and recovery regions as children of a
+  generic partition-container interface.
+
 ## U14 — I read a file from a striped volume assembled from several images
 
 I have `<member-a>.vhdx` and `<member-b>.vhdx`, two virtual disks captured
@@ -1548,11 +1698,11 @@ logical storage. NTFS identifies its own filesystem and namespace. None of
 those layers assigns a Windows drive letter.
 
 The persistent mapping between a Windows mount name and a volume belongs to
-the Windows installation which made that assignment, and this library reads
-no such mapping and derives none: a guest-side name is outside the claim
-(P19). So this journey's layered report establishes no Windows namespace
-mapping, and an NTFS volume label, GPT name or type, partition order,
-filename, or familiar directory tree is not promoted into a
+the Windows installation which made that assignment. In U13 the selected
+installation's SYSTEM hive supplies that evidence. This data-only artifact
+does not contain that authority, so its layered report states that no Windows
+namespace mapping was established. An NTFS volume label, GPT name or type,
+partition order, filename, or familiar directory tree is not promoted into a
 drive-letter claim.
 
 That absence does not weaken the lower result. The selected region, direct
@@ -1561,10 +1711,10 @@ when the higher Windows namespace is unavailable. The caller explicitly
 asked for a path in the filesystem root, so the file read needs no substitute
 drive letter.
 
-A caller who wants the source machine's own name for this volume holds the
-volume identity the report issued and maps it in their own terms, from
-whatever evidence they hold. That is their composition, not a mutation or
-relabeling of this already-open file-container view.
+If the caller later supplies the corresponding Windows system artifact, it
+may open the artifacts together and request a Windows-installation namespace.
+That is a new composition with new evidence, not a mutation or relabeling of
+this already-open file-container view.
 
 ### Completion and refusals
 
