@@ -131,12 +131,12 @@ void flux_cycle()
     (void)image.orbits();
     (void)image.provenance();
 
-    remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+    remanence::Bitstream bits = image.materialize_bitstream();
     (void)bits.locations();
     (void)bits.evidence();
     (void)bits.declared_losses();
 
-    remanence::C1541Bytestream bytes = bits.materialize_bytestream();
+    remanence::Bytestream bytes = bits.materialize_bytestream();
     (void)bytes.locations();
     (void)bytes.evidence();
 

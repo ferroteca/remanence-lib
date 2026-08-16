@@ -330,10 +330,10 @@ class Medium:
         A medium recording no scheme bears the direct partition at 0.
         """
 
-    def bitstream(self) -> C1541Bitstream:
+    def bitstream(self) -> Bitstream:
         """Clocks the family's pulses under the profile's declared channel."""
 
-    def bytestream(self) -> C1541Bytestream:
+    def bytestream(self) -> Bytestream:
         """Resolves the bitstream under the family's declared group code."""
 
     def commit(self) -> None: ...
@@ -812,7 +812,7 @@ class DeclaredLoss:
     def __repr__(self) -> str: ...
 
 @final
-class C1541Bitstream:
+class Bitstream:
     """The family's pulses, clocked into bit cells under its read channel."""
 
     def inspect(self) -> BitstreamReport: ...
@@ -824,11 +824,11 @@ class C1541Bitstream:
     def resident_bytes(self) -> int: ...
     def materialize_bytestream(
         self, *, cache_bytes: int | None = None
-    ) -> C1541Bytestream: ...
+    ) -> Bytestream: ...
     def __repr__(self) -> str: ...
 
 @final
-class C1541Bytestream:
+class Bytestream:
     """The bytes one declared group code resolved. It assigns nothing above a byte."""
 
     def inspect(self) -> BytestreamReport: ...
@@ -1101,10 +1101,10 @@ class FluxImage:
     def write_g64(self, path: _Path, /) -> G64Report: ...
     def describe_p64(self) -> P64Report: ...
     def write_p64(self, path: _Path, /) -> P64Report: ...
-    def materialize_c1541_bitstream(
+    def materialize_bitstream(
         self, *, cache_bytes: int | None = None
-    ) -> C1541Bitstream:
-        """The qualifier stays: this receiver is no c1541 type."""
+    ) -> Bitstream:
+        """The family is the image's own, looked up rather than assumed."""
 
     def close(self) -> None: ...
     def __enter__(self) -> FluxImage: ...

@@ -690,7 +690,7 @@ try {
     // The flux levels are in the same header. Each one is built from
     // the one below it, and reports what it could not carry over.
     remanence::FluxImage image = remanence::FluxImage::open("capture.remanence");
-    remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+    remanence::Bitstream bits = image.materialize_bitstream();
     remanence::C1541Sectors sectors = bits.materialize_bytestream().recognize_sectors();
     std::vector<std::uint8_t> bam = sectors.read(18, 0);
     for (const remanence::DeclaredLoss& loss : image.describe_d64().declared_losses()) {

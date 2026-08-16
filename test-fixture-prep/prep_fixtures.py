@@ -68,6 +68,47 @@ HDOS_ZIP_SHA256 = \
 HDOS_IMAGE_NAME = "HDOS_1-0_Issue_#50-00-00_890-1.h8d"
 HDOS_ZIP_NAME = "HDOS_1-0_Issue_#50-00-00_890-1.zip"
 
+CPM_2202_URL = \
+    "https://sebhc.github.io/sebhc/software/CPM/CPM_2_2_02_Distribution.zip"
+# As with the HDOS archive above, SEBHC publishes no hash; this pin
+# records the archive as first fetched (2026-08-16), so a changed
+# upstream is caught, not silently adopted.
+CPM_2202_ZIP_SHA256 = \
+    "0b8931989f6f6486fd16c9f90c8235317cac0df7df0f84385dd3da74303f2547"
+CPM_2202_ZIP_NAME = "CPM_2_2_02_Distribution.zip"
+# The distribution is two disks; the first carries the system and the
+# transient commands, which is what the CP/M reader's tests read.
+CPM_2202_IMAGE_NAME = "CPM_2_2_02_distribution_1.h8d"
+
+CPM_2203_URL = \
+    "https://sebhc.github.io/sebhc/software/CPM/CPM_2_2_03_Distribution.zip"
+# First fetched 2026-08-16, pinned on the same terms as its sibling.
+CPM_2203_ZIP_SHA256 = \
+    "aaa1ed37d7868f361f6cd680b867fe208e9dd4bf1f9f74c863a621f1a0a0a0fc"
+CPM_2203_ZIP_NAME = "CPM_2_2_03_Distribution.zip"
+# Three disks, and the archive's members carry no release in their
+# names. Two are taken: the first for its system and transients, and the
+# third because its BIOS.ASM spans four extents — which is the directory
+# grammar's join tested against a real artifact rather than a built one.
+CPM_2203_IMAGE_NAMES = (
+    "CPM_2_2_distribution_1.h8d",
+    "CPM_2_2_distribution_3.h8d",
+)
+
+# The same release imaged from soft-sectored media, as ImageDisk rather
+# than a raw dump. It is the artifact D60 was decided against: its
+# interleave is in the sector numbering the format states, where the
+# hard-sectored dumps leave it to the drive's BIOS.
+CPM_2203_SOFT_URL = (
+    "https://heathkit.garlanger.com/software/library/Heath/CPM/"
+    "CPM_2_2_03/CPM_2_2_03.zip"
+)
+# First fetched 2026-08-16; the archive publishes no hash of its own.
+CPM_2203_SOFT_ZIP_SHA256 = \
+    "25d9434859e7c8c107d4404207f83d8da1f2e55e0cc72f2d3d6a54d82ff854e9"
+CPM_2203_SOFT_ZIP_NAME = "CPM_2_2_03_soft.zip"
+CPM_2203_SOFT_IMAGE_NAME = "cpm_2_2_03_Disk_1.imd"
+
 PINBALL_URL = (
     "https://archive.org/download/BillBudgePinballConstructionSetCommodore64.7z/"
     "Disk%20Dump/Bill%20Budge%20Pinball%20Construction%20Set%5BCommodore%20"
@@ -159,6 +200,12 @@ def download_archives() -> None:
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     _download_archive(FIXTURES_DIR / "HDOS_1-0.zip", HDOS_URL,
                       HDOS_ZIP_SHA256)
+    _download_archive(FIXTURES_DIR / CPM_2202_ZIP_NAME, CPM_2202_URL,
+                      CPM_2202_ZIP_SHA256)
+    _download_archive(FIXTURES_DIR / CPM_2203_ZIP_NAME, CPM_2203_URL,
+                      CPM_2203_ZIP_SHA256)
+    _download_archive(FIXTURES_DIR / CPM_2203_SOFT_ZIP_NAME,
+                      CPM_2203_SOFT_URL, CPM_2203_SOFT_ZIP_SHA256)
     _download_archive(DOWNLOADS_DIR / PINBALL_ARCHIVE_NAME, PINBALL_URL,
                       PINBALL_ARCHIVE_SHA256)
     # A single NIB-compressed disk image, fixture as downloaded — no
@@ -189,6 +236,35 @@ def prepare_hdos_fixtures() -> None:
         print(f"Packaging single image ZIP fixture ({hdos_zip_target.name})...")
         with zipfile.ZipFile(hdos_zip_target, "w", zipfile.ZIP_STORED) as zip_out:
             zip_out.write(hdos_8d_target, arcname=hdos_8d_target.name)
+
+
+def prepare_cpm_fixtures() -> None:
+    """Extract the CP/M system disks beside their archives.
+
+    Heath's CP/M records nothing on the disk about how to read it — the
+    disk parameter block lived in the BIOS — so these artifacts are what
+    the declared layout is checked against, and they are also where that
+    layout was derived from in the first place.
+
+    Two releases, because one could not answer the question the second
+    did: 2.2.02 and 2.2.03 turn out to write the same layout on the same
+    drive, which is why the enrolled block is named for the medium and
+    not for either release.
+    """
+    print("==> Preparing CP/M fixture images...")
+    FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+
+    wanted = [(CPM_2202_ZIP_NAME, CPM_2202_IMAGE_NAME)]
+    wanted += [(CPM_2203_ZIP_NAME, name) for name in CPM_2203_IMAGE_NAMES]
+    wanted += [(CPM_2203_SOFT_ZIP_NAME, CPM_2203_SOFT_IMAGE_NAME)]
+    for archive, member in wanted:
+        target = FIXTURES_DIR / member
+        if target.exists():
+            print(f"{member} already present")
+            continue
+        print(f"Extracting {member} into fixtures directory...")
+        with zipfile.ZipFile(FIXTURES_DIR / archive, "r") as zip_ref:
+            zip_ref.extract(member, FIXTURES_DIR)
 
 
 def prepare_pinball_fixture() -> None:
@@ -400,6 +476,7 @@ def clean_rig_media(context) -> None:
 def main() -> None:
     download_archives()
     prepare_hdos_fixtures()
+    prepare_cpm_fixtures()
     prepare_pinball_fixture()
 
     # Every rig machine builds, harvests and retires in turn; the

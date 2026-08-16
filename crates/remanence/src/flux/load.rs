@@ -27,11 +27,11 @@ use std::sync::Arc;
 
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::DeclaredLoss;
-use crate::flux::c1541::presentation::{C1541Bitstream, C1541Bytestream, materialize_bitstream};
 use crate::flux::c1541::sectors::C1541Sectors;
 use crate::flux::drive_profile::DriveProfile;
 use crate::flux::kryoflux::{self, MemberSource};
 use crate::flux::medium::FluxMedium;
+use crate::flux::presentation::{Bitstream, Bytestream, materialize_bitstream};
 use crate::flux::remanence::reconstruction::{ReconstructionPolicy, RecordingSelection, plan};
 use crate::io::device::{AccessMode, Claim, read_exact_at};
 use crate::io::source::{FileSource, ImageSource};
@@ -112,8 +112,8 @@ pub(crate) struct FluxState {
     cache_bytes: u64,
     /// The ladder, materialized once on demand under the profile's
     /// declared policies and answered from then on.
-    bitstream: Option<C1541Bitstream>,
-    bytestream: Option<C1541Bytestream>,
+    bitstream: Option<Bitstream>,
+    bytestream: Option<Bytestream>,
     sectors: Option<C1541Sectors>,
 }
 
@@ -410,10 +410,11 @@ impl FluxState {
 
     /// The family's hardware bitstream, materialized once under the
     /// profile's declared channel policy (P30 reached through the type).
-    pub(crate) fn bitstream(&mut self) -> Result<&C1541Bitstream> {
+    pub(crate) fn bitstream(&mut self) -> Result<&Bitstream> {
         if self.bitstream.is_none() {
             self.bitstream = Some(materialize_bitstream(
                 &self.medium,
+                self.profile,
                 self.profile.presentation.channel_policy,
                 self.cache_bytes,
             )?);
@@ -423,7 +424,7 @@ impl FluxState {
 
     /// The family's encoded bytestream, materialized once above the
     /// bitstream under the profile's declared codec policy.
-    pub(crate) fn bytestream(&mut self) -> Result<&C1541Bytestream> {
+    pub(crate) fn bytestream(&mut self) -> Result<&Bytestream> {
         if self.bytestream.is_none() {
             let cache_bytes = self.cache_bytes;
             let bitstream = self.bitstream()?;
@@ -495,8 +496,8 @@ mod tests {
         Derivation, FluxMedium, LocationKey, MediumBuilder, Pulse, Strength,
     };
     use crate::model::device_type::DeviceType;
-    use crate::model::pools::Session;
     use crate::model::media::Format;
+    use crate::model::pools::Session;
 
     /// A small medium of the family, written out as a P64 artifact —
     /// the served form at rest, which is what `Format::P64` loads

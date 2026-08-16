@@ -278,7 +278,22 @@ pub(crate) enum DeclaredNamespace {
 /// declaration is only ever needed where nothing does: an HDOS or CP/M
 /// catalog a medium bears directly, the CBM DOS directory a recording
 /// bears, and FAT itself where no scheme declared a type.
-const CLAIMED_NAMESPACES: [&str; 4] = ["fat", "hdos", "cpm", "cbmdos"];
+/// The namespace names a caller may declare.
+///
+/// `cpm` is here as the name that *recognizes* a CP/M directory; it
+/// refuses at the open, because the layout that says where a CP/M
+/// volume's files are lived in the BIOS and is not on the disk. The
+/// `cpm-*` entries beside it are the enrolled layouts, and each is the
+/// narrowest claim its evidence supports — a release on a medium, not
+/// CP/M in general.
+const CLAIMED_NAMESPACES: [&str; 6] = [
+    "fat",
+    "hdos",
+    "cpm",
+    "cpm-heath-h17",
+    "cpm-heath-soft",
+    "cbmdos",
+];
 
 fn unclaimed_namespace(id: &str) -> Error {
     refuse(
@@ -672,7 +687,7 @@ impl<'a> PartitionView<'a> {
     }
 
     /// The declared reading, where no partition type determines one:
-    /// `"fat"`, `"hdos"`, `"cpm"` or `"cbmdos"`.
+    /// `"fat"`, `"hdos"`, `"cpm"`, a `"cpm-*"` layout, or `"cbmdos"`.
     ///
     /// **The reading is the caller's and the check is the library's.**
     /// The adapter the declaration names is the one that reads it, and

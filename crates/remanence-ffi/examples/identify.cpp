@@ -326,12 +326,12 @@ int remanence_image(const std::string& path, const std::optional<std::string>& w
     // bytestream, and the sectors the recording states for itself.
     // Neither takes a policy — the type carries one.
     try {
-        remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+        remanence::Bitstream bits = image.materialize_bitstream();
         std::cout << "  bitstream: " << bits.profile_name() << ", "
                   << bits.locations().size() << " location(s), " << bits.resident_bytes()
                   << " of " << bits.backing_bytes() << " bytes resident\n";
 
-        remanence::C1541Bytestream bytes = bits.materialize_bytestream();
+        remanence::Bytestream bytes = bits.materialize_bytestream();
         std::cout << "  bytestream: " << bytes.codec_name() << ", "
                   << bytes.locations().size() << " location(s)\n";
 

@@ -24,7 +24,9 @@ use crate::io::source::{Evidence, SourceDevice};
 use crate::model::device_type::{DeviceType, FloppyDrive, HardDrive, OpticalDrive};
 use crate::model::disk::DiskFormat;
 use crate::model::media::Format;
-use crate::model::media_profile::{FLEXIBLE_5_25_HARD_10, LOGICAL_BLOCK_512, MediaProfile};
+use crate::model::media_profile::{
+    FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile,
+};
 use crate::partition::mbr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +199,30 @@ impl ProbeResult {
 
 pub(crate) trait OpenedImage: Device + std::fmt::Debug + Send + Sync {
     fn device_mut(&mut self) -> &mut dyn Device;
+
+    /// The coordinates *this artifact* establishes, where the format
+    /// declares none for every image it claims.
+    ///
+    /// Most formats state one geometry in their descriptor and every
+    /// image of them holds it. A format whose recording carries its own
+    /// coordinates track by track cannot: what it establishes is read
+    /// off the artifact at the open, and `None` here is the honest
+    /// answer for a recording that establishes nothing single.
+    fn declared_geometry(&self) -> Option<DiskDescriptor> {
+        None
+    }
+
+    /// What the open itself observed about the artifact, for the account
+    /// the load carries (P4).
+    ///
+    /// A driver that translates offsets observes nothing worth stating —
+    /// the artifact is what its header said. One that *decodes* an
+    /// artifact does: what it found, and what it did with it, are facts
+    /// a reader has to be able to weigh against the bytes served.
+    fn open_evidence(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     fn host_mut(&mut self) -> &mut MediumDevice;
     fn cache_snapshot(&self) -> Option<Vec<u64>>;
     fn restore_cache(&mut self, snapshot: Option<Vec<u64>>);
@@ -626,6 +652,145 @@ impl ImageFormatAdapter for H8dAdapter {
     }
 }
 
+impl OpenedImage for crate::image::imd::ImdImage {
+    fn device_mut(&mut self) -> &mut dyn Device {
+        self
+    }
+
+    fn host_mut(&mut self) -> &mut MediumDevice {
+        crate::image::imd::ImdImage::host_mut(self)
+    }
+
+    /// The decode holds no mapping the caller can disturb: the artifact
+    /// is read once and is not written, so there is nothing to put back.
+    fn cache_snapshot(&self) -> Option<Vec<u64>> {
+        None
+    }
+
+    fn restore_cache(&mut self, _snapshot: Option<Vec<u64>>) {}
+
+    fn format(&self) -> DiskFormat {
+        DiskFormat::Imd
+    }
+
+    fn presented_size(&self) -> u64 {
+        self.len()
+    }
+
+    fn declared_geometry(&self) -> Option<DiskDescriptor> {
+        crate::image::imd::ImdImage::geometry(self)
+    }
+
+    fn open_evidence(&self) -> Vec<String> {
+        crate::image::imd::ImdImage::evidence(self).to_vec()
+    }
+}
+
+pub(crate) struct ImdAdapter;
+
+pub(crate) static IMD_ADAPTER: ImdAdapter = ImdAdapter;
+
+static IMD_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
+    id: "imd",
+    name: "ImageDisk sector image",
+    extensions: &["imd"],
+    authoritative_layer: ImageLayer::Chs,
+    initial_active_layer: ActiveLayer::Chs,
+    // ImageDisk is what a soft-sectored controller read, so the article
+    // is the soft-sectored flexible disk. The format carries no size of
+    // its own — the same grammar holds an 8-inch recording — and the
+    // adapter refuses a geometry that article cannot be.
+    media: &FLEXIBLE_5_25_SOFT,
+    // Two drives record it, so the load declares which: the Heathkit
+    // soft-sectored product class, and the generic sector floppy for
+    // everything else that a standard controller read.
+    devices: &IMD_RECORDED_DEVICES,
+    // The recording states its own coordinates track by track, so there
+    // is no one geometry the *format* declares. What a given artifact
+    // establishes is read off it at the open.
+    disk: None,
+};
+
+/// The floppy types an ImageDisk artifact may be declared as recorded
+/// by.
+pub(crate) static IMD_RECORDED_DEVICES: [DeviceType; 2] = [
+    DeviceType::Floppy(FloppyDrive::HeathH37),
+    DeviceType::Floppy(FloppyDrive::Sector),
+];
+
+impl ImageFormatAdapter for ImdAdapter {
+    fn descriptor(&self) -> &'static ImageFormatDescriptor {
+        &IMD_DESCRIPTOR
+    }
+
+    fn probe(&self, input: &ProbeInput<'_>) -> ProbeResult {
+        let extension = input.extension();
+        let extension_matches = extension
+            .as_deref()
+            .is_some_and(|extension| IMD_DESCRIPTOR.extensions.contains(&extension));
+        if !input.prefix.starts_with(crate::image::imd::IMD_MAGIC) {
+            return if extension_matches {
+                ProbeResult::Invalid {
+                    confidence: 20,
+                    evidence: vec![format!("matched file extension '.{}'", extension.unwrap())],
+                    category: ErrorCategory::InvalidImage,
+                    reason: "the artifact does not open with ImageDisk's own signature".to_owned(),
+                }
+            } else {
+                ProbeResult::NoMatch
+            };
+        }
+
+        let mut confidence = 90;
+        let mut evidence = vec!["matched the ImageDisk signature 'IMD '".to_owned()];
+        if extension_matches {
+            confidence = 100;
+            evidence.push(format!("matched file extension '.{}'", extension.unwrap()));
+        }
+        ProbeResult::Match {
+            confidence,
+            evidence,
+        }
+    }
+
+    fn identify_filesystems(
+        &self,
+        source: &dyn Evidence,
+        evidence: &mut Vec<String>,
+    ) -> Result<Vec<DetectedFilesystem>> {
+        let length = source.len();
+        let mut volume = SourceDevice(source);
+        let found = filesystem_catalog::detect(&mut volume)?;
+        Ok(match (found.filesystem_id, found.filesystem_name) {
+            (Some(id), Some(name)) => vec![DetectedFilesystem {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                confidence: found.confidence,
+                offset: 0,
+                length,
+                evidence: found.evidence,
+            }],
+            _ => {
+                evidence.extend(found.evidence);
+                Vec::new()
+            }
+        })
+    }
+
+    fn open_disk(
+        &self,
+        mut file: MediumDevice,
+        _path: Option<&Path>,
+    ) -> Result<Box<dyn OpenedImage>> {
+        let length = file.len();
+        crate::image::imd::ImdExtent::bound(length)?;
+        let mut bytes = vec![0u8; length as usize];
+        file.read_at(0, &mut bytes)?;
+        let content = crate::image::imd::decode(&bytes)?;
+        Ok(Box::new(crate::image::imd::ImdImage::new(file, &content)))
+    }
+}
+
 pub(crate) struct Qcow2Adapter;
 
 pub(crate) static QCOW2_ADAPTER: Qcow2Adapter = Qcow2Adapter;
@@ -977,6 +1142,7 @@ fn adapter_for(format: Format) -> &'static dyn ImageFormatAdapter {
         Format::Qcow2 { .. } => &QCOW2_ADAPTER,
         Format::Vdi { .. } => &VDI_ADAPTER,
         Format::H8d => &H8D_ADAPTER,
+        Format::Imd { .. } => &IMD_ADAPTER,
         Format::Zip | Format::SevenZip => {
             unreachable!("an archive grammar is opened by its own catalog")
         }

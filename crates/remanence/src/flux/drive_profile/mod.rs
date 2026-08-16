@@ -395,12 +395,23 @@ pub(crate) struct Presentation {
     pub(crate) read_channel: ReadChannel,
     pub(crate) codec: GroupCodec,
     pub(crate) record: RecordGrammar,
-    /// The declared medium-to-bitstream policy.
-    pub(crate) channel_policy: crate::flux::c1541::presentation::ReadChannelPolicy,
+    /// The declared medium-to-bitstream policy, for the one channel
+    /// every enrolled family is clocked by.
+    pub(crate) channel_policy: crate::flux::presentation::ReadChannelPolicy,
     /// The declared bitstream-to-bytestream policy.
     pub(crate) codec_policy: crate::flux::c1541::presentation::GcrCodecPolicy,
     /// The declared bytestream-to-sector reading.
     pub(crate) sector_policy: crate::flux::c1541::sectors::SectorPolicy,
+    /// **The family's own bitstream-to-bytestream transition.** Bits
+    /// become bytes by a rule that differs in kind between families, so
+    /// the profile carries the transition as behavior rather than as a
+    /// declaration central code would have to interpret (P12): enrolling
+    /// a family enrols its codec here, and the rung above branches on
+    /// nothing.
+    pub(crate) bytestream: fn(
+        &crate::flux::presentation::Bitstream,
+        u64,
+    ) -> crate::error::Result<crate::flux::presentation::Bytestream>,
 }
 
 /// One family's recording conventions, and the published description

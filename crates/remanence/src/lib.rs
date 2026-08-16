@@ -160,16 +160,16 @@
 //! **A flux medium is then read the way a drive reads it**, and the
 //! type carries the rules (P30 reached through the type):
 //! [`Medium::bitstream`] clocks the family's pulses into a
-//! [`C1541Bitstream`] under the profile's declared channel,
-//! [`Medium::bytestream`] resolves that into the [`C1541Bytestream`]
+//! [`Bitstream`] under the profile's declared channel,
+//! [`Medium::bytestream`] resolves that into the [`Bytestream`]
 //! the family's declared group code makes of it — argument-free both,
 //! because being a `Commodore1541` medium *means* reading through the
 //! c1541 channel and codec — and
-//! [`C1541Bytestream::location`] serves the framed bytes of one
+//! [`Bytestream::location`] serves the framed bytes of one
 //! [`Location`]. The same rungs stand on a `.remanence` image through
 //! [`FluxImage::materialize_c1541_bitstream`] and
-//! [`C1541Bitstream::materialize_bytestream`]. The rungs assign
-//! nothing above a byte; [`C1541Bytestream::recognize_sectors`]
+//! [`Bitstream::materialize_bytestream`]. The rungs assign
+//! nothing above a byte; [`Bytestream::recognize_sectors`]
 //! is where that ends, and it ends by stating what it derives — every
 //! record carrying its evidence, and [`C1541Sectors::read_sector`]
 //! refusing by name (its own [`SectorRule`] set) rather than filling in
@@ -207,15 +207,15 @@ mod partition;
 pub use crate::filesystem::dos_name::DosNameRule;
 pub use crate::filesystem::fat::FatKind;
 pub use crate::filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
-pub use crate::flux::c1541::presentation::{
-    BitstreamLocation, BitstreamReport, BytestreamLocation, BytestreamReport, C1541Bitstream,
-    C1541Bytestream, Location, LocationBytes,
-};
 pub use crate::flux::c1541::renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
 pub use crate::flux::c1541::sectors::{
     C1541Sectors, ContestedAddress, SectorClaim, SectorLocation, SectorReport, SectorRule,
 };
 pub use crate::flux::p64::{P64HalfTrack, P64Report};
+pub use crate::flux::presentation::{
+    Bitstream, BitstreamLocation, BitstreamReport, Bytestream, BytestreamLocation,
+    BytestreamReport, Location, LocationBytes,
+};
 pub use crate::flux::remanence::format::FluxWriteReport;
 pub use crate::flux::remanence::image::{FluxHole, FluxImage, FluxImageReport, FluxOrbit};
 pub use crate::io::cache::DEFAULT_CACHE_BYTES;
@@ -229,8 +229,8 @@ pub use crate::model::disk::DiskFormat;
 pub use crate::model::geometry::{
     Geometry, GeometryReading, GeometryRule, GeometrySource, GeometryState, RecordingGeometry,
 };
-pub use crate::model::pools::Session;
 pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
+pub use crate::model::pools::Session;
 pub use crate::model::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,

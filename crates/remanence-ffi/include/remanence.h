@@ -43,6 +43,7 @@ typedef enum {
   REMANENCE_DISK_FORMAT_RAW,
   REMANENCE_DISK_FORMAT_QCOW2,
   REMANENCE_DISK_FORMAT_VDI,
+  REMANENCE_DISK_FORMAT_IMD,
 } RemanenceDiskFormat;
 
 // A medium's effective access mode: the declared intent's echo
@@ -163,19 +164,19 @@ typedef struct RemanenceAssurance RemanenceAssurance;
 // A hardware bitstream, held in the session. The bits stay behind this
 // handle; what it reports is the transition that produced them.
 //
-// Two doors mint it: `remanence_flux_image_materialize_c1541_bitstream`,
+// Two doors mint it: `remanence_flux_image_materialize_bitstream`,
 // whose handle owns the stream it materialized, and
 // `remanence_medium_bitstream`, whose handle is a view of the stream
 // cached in the pooled medium — that one **must not outlive its
 // session**, and stops answering once the medium is released.
-typedef struct RemanenceC1541Bitstream RemanenceC1541Bitstream;
+typedef struct RemanenceBitstream RemanenceBitstream;
 
 // An encoded bytestream, held in the session — minted by
-// `remanence_c1541_bitstream_materialize_bytestream`, whose handle owns
+// `remanence_bitstream_materialize_bytestream`, whose handle owns
 // its stream, or by `remanence_medium_bytestream`, whose handle is a
 // view of the stream cached in the pooled medium and **must not outlive
 // its session**.
-typedef struct RemanenceC1541Bytestream RemanenceC1541Bytestream;
+typedef struct RemanenceBytestream RemanenceBytestream;
 
 // The recording's own sectors, held in the session. The payloads stay
 // behind this handle and are read by the address the recording states.
@@ -1603,7 +1604,7 @@ RemanenceSpace *remanence_partition_filesystem(const RemanencePartition *partiti
                                                char **error_rule_out);
 
 // The declared reading, where no partition type determines one: `"fat"`,
-// `"hdos"`, `"cpm"` or `"cbmdos"`.
+// `"hdos"`, `"cpm"`, a `"cpm-*"` layout, or `"cbmdos"`.
 //
 // **The reading is the caller's and the check is the library's.** The
 // adapter the declaration names is the one that reads it, and it reads
@@ -1994,13 +1995,13 @@ const char *remanence_p64_evidence(const RemanenceP64Report *report, size_t inde
 // projection of it — one multiply per point, at the family's reference
 // frame — rather than on the image directly. The image is untouched.
 // The handle owns the stream; free it with
-// `remanence_c1541_bitstream_free`. Returns null on failure and stores
+// `remanence_bitstream_free`. Returns null on failure and stores
 // a message in `error_out` (free with `remanence_string_free`).
-RemanenceC1541Bitstream *remanence_flux_image_materialize_c1541_bitstream(const RemanenceFluxImage *image,
-                                                                          uint64_t cache_bytes,
-                                                                          RemanenceErrorCategory *error_category_out,
-                                                                          char **error_out,
-                                                                          char **error_rule_out);
+RemanenceBitstream *remanence_flux_image_materialize_bitstream(const RemanenceFluxImage *image,
+                                                               uint64_t cache_bytes,
+                                                               RemanenceErrorCategory *error_category_out,
+                                                               char **error_out,
+                                                               char **error_rule_out);
 
 // The family's hardware bitstream over this medium's recording,
 // materialized once — lazily, into the pooled medium itself — and
@@ -2012,29 +2013,29 @@ RemanenceC1541Bitstream *remanence_flux_image_materialize_c1541_bitstream(const 
 // The handle is a view of the pooled stream, named by session and pool
 // identity like the medium's own view: it re-resolves on every call,
 // stops answering once the medium is released, and **must not outlive
-// the session**. Free it with `remanence_c1541_bitstream_free`, which
+// the session**. Free it with `remanence_bitstream_free`, which
 // discards the view alone — the stream stays with its medium. Returns
 // null on failure.
-RemanenceC1541Bitstream *remanence_medium_bitstream(RemanenceMedium *medium,
-                                                    RemanenceErrorCategory *error_category_out,
-                                                    char **error_out,
-                                                    char **error_rule_out);
+RemanenceBitstream *remanence_medium_bitstream(RemanenceMedium *medium,
+                                               RemanenceErrorCategory *error_category_out,
+                                               char **error_out,
+                                               char **error_rule_out);
 
 // Frees a bitstream handle. A materialized stream's private session
 // storage goes with it; a pooled medium's stream stays with its
 // medium, and only the view is discarded.
-void remanence_c1541_bitstream_free(RemanenceC1541Bitstream *bitstream);
+void remanence_bitstream_free(RemanenceBitstream *bitstream);
 
 // Materializes the family's encoded bytestream from a bitstream under
 // its declared group code — no policy, because the type carries one.
 // The bitstream is untouched, and the handle owns the stream it
 // answers. Returns null on failure and stores a message in
 // `error_out`.
-RemanenceC1541Bytestream *remanence_c1541_bitstream_materialize_bytestream(const RemanenceC1541Bitstream *bitstream,
-                                                                           uint64_t cache_bytes,
-                                                                           RemanenceErrorCategory *error_category_out,
-                                                                           char **error_out,
-                                                                           char **error_rule_out);
+RemanenceBytestream *remanence_bitstream_materialize_bytestream(const RemanenceBitstream *bitstream,
+                                                                uint64_t cache_bytes,
+                                                                RemanenceErrorCategory *error_category_out,
+                                                                char **error_out,
+                                                                char **error_rule_out);
 
 // The family's encoded bytestream over this medium's recording — the
 // byte sequence the declared group code makes of the bitstream —
@@ -2045,126 +2046,124 @@ RemanenceC1541Bytestream *remanence_c1541_bitstream_materialize_bytestream(const
 // The handle is a view of the pooled stream with the same contract as
 // the bitstream's: re-resolved per call, silent after release, never
 // to outlive the session, freed with
-// `remanence_c1541_bytestream_free` — which discards the view alone.
+// `remanence_bytestream_free` — which discards the view alone.
 // Returns null on failure.
-RemanenceC1541Bytestream *remanence_medium_bytestream(RemanenceMedium *medium,
-                                                      RemanenceErrorCategory *error_category_out,
-                                                      char **error_out,
-                                                      char **error_rule_out);
+RemanenceBytestream *remanence_medium_bytestream(RemanenceMedium *medium,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
 
 // Frees a bytestream handle. A materialized stream's private session
 // storage goes with it; a pooled medium's stream stays with its
 // medium, and only the view is discarded.
-void remanence_c1541_bytestream_free(RemanenceC1541Bytestream *bytestream);
+void remanence_bytestream_free(RemanenceBytestream *bytestream);
 
 // The profile the channel was declared by.
-const char *remanence_c1541_bitstream_profile_id(const RemanenceC1541Bitstream *bitstream);
+const char *remanence_bitstream_profile_id(const RemanenceBitstream *bitstream);
 
 // Its human-readable name.
-const char *remanence_c1541_bitstream_profile_name(const RemanenceC1541Bitstream *bitstream);
+const char *remanence_bitstream_profile_name(const RemanenceBitstream *bitstream);
 
-uint32_t remanence_c1541_bitstream_profile_version(const RemanenceC1541Bitstream *bitstream);
+uint32_t remanence_bitstream_profile_version(const RemanenceBitstream *bitstream);
 
 // The frame the cells are angles in, carried from the medium unchanged.
-uint64_t remanence_c1541_bitstream_reference_clock_hz(const RemanenceC1541Bitstream *bitstream);
+uint64_t remanence_bitstream_reference_clock_hz(const RemanenceBitstream *bitstream);
 
-uint64_t remanence_c1541_bitstream_cycles_per_rotation(const RemanenceC1541Bitstream *bitstream);
+uint64_t remanence_bitstream_cycles_per_rotation(const RemanenceBitstream *bitstream);
 
 // How many bytes of private session storage the bitstream occupies, and
 // how much of that is currently resident. It is never held whole (P27).
-uint64_t remanence_c1541_bitstream_backing_bytes(const RemanenceC1541Bitstream *bitstream);
+uint64_t remanence_bitstream_backing_bytes(const RemanenceBitstream *bitstream);
 
-uint64_t remanence_c1541_bitstream_resident_bytes(const RemanenceC1541Bitstream *bitstream);
+uint64_t remanence_bitstream_resident_bytes(const RemanenceBitstream *bitstream);
 
 // How many locations the bitstream claims.
-size_t remanence_c1541_bitstream_location_count(const RemanenceC1541Bitstream *bitstream);
+size_t remanence_bitstream_location_count(const RemanenceBitstream *bitstream);
 
 // One of them, written into `out`. Returns false when out of range.
-bool remanence_c1541_bitstream_location(const RemanenceC1541Bitstream *bitstream,
-                                        size_t index,
-                                        RemanenceBitstreamLocation *out);
+bool remanence_bitstream_location(const RemanenceBitstream *bitstream,
+                                  size_t index,
+                                  RemanenceBitstreamLocation *out);
 
 // How many kinds of thing the bitstream does not carry of the medium.
-size_t remanence_c1541_bitstream_declared_loss_count(const RemanenceC1541Bitstream *bitstream);
+size_t remanence_bitstream_declared_loss_count(const RemanenceBitstream *bitstream);
 
-const char *remanence_c1541_bitstream_declared_loss_code(const RemanenceC1541Bitstream *bitstream,
-                                                         size_t index);
+const char *remanence_bitstream_declared_loss_code(const RemanenceBitstream *bitstream,
+                                                   size_t index);
 
 // What was not carried, in the medium's own terms. A count is not an
 // account.
-const char *remanence_c1541_bitstream_declared_loss_detail(const RemanenceC1541Bitstream *bitstream,
-                                                           size_t index);
+const char *remanence_bitstream_declared_loss_detail(const RemanenceBitstream *bitstream,
+                                                     size_t index);
 
-uint64_t remanence_c1541_bitstream_declared_loss_amount(const RemanenceC1541Bitstream *bitstream,
-                                                        size_t index);
+uint64_t remanence_bitstream_declared_loss_amount(const RemanenceBitstream *bitstream,
+                                                  size_t index);
 
 // The channel that produced the bitstream and the policy that produced
 // the medium, in that order.
-size_t remanence_c1541_bitstream_evidence_count(const RemanenceC1541Bitstream *bitstream);
+size_t remanence_bitstream_evidence_count(const RemanenceBitstream *bitstream);
 
-const char *remanence_c1541_bitstream_evidence(const RemanenceC1541Bitstream *bitstream,
-                                               size_t index);
+const char *remanence_bitstream_evidence(const RemanenceBitstream *bitstream, size_t index);
 
 // The profile and the group code the bytes were resolved by.
-const char *remanence_c1541_bytestream_profile_id(const RemanenceC1541Bytestream *bytestream);
+const char *remanence_bytestream_profile_id(const RemanenceBytestream *bytestream);
 
-const char *remanence_c1541_bytestream_codec_id(const RemanenceC1541Bytestream *bytestream);
+const char *remanence_bytestream_codec_id(const RemanenceBytestream *bytestream);
 
-const char *remanence_c1541_bytestream_codec_name(const RemanenceC1541Bytestream *bytestream);
+const char *remanence_bytestream_codec_name(const RemanenceBytestream *bytestream);
 
 // How many bits of the recording carry how many bits of a byte, and how
 // many symbols make one.
-uint32_t remanence_c1541_bytestream_symbol_bits(const RemanenceC1541Bytestream *bytestream);
+uint32_t remanence_bytestream_symbol_bits(const RemanenceBytestream *bytestream);
 
-uint32_t remanence_c1541_bytestream_data_bits(const RemanenceC1541Bytestream *bytestream);
+uint32_t remanence_bytestream_data_bits(const RemanenceBytestream *bytestream);
 
-uint32_t remanence_c1541_bytestream_symbols_per_byte(const RemanenceC1541Bytestream *bytestream);
+uint32_t remanence_bytestream_symbols_per_byte(const RemanenceBytestream *bytestream);
 
-uint64_t remanence_c1541_bytestream_backing_bytes(const RemanenceC1541Bytestream *bytestream);
+uint64_t remanence_bytestream_backing_bytes(const RemanenceBytestream *bytestream);
 
-uint64_t remanence_c1541_bytestream_resident_bytes(const RemanenceC1541Bytestream *bytestream);
+uint64_t remanence_bytestream_resident_bytes(const RemanenceBytestream *bytestream);
 
-size_t remanence_c1541_bytestream_location_count(const RemanenceC1541Bytestream *bytestream);
+size_t remanence_bytestream_location_count(const RemanenceBytestream *bytestream);
 
 // One of them, written into `out`. Returns false when out of range.
-bool remanence_c1541_bytestream_location(const RemanenceC1541Bytestream *bytestream,
-                                         size_t index,
-                                         RemanenceBytestreamLocation *out);
+bool remanence_bytestream_location(const RemanenceBytestream *bytestream,
+                                   size_t index,
+                                   RemanenceBytestreamLocation *out);
 
-size_t remanence_c1541_bytestream_declared_loss_count(const RemanenceC1541Bytestream *bytestream);
+size_t remanence_bytestream_declared_loss_count(const RemanenceBytestream *bytestream);
 
-const char *remanence_c1541_bytestream_declared_loss_code(const RemanenceC1541Bytestream *bytestream,
-                                                          size_t index);
+const char *remanence_bytestream_declared_loss_code(const RemanenceBytestream *bytestream,
+                                                    size_t index);
 
-const char *remanence_c1541_bytestream_declared_loss_detail(const RemanenceC1541Bytestream *bytestream,
-                                                            size_t index);
+const char *remanence_bytestream_declared_loss_detail(const RemanenceBytestream *bytestream,
+                                                      size_t index);
 
-uint64_t remanence_c1541_bytestream_declared_loss_amount(const RemanenceC1541Bytestream *bytestream,
-                                                         size_t index);
+uint64_t remanence_bytestream_declared_loss_amount(const RemanenceBytestream *bytestream,
+                                                   size_t index);
 
 // The codec, the channel beneath it and the medium policy beneath that,
 // in that order.
-size_t remanence_c1541_bytestream_evidence_count(const RemanenceC1541Bytestream *bytestream);
+size_t remanence_bytestream_evidence_count(const RemanenceBytestream *bytestream);
 
-const char *remanence_c1541_bytestream_evidence(const RemanenceC1541Bytestream *bytestream,
-                                                size_t index);
+const char *remanence_bytestream_evidence(const RemanenceBytestream *bytestream, size_t index);
 
 // How many framed bytes one location holds, addressed in the family's
 // own terms — the Commodore 1541 numbers its tracks from 1 — written
 // into `bytes_out`. This is the extent
-// `remanence_c1541_bytestream_location_read_at` reads within.
+// `remanence_bytestream_location_read_at` reads within.
 //
 // A track the stream does not hold is refused naming what it does
 // hold: the stream's locations are what the medium carried, and
 // nothing is manufactured to answer for a track that is not there.
 // Returns false on failure and stores a message in `error_out` (free
 // with `remanence_string_free`).
-bool remanence_c1541_bytestream_location_bytes(const RemanenceC1541Bytestream *bytestream,
-                                               uint32_t track,
-                                               uint64_t *bytes_out,
-                                               RemanenceErrorCategory *error_category_out,
-                                               char **error_out,
-                                               char **error_rule_out);
+bool remanence_bytestream_location_bytes(const RemanenceBytestream *bytestream,
+                                         uint32_t track,
+                                         uint64_t *bytes_out,
+                                         RemanenceErrorCategory *error_category_out,
+                                         char **error_out,
+                                         char **error_rule_out);
 
 // Reads exactly `length` framed bytes at `offset` of one track into
 // `buffer_out`, whole or not at all. Bytes number from the first
@@ -2176,14 +2175,14 @@ bool remanence_c1541_bytestream_location_bytes(const RemanenceC1541Bytestream *b
 // no value to serve: a read that touches one is refused naming it
 // rather than answered with an invented value. Returns false on
 // failure and stores a message in `error_out`.
-bool remanence_c1541_bytestream_location_read_at(const RemanenceC1541Bytestream *bytestream,
-                                                 uint32_t track,
-                                                 uint64_t offset,
-                                                 uint8_t *buffer_out,
-                                                 size_t length,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
+bool remanence_bytestream_location_read_at(const RemanenceBytestream *bytestream,
+                                           uint32_t track,
+                                           uint64_t offset,
+                                           uint8_t *buffer_out,
+                                           size_t length,
+                                           RemanenceErrorCategory *error_category_out,
+                                           char **error_out,
+                                           char **error_rule_out);
 
 // Recognizes the recording's own sectors out of a bytestream, under
 // the family's declared record grammar — no policy, because the
@@ -2192,11 +2191,11 @@ bool remanence_c1541_bytestream_location_read_at(const RemanenceC1541Bytestream 
 // stream's handle or a pooled medium's view. Returns null on failure
 // and stores a message in `error_out` (free with
 // `remanence_string_free`).
-RemanenceC1541Sectors *remanence_c1541_bytestream_recognize_sectors(const RemanenceC1541Bytestream *bytestream,
-                                                                    uint64_t cache_bytes,
-                                                                    RemanenceErrorCategory *error_category_out,
-                                                                    char **error_out,
-                                                                    char **error_rule_out);
+RemanenceC1541Sectors *remanence_bytestream_recognize_sectors(const RemanenceBytestream *bytestream,
+                                                              uint64_t cache_bytes,
+                                                              RemanenceErrorCategory *error_category_out,
+                                                              char **error_out,
+                                                              char **error_rule_out);
 
 // Frees a sector-layer handle, discarding its private session storage.
 void remanence_c1541_sectors_free(RemanenceC1541Sectors *sectors);

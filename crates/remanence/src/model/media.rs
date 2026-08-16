@@ -36,8 +36,8 @@ use crate::error::{Error, Result};
 use crate::filesystem::Catalog;
 use crate::filesystem::catalog::FilesystemAdapter;
 use crate::filesystem::fat::FatEntry;
-use crate::flux::c1541::presentation::{C1541Bitstream, C1541Bytestream};
 use crate::flux::c1541::sectors::C1541Sectors;
+use crate::flux::presentation::{Bitstream, Bytestream};
 use crate::image::adapters::{RAW_RECORDED_DEVICES, RECORDED_HARD_DRIVES};
 use crate::io::device::AccessMode;
 use crate::io::source::FileSource;
@@ -100,6 +100,12 @@ pub enum Format {
     /// Heathkit H8/H17 disk image — a Heathkit H-17 recording, and the
     /// format admits no other.
     H8d,
+    /// ImageDisk sector image. The recording states its own sector
+    /// identities, and the adapter presents them in that order (D60), so
+    /// what reads is the disk as its own numbering has it rather than as
+    /// the artifact happens to store it. More than one drive records the
+    /// format, so the load declares which.
+    Imd { device: FloppyDrive },
     /// ZIP, whose content is a namespace. An archive was recorded by no
     /// device, so there is nothing to declare.
     Zip,
@@ -187,7 +193,7 @@ impl FormatClaim {
 
 /// Every format a load may declare, and what each admits. The catalog is
 /// the claim: a pairing absent from it is refused by name.
-static CLAIMED: [FormatClaim; 8] = [
+static CLAIMED: [FormatClaim; 9] = [
     FormatClaim {
         id: "raw",
         name: "Raw disk image",
@@ -213,6 +219,13 @@ static CLAIMED: [FormatClaim; 8] = [
         id: "h8d",
         name: "Heathkit H8 H17 disk image",
         devices: &[DeviceType::Floppy(FloppyDrive::HeathH17)],
+        block_bytes: false,
+        collection: false,
+    },
+    FormatClaim {
+        id: "imd",
+        name: "ImageDisk sector image",
+        devices: &crate::image::adapters::IMD_RECORDED_DEVICES,
         block_bytes: false,
         collection: false,
     },
@@ -260,6 +273,7 @@ impl Format {
             Self::Qcow2 { .. } => "qcow2",
             Self::Vdi { .. } => "vdi",
             Self::H8d => "h8d",
+            Self::Imd { .. } => "imd",
             Self::Zip => "zip",
             Self::SevenZip => "7z",
             Self::KryoFlux { .. } => "kryoflux",
@@ -274,6 +288,7 @@ impl Format {
             Self::Qcow2 { .. } => "QEMU copy-on-write disk image",
             Self::Vdi { .. } => "VirtualBox disk image",
             Self::H8d => "Heathkit H8 H17 disk image",
+            Self::Imd { .. } => "ImageDisk sector image",
             Self::Zip => "ZIP archive",
             Self::SevenZip => "7z archive",
             Self::KryoFlux { .. } => "KryoFlux capture set",
@@ -296,6 +311,7 @@ impl Format {
             Self::Raw { device, .. } => Some(device),
             Self::Qcow2 { device } | Self::Vdi { device } => Some(DeviceType::HardDrive(device)),
             Self::H8d => Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
+            Self::Imd { device } => Some(DeviceType::Floppy(device)),
             Self::KryoFlux { device } => Some(DeviceType::Floppy(device)),
             Self::P64 => Some(DeviceType::Floppy(FloppyDrive::Commodore1541)),
             Self::Zip | Self::SevenZip => None,
@@ -465,6 +481,9 @@ impl Format {
                 device: hard_drive(device)?,
             },
             "h8d" => Self::H8d,
+            "imd" => Self::Imd {
+                device: floppy(device)?,
+            },
             "zip" => Self::Zip,
             "7z" => Self::SevenZip,
             "kryoflux" => Self::KryoFlux {
@@ -509,6 +528,7 @@ impl Format {
             | Self::Qcow2 { .. }
             | Self::Vdi { .. }
             | Self::H8d
+            | Self::Imd { .. }
             | Self::KryoFlux { .. }
             | Self::P64 => None,
         }
@@ -525,6 +545,7 @@ impl Format {
             | Self::Qcow2 { .. }
             | Self::Vdi { .. }
             | Self::H8d
+            | Self::Imd { .. }
             | Self::Zip
             | Self::SevenZip => None,
         }
@@ -1031,7 +1052,7 @@ impl Medium {
     /// type's profile bears flux, and refuses by name everywhere else —
     /// a block medium's recording is presented by its format adapter,
     /// and the two families are disjoint (P13).
-    pub fn bitstream(&mut self) -> Result<&C1541Bitstream> {
+    pub fn bitstream(&mut self) -> Result<&Bitstream> {
         self.state.flux_mut("bitstream")?.bitstream()
     }
 
@@ -1040,9 +1061,9 @@ impl Medium {
     /// same rule and answered from then on.
     ///
     /// The framed bytes of one location are read through
-    /// [`C1541Bytestream::location`]; no byte here is a header, a
+    /// [`Bytestream::location`]; no byte here is a header, a
     /// sector or a file, and the layers that assign those sit above.
-    pub fn bytestream(&mut self) -> Result<&C1541Bytestream> {
+    pub fn bytestream(&mut self) -> Result<&Bytestream> {
         self.state.flux_mut("bytestream")?.bytestream()
     }
 
@@ -1317,7 +1338,6 @@ impl MediaPool {
             .ok_or_else(|| Error::not_found(format!("this session holds no {id}")))?;
         Ok(self.media.remove(at))
     }
-
 }
 
 #[cfg(test)]

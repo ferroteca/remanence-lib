@@ -471,17 +471,17 @@ struct Release<RemanenceFluxWriteReport> {
     }
 };
 template <>
-struct Release<RemanenceC1541Bitstream> {
-    void operator()(RemanenceC1541Bitstream* handle) const noexcept
+struct Release<RemanenceBitstream> {
+    void operator()(RemanenceBitstream* handle) const noexcept
     {
-        remanence_c1541_bitstream_free(handle);
+        remanence_bitstream_free(handle);
     }
 };
 template <>
-struct Release<RemanenceC1541Bytestream> {
-    void operator()(RemanenceC1541Bytestream* handle) const noexcept
+struct Release<RemanenceBytestream> {
+    void operator()(RemanenceBytestream* handle) const noexcept
     {
-        remanence_c1541_bytestream_free(handle);
+        remanence_bytestream_free(handle);
     }
 };
 template <>
@@ -2990,69 +2990,69 @@ public:
 ///
 /// No byte here is a header, a sector or a file — the layers that decide
 /// that sit above.
-class C1541Bytestream : public detail::Held<RemanenceC1541Bytestream> {
+class Bytestream : public detail::Held<RemanenceBytestream> {
 public:
     using Held::Held;
 
     std::string profile_id() const
     {
-        return detail::copied(remanence_c1541_bytestream_profile_id(get()));
+        return detail::copied(remanence_bytestream_profile_id(get()));
     }
 
     /// The group code the stream was resolved under, and its shape.
     std::string codec_id() const
     {
-        return detail::copied(remanence_c1541_bytestream_codec_id(get()));
+        return detail::copied(remanence_bytestream_codec_id(get()));
     }
 
     std::string codec_name() const
     {
-        return detail::copied(remanence_c1541_bytestream_codec_name(get()));
+        return detail::copied(remanence_bytestream_codec_name(get()));
     }
 
     std::uint32_t symbol_bits() const noexcept
     {
-        return remanence_c1541_bytestream_symbol_bits(get());
+        return remanence_bytestream_symbol_bits(get());
     }
 
     std::uint32_t data_bits() const noexcept
     {
-        return remanence_c1541_bytestream_data_bits(get());
+        return remanence_bytestream_data_bits(get());
     }
 
     std::uint32_t symbols_per_byte() const noexcept
     {
-        return remanence_c1541_bytestream_symbols_per_byte(get());
+        return remanence_bytestream_symbols_per_byte(get());
     }
 
     std::uint64_t backing_bytes() const noexcept
     {
-        return remanence_c1541_bytestream_backing_bytes(get());
+        return remanence_bytestream_backing_bytes(get());
     }
 
     std::uint64_t resident_bytes() const noexcept
     {
-        return remanence_c1541_bytestream_resident_bytes(get());
+        return remanence_bytestream_resident_bytes(get());
     }
 
     std::size_t location_count() const noexcept
     {
-        return remanence_c1541_bytestream_location_count(get());
+        return remanence_bytestream_location_count(get());
     }
 
     BytestreamLocation location(std::size_t index) const
     {
         detail::in_range(index, location_count(), "bytestream location index");
         BytestreamLocation found{};
-        remanence_c1541_bytestream_location(get(), index, &found);
+        remanence_bytestream_location(get(), index, &found);
         return found;
     }
 
     std::vector<BytestreamLocation> locations() const
     {
         return detail::records<BytestreamLocation>(get(),
-                                                   remanence_c1541_bytestream_location_count,
-                                                   remanence_c1541_bytestream_location);
+                                                   remanence_bytestream_location_count,
+                                                   remanence_bytestream_location);
     }
 
     /// How many framed bytes one location holds, addressed in the
@@ -3062,7 +3062,7 @@ public:
     {
         detail::Outcome outcome;
         std::uint64_t bytes = 0;
-        outcome.require(remanence_c1541_bytestream_location_bytes(get(), track, &bytes,
+        outcome.require(remanence_bytestream_location_bytes(get(), track, &bytes,
                                                                   outcome.category(),
                                                                   outcome.message(),
                                                                   outcome.rule()),
@@ -3077,7 +3077,7 @@ public:
                           std::size_t length) const
     {
         detail::Outcome outcome;
-        outcome.require(remanence_c1541_bytestream_location_read_at(get(), track, offset, buffer,
+        outcome.require(remanence_bytestream_location_read_at(get(), track, offset, buffer,
                                                                     length, outcome.category(),
                                                                     outcome.message(),
                                                                     outcome.rule()),
@@ -3100,25 +3100,25 @@ public:
     C1541Sectors recognize_sectors(std::uint64_t cache_bytes = 0) const
     {
         detail::Outcome outcome;
-        RemanenceC1541Sectors* recognized = remanence_c1541_bytestream_recognize_sectors(
+        RemanenceC1541Sectors* recognized = remanence_bytestream_recognize_sectors(
             get(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
         return C1541Sectors(outcome.require(recognized, "no sectors were recognized"));
     }
 
     std::vector<DeclaredLoss> declared_losses() const
     {
-        return detail::losses(get(), remanence_c1541_bytestream_declared_loss_count,
-                              remanence_c1541_bytestream_declared_loss_code,
-                              remanence_c1541_bytestream_declared_loss_detail,
-                              remanence_c1541_bytestream_declared_loss_amount);
+        return detail::losses(get(), remanence_bytestream_declared_loss_count,
+                              remanence_bytestream_declared_loss_code,
+                              remanence_bytestream_declared_loss_detail,
+                              remanence_bytestream_declared_loss_amount);
     }
 
     /// The codec, the channel beneath it and the medium policy beneath
     /// that, in that order.
     std::vector<std::string> evidence() const
     {
-        return detail::lines(get(), remanence_c1541_bytestream_evidence_count,
-                             remanence_c1541_bytestream_evidence);
+        return detail::lines(get(), remanence_bytestream_evidence_count,
+                             remanence_bytestream_evidence);
     }
 };
 
@@ -3126,13 +3126,13 @@ public:
 /// of the recording, under the profile's declared mechanics.
 ///
 /// **Two doors mint it, and their lifetimes differ.**
-/// `FluxImage::materialize_c1541_bitstream` gives a handle that owns the
+/// `FluxImage::materialize_bitstream` gives a handle that owns the
 /// stream it materialized. `Medium::bitstream` gives a *view* of the
 /// stream cached in the pooled medium: it stops answering once the
 /// medium is released and **must not outlive its session**. Destroying
 /// either is correct — the view discards only itself — but the second
 /// is a borrow this class cannot enforce, exactly as the ABI cannot.
-class C1541Bitstream : public detail::Held<RemanenceC1541Bitstream> {
+class Bitstream : public detail::Held<RemanenceBitstream> {
 public:
     using Held::Held;
 
@@ -3140,42 +3140,42 @@ public:
     /// declares.
     std::string profile_id() const
     {
-        return detail::copied(remanence_c1541_bitstream_profile_id(get()));
+        return detail::copied(remanence_bitstream_profile_id(get()));
     }
 
     std::string profile_name() const
     {
-        return detail::copied(remanence_c1541_bitstream_profile_name(get()));
+        return detail::copied(remanence_bitstream_profile_name(get()));
     }
 
     std::uint32_t profile_version() const noexcept
     {
-        return remanence_c1541_bitstream_profile_version(get());
+        return remanence_bitstream_profile_version(get());
     }
 
     std::uint64_t reference_clock_hz() const noexcept
     {
-        return remanence_c1541_bitstream_reference_clock_hz(get());
+        return remanence_bitstream_reference_clock_hz(get());
     }
 
     std::uint64_t cycles_per_rotation() const noexcept
     {
-        return remanence_c1541_bitstream_cycles_per_rotation(get());
+        return remanence_bitstream_cycles_per_rotation(get());
     }
 
     std::uint64_t backing_bytes() const noexcept
     {
-        return remanence_c1541_bitstream_backing_bytes(get());
+        return remanence_bitstream_backing_bytes(get());
     }
 
     std::uint64_t resident_bytes() const noexcept
     {
-        return remanence_c1541_bitstream_resident_bytes(get());
+        return remanence_bitstream_resident_bytes(get());
     }
 
     std::size_t location_count() const noexcept
     {
-        return remanence_c1541_bitstream_location_count(get());
+        return remanence_bitstream_location_count(get());
     }
 
     /// One location the stream holds, and what the channel resolved
@@ -3184,39 +3184,39 @@ public:
     {
         detail::in_range(index, location_count(), "bitstream location index");
         BitstreamLocation found{};
-        remanence_c1541_bitstream_location(get(), index, &found);
+        remanence_bitstream_location(get(), index, &found);
         return found;
     }
 
     std::vector<BitstreamLocation> locations() const
     {
-        return detail::records<BitstreamLocation>(get(), remanence_c1541_bitstream_location_count,
-                                                  remanence_c1541_bitstream_location);
+        return detail::records<BitstreamLocation>(get(), remanence_bitstream_location_count,
+                                                  remanence_bitstream_location);
     }
 
     /// Materializes the encoded bytestream above this one under its
     /// declared group code — no policy to pass, because the type carries
     /// one. The bitstream is untouched.
-    C1541Bytestream materialize_bytestream(std::uint64_t cache_bytes = 0) const
+    Bytestream materialize_bytestream(std::uint64_t cache_bytes = 0) const
     {
         detail::Outcome outcome;
-        RemanenceC1541Bytestream* stream = remanence_c1541_bitstream_materialize_bytestream(
+        RemanenceBytestream* stream = remanence_bitstream_materialize_bytestream(
             get(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
-        return C1541Bytestream(outcome.require(stream, "no bytestream materialized"));
+        return Bytestream(outcome.require(stream, "no bytestream materialized"));
     }
 
     std::vector<DeclaredLoss> declared_losses() const
     {
-        return detail::losses(get(), remanence_c1541_bitstream_declared_loss_count,
-                              remanence_c1541_bitstream_declared_loss_code,
-                              remanence_c1541_bitstream_declared_loss_detail,
-                              remanence_c1541_bitstream_declared_loss_amount);
+        return detail::losses(get(), remanence_bitstream_declared_loss_count,
+                              remanence_bitstream_declared_loss_code,
+                              remanence_bitstream_declared_loss_detail,
+                              remanence_bitstream_declared_loss_amount);
     }
 
     std::vector<std::string> evidence() const
     {
-        return detail::lines(get(), remanence_c1541_bitstream_evidence_count,
-                             remanence_c1541_bitstream_evidence);
+        return detail::lines(get(), remanence_bitstream_evidence_count,
+                             remanence_bitstream_evidence);
     }
 };
 
@@ -3329,12 +3329,12 @@ public:
     /// Materializes the family's hardware bitstream from what the image
     /// holds. It takes no policy, because the type carries one (P30);
     /// `cache_bytes` is the working-set bound. The image is untouched.
-    C1541Bitstream materialize_c1541_bitstream(std::uint64_t cache_bytes = 0) const
+    Bitstream materialize_bitstream(std::uint64_t cache_bytes = 0) const
     {
         detail::Outcome outcome;
-        RemanenceC1541Bitstream* stream = remanence_flux_image_materialize_c1541_bitstream(
+        RemanenceBitstream* stream = remanence_flux_image_materialize_bitstream(
             get(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
-        return C1541Bitstream(outcome.require(stream, "no bitstream materialized"));
+        return Bitstream(outcome.require(stream, "no bitstream materialized"));
     }
 
     /// Writes the image into a new `.remanence` artifact. An existing
@@ -3645,21 +3645,21 @@ public:
     /// **The handle is a view of the pooled stream**, not an owner: it
     /// stops answering once the medium is released and must not outlive
     /// the session. Destroying it discards the view alone.
-    C1541Bitstream bitstream()
+    Bitstream bitstream()
     {
         detail::Outcome outcome;
-        RemanenceC1541Bitstream* stream = remanence_medium_bitstream(
+        RemanenceBitstream* stream = remanence_medium_bitstream(
             handle_, outcome.category(), outcome.message(), outcome.rule());
-        return C1541Bitstream(outcome.require(stream, "this medium bears no bitstream"));
+        return Bitstream(outcome.require(stream, "this medium bears no bitstream"));
     }
 
     /// The encoded bytestream above it, on the same terms.
-    C1541Bytestream bytestream()
+    Bytestream bytestream()
     {
         detail::Outcome outcome;
-        RemanenceC1541Bytestream* stream = remanence_medium_bytestream(
+        RemanenceBytestream* stream = remanence_medium_bytestream(
             handle_, outcome.category(), outcome.message(), outcome.rule());
-        return C1541Bytestream(outcome.require(stream, "this medium bears no bytestream"));
+        return Bytestream(outcome.require(stream, "this medium bears no bytestream"));
     }
 
 private:

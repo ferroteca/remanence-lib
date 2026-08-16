@@ -92,6 +92,29 @@ fn lists_files_from_hdos_fixture_image() {
         "and composes no volume; the inspection report issued no identity here"
     );
 
+    // The label's initializer version byte is reported as recorded. This
+    // fixture is the HDOS 1.0 distribution disk and it carries 0x00 —
+    // which is the reason no release number is named from this byte:
+    // the obvious packed-decimal reading would make 1.0 into 0x10, and
+    // the one disk here whose release is known says otherwise.
+    let account = filesystem.evidence().expect("the namespace is present");
+    assert!(
+        account.iter().any(|line| line.contains("0x00")),
+        "the account carries the byte as recorded: {account:?}"
+    );
+    assert!(
+        account
+            .iter()
+            .any(|line| line.contains("no verified mapping")),
+        "and does not name a release from it: {account:?}"
+    );
+    assert!(
+        account
+            .iter()
+            .any(|line| line.contains("early-release convention")),
+        "and says the sizes were supplied rather than read: {account:?}"
+    );
+
     let files = filesystem.entries("").expect("directory parses");
     assert_eq!(files.len(), 31);
 

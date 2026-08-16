@@ -93,7 +93,7 @@ with remanence.FluxImage("disk.remanence", cache_bytes=1 << 20) as image:
     holes: list[remanence.FluxHole] = image_report.holes
     orbits: list[remanence.FluxOrbit] = image_report.orbits
 
-    bitstream = image.materialize_c1541_bitstream()
+    bitstream = image.materialize_bitstream()
     location_count: int = bitstream.location_count
     bitstream_report: remanence.BitstreamReport = bitstream.inspect()
 

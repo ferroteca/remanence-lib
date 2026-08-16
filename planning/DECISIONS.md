@@ -58,6 +58,88 @@ removes it is the record either way.
 
 ## Decisions
 
+### D60 — Sector ordering is resolved by the image format, and only where the format states it
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-16. **Supports** S1; in-force P4, P12, P13, P18. Shapes pledged
+F68.
+
+**The same recording arrives in two orders.** An ImageDisk track stores
+its sectors in the physical order they were recorded and states each
+one's id separately; a raw dump of that disk holds them in id order,
+because whoever dumped it flattened the interleave. Something has to say
+which order a byte offset is in, and the choice is not free: every layer
+above — the CP/M layout's skew table above all — is written against one
+answer or the other.
+
+**It belongs to the image format, because that is where the evidence
+is.** The sector-id map is inside the ImageDisk file. A filesystem
+adapter resolving the order would be applying a rule it cannot see the
+basis for, which is exactly the arrangement P12 and P18 keep out of the
+seams: the module making a claim is the module that knows why. So an
+adapter presents sectors in the order the recording numbers them, and it
+does so *only* where the format states that numbering.
+
+**The converse is half the ruling.** A raw dump states no ids and no
+interleave, so nothing is resolved for one and nothing is guessed:
+whatever ordering remains is a declaration some layer above makes and
+takes responsibility for. This is what keeps the rule from becoming
+"adapters normalize", which would have them inventing an answer for
+formats that supply none.
+
+**The Heath CP/M disks are what forced it and what checks it.** The
+hard-sectored dumps need a four-way skew declared in the CP/M layout,
+the interleave having lived in the drive's BIOS. The soft-sectored
+ImageDisk images of the *same release* need none: the interleave is in
+the sector numbering, and the format states it. Under a single rule that
+put ordering in one place for both, one of those two must read wrongly —
+and wrongly in this format's characteristic way, where the directory
+still lists and only file contents come back interleaved.
+
+**Weighed and declined:** resolving ordering in the filesystem layout,
+which would make a CP/M block depend on which container carried the disk
+and put the image format into the namespace's vocabulary; and
+normalizing every adapter to some canonical order, which reads well until
+a format that states nothing has to be normalized, at which point it is
+guessing under another name.
+
+### D59 — The flux rungs stop naming their family, which takes D39's surviving qualifier with it
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-16. **Supports** S1, S2, S3; in-force P5, P12, P13, P30; pledged
+F76. Partly overrules **D39**.
+
+**D39's qualifier ruling is overturned by its own reasoning, not
+against it.** That entry dropped `c1541` from
+`C1541Bitstream::materialize_c1541_bytestream` and kept it on
+`FluxImage::materialize_c1541_bitstream`, and the test it applied was
+whether the word does work: a receiver that is nothing but a 1541 type
+restates the family for nothing, while a `FluxImage` is no c1541 type,
+so there the word said which family was being materialized. Both halves
+were right at the time.
+
+F76 changes what the word can honestly say. With the rungs named
+`Bitstream` and `Bytestream`, the family is no longer in any receiver on
+the path, and the image states for itself which family it holds — so the
+verb reads that declaration and refuses by name where nothing enrolled
+matches it. A `c1541` in the spelling would then be a claim about the
+result that the call does not make, which is worse than a redundant
+word: the first defect D39 was fixing was one word meaning two things,
+and this would be one word meaning something untrue.
+
+**What is not overturned is the test.** D39 asked whether a qualifier
+does work; this entry applies the same test to a receiver whose meaning
+changed underneath it. The ruling would be identical on the old surface,
+which is why this supersedes one clause and leaves the rest of D39
+standing.
+
+**Weighed and declined:** keeping the qualifier and reading it as "the
+c1541 case of a general verb" (it is not a case of anything — the verb
+is general and would be advertising one family's name on every other
+family's call); spelling it `materialize_declared_bitstream` to say the
+family comes from the artifact (accurate, and it names the mechanism
+rather than the result, which no sibling verb here does).
+
 ### D58 — The machine tier is withdrawn, the session being the device scope until nesting needs otherwise
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -1425,6 +1507,12 @@ and what the three surfaces now agree on.
 `FluxImage::materialize_c1541_bitstream` **keeps** its qualifier: that
 receiver is not a c1541 type, so the word says which family is being
 materialized and is doing work.
+
+> **Annotation (D59, 2026-08-16):** this last clause no longer holds.
+> F76 took the family out of the rung types, so the verb is general and
+> the artifact states which family it holds; the qualifier was dropped
+> and the spelling is now `FluxImage::materialize_bitstream`. The rest
+> of this entry stands.
 
 **`get_sector`/`put_sector` become `read_sector`/`write_sector`.** Rust
 discourages the `get_` prefix (C-GETTER), and the crate already spelled

@@ -20,10 +20,13 @@
 //! The P23 layers above the medium are [`bitstream`] — circular
 //! track-relative clocked bit state, every bit saying whether it was
 //! recorded or resolved by a declared rule — and [`bytestream`], the
-//! byte sequence a declared group code makes of it, which assigns no
-//! header, sector or file to any of them. [`c1541`] is the one family
-//! carried through to a filesystem, and [`remanence`] the physical
-//! stratum beneath the whole ladder.
+//! byte sequence a declared code makes of it, which assigns no
+//! header, sector or file to any of them. [`presentation`] is the seam
+//! a caller reaches them through and the phase-locked channel that
+//! produces the first: **the rungs name no family**, and the transition
+//! above the bits is the profile's own behavior rather than a branch
+//! here. [`c1541`] is the one family carried through to a filesystem,
+//! and [`remanence`] the physical stratum beneath the whole ladder.
 //!
 //! [`p64`] is the served form, claimed in both directions, and
 //! [`load`] is the single seam into the session model — the two
@@ -41,4 +44,5 @@ pub(crate) mod kryoflux;
 pub(crate) mod load;
 pub(crate) mod medium;
 pub(crate) mod p64;
+pub(crate) mod presentation;
 pub(crate) mod remanence;

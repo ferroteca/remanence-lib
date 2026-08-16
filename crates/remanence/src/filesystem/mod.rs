@@ -77,6 +77,7 @@
 // decisions one volume makes.
 pub(crate) mod catalog;
 pub(crate) mod cbm_dos;
+pub(crate) mod cpm;
 pub(crate) mod dos_name;
 pub(crate) mod fat;
 pub(crate) mod hdos;

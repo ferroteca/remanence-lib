@@ -1090,6 +1090,7 @@ impl Discovery {
             remanence::DiskFormat::Raw => "raw",
             remanence::DiskFormat::Qcow2 { .. } => "qcow2",
             remanence::DiskFormat::Vdi { .. } => "vdi",
+            remanence::DiskFormat::Imd => "imd",
         })
     }
 
@@ -1910,6 +1911,7 @@ impl Medium {
             remanence::DiskFormat::Raw => "raw",
             remanence::DiskFormat::Qcow2 { .. } => "qcow2",
             remanence::DiskFormat::Vdi { .. } => "vdi",
+            remanence::DiskFormat::Imd => "imd",
         })
     }
 
@@ -1918,7 +1920,9 @@ impl Medium {
     fn qcow2_version(&self) -> PyResult<Option<u32>> {
         Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Qcow2 { version } => Some(version),
-            remanence::DiskFormat::Raw | remanence::DiskFormat::Vdi { .. } => None,
+            remanence::DiskFormat::Raw
+            | remanence::DiskFormat::Imd
+            | remanence::DiskFormat::Vdi { .. } => None,
         })
     }
 
@@ -1928,7 +1932,9 @@ impl Medium {
     fn vdi_version(&self) -> PyResult<Option<(u32, u32)>> {
         Ok(match self.get()?.format().map_err(to_py_err)? {
             remanence::DiskFormat::Vdi { major, minor } => Some((major, minor)),
-            remanence::DiskFormat::Raw | remanence::DiskFormat::Qcow2 { .. } => None,
+            remanence::DiskFormat::Raw
+            | remanence::DiskFormat::Imd
+            | remanence::DiskFormat::Qcow2 { .. } => None,
         })
     }
 
@@ -2016,17 +2022,19 @@ impl Medium {
     /// read-channel rules and answered from then on.
     ///
     /// **It takes no arguments because the type carries the rules**:
-    /// being a Commodore 1541 medium *means* clocking through the c1541
-    /// channel, and what was used travels into the result's account. It
+    /// being a medium of a declared family *means* clocking through that
+    /// family's channel, and what was used travels into the result's
+    /// account. The rung names no family, and the one behind it is the
+    /// medium's own. It
     /// answers where the device type's profile bears flux, and raises by
     /// name everywhere else — a block medium's recording is presented by
     /// its format adapter, and the two families are disjoint.
-    fn bitstream(&self) -> PyResult<C1541Bitstream> {
+    fn bitstream(&self) -> PyResult<Bitstream> {
         let report = {
             let mut medium = self.get()?;
             BitstreamReport::new(medium.bitstream().map_err(to_py_err)?.inspect())
         };
-        Ok(C1541Bitstream {
+        Ok(Bitstream {
             provider: BitstreamProvider::Medium {
                 session: Arc::clone(&self.session),
                 id: self.id,
@@ -2040,14 +2048,14 @@ impl Medium {
     /// same rule and answered from then on.
     ///
     /// The framed bytes of one location are read through
-    /// `C1541Bytestream.location`; no byte here is a header, a sector or
+    /// `Bytestream.location`; no byte here is a header, a sector or
     /// a file, and the layers that assign those sit above.
-    fn bytestream(&self) -> PyResult<C1541Bytestream> {
+    fn bytestream(&self) -> PyResult<Bytestream> {
         let report = {
             let mut medium = self.get()?;
             BytestreamReport::new(medium.bytestream().map_err(to_py_err)?.inspect())
         };
-        Ok(C1541Bytestream {
+        Ok(Bytestream {
             provider: BytestreamProvider::Medium {
                 session: Arc::clone(&self.session),
                 id: self.id,
@@ -2388,7 +2396,7 @@ impl Partition {
     }
 
     /// The declared reading, where no partition type determines one:
-    /// `"fat"`, `"hdos"`, `"cpm"` or `"cbmdos"`.
+    /// `"fat"`, `"hdos"`, `"cpm"`, a `"cpm-*"` layout, or `"cbmdos"`.
     ///
     /// **The reading is the caller's and the check is the library's.** The
     /// adapter the declaration names is the one that reads it, and it
@@ -3488,7 +3496,7 @@ impl BytestreamReport {
 /// it — re-resolved on every access, so a released medium refuses by
 /// name rather than reaching state that is gone.
 enum BitstreamProvider {
-    Owned(remanence::C1541Bitstream),
+    Owned(remanence::Bitstream),
     Medium {
         session: Arc<Mutex<remanence::Session>>,
         id: remanence::MediaId,
@@ -3498,7 +3506,7 @@ enum BitstreamProvider {
 impl BitstreamProvider {
     fn with<T>(
         &self,
-        action: impl FnOnce(&remanence::C1541Bitstream) -> remanence::Result<T>,
+        action: impl FnOnce(&remanence::Bitstream) -> remanence::Result<T>,
     ) -> PyResult<T> {
         match self {
             Self::Owned(bitstream) => action(bitstream).map_err(to_py_err),
@@ -3523,13 +3531,13 @@ impl BitstreamProvider {
 /// surface: what a hardware presentation makes of them is that seam's
 /// business.
 #[pyclass(module = "remanence")]
-pub struct C1541Bitstream {
+pub struct Bitstream {
     provider: BitstreamProvider,
     report: BitstreamReport,
 }
 
 #[pymethods]
-impl C1541Bitstream {
+impl Bitstream {
     /// The transition that produced this bitstream, and everything it
     /// does not carry of the medium beneath it.
     fn inspect(&self) -> BitstreamReport {
@@ -3565,19 +3573,19 @@ impl C1541Bitstream {
     /// it was; the bytestream is separate session state with its own
     /// provenance, which is this bitstream's with the codec added to it.
     #[pyo3(signature = (*, cache_bytes = None))]
-    fn materialize_bytestream(&self, cache_bytes: Option<u64>) -> PyResult<C1541Bytestream> {
+    fn materialize_bytestream(&self, cache_bytes: Option<u64>) -> PyResult<Bytestream> {
         let inner = self.provider.with(|bitstream| {
             bitstream.materialize_bytestream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
         })?;
         let report = BytestreamReport::new(inner.inspect());
-        Ok(C1541Bytestream {
+        Ok(Bytestream {
             provider: BytestreamProvider::Owned(Arc::new(inner)),
             report,
         })
     }
 
     fn __repr__(&self) -> String {
-        format!("C1541Bitstream(locations={})", self.report.locations.len())
+        format!("Bitstream(locations={})", self.report.locations.len())
     }
 }
 
@@ -3586,7 +3594,7 @@ impl C1541Bitstream {
 /// location reads below re-resolve through it.
 #[derive(Clone)]
 enum BytestreamProvider {
-    Owned(Arc<remanence::C1541Bytestream>),
+    Owned(Arc<remanence::Bytestream>),
     Medium {
         session: Arc<Mutex<remanence::Session>>,
         id: remanence::MediaId,
@@ -3596,7 +3604,7 @@ enum BytestreamProvider {
 impl BytestreamProvider {
     fn with<T>(
         &self,
-        action: impl FnOnce(&remanence::C1541Bytestream) -> remanence::Result<T>,
+        action: impl FnOnce(&remanence::Bytestream) -> remanence::Result<T>,
     ) -> PyResult<T> {
         match self {
             Self::Owned(bytestream) => action(bytestream).map_err(to_py_err),
@@ -3619,13 +3627,13 @@ impl BytestreamProvider {
 
 /// An encoded bytestream, held in the session.
 #[pyclass(module = "remanence")]
-pub struct C1541Bytestream {
+pub struct Bytestream {
     provider: BytestreamProvider,
     report: BytestreamReport,
 }
 
 #[pymethods]
-impl C1541Bytestream {
+impl Bytestream {
     fn inspect(&self) -> BytestreamReport {
         self.report.clone()
     }
@@ -3689,7 +3697,7 @@ impl C1541Bytestream {
     }
 
     fn __repr__(&self) -> String {
-        format!("C1541Bytestream(locations={})", self.report.locations.len())
+        format!("Bytestream(locations={})", self.report.locations.len())
     }
 }
 
@@ -4617,13 +4625,13 @@ impl FluxImage {
     /// image's own provenance beneath the channel that produced it.
     /// There is no way back down.
     #[pyo3(signature = (*, cache_bytes = None))]
-    fn materialize_c1541_bitstream(&self, cache_bytes: Option<u64>) -> PyResult<C1541Bitstream> {
+    fn materialize_bitstream(&self, cache_bytes: Option<u64>) -> PyResult<Bitstream> {
         let inner = self
             .get()?
-            .materialize_c1541_bitstream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+            .materialize_bitstream(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
             .map_err(to_py_err)?;
         let report = BitstreamReport::new(inner.inspect());
-        Ok(C1541Bitstream {
+        Ok(Bitstream {
             provider: BitstreamProvider::Owned(inner),
             report,
         })
@@ -4679,8 +4687,8 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", version)?;
     m.add("DEFAULT_CACHE_BYTES", remanence::DEFAULT_CACHE_BYTES)?;
     m.add("Error", m.py().get_type::<Error>())?;
-    m.add_class::<C1541Bitstream>()?;
-    m.add_class::<C1541Bytestream>()?;
+    m.add_class::<Bitstream>()?;
+    m.add_class::<Bytestream>()?;
     m.add_class::<LocationBytes>()?;
     m.add_class::<BitstreamReport>()?;
     m.add_class::<BitstreamLocation>()?;

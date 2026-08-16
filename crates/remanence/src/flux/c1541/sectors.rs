@@ -49,13 +49,13 @@ use std::collections::BTreeSet;
 use crate::error::{Error, ErrorCategory, Result, RuleIdentity};
 use crate::evidence::{DeclaredLoss, LossAccount, Provenance};
 use crate::flux::bytestream::{ByteRecord, BytestreamFactKind, EncodedBytestream};
-use crate::flux::c1541::presentation::C1541Bytestream;
 use crate::flux::capture::{
     ByteSource, LEAF_ENTRIES, SectionAddress, SectionCache, SectionWriter, SessionBacking,
     read_varint, write_varint,
 };
 use crate::flux::drive_profile::{BlockShape, C1541, RecordGrammar};
 use crate::flux::medium::{LocationKey, read_location_key, write_location_key};
+use crate::flux::presentation::Bytestream;
 
 /// The profile every rule this layer applies is declared by.
 const PROFILE: &str = "c1541";
@@ -1194,7 +1194,7 @@ impl C1541Sectors {
 
 // ------------------------------------------------------ the entry point
 
-impl C1541Bytestream {
+impl Bytestream {
     /// Recognizes the recording's own sectors out of this bytestream,
     /// under the family's declared record grammar and sector reading
     /// (P23, P30 reached through the type).
@@ -1206,9 +1206,26 @@ impl C1541Bytestream {
     /// beneath the grammar and policy that produced it. There is no way
     /// back down (P33): a sector is not lowered into bytes.
     pub fn recognize_sectors(&self, cache_bytes: u64) -> Result<C1541Sectors> {
+        let profile = &crate::flux::drive_profile::C1541;
+        // The rung is family-plural and this grammar is not: these are
+        // the 1541's own records, so a bytestream of another family is
+        // refused by name rather than read for headers its recording
+        // never wrote (F76).
+        if self.profile().id != profile.id {
+            return Err(crate::flux::presentation::refuse(
+                profile.id,
+                format!(
+                    "the bytestream was resolved for the family '{}' and these are the \
+                     '{}' record grammar's sectors; a recording states its records in \
+                     the terms its own family declares",
+                    self.profile().id,
+                    profile.id
+                ),
+            ));
+        }
         recognize(
             self.inner(),
-            crate::flux::drive_profile::C1541.presentation.sector_policy,
+            profile.presentation.sector_policy,
             cache_bytes,
         )
     }
@@ -1217,13 +1234,13 @@ impl C1541Bytestream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flux::c1541::presentation::{
-        DensityPolicy, ReadChannelPolicy, UnzonedPolicy, WeakPulsePolicy, materialize_bitstream,
-    };
     use crate::flux::capture::TimeBase;
     use crate::flux::medium::{
         Derivation, FluxMedium, MediumBuilder, MediumFact, MediumFactKind, OriginRule,
         OriginStatement, Pulse, RotationalFrame, Strength,
+    };
+    use crate::flux::presentation::{
+        DensityPolicy, ReadChannelPolicy, UnzonedPolicy, WeakPulsePolicy, materialize_bitstream,
     };
 
     const CYCLES_PER_ROTATION: u64 = 3_200_000;
@@ -1369,6 +1386,7 @@ mod tests {
         let medium = medium_of(location, bits);
         let bitstream = materialize_bitstream(
             &medium,
+            &crate::flux::drive_profile::C1541,
             ReadChannelPolicy {
                 density: DensityPolicy::Declared,
                 unzoned: UnzonedPolicy::Refuse,

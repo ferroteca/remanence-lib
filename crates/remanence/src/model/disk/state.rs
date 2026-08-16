@@ -155,8 +155,16 @@ pub(super) fn assess(
     claim: Claim,
 ) -> Result<Assurance> {
     let observed = image.presented_size();
+    // What the open observed travels with the medium whatever else the
+    // gate settles (P4): a decoding driver's account is as much a fact
+    // about this session as the shortfall gate's own findings.
+    let opened = image.open_evidence();
+    let with_evidence = |mut assurance: Assurance| {
+        assurance.evidence.splice(0..0, opened.iter().cloned());
+        assurance
+    };
     if format != DiskFormat::Raw || observed < 512 {
-        return Ok(Assurance::verified(observed, mode, claim));
+        return Ok(with_evidence(Assurance::verified(observed, mode, claim)));
     }
     let mut sector = [0u8; 512];
     image.read_at(0, &mut sector)?;
@@ -165,7 +173,7 @@ pub(super) fn assess(
             bytes,
             metadata_end,
             reading,
-        } if bytes > observed => assurance::degraded(
+        } if bytes > observed => with_evidence(assurance::degraded(
             Shortfall {
                 declared: bytes,
                 observed,
@@ -173,7 +181,7 @@ pub(super) fn assess(
             },
             &reading,
             claim,
-        ),
+        )),
         // A contradiction is only this gate's business where the source is
         // also short: with the declared bytes all present there is nothing
         // to bound, and what the boot record says about itself is the
@@ -181,7 +189,7 @@ pub(super) fn assess(
         VolumeDeclaration::Conflicted { bytes, detail } if bytes > observed => {
             return Err(assurance::conflicted(&detail, bytes, observed));
         }
-        _ => Assurance::verified(observed, mode, claim),
+        _ => with_evidence(Assurance::verified(observed, mode, claim)),
     })
 }
 
@@ -388,7 +396,14 @@ impl MediaState {
             .collect();
         let sources = GeometrySources {
             format_id: self.descriptor.id,
-            format_disk: self.descriptor.disk,
+            // The artifact's own reading first: a format declaring one
+            // geometry for every image it claims states it in the
+            // descriptor, and one whose recording carries its own
+            // states it here (F68).
+            format_disk: self
+                .virtual_disk
+                .declared_geometry()
+                .or(self.descriptor.disk),
             declared_sector_bytes: self.declared_sector_bytes,
             reads_table: partitions.scheme().is_some(),
             boot_records: &boot_records,

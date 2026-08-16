@@ -128,3 +128,198 @@ prerequisites, and none of them presents a filesystem through the P19 seam.
 
 Companion design:
 [design/computer-tape-representations.md](design/computer-tape-representations.md).
+
+## F80 — Coordinates for a recording that is not uniform
+
+Give the discovered-geometry seam a way to state coordinates **per track**,
+and make the sector verbs address through them.
+
+A recording's coordinates are one four-tuple today. An ImageDisk whose
+track 0 is single-density and whose remaining tracks are not — the ordinary
+CP/M and DOS floppy, not an exotic one — has no single tuple to state, and
+it is not `Undetermined` either: nothing disagrees, the recording simply is
+not uniform. F68 declines the case honestly, declaring no geometry so that
+bytes and filesystems read while `read_sector` refuses; this feature is
+what gives that recording real coordinates.
+
+The work is a third settled state beside determined and undetermined,
+carrying the table rather than a tuple, without weakening what
+`Undetermined` means — it stays exactly "two sources disagree". The sector
+verbs then address through the table where one is present.
+
+The alternative this must not become is declaring the majority track's
+geometry and refusing the odd one. It reads well in the common case and it
+silently loses track 0 of most CP/M and DOS floppies ever written, which is
+the track carrying the boot record.
+
+Touches: S1, S2, S3. Supports: U1, U2; P3, P4, P10, P13, P14. F68 is a
+prerequisite — it is what produced the recordings this serves.
+
+## F69 — ImageDisk write
+
+Write a record back into an ImageDisk artifact, and commit the re-encoded
+container durably.
+
+The distinguishing problem is that a record's encoded length is not fixed:
+a compressed record is one fill byte, and writing anything else into it
+makes it a literal run. A write therefore relocates everything after it,
+so the commit rewrites the container rather than patching an offset. P9's
+journal already covers that; what is new is that the plan must be complete
+before the first byte moves (P6), and that a write which would silently
+drop a record's declared facts — its deleted mark, its error flag — is
+refused rather than quietly normalized.
+
+The feature claims writing an existing record in place. It does not claim
+formatting: adding a track, changing a track's mode, or changing a sector
+size is a different act with different evidence, and an adapter that
+invented one would be manufacturing a recording nobody made.
+
+Touches: S1, S2, S3. Supports: U1, U2; P2, P6, P7, P9, P10, P12, P13, P28.
+F68 is a prerequisite.
+
+Companion design:
+[design/record-structured-sector-images.md](design/record-structured-sector-images.md).
+
+## F70 — H17Disk version 2 read
+
+Read a version 2 H17Disk artifact through the F68 seam. Its worth is
+double: it is a format worth reading, and it is the second format that
+proves the seam is not ImageDisk-shaped.
+
+Its structure is a tagged container rather than a bare track run, and what
+it carries beyond the payload is different in kind from ImageDisk's — disk
+metadata, per-sector error records, and the hard-sector facts of the medium
+the H17 wrote. That the two formats' extra facts land in one record
+vocabulary, or that they demonstrably cannot, is the finding the feature
+must produce.
+
+The version claim is exact (P8): version 2 is read, and another version is
+refused by name rather than attempted on the assumption that the layout
+held.
+
+This does not supersede H8D, which already reads and writes today as a flat
+CHS recording. The two carry different information floors and neither is
+the other's improvement — the same distinction proposed U11 draws when it
+keeps both out of the flux tier.
+
+Touches: S1, S2, S3. Supports: U1, U2; P3–P5, P8, P10, P12–P14, P21, P27,
+P28. F68 is a prerequisite.
+
+Companion design:
+[design/record-structured-sector-images.md](design/record-structured-sector-images.md).
+
+## F71 — H17Disk version 2 write
+
+Write a record back into a version 2 H17Disk artifact, under F69's rules
+and with its own: the container's tags and metadata blocks must survive a
+write that does not concern them, and a per-sector error record that no
+longer describes what is now stored is a refusal rather than a stale fact
+left behind.
+
+Touches: S1, S2, S3. Supports: U1, U2; P2, P6, P7, P9, P10, P12, P13, P28.
+F69 and F70 are prerequisites.
+
+Companion design:
+[design/record-structured-sector-images.md](design/record-structured-sector-images.md).
+
+## F73 — MAME floppy image read
+
+Read a MAME `.mfi` artifact. It sits a level below the HxC MFM container
+pledged as F77: a track is a run
+of cell transition positions across one revolution, angular rather than
+timed, and each track is stored deflate-compressed — which the library's
+own encoder and decoder already serve, so nothing is added to the
+dependency-free claim.
+
+Being a level below is the point. MFI and HxC MFM are the two sources that
+say whether the framing pledged as F78 is a channel or a container reader:
+one hands it cells, the other hands it bits already framed at a uniform
+rate, and both must arrive at the same sector claims by the same rules.
+Where the two representations differ, the difference is stated rather than
+normalized away — a cell stream can carry a density variation and a
+uniform bitstream cannot, so what MFI knows is not silently levelled down
+to what MFM knows.
+
+Read only.
+
+Touches: S1, S2, S3. Supports: U1, U2; P1, P3–P5, P8, P10, P12–P14, P21–P23,
+P27. F76 is a prerequisite, and F78 is a prerequisite for its sector
+claims; F77 is not — this format reaches the ladder by its own container.
+
+Companion design:
+[design/bitstream-and-cell-floppy-images.md](design/bitstream-and-cell-floppy-images.md).
+
+## F74 — Mastering out to HxC MFM and MAME floppy image
+
+Write `.mfm` and `.mfi` artifacts from evidence the session already holds,
+as the D64, G64 and P64 renditions are written: a plan that computes the
+whole transformation and produces nothing, an execution that produces the
+result, and a declared-loss account stated in the source's own terms before
+a byte is written (P29).
+
+This is the honest first meaning of "write" at this tier. Each destination
+is asked what it can hold and answers for itself — an MFM container cannot
+carry a density variation or a weak region, an MFI track cannot carry
+several revolutions of the same location — and what would be lost is named
+and counted rather than approximated. An existing file at the destination
+is a refusal, and the artifact is built alongside and moved into place
+whole.
+
+Touches: S1, S2, S3. Supports: U1, U2; P6, P8, P9, P12, P13, P22, P29, P30.
+F77 is a prerequisite for the MFM destination; F73 for the MFI destination.
+
+Companion design:
+[design/bitstream-and-cell-floppy-images.md](design/bitstream-and-cell-floppy-images.md).
+
+## F75 — Writing in place at a bitstream authoritative layer
+
+Change a loaded `.mfm` or `.mfi` artifact rather than producing a new one.
+
+It is filed separately because it is the one piece of this group that the
+principles may refuse. P13 offers a writable composition only where every
+derivation on the path projects back to the authoritative layer without
+unclaimed loss, and writing a *sector* into a cell stream chooses cell
+timings the source never stated — a reduction, and under P29 a reduction
+no policy names is a refusal rather than a default. The feature's first
+job is therefore to establish whether an in-place write exists that is
+honest at all: replacing a whole track's cells with cells the caller
+supplies plainly is, and re-encoding one sector into a track the caller
+did not otherwise touch plainly is not.
+
+The outcome may be that the sector-level write is refused by name and only
+the track-level one is offered. That is a delivery, not a failure — a
+refusal that states what would change the answer is the point of P3.
+
+Touches: S1, S2, S3. Supports: U1, U2; P2, P6, P7, P9, P10, P12, P13, P22,
+P29. F77 is a prerequisite; F74 is not, and the two are alternatives at the
+same seam rather than stages of one thing.
+
+Companion design:
+[design/bitstream-and-cell-floppy-images.md](design/bitstream-and-cell-floppy-images.md).
+
+## F79 — HxC Floppy Emulator (HFE) read
+
+Read an `.hfe` artifact through the ladder F76–F78 establish. It is the
+same house as F77's `.mfm` and a materially different claim: HFE is a
+bitstream container that declares an *interface mode* and can carry more
+than one encoding, where the MFM container carries one and says so by
+carrying nothing else.
+
+That difference is the feature's whole argument. F77 proves a container
+can be read into the bit tier; this proves the tier does not quietly
+assume the encoding a caller happened to load first. Where the declared
+mode names an encoding this release does not decode, the refusal names
+the mode rather than reading it as MFM and hoping (P3, P8).
+
+The version claim is exact, and the same limits stand: nothing above may
+present as recovered evidence what the container never held.
+
+Read only. Writing HFE belongs with F74's mastering seam if it is ever
+argued, and is not claimed here.
+
+Touches: S1, S2, S3. Supports: U1, U2; P3–P5, P8, P10, P12–P14, P21–P23,
+P27, P30. F76 and F77 are prerequisites; F78 is a prerequisite for its
+sector claims.
+
+Companion design:
+[design/bitstream-and-cell-floppy-images.md](design/bitstream-and-cell-floppy-images.md).

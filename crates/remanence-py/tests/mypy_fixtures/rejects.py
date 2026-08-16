@@ -36,8 +36,8 @@ medium.size  # expect: union-attr
 image = remanence.FluxImage("disk.remanence")
 image.locations  # expect: attr-defined
 
-# The qualifier that stays on this receiver, dropped (D39).
-image.materialize_bitstream()  # expect: attr-defined
+# The qualifier this receiver used to carry, kept (D39, overruled by D59).
+image.materialize_c1541_bitstream()  # expect: attr-defined
 
 # A path argument given an int.
 image.write_d64(3)  # expect: arg-type

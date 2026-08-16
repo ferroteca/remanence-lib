@@ -51,6 +51,92 @@ rather than bridged. Read every entry below in that light.
   here claims them, no optical active layer exists, and the article
   declares none of them.
 
+- **ImageDisk (`.imd`) artifacts are read** (F68). `Format::Imd { device }`
+  loads one: the header and its comment, every track's encoding mode and
+  data rate, its sector-id map and optional cylinder and head maps, and
+  all nine sector-record types the format defines.
+
+  **Sectors are presented in the order the recording numbers them, and
+  that is a ruling rather than a convenience** (D60). An ImageDisk track
+  stores its sectors in the physical order they were recorded and states
+  their ids separately; a raw dump of the same disk is already in id
+  order. Resolving that belongs to the image format, because the id map
+  is in the file and nowhere else — and nothing is resolved that the
+  format does not state, so a raw dump's ordering remains a declaration
+  some layer above makes.
+
+  The Heath CP/M disks are what settled it: the hard-sectored raw dumps
+  need a four-way skew declared in their CP/M layout, and the
+  soft-sectored ImageDisk images of the *same release* need none, the
+  interleave having been written into the sector numbering. Both now read,
+  each under its own declared block.
+
+  **A recording whose tracks differ declares no geometry.** That is the
+  ordinary CP/M and DOS floppy, whose track 0 is not like the rest, and it
+  has no single coordinate system; its bytes and every filesystem above
+  them read, while `read_sector` refuses through the geometry seam's
+  existing rule rather than addressing it by coordinates it does not have.
+  Giving such a recording per-track coordinates is separate work.
+
+  **A sector the artifact records as unrecovered is not zeroes**: a read
+  touching one is refused with its range. Deleted-address marks, data
+  errors and compressed encoding are counted into the load's account,
+  which now also carries whatever the imaging tool wrote in the header.
+
+  Read only; writing ImageDisk is refused by name.
+
+- **CP/M 2.2 volumes read, against a layout the caller declares.** A new
+  namespace reader takes CP/M's directory grammar — 32-byte entries, user
+  numbers, extents joined across `EX`/`S2`, record counts, attribute bits
+  carried in the high bits of the name, and allocation pointers one byte
+  or two according to the block count.
+
+  **The layout is declared because nothing on the disk can be looked up
+  for it.** A CP/M volume records no structure saying where its directory
+  is, how large an allocation block is, or how its sectors are ordered:
+  that is the disk parameter block, and it is a structure in the BIOS
+  rather than in the filesystem. Two different blocks read the same bytes
+  as two different directories, both self-consistent, so a reader that
+  guessed would be undetectably wrong rather than occasionally wrong.
+  `"cpm"` therefore recognizes and refuses at the open, naming the layouts
+  a caller may declare instead.
+
+  That is not the same as the information being absent. A bootable CP/M
+  disk carries its BIOS in the reserved tracks, so the block is often
+  physically present — the Heath distribution disks each carry theirs, and
+  the enrolled layouts were checked against them field by field. What is
+  missing is a reliable way to *find* it: no fixed offset, no identifying
+  form, inside 8080 code, and only on disks that happen to be bootable.
+  Searching for a plausible fifteen bytes finds several candidates on
+  these very artifacts, of which one describes the volume it sits on.
+
+  Two layouts are enrolled, both named for the medium rather than the
+  release: `"cpm-heath-h17"` for the hard-sectored 5.25-inch disk and
+  `"cpm-heath-soft"` for the soft-sectored one. The release is not in
+  either name because it turned out not to matter — CP/M 2.2.02 and
+  2.2.03 write the same block on the same drive — while one release
+  recorded two ways needs two. Their volume parameters are identical and
+  they differ in exactly one field, the sector translation, which is the
+  one fact the two recordings differ in.
+
+  Every value was derived from the distribution disks and confirmed by
+  reading their files back, rather than taken from a published table, and
+  the reader's account says so — including that the block count is the
+  artifacts' upper bound rather than a stated figure.
+
+  **The sector map is part of the declaration.** The H-17 layout skews
+  four ways, and a wrong map is the quiet failure: the directory still
+  lists, because its first sector is where every candidate map agrees, and
+  only the file contents come back interleaved. The artifact is put into
+  logical record order once, at the open, and the account states that it
+  was.
+
+- **The HDOS reader states the initializer version byte its label
+  carries**, as evidence rather than as a switch. It is reported and not
+  interpreted: no mapping from that byte onto an HDOS release number is
+  claimed here, because the HDOS 1.0 distribution disk carries `0x00`,
+  which rules out the packed-decimal reading its other values invite.
+
 ### Removed
 
 - **The machine tier is withdrawn; a session holds its devices
@@ -123,6 +209,42 @@ rather than bridged. Read every entry below in that light.
   it — rather than because a letter reached it.
 
 ### Changed
+
+- **The flux presentation rungs no longer name their family** (F76). The
+  bitstream and bytestream a flux medium answers were spelled
+  `C1541Bitstream` and `C1541Bytestream`, which made the 1541 part of
+  the type of every rung and left a medium of any other family with
+  nothing to answer with. They are now `Bitstream` and `Bytestream`, and
+  the seam a caller reaches is one seam whatever disk they loaded.
+
+  **What differs between families is behind the rung, not in it.**
+  Clocking pulses into bit cells is one phase-locked channel that reads
+  every number it uses off the family's profile, so it moved out of the
+  1541's module and takes the profile as an argument; resolving those
+  bits into bytes differs in kind between families — a group code with a
+  symbol table here, an address mark elsewhere — so a profile now
+  carries its own transition as behavior. Enrolling a family enrols its
+  codec, and nothing central branches on which family arrived.
+
+  In C, `RemanenceC1541Bitstream` and `RemanenceC1541Bytestream` become
+  `RemanenceBitstream` and `RemanenceBytestream`, and the
+  `remanence_c1541_bitstream_*` and `remanence_c1541_bytestream_*`
+  functions become `remanence_bitstream_*` and `remanence_bytestream_*`.
+  In Python, the classes are `Bitstream` and `Bytestream`. The sector
+  rung is untouched: `C1541Sectors` is the 1541's own record grammar and
+  keeps its name, and it now refuses by name a bytestream resolved for
+  another family.
+
+- **`FluxImage::materialize_c1541_bitstream` loses its qualifier** and is
+  now `materialize_bitstream`, in all three surfaces
+  (`remanence_flux_image_materialize_bitstream` in C). The family is
+  read off the artifact — an image states which family it holds — and an
+  image whose family no enrolled profile declares is refused naming it,
+  rather than being clocked by whichever channel was nearest. This
+  overturns one clause of D39, which kept the qualifier on the ground
+  that the receiver was no c1541 type and the word therefore said which
+  family was meant; with the rungs family-neutral the word would instead
+  be claiming something the call does not. Recorded as D59.
 
 - The device class a slot answers — `class`, `device_class` — now also
   answers `optical`.

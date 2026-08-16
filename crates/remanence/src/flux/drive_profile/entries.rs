@@ -170,18 +170,18 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
         // one stochastic element is seeded with the profile's own
         // stated constant, so the same medium reads back the same bits
         // (P29).
-        channel_policy: crate::flux::c1541::presentation::ReadChannelPolicy {
+        channel_policy: crate::flux::presentation::ReadChannelPolicy {
             // The zone the family's own density map declares.
-            density: crate::flux::c1541::presentation::DensityPolicy::Declared,
+            density: crate::flux::presentation::DensityPolicy::Declared,
             // A location no zone covers — a half-track between two of
             // them — is left out and counted: no published rate reaches
             // it, and a neighbour's would be an undeclared number.
-            unzoned: crate::flux::c1541::presentation::UnzonedPolicy::Omit,
+            unzoned: crate::flux::presentation::UnzonedPolicy::Omit,
             // A pulse that does not read the same every time resolves
             // reproducibly from the declared seed and its own angle,
             // which is the one honest answer a convention can give
             // about a bit the medium itself leaves undecided.
-            weak_pulse: crate::flux::c1541::presentation::WeakPulsePolicy::Seeded,
+            weak_pulse: crate::flux::presentation::WeakPulsePolicy::Seeded,
             seed: 0x1541_1541_1541_1541,
         },
         codec_policy: crate::flux::c1541::presentation::GcrCodecPolicy {
@@ -198,6 +198,10 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
             checksum_failure: crate::flux::c1541::sectors::ChecksumFailurePolicy::DeclareLoss,
             unpaired_record: crate::flux::c1541::sectors::UnpairedRecordPolicy::DeclareLoss,
         },
+        // The family's own transition, enrolled as behavior: the rung
+        // above reaches the 1541's group code by holding this profile
+        // and not by knowing which family it is holding.
+        bytestream: crate::flux::c1541::presentation::materialize_declared,
     },
 };
 

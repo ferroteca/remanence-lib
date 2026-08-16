@@ -91,7 +91,28 @@ struct Label {
     grt_sector: u16,
     sectors_per_group: u8,
     volume_sectors: u16,
+    /// The version byte the label carries, kept exactly as recorded.
+    ///
+    /// **It is reported and not interpreted.** The byte is evidence
+    /// about which initializer wrote the volume, and this library has no
+    /// verified mapping from its values onto HDOS's released version
+    /// numbers: the HDOS 1.0 distribution disk in the fixture set
+    /// carries `0x00`, which already rules out the packed-decimal
+    /// reading the values `0x15` and `0x16` invite. Naming a release
+    /// from this byte would be a claim about the world resting on a
+    /// pattern, so the account states the byte and what the reader did
+    /// with it, and stops there.
+    version: u8,
 }
+
+/// The version bytes that take the early-release conventions below.
+///
+/// This is a statement about *this reader's* behavior, which is
+/// checkable, rather than about which HDOS release wrote which byte,
+/// which is not — a label carrying one of these leaves the volume size
+/// and sector size unwritten, and the reader supplies the values those
+/// releases fixed by convention.
+const EARLY_CONVENTION_VERSIONS: [u8; 4] = [0x00, 0x10, 0x15, 0x16];
 
 fn parse_label(image: &[u8]) -> Result<Label> {
     if image.len() < (LABEL_SECTOR + 1) * SECTOR_SIZE {
@@ -107,11 +128,16 @@ fn parse_label(image: &[u8]) -> Result<Label> {
         grt_sector: read_le16(label, 5),
         sectors_per_group: label[7],
         volume_sectors: read_le16(label, 12),
+        version: label[9],
     };
-    let init_ver = label[9];
+    let init_ver = info.version;
     let mut sector_size = read_le16(label, 14);
 
-    let early_ver = matches!(init_ver, 0x00 | 0x10 | 0x15 | 0x16);
+    // These labels leave the volume size and sector size unwritten, so
+    // the reader supplies what the early releases fixed by convention. A
+    // label outside the set states both for itself and is taken at its
+    // word.
+    let early_ver = EARLY_CONVENTION_VERSIONS.contains(&init_ver);
     if early_ver && info.volume_sectors == 0 {
         info.volume_sectors = 400;
     }
@@ -406,6 +432,37 @@ pub(crate) struct HdosCatalog {
 const HDOS_BOUND: u64 = 8 * 1024 * 1024;
 
 impl HdosCatalog {
+    /// What the volume's own label says about the release that wrote it
+    /// (P4), read back out of the image the view holds.
+    fn account(&self) -> Vec<String> {
+        let Ok(label) = parse_label(&self.image) else {
+            return Vec::new();
+        };
+        let early = EARLY_CONVENTION_VERSIONS.contains(&label.version);
+        let mut evidence = vec![format!(
+            "the volume label carries the initializer version byte {:#04x}, reported as \
+             recorded: no verified mapping from this byte onto an HDOS release number \
+             is claimed here",
+            label.version
+        )];
+        evidence.push(if early {
+            "it is one of the bytes whose labels leave the volume and sector sizes \
+             unwritten, so those two were supplied by the early-release convention \
+             rather than read"
+                .to_owned()
+        } else {
+            "the label states its own volume and sector sizes, and both were read from \
+             it rather than supplied"
+                .to_owned()
+        });
+        evidence.push(format!(
+            "{} sectors of {SECTOR_SIZE} bytes in groups of {}, with the directory at \
+             sector {} and the group reservation table at {}",
+            label.volume_sectors, label.sectors_per_group, label.dir_sector, label.grt_sector
+        ));
+        evidence
+    }
+
     pub(crate) fn open(volume: &mut dyn crate::io::device::Device) -> Result<Self> {
         let length = volume.len();
         if length > HDOS_BOUND {
@@ -441,6 +498,10 @@ impl HdosCatalog {
 }
 
 impl Catalog for HdosCatalog {
+    fn evidence(&self) -> Vec<String> {
+        self.account()
+    }
+
     fn entries(&self, path: &str) -> Result<Vec<Entry>> {
         if !path_is_root(path) {
             return Err(Error::categorized_image(

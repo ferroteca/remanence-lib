@@ -15,5 +15,6 @@
 //! rather than by opening a byte-addressed device. See [`crate::flux`].
 
 pub(crate) mod adapters;
+pub(crate) mod imd;
 pub(crate) mod qcow2;
 pub(crate) mod vdi;

@@ -522,7 +522,7 @@ void group_flux(const char* directory)
     // The ladder. Two points are not a recording, so what each rung
     // reports is the shape of nothing having been read — or a refusal
     // naming why, which is the answer this disk deserves.
-    remanence::C1541Bitstream bits = image.materialize_c1541_bitstream();
+    remanence::Bitstream bits = image.materialize_bitstream();
     CHECK(!bits.profile_id().empty(), "the bitstream names no profile");
     CHECK(bits.cycles_per_rotation() > 0, "the profile declares no frame");
     CHECK(!bits.evidence().empty(), "the bitstream carries no evidence");
@@ -530,7 +530,7 @@ void group_flux(const char* directory)
         CHECK(location.cell_cycles_denominator > 0, "a location has no cell");
     }
 
-    remanence::C1541Bytestream bytes = bits.materialize_bytestream();
+    remanence::Bytestream bytes = bits.materialize_bytestream();
     CHECK(!bytes.codec_id().empty(), "the bytestream names no group code");
     CHECK(bytes.symbols_per_byte() > 0, "the codec resolves no byte at all");
     CHECK(!bytes.evidence().empty(), "the bytestream carries no evidence");
@@ -645,11 +645,11 @@ void group_flux_capture(const char* archive_path)
 
     // The bitstream, from the pooled medium: materialized once, into the
     // medium itself, and answered from then on.
-    remanence::C1541Bitstream bits = disk.bitstream();
+    remanence::Bitstream bits = disk.bitstream();
     CHECK(!bits.locations().empty(), "a real capture resolved no location at all");
     CHECK(bits.cycles_per_rotation() > 0, "the profile declares no frame");
 
-    remanence::C1541Bytestream bytes = disk.bytestream();
+    remanence::Bytestream bytes = disk.bytestream();
     CHECK(!bytes.locations().empty(), "the bytestream framed nothing");
     const std::uint64_t held = bytes.location_bytes(1);
     CHECK(held > 0, "track one framed no bytes");

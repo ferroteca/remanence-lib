@@ -60,8 +60,16 @@ use crate::partition::PartitionPool;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskFormat {
     Raw,
-    Qcow2 { version: u32 },
-    Vdi { major: u32, minor: u32 },
+    /// An ImageDisk sector image, decoded into the order its recording
+    /// numbers its sectors (F68, D60).
+    Imd,
+    Qcow2 {
+        version: u32,
+    },
+    Vdi {
+        major: u32,
+        minor: u32,
+    },
 }
 
 /// What occupies a device's slot: a medium of one of the two vantages

@@ -241,11 +241,68 @@ impl FilesystemAdapter for CpmAdapter {
             )],
         })
     }
+
+    /// Recognizing a CP/M directory and being able to read it are
+    /// different claims, and this format is where they come furthest
+    /// apart: the disk parameter block lived in the BIOS and was never
+    /// written to the disk, so recognizing the directory says nothing
+    /// about where its files are. The refusal therefore names the
+    /// layouts a caller may declare instead of stopping at "not read".
+    fn open(&self, _volume: &mut dyn Device) -> Result<Box<dyn Catalog>> {
+        let enrolled: Vec<&str> = crate::filesystem::cpm::LAYOUTS
+            .iter()
+            .map(|layout| layout.id)
+            .collect();
+        Err(Error::categorized_image(
+            ErrorCategory::Unsupported,
+            self.id(),
+            format!(
+                "a CP/M volume does not record how to read it — the disk parameter \
+                 block lived in the BIOS — so '{}' names a directory this release \
+                 recognizes and cannot address. Declare the layout instead: {}",
+                self.id(),
+                enrolled.join(", ")
+            ),
+        )
+        .broke_rule(SpaceRule::RecognizedNotRead.as_str()))
+    }
+}
+
+/// One enrolled CP/M layout, presented as a namespace a caller may
+/// declare.
+///
+/// **It never probes.** Which layout an artifact was written under is
+/// not in the artifact, so an adapter that volunteered one would be
+/// guessing at exactly the point this format gives nothing away. The
+/// generic `cpm` entry above is what recognizes the directory; this is
+/// what reads it, and only when named.
+struct CpmLayoutAdapter(&'static crate::filesystem::cpm::CpmLayout);
+
+impl FilesystemAdapter for CpmLayoutAdapter {
+    fn id(&self) -> &'static str {
+        self.0.id
+    }
+
+    fn name(&self) -> &'static str {
+        self.0.name
+    }
+
+    fn probe(&self, _volume: &mut dyn Device) -> Result<ProbeResult> {
+        Ok(ProbeResult::NoMatch)
+    }
+
+    fn open(&self, volume: &mut dyn Device) -> Result<Box<dyn Catalog>> {
+        Ok(Box::new(crate::filesystem::cpm::CpmCatalog::open_declared(
+            volume, self.0,
+        )?))
+    }
 }
 
 static HDOS: HdosAdapter = HdosAdapter;
 static CPM: CpmAdapter = CpmAdapter;
-static BUILT_INS: [&dyn FilesystemAdapter; 2] = [&HDOS, &CPM];
+static CPM_HEATH_H17: CpmLayoutAdapter = CpmLayoutAdapter(&crate::filesystem::cpm::CPM_HEATH_H17);
+static CPM_HEATH_SOFT: CpmLayoutAdapter = CpmLayoutAdapter(&crate::filesystem::cpm::CPM_HEATH_SOFT);
+static BUILT_INS: [&dyn FilesystemAdapter; 4] = [&HDOS, &CPM, &CPM_HEATH_H17, &CPM_HEATH_SOFT];
 
 pub(crate) fn detect(volume: &mut dyn Device) -> Result<FilesystemIdentification> {
     FilesystemCatalog::new(&BUILT_INS).detect(volume)

@@ -875,6 +875,7 @@ pub unsafe extern "C" fn remanence_discovery_format(
                 DiskFormat::Qcow2 { .. } => RemanenceDiskFormat::Qcow2,
                 DiskFormat::Vdi { .. } => RemanenceDiskFormat::Vdi,
                 DiskFormat::Raw => RemanenceDiskFormat::Raw,
+                DiskFormat::Imd => RemanenceDiskFormat::Imd,
             }
         };
     }
@@ -1609,6 +1610,7 @@ pub enum RemanenceDiskFormat {
     Raw,
     Qcow2,
     Vdi,
+    Imd,
 }
 
 /// What a FAT directory entry is.
@@ -3229,6 +3231,7 @@ pub unsafe extern "C" fn remanence_medium_format(
                 DiskFormat::Qcow2 { .. } => RemanenceDiskFormat::Qcow2,
                 DiskFormat::Vdi { .. } => RemanenceDiskFormat::Vdi,
                 DiskFormat::Raw => RemanenceDiskFormat::Raw,
+                DiskFormat::Imd => RemanenceDiskFormat::Imd,
             }
         };
     }
@@ -4580,7 +4583,7 @@ pub unsafe extern "C" fn remanence_partition_filesystem(
 }
 
 /// The declared reading, where no partition type determines one: `"fat"`,
-/// `"hdos"`, `"cpm"` or `"cbmdos"`.
+/// `"hdos"`, `"cpm"`, a `"cpm-*"` layout, or `"cbmdos"`.
 ///
 /// **The reading is the caller's and the check is the library's.** The
 /// adapter the declaration names is the one that reads it, and it reads
@@ -5808,13 +5811,14 @@ pub unsafe extern "C" fn remanence_p64_evidence(
 }
 
 // ---------------------------------------------------------------------------
-// The C1541 presentation: the hardware bitstream a declared read channel
-// clocks out of a flux medium, and the encoded bytestream a declared
-// group code resolves out of that. Neither layer assigns
-// synchronization, headers, sectors or files to what it holds, and there
-// is no way back down.
+// The presentation rungs: the hardware bitstream a declared read channel
+// clocks out of a flux medium, and the encoded bytestream the family's
+// own declared code resolves out of that. Neither names a family — the
+// medium beneath them does, and the rules come from its profile. Neither
+// layer assigns synchronization, headers, sectors or files to what it
+// holds, and there is no way back down.
 
-use remanence::{C1541Bitstream, C1541Bytestream, Location};
+use remanence::{Bitstream, Bytestream, Location};
 
 /// One location the bitstream holds, and what the channel resolved
 /// there.
@@ -5890,7 +5894,7 @@ impl LayerView {
 enum BitstreamBacking {
     /// The materialize door's: the handle owns the stream, and freeing
     /// it discards the stream's private session storage.
-    Owned(C1541Bitstream),
+    Owned(Bitstream),
     /// The medium door's: the stream lives in the session's pool with
     /// its medium, named by session and pool identity and re-resolved
     /// on every call, so a released medium answers by name rather than
@@ -5903,7 +5907,7 @@ enum BitstreamBacking {
 
 /// What a bytestream handle stands on, the same fork.
 enum BytestreamBacking {
-    Owned(C1541Bytestream),
+    Owned(Bytestream),
     Pooled {
         session: *mut RemanenceSession,
         media: MediaId,
@@ -5913,21 +5917,21 @@ enum BytestreamBacking {
 /// A hardware bitstream, held in the session. The bits stay behind this
 /// handle; what it reports is the transition that produced them.
 ///
-/// Two doors mint it: `remanence_flux_image_materialize_c1541_bitstream`,
+/// Two doors mint it: `remanence_flux_image_materialize_bitstream`,
 /// whose handle owns the stream it materialized, and
 /// `remanence_medium_bitstream`, whose handle is a view of the stream
 /// cached in the pooled medium — that one **must not outlive its
 /// session**, and stops answering once the medium is released.
-pub struct RemanenceC1541Bitstream {
+pub struct RemanenceBitstream {
     backing: BitstreamBacking,
     view: LayerView,
 }
 
-impl RemanenceC1541Bitstream {
+impl RemanenceBitstream {
     /// The stream this handle names: its own for the materialize
     /// backing, the pooled medium's for the medium one — `None` once
     /// that medium is released.
-    fn stream(&self) -> Option<&C1541Bitstream> {
+    fn stream(&self) -> Option<&Bitstream> {
         match &self.backing {
             BitstreamBacking::Owned(bitstream) => Some(bitstream),
             BitstreamBacking::Pooled { session, media } => {
@@ -5939,18 +5943,18 @@ impl RemanenceC1541Bitstream {
 }
 
 /// An encoded bytestream, held in the session — minted by
-/// `remanence_c1541_bitstream_materialize_bytestream`, whose handle owns
+/// `remanence_bitstream_materialize_bytestream`, whose handle owns
 /// its stream, or by `remanence_medium_bytestream`, whose handle is a
 /// view of the stream cached in the pooled medium and **must not outlive
 /// its session**.
-pub struct RemanenceC1541Bytestream {
+pub struct RemanenceBytestream {
     backing: BytestreamBacking,
     view: LayerView,
 }
 
-impl RemanenceC1541Bytestream {
+impl RemanenceBytestream {
     /// The stream this handle names, as the bitstream's resolves.
-    fn stream(&self) -> Option<&C1541Bytestream> {
+    fn stream(&self) -> Option<&Bytestream> {
         match &self.backing {
             BytestreamBacking::Owned(bytestream) => Some(bytestream),
             BytestreamBacking::Pooled { session, media } => {
@@ -5962,7 +5966,7 @@ impl RemanenceC1541Bytestream {
 }
 
 /// The report view a bitstream handle answers its strings from.
-fn bitstream_view(bitstream: &C1541Bitstream) -> LayerView {
+fn bitstream_view(bitstream: &Bitstream) -> LayerView {
     let report = bitstream.inspect();
     LayerView::new(
         &report.profile_id,
@@ -5974,7 +5978,7 @@ fn bitstream_view(bitstream: &C1541Bitstream) -> LayerView {
 }
 
 /// The report view a bytestream handle answers its strings from.
-fn bytestream_view(bytestream: &C1541Bytestream) -> LayerView {
+fn bytestream_view(bytestream: &Bytestream) -> LayerView {
     let report = bytestream.inspect();
     LayerView::new(
         &report.profile_id,
@@ -5994,26 +5998,26 @@ fn bytestream_view(bytestream: &C1541Bytestream) -> LayerView {
 /// projection of it — one multiply per point, at the family's reference
 /// frame — rather than on the image directly. The image is untouched.
 /// The handle owns the stream; free it with
-/// `remanence_c1541_bitstream_free`. Returns null on failure and stores
+/// `remanence_bitstream_free`. Returns null on failure and stores
 /// a message in `error_out` (free with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_flux_image_materialize_c1541_bitstream(
+pub unsafe extern "C" fn remanence_flux_image_materialize_bitstream(
     image: *const RemanenceFluxImage,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceC1541Bitstream {
+) -> *mut RemanenceBitstream {
     unsafe { clear_error(error_out, error_rule_out) };
     let Some(image) = (unsafe { image.as_ref() }) else {
         let error = remanence::Error::io("null image");
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    match image.image.materialize_c1541_bitstream(cache_bytes) {
+    match image.image.materialize_bitstream(cache_bytes) {
         Ok(bitstream) => {
             let view = bitstream_view(&bitstream);
-            Box::into_raw(Box::new(RemanenceC1541Bitstream {
+            Box::into_raw(Box::new(RemanenceBitstream {
                 backing: BitstreamBacking::Owned(bitstream),
                 view,
             }))
@@ -6035,7 +6039,7 @@ pub unsafe extern "C" fn remanence_flux_image_materialize_c1541_bitstream(
 /// The handle is a view of the pooled stream, named by session and pool
 /// identity like the medium's own view: it re-resolves on every call,
 /// stops answering once the medium is released, and **must not outlive
-/// the session**. Free it with `remanence_c1541_bitstream_free`, which
+/// the session**. Free it with `remanence_bitstream_free`, which
 /// discards the view alone — the stream stays with its medium. Returns
 /// null on failure.
 #[unsafe(no_mangle)]
@@ -6044,7 +6048,7 @@ pub unsafe extern "C" fn remanence_medium_bitstream(
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceC1541Bitstream {
+) -> *mut RemanenceBitstream {
     unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { medium.as_mut() }) else {
         let error = remanence::Error::io("null medium");
@@ -6059,7 +6063,7 @@ pub unsafe extern "C" fn remanence_medium_bitstream(
     match pooled.bitstream() {
         Ok(bitstream) => {
             let view = bitstream_view(bitstream);
-            Box::into_raw(Box::new(RemanenceC1541Bitstream {
+            Box::into_raw(Box::new(RemanenceBitstream {
                 backing: BitstreamBacking::Pooled {
                     session: handle.session,
                     media: handle.id,
@@ -6078,7 +6082,7 @@ pub unsafe extern "C" fn remanence_medium_bitstream(
 /// storage goes with it; a pooled medium's stream stays with its
 /// medium, and only the view is discarded.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_free(bitstream: *mut RemanenceC1541Bitstream) {
+pub unsafe extern "C" fn remanence_bitstream_free(bitstream: *mut RemanenceBitstream) {
     if !bitstream.is_null() {
         drop(unsafe { Box::from_raw(bitstream) });
     }
@@ -6090,13 +6094,13 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_free(bitstream: *mut Remanenc
 /// answers. Returns null on failure and stores a message in
 /// `error_out`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_materialize_bytestream(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_materialize_bytestream(
+    bitstream: *const RemanenceBitstream,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceC1541Bytestream {
+) -> *mut RemanenceBytestream {
     unsafe { clear_error(error_out, error_rule_out) };
     let Some(held) = (unsafe { bitstream.as_ref() }) else {
         let error = remanence::Error::io("null bitstream");
@@ -6111,7 +6115,7 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_materialize_bytestream(
     match stream.materialize_bytestream(cache_bytes) {
         Ok(bytestream) => {
             let view = bytestream_view(&bytestream);
-            Box::into_raw(Box::new(RemanenceC1541Bytestream {
+            Box::into_raw(Box::new(RemanenceBytestream {
                 backing: BytestreamBacking::Owned(bytestream),
                 view,
             }))
@@ -6132,7 +6136,7 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_materialize_bytestream(
 /// The handle is a view of the pooled stream with the same contract as
 /// the bitstream's: re-resolved per call, silent after release, never
 /// to outlive the session, freed with
-/// `remanence_c1541_bytestream_free` — which discards the view alone.
+/// `remanence_bytestream_free` — which discards the view alone.
 /// Returns null on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_medium_bytestream(
@@ -6140,7 +6144,7 @@ pub unsafe extern "C" fn remanence_medium_bytestream(
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
     error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceC1541Bytestream {
+) -> *mut RemanenceBytestream {
     unsafe { clear_error(error_out, error_rule_out) };
     let Some(handle) = (unsafe { medium.as_mut() }) else {
         let error = remanence::Error::io("null medium");
@@ -6155,7 +6159,7 @@ pub unsafe extern "C" fn remanence_medium_bytestream(
     match pooled.bytestream() {
         Ok(bytestream) => {
             let view = bytestream_view(bytestream);
-            Box::into_raw(Box::new(RemanenceC1541Bytestream {
+            Box::into_raw(Box::new(RemanenceBytestream {
                 backing: BytestreamBacking::Pooled {
                     session: handle.session,
                     media: handle.id,
@@ -6174,9 +6178,7 @@ pub unsafe extern "C" fn remanence_medium_bytestream(
 /// storage goes with it; a pooled medium's stream stays with its
 /// medium, and only the view is discarded.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_free(
-    bytestream: *mut RemanenceC1541Bytestream,
-) {
+pub unsafe extern "C" fn remanence_bytestream_free(bytestream: *mut RemanenceBytestream) {
     if !bytestream.is_null() {
         drop(unsafe { Box::from_raw(bytestream) });
     }
@@ -6184,87 +6186,86 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_free(
 
 /// The profile the channel was declared by.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_profile_id(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_profile_id(
+    bitstream: *const RemanenceBitstream,
 ) -> *const c_char {
     unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| held.view.first.as_ptr())
 }
 
 /// Its human-readable name.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_profile_name(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_profile_name(
+    bitstream: *const RemanenceBitstream,
 ) -> *const c_char {
     unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| held.view.second.as_ptr())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_profile_version(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_profile_version(
+    bitstream: *const RemanenceBitstream,
 ) -> u32 {
     unsafe { bitstream.as_ref() }
-        .and_then(RemanenceC1541Bitstream::stream)
+        .and_then(RemanenceBitstream::stream)
         .map_or(0, |stream| stream.inspect().profile_version)
 }
 
 /// The frame the cells are angles in, carried from the medium unchanged.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_reference_clock_hz(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_reference_clock_hz(
+    bitstream: *const RemanenceBitstream,
 ) -> u64 {
     unsafe { bitstream.as_ref() }
-        .and_then(RemanenceC1541Bitstream::stream)
+        .and_then(RemanenceBitstream::stream)
         .map_or(0, |stream| stream.inspect().reference_clock_hz)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_cycles_per_rotation(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_cycles_per_rotation(
+    bitstream: *const RemanenceBitstream,
 ) -> u64 {
     unsafe { bitstream.as_ref() }
-        .and_then(RemanenceC1541Bitstream::stream)
+        .and_then(RemanenceBitstream::stream)
         .map_or(0, |stream| stream.inspect().cycles_per_rotation)
 }
 
 /// How many bytes of private session storage the bitstream occupies, and
 /// how much of that is currently resident. It is never held whole (P27).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_backing_bytes(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_backing_bytes(
+    bitstream: *const RemanenceBitstream,
 ) -> u64 {
     unsafe { bitstream.as_ref() }
-        .and_then(RemanenceC1541Bitstream::stream)
+        .and_then(RemanenceBitstream::stream)
         .map_or(0, |stream| stream.backing_bytes())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_resident_bytes(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_resident_bytes(
+    bitstream: *const RemanenceBitstream,
 ) -> u64 {
     unsafe { bitstream.as_ref() }
-        .and_then(RemanenceC1541Bitstream::stream)
+        .and_then(RemanenceBitstream::stream)
         .map_or(0, |stream| stream.resident_bytes())
 }
 
 /// How many locations the bitstream claims.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_location_count(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_location_count(
+    bitstream: *const RemanenceBitstream,
 ) -> usize {
     unsafe { bitstream.as_ref() }
-        .and_then(RemanenceC1541Bitstream::stream)
+        .and_then(RemanenceBitstream::stream)
         .map_or(0, |stream| stream.inspect().locations.len())
 }
 
 /// One of them, written into `out`. Returns false when out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_location(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_location(
+    bitstream: *const RemanenceBitstream,
     index: usize,
     out: *mut RemanenceBitstreamLocation,
 ) -> bool {
-    let Some(stream) = (unsafe { bitstream.as_ref() }).and_then(RemanenceC1541Bitstream::stream)
-    else {
+    let Some(stream) = (unsafe { bitstream.as_ref() }).and_then(RemanenceBitstream::stream) else {
         return false;
     };
     let Some(location) = stream.inspect().locations.get(index) else {
@@ -6295,15 +6296,15 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_location(
 
 /// How many kinds of thing the bitstream does not carry of the medium.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_count(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_declared_loss_count(
+    bitstream: *const RemanenceBitstream,
 ) -> usize {
     unsafe { bitstream.as_ref() }.map_or(0, |held| held.view.loss_codes.len())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_code(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_declared_loss_code(
+    bitstream: *const RemanenceBitstream,
     index: usize,
 ) -> *const c_char {
     unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| {
@@ -6317,8 +6318,8 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_code(
 /// What was not carried, in the medium's own terms. A count is not an
 /// account.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_detail(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_declared_loss_detail(
+    bitstream: *const RemanenceBitstream,
     index: usize,
 ) -> *const c_char {
     unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| {
@@ -6330,12 +6331,12 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_detail(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_amount(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_declared_loss_amount(
+    bitstream: *const RemanenceBitstream,
     index: usize,
 ) -> u64 {
     unsafe { bitstream.as_ref() }
-        .and_then(RemanenceC1541Bitstream::stream)
+        .and_then(RemanenceBitstream::stream)
         .map_or(0, |stream| {
             stream
                 .inspect()
@@ -6348,15 +6349,15 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_declared_loss_amount(
 /// The channel that produced the bitstream and the policy that produced
 /// the medium, in that order.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_evidence_count(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_evidence_count(
+    bitstream: *const RemanenceBitstream,
 ) -> usize {
     unsafe { bitstream.as_ref() }.map_or(0, |held| held.view.evidence.len())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bitstream_evidence(
-    bitstream: *const RemanenceC1541Bitstream,
+pub unsafe extern "C" fn remanence_bitstream_evidence(
+    bitstream: *const RemanenceBitstream,
     index: usize,
 ) -> *const c_char {
     unsafe { bitstream.as_ref() }.map_or(ptr::null(), |held| {
@@ -6369,22 +6370,22 @@ pub unsafe extern "C" fn remanence_c1541_bitstream_evidence(
 
 /// The profile and the group code the bytes were resolved by.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_profile_id(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_profile_id(
+    bytestream: *const RemanenceBytestream,
 ) -> *const c_char {
     unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| held.view.first.as_ptr())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_codec_id(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_codec_id(
+    bytestream: *const RemanenceBytestream,
 ) -> *const c_char {
     unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| held.view.second.as_ptr())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_codec_name(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_codec_name(
+    bytestream: *const RemanenceBytestream,
 ) -> *const c_char {
     unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| held.view.third.as_ptr())
 }
@@ -6392,67 +6393,67 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_codec_name(
 /// How many bits of the recording carry how many bits of a byte, and how
 /// many symbols make one.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_symbol_bits(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_symbol_bits(
+    bytestream: *const RemanenceBytestream,
 ) -> u32 {
     unsafe { bytestream.as_ref() }
-        .and_then(RemanenceC1541Bytestream::stream)
+        .and_then(RemanenceBytestream::stream)
         .map_or(0, |stream| stream.inspect().symbol_bits)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_data_bits(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_data_bits(
+    bytestream: *const RemanenceBytestream,
 ) -> u32 {
     unsafe { bytestream.as_ref() }
-        .and_then(RemanenceC1541Bytestream::stream)
+        .and_then(RemanenceBytestream::stream)
         .map_or(0, |stream| stream.inspect().data_bits)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_symbols_per_byte(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_symbols_per_byte(
+    bytestream: *const RemanenceBytestream,
 ) -> u32 {
     unsafe { bytestream.as_ref() }
-        .and_then(RemanenceC1541Bytestream::stream)
+        .and_then(RemanenceBytestream::stream)
         .map_or(0, |stream| stream.inspect().symbols_per_byte)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_backing_bytes(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_backing_bytes(
+    bytestream: *const RemanenceBytestream,
 ) -> u64 {
     unsafe { bytestream.as_ref() }
-        .and_then(RemanenceC1541Bytestream::stream)
+        .and_then(RemanenceBytestream::stream)
         .map_or(0, |stream| stream.backing_bytes())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_resident_bytes(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_resident_bytes(
+    bytestream: *const RemanenceBytestream,
 ) -> u64 {
     unsafe { bytestream.as_ref() }
-        .and_then(RemanenceC1541Bytestream::stream)
+        .and_then(RemanenceBytestream::stream)
         .map_or(0, |stream| stream.resident_bytes())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_location_count(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_location_count(
+    bytestream: *const RemanenceBytestream,
 ) -> usize {
     unsafe { bytestream.as_ref() }
-        .and_then(RemanenceC1541Bytestream::stream)
+        .and_then(RemanenceBytestream::stream)
         .map_or(0, |stream| stream.inspect().locations.len())
 }
 
 /// One of them, written into `out`. Returns false when out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_location(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_location(
+    bytestream: *const RemanenceBytestream,
     index: usize,
     out: *mut RemanenceBytestreamLocation,
 ) -> bool {
-    let Some(stream) = (unsafe { bytestream.as_ref() }).and_then(RemanenceC1541Bytestream::stream)
+    let Some(stream) = (unsafe { bytestream.as_ref() }).and_then(RemanenceBytestream::stream)
     else {
         return false;
     };
@@ -6479,15 +6480,15 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_location(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_count(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_declared_loss_count(
+    bytestream: *const RemanenceBytestream,
 ) -> usize {
     unsafe { bytestream.as_ref() }.map_or(0, |held| held.view.loss_codes.len())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_code(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_declared_loss_code(
+    bytestream: *const RemanenceBytestream,
     index: usize,
 ) -> *const c_char {
     unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| {
@@ -6499,8 +6500,8 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_code(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_detail(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_declared_loss_detail(
+    bytestream: *const RemanenceBytestream,
     index: usize,
 ) -> *const c_char {
     unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| {
@@ -6512,12 +6513,12 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_detail(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_amount(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_declared_loss_amount(
+    bytestream: *const RemanenceBytestream,
     index: usize,
 ) -> u64 {
     unsafe { bytestream.as_ref() }
-        .and_then(RemanenceC1541Bytestream::stream)
+        .and_then(RemanenceBytestream::stream)
         .map_or(0, |stream| {
             stream
                 .inspect()
@@ -6530,15 +6531,15 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_declared_loss_amount(
 /// The codec, the channel beneath it and the medium policy beneath that,
 /// in that order.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_evidence_count(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_evidence_count(
+    bytestream: *const RemanenceBytestream,
 ) -> usize {
     unsafe { bytestream.as_ref() }.map_or(0, |held| held.view.evidence.len())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_evidence(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_evidence(
+    bytestream: *const RemanenceBytestream,
     index: usize,
 ) -> *const c_char {
     unsafe { bytestream.as_ref() }.map_or(ptr::null(), |held| {
@@ -6552,7 +6553,7 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_evidence(
 /// How many framed bytes one location holds, addressed in the family's
 /// own terms — the Commodore 1541 numbers its tracks from 1 — written
 /// into `bytes_out`. This is the extent
-/// `remanence_c1541_bytestream_location_read_at` reads within.
+/// `remanence_bytestream_location_read_at` reads within.
 ///
 /// A track the stream does not hold is refused naming what it does
 /// hold: the stream's locations are what the medium carried, and
@@ -6560,8 +6561,8 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_evidence(
 /// Returns false on failure and stores a message in `error_out` (free
 /// with `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_location_bytes(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_location_bytes(
+    bytestream: *const RemanenceBytestream,
     track: u32,
     bytes_out: *mut u64,
     error_category_out: *mut RemanenceErrorCategory,
@@ -6604,8 +6605,8 @@ pub unsafe extern "C" fn remanence_c1541_bytestream_location_bytes(
 /// rather than answered with an invented value. Returns false on
 /// failure and stores a message in `error_out`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_location_read_at(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_location_read_at(
+    bytestream: *const RemanenceBytestream,
     track: u32,
     offset: u64,
     buffer_out: *mut u8,
@@ -6730,8 +6731,8 @@ pub struct RemanenceC1541Sectors {
 /// and stores a message in `error_out` (free with
 /// `remanence_string_free`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_c1541_bytestream_recognize_sectors(
-    bytestream: *const RemanenceC1541Bytestream,
+pub unsafe extern "C" fn remanence_bytestream_recognize_sectors(
+    bytestream: *const RemanenceBytestream,
     cache_bytes: u64,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
