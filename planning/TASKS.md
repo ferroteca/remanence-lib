@@ -87,6 +87,29 @@ C++ `lib/`. Work on the front-ends lands in that repository; any
 surface gap the rewiring exposes lands here as an S2 change under
 the landing rules.
 
+### T8 — Give the storage model an optical drive and the medium it takes
+
+`device_slots()` enumerates no optical device and `formats()` reads
+no ISO 9660, so a caller assembling a machine that has a CD-ROM
+cannot state one. The DOS letter composition already reasons about a
+drive the storage model cannot hold: a report places an optical
+letter from an `MSCDEX /L:` line read out of the guest's startup
+files, and `LetterOutcome::OpticalDrive` names that outcome. The
+letter is therefore inferred from a configuration file rather than
+placed on a device the machine bears, and a machine holding an
+optical drive that no `MSCDEX` line mentions is unaccountable.
+
+Add the device and the medium it takes, so an optical drive is
+configured like every other device and its letter is placed on
+something the machine holds. The `MSCDEX` reading stays: it states
+*which* letter, where the device is what states there is one.
+
+Two questions belong to the work rather than to this entry —
+whether a held drive no `MSCDEX` line mentions takes a letter at
+all, and how much of ISO 9660 is owed. Holding and placing the
+device is what the letter composition needs; reading the medium's
+namespace is a separable claim and may be scoped as its own.
+
 ## Rejected
 
 A thin index into [DECISIONS.md](DECISIONS.md) — what was refused,
