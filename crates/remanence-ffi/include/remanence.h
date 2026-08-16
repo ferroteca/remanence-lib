@@ -156,35 +156,6 @@ typedef enum {
   REMANENCE_VOLUME_ORIGIN_REGIONS,
 } RemanenceVolumeOrigin;
 
-// Which volume the machine booted, and what settled it.
-typedef enum {
-  // One installation booted, and the report names it.
-  REMANENCE_BOOT_OUTCOME_BOOTED = 0,
-  // Several are bootable and nothing settles which ran. Every
-  // candidate stands with its evidence and no letters are assigned.
-  REMANENCE_BOOT_OUTCOME_AMBIGUOUS = 1,
-  // No volume holds an operating system this release recognizes.
-  REMANENCE_BOOT_OUTCOME_NOTHING_BOOTABLE = 2,
-} RemanenceBootOutcome;
-
-// What one letter turned out to name.
-typedef enum {
-  // A volume on one of the machine's drives, named by the identity
-  // its own report issued.
-  REMANENCE_LETTER_OUTCOME_VOLUME = 0,
-  // An optical drive the machine's own startup files placed here —
-  // `MSCDEX /L:`. The drive itself is one the machine holds, named by
-  // `remanence_machine_report_drive_attachment`, and null there means
-  // the machine as stated holds none. The library composes no volume
-  // for an optical drive and invents no identity.
-  REMANENCE_LETTER_OUTCOME_OPTICAL_DRIVE = 1,
-  // DOS's phantom second floppy: the same drive as the letter before
-  // it, not a second volume.
-  REMANENCE_LETTER_OUTCOME_PHANTOM = 2,
-  // The claimed rules could not settle this letter.
-  REMANENCE_LETTER_OUTCOME_UNDETERMINED = 3,
-} RemanenceLetterOutcome;
-
 // One open's assurance state (P28). Free with
 // `remanence_assurance_free`; the strings it returns are owned by it.
 typedef struct RemanenceAssurance RemanenceAssurance;
@@ -282,10 +253,6 @@ typedef struct RemanenceIdentification RemanenceIdentification;
 // **The session owns this; never free it.** It stays valid until the
 // session is freed.
 typedef struct RemanenceMachine RemanenceMachine;
-
-// The C-side view of one machine reading. Every string it hands out is
-// owned here, so a caller frees the report and nothing else.
-typedef struct RemanenceMachineReport RemanenceMachineReport;
 
 // A borrowed view of one medium in a session's media pool — the content
 // handle, and where every content verb lives.
@@ -1342,42 +1309,6 @@ bool remanence_machine_release_device(RemanenceMachine *machine,
                                       RemanenceErrorCategory *error_category_out,
                                       char **error_out,
                                       char **error_rule_out);
-
-// Reads this machine: every device, what the medium in each turned out
-// to be, which one it booted, and the drive letters its operating system
-// gave (P32, P35).
-//
-// **The caller states the machine and nothing else.** Which system is
-// installed, which volume boots, and what its startup files declared are
-// read from the disks the machine holds. The one fact no artifact holds
-// is which device the firmware booted, and
-// `remanence_machine_declare_boot_device` is where a caller overrides
-// the evidence with it.
-//
-// Free the result with `remanence_machine_report_free`; returns null on
-// failure.
-RemanenceMachineReport *remanence_machine_inspect(RemanenceMachine *machine,
-                                                  RemanenceErrorCategory *error_category_out,
-                                                  char **error_out,
-                                                  char **error_rule_out);
-
-// Declares which device this machine's firmware booted, overriding what
-// the disks themselves make look bootable.
-//
-// This is the one machine fact no artifact holds: a stopped machine's
-// host set its boot order, so declaring it here says "the firmware
-// booted something other than the default". It is configuration, and a
-// report marks it as such rather than as evidence. Returns false and
-// sets the error where the attachment is not this machine's own.
-bool remanence_machine_declare_boot_device(RemanenceMachine *machine,
-                                           const char *attachment,
-                                           RemanenceErrorCategory *error_category_out,
-                                           char **error_out,
-                                           char **error_rule_out);
-
-// Withdraws a declared boot device, returning this machine to the
-// evidence on its own disks. Answers whether one had been declared.
-bool remanence_machine_clear_boot_device(RemanenceMachine *machine);
 
 // How many devices this machine holds.
 size_t remanence_machine_device_count(const RemanenceMachine *machine);
@@ -2746,148 +2677,6 @@ bool remanence_report_filesystem_issue_category(const RemanenceDiskReport *repor
 const char *remanence_report_filesystem_issue(const RemanenceDiskReport *report,
                                               size_t index,
                                               size_t issue_index);
-
-// Frees a machine reading and everything borrowed from it.
-void remanence_machine_report_free(RemanenceMachineReport *report);
-
-// The machine's identity, or null for the session's anonymous machine.
-const char *remanence_machine_report_identity(const RemanenceMachineReport *report);
-
-// Which volume the machine booted, and what settled it.
-RemanenceBootOutcome remanence_machine_report_boot(const RemanenceMachineReport *report);
-
-// The attachment identity of the device that booted, or null where
-// nothing did.
-const char *remanence_machine_report_boot_attachment(const RemanenceMachineReport *report);
-
-// The operating system that booted, by its stable spelling — `ms-dos`,
-// `pc-dos`, `freedos` — or null where nothing did.
-const char *remanence_machine_report_boot_system(const RemanenceMachineReport *report);
-
-// Whether the machine's own declaration settled which device booted,
-// rather than the evidence on its disks. A declaration is configuration
-// and never evidence.
-bool remanence_machine_report_boot_declared(const RemanenceMachineReport *report);
-
-// What the version sources settled — `settled`, `undetermined` or
-// `unstated` — or null where nothing booted.
-const char *remanence_machine_report_boot_version_state(const RemanenceMachineReport *report);
-
-// The settled version of the DOS that booted. Answers false and writes
-// nothing where the sources disagreed or none spoke, which is a
-// different fact from a version of zero.
-bool remanence_machine_report_boot_version(const RemanenceMachineReport *report,
-                                           uint8_t *major_out,
-                                           uint8_t *minor_out);
-
-// How many devices the machine holds.
-size_t remanence_machine_report_disk_count(const RemanenceMachineReport *report);
-
-// The attachment identity of device `index`, in the order the machine
-// added them. Null when the index is out of range.
-const char *remanence_machine_report_disk_attachment(const RemanenceMachineReport *report,
-                                                     size_t index);
-
-// The device type of device `index`, or null for a slot recording none.
-const char *remanence_machine_report_disk_device_type(const RemanenceMachineReport *report,
-                                                      size_t index);
-
-// The device class of device `index` — `floppy`, `hard-drive` or
-// `optical` — which is what decides whether a claimed letter rule
-// reaches it, and how. Null where the slot records no device type.
-const char *remanence_machine_report_disk_family(const RemanenceMachineReport *report,
-                                                 size_t index);
-
-// Whether device `index` holds a medium that composed a reading.
-bool remanence_machine_report_disk_has_report(const RemanenceMachineReport *report, size_t index);
-
-// Why device `index` composed no reading, where it composed none. An
-// empty drive is configuration in its own right, not a failure.
-const char *remanence_machine_report_disk_note(const RemanenceMachineReport *report, size_t index);
-
-// How many volumes the machine holds, lettered or not.
-size_t remanence_machine_report_volume_count(const RemanenceMachineReport *report);
-
-// The attachment identity of the drive volume `index` sits on.
-const char *remanence_machine_report_volume_attachment(const RemanenceMachineReport *report,
-                                                       size_t index);
-
-// The identity of volume `index` — the value a file verb takes. The
-// letter beside it is what a user is shown.
-uint64_t remanence_machine_report_volume_id(const RemanenceMachineReport *report, size_t index);
-
-// The letter volume `index` was given, or `0` where the rules
-// established none for it.
-char remanence_machine_report_volume_letter(const RemanenceMachineReport *report, size_t index);
-
-// How many letters the machine had a drive at — undetermined ones
-// included, a letter that exists and could not be settled being a
-// different fact from one that does not exist.
-size_t remanence_machine_report_drive_count(const RemanenceMachineReport *report);
-
-// The letter at `index`, in letter order. `0` when out of range.
-char remanence_machine_report_drive_letter(const RemanenceMachineReport *report, size_t index);
-
-// The index of `letter` in the mapping, or false where the machine had
-// no drive at it — which is a different answer from a letter that
-// exists and is undetermined.
-bool remanence_machine_report_find_letter(const RemanenceMachineReport *report,
-                                          char letter,
-                                          size_t *index_out);
-
-// What the letter at `index` turned out to name.
-RemanenceLetterOutcome remanence_machine_report_drive_outcome(const RemanenceMachineReport *report,
-                                                              size_t index);
-
-// The attachment identity of the drive the letter at `index` names —
-// the drive a volume sits on, or the optical drive the machine holds.
-// Null for a phantom, an undetermined letter, and an optical placement
-// the machine holds no drive for.
-const char *remanence_machine_report_drive_attachment(const RemanenceMachineReport *report,
-                                                      size_t index);
-
-// The volume identity the letter at `index` names. Answers false where
-// the letter names no volume, which is a different fact from an
-// identity of zero.
-bool remanence_machine_report_drive_volume(const RemanenceMachineReport *report,
-                                           size_t index,
-                                           uint64_t *volume_out);
-
-// The letter a phantom drive stands for, or `0` where the outcome at
-// `index` is not a phantom.
-char remanence_machine_report_drive_phantom_of(const RemanenceMachineReport *report, size_t index);
-
-// Why the letter at `index` is undetermined, or what placed an optical
-// drive there. Null for every other outcome.
-const char *remanence_machine_report_drive_reason(const RemanenceMachineReport *report,
-                                                  size_t index);
-
-// How many provenance lines the reading carries.
-size_t remanence_machine_report_provenance_count(const RemanenceMachineReport *report);
-
-// One provenance line — the rule applied, what it was applied to, and
-// what was read to choose it. **This is not evidence.** Null when the
-// index is out of range.
-const char *remanence_machine_report_provenance(const RemanenceMachineReport *report, size_t index);
-
-// How many DOS drive-letter assignment rules this release claims.
-size_t remanence_dos_rule_count(void);
-
-// One claimed rule's stable spelling by index, or null out of range.
-const char *remanence_dos_rule_name(size_t index);
-
-// What that rule says, in a sentence fit to show a user beside the
-// mapping it produced. Null when the index is out of range.
-const char *remanence_dos_rule_reading(size_t index);
-
-// Resolves a condition's stable spelling, refusing anything this
-// release does not claim by name (P3).
-//
-// Conditions are **read** from a machine's own startup files rather than
-// declared, so this exists for a consumer that displays or matches one:
-// `lastdrive=<letter>`, `subst`, `join`, `assign`,
-// `block-device-driver`, `network-redirector`, `alternate-letter-order`.
-bool remanence_dos_condition_is_claimed(const char *condition);
 
 // Opens the `.remanence` artifact at `path` (UTF-8), claiming the file
 // and decoding the whole image once into private session storage. The

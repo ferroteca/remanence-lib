@@ -254,10 +254,8 @@ pub struct RegionInfo {
     /// exactly as it records it.
     ///
     /// It is a declared fact of the region like the type beside it, and
-    /// it is evidence about which volume a machine booted: the assignment
-    /// rules letter a disk's *bootable* primary ahead of the rest, and
-    /// which one that is is this flag's answer rather than a position in
-    /// the table.
+    /// it is what the boot sector follows, so it is evidence about which
+    /// volume a machine booted rather than a position in the table.
     pub declared_active: bool,
     /// The type value exactly as the schema records it.
     pub declared_type: u8,
@@ -443,10 +441,9 @@ impl DiskReport {
     /// deliberately distinct from
     /// [`composed_volume_count`](Self::composed_volume_count): an
     /// unrecognized volume stays in the report rather than vanishing to
-    /// keep one number correct. It is a count and not a drive-letter
-    /// rule — which volume a guest's letter named is
-    /// [`MachineView::inspect`](crate::MachineView::inspect)'s answer,
-    /// over a rule this library owns and a machine it reads.
+    /// keep one number correct. Both are counts of what this disk
+    /// composed, and neither says anything about what a guest called
+    /// them: this library derives no guest-side naming.
     pub fn readable_filesystem_volume_count(&self) -> usize {
         self.filesystems
             .iter()

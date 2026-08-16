@@ -85,8 +85,8 @@ fn a_medium_is_loaded_unlinked_and_answers_before_any_device_exists() {
 #[test]
 fn a_device_is_added_empty_and_the_medium_is_inserted_into_it() {
     // The acts, and the empty device between them: a drive with no disk
-    // in it is configuration in its own right (U22 letters one), not a
-    // half-finished attach.
+    // in it is configuration in its own right — the machine held it —
+    // not a half-finished attach.
     let a = write_image("three-acts");
     let mut session = Session::new();
 

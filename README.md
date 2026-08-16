@@ -235,26 +235,6 @@ the format's fourth type, undo, is refused rather than attempted. A block
 the map marks discarded reads as the zeroes the format says it holds, and
 is never confused with an allocated block that happens to contain zeroes.
 
-## DOS drive letters
-
-If the machine you are reconstructing ran DOS, you can ask which drive
-letter named which volume.
-
-DOS never stored that map anywhere — letters were worked out at boot from
-the machine's own configuration — so the answer has to be derived. You
-supply the machine facts, either by describing them directly or by letting
-the library read the machine's device list in the order the devices were
-added. The library then applies one named assignment rule to the disks it
-has already inspected.
-
-The rule is a claim like any other. Two MS-DOS variants are supported by
-name; naming one settles the map, and naming none leaves any letter the
-variants disagree about undetermined, showing both answers rather than
-averaging them into a third. `LASTDRIVE`, `SUBST`, `JOIN`, `ASSIGN`,
-resident block-device drivers and network redirectors are outside every
-supported rule, and any letter one of them could have changed is reported
-undetermined rather than guessed.
-
 ## Damaged and incomplete images
 
 An image that is short of what it claims is neither accepted whole nor
@@ -485,16 +465,6 @@ session
 // refused by name where it records several and you named none.
 let drive = session.add_device_for("disk.h8d", remanence::AccessIntent::Read)?;
 
-// The drive letters a DOS machine would have shown. The machine facts
-// are yours — here, its own device list in the order they were added —
-// and the assignment rule is the library's.
-let letters = session
-    .anonymous_mut()
-    .compose_dos_letters(Some(remanence::DosAssignmentRule::MsDos5), &[])?;
-for mapping in &letters.mappings {
-    println!("{}: {:?}", mapping.letter, mapping.outcome);
-}
-
 // A KryoFlux capture is a set of files, not one file: gathered from an
 // archive here, or a Vec of files you opened yourself.
 let capture = session
@@ -609,12 +579,6 @@ session.add_device("h17").insert(found.id)
 
 # Or both at once, where the format records one kind of drive.
 drive = session.add_device_for("disk.h8d", writable=False)
-
-# The drive letters a DOS machine would have shown — from the machine's
-# own device list, or from facts you supply instead.
-drives = session.machine().compose_dos_letters()  # no variant named, so
-for mapping in drives.mappings:                   # disagreement is reported
-    print(mapping.letter, mapping.outcome, mapping.volume, mapping.reason)
 
 with open("captures.7z", "rb") as source:
     archive = session.load_media(source, "7z")

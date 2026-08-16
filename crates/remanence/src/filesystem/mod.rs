@@ -73,13 +73,10 @@
 
 // The recognizers that present through the contract above: `catalog` the
 // streamed adapters for a medium's own namespace, and one module per
-// filesystem beneath it. `dos_name` and `dos_letters` are FAT's two name
-// seams — the 8.3 decisions one volume makes, and the P19 mapping a DOS
-// machine's whole device set derives.
+// filesystem beneath it. `dos_name` is FAT's name seam — the 8.3
+// decisions one volume makes.
 pub(crate) mod catalog;
 pub(crate) mod cbm_dos;
-pub(crate) mod dos_install;
-pub(crate) mod dos_letters;
 pub(crate) mod dos_name;
 pub(crate) mod fat;
 pub(crate) mod hdos;

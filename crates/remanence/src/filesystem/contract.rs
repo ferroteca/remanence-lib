@@ -321,8 +321,8 @@ impl ItemFacts {
 /// The view a file-bearing system presents at the P19 seam.
 ///
 /// Implementors are the real systems themselves — an archive grammar, a
-/// filesystem adapter, a namespace composer — answering about their own
-/// structure. The shape is navigational rather than wholesale so that
+/// filesystem adapter — answering about their own structure. The shape
+/// is navigational rather than wholesale so that
 /// answering one question costs one question's worth of reading (P27);
 /// [`account`] is the deliberate exception, being a whole-artifact
 /// report produced only when asked for.
@@ -336,7 +336,8 @@ pub(crate) trait FilesystemView {
     fn floor(&self) -> Floor;
 
     /// The namespace's roots, each a directory. Several are ordinary:
-    /// a composed namespace may have one per drive letter or mount.
+    /// an archive may name more than one top-level tree, and P19 says
+    /// they are exposed rather than flattened into a synthetic parent.
     fn roots(&self) -> Result<Vec<ItemRef>>;
 
     /// The entries of one directory, in the source's own order.

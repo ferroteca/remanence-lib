@@ -212,18 +212,13 @@ static void group_nulls(void)
     remanence_string_free(NULL);
 }
 
-/* --------------------------------------------- the machine reading
+/* --------------------------------------------- the machine's device set
  *
- * The machine report is the journey a consumer actually takes: build a
- * machine, put a medium in it, ask what it is. Nothing about the DOS on
- * it is asserted, so what this checks is that the answer *arrives* --
- * that a machine with nothing in it reads cleanly, that the accessors
- * answer on a null report rather than dereferencing it, and that a
- * boot device this machine does not hold is refused by name.
- *
- * The old caller-asserted surface was never exercised from C at all: it
- * compiled and nothing called it. This group exists so the surface that
- * replaced it is not in the same position.
+ * A machine is configuration: devices in the order they were attached,
+ * each answering to an identity the library assigns. What this checks is
+ * that the set behaves from C as it does from Rust -- a slot is filled
+ * once, an attachment resolves to the device in it, releasing frees the
+ * slot, and every accessor answers on null rather than dereferencing it.
  */
 static void group_machine(void)
 {
@@ -238,81 +233,69 @@ static void group_machine(void)
         remanence_session_add_machine(session, "pc", &category, &message, &rule);
     CHECK(machine != NULL, "a machine could not be added");
 
-    /* A machine holding no device reads, and says nothing booted. */
-    RemanenceMachineReport *report =
-        remanence_machine_inspect(machine, &category, &message, &rule);
-    CHECK(report != NULL, "an empty machine did not read");
-    if (report != NULL) {
-        CHECK(remanence_machine_report_boot(report)
-                  == REMANENCE_BOOT_OUTCOME_NOTHING_BOOTABLE,
-              "an empty machine claimed something booted");
-        CHECK(remanence_machine_report_drive_count(report) == 0,
-              "an empty machine was given drive letters");
-        CHECK(remanence_machine_report_volume_count(report) == 0,
-              "an empty machine held a volume");
-        CHECK(remanence_machine_report_disk_count(report) == 0,
-              "an empty machine held a device");
-        /* The identity is the one we gave it. */
-        const char *identity = remanence_machine_report_identity(report);
-        CHECK(identity != NULL && strcmp(identity, "pc") == 0,
-              "the report did not carry the machine's own identity");
-        /* Absence is an answer, not a zero. */
-        uint8_t major = 0;
-        uint8_t minor = 0;
-        CHECK(!remanence_machine_report_boot_version(report, &major, &minor),
-              "a machine that booted nothing answered a version");
-        CHECK(remanence_machine_report_boot_attachment(report) == NULL,
-              "a machine that booted nothing named a device");
-        /* Provenance says why, rather than leaving the emptiness bare. */
-        CHECK(remanence_machine_report_provenance_count(report) > 0,
-              "the report carried no provenance");
-        remanence_machine_report_free(report);
+    const char *identity = remanence_machine_identity(machine);
+    CHECK(identity != NULL && strcmp(identity, "pc") == 0,
+          "the machine did not carry the identity it was given");
+
+    /* A fresh machine holds nothing until a device is added to it. */
+    CHECK(remanence_machine_device_count(machine) == 0,
+          "a fresh machine already held a device");
+
+    RemanenceDevice *first =
+        remanence_machine_add_device(machine, "mbr-sector-hd", &category, &message, &rule);
+    CHECK(first != NULL, "a hard drive could not be added");
+    CHECK(remanence_machine_device_count(machine) == 1,
+          "the added device was not counted");
+
+    /* The attachment identity is the bay's prefix plus its index, and it
+     * is the library's to assign rather than the caller's to choose. */
+    char *attachment = NULL;
+    CHECK(remanence_machine_device_attachment(machine, 0, &attachment),
+          "the first device answered no attachment identity");
+    if (attachment != NULL) {
+        CHECK(strcmp(attachment, "hdd0") == 0,
+              "the first hard drive was not attached at hdd0");
+        CHECK(remanence_machine_device(machine, attachment) != NULL,
+              "the attachment did not resolve to the device in it");
+        remanence_string_free(attachment);
+        attachment = NULL;
     }
 
-    /* A boot device this machine does not hold is refused by name. */
-    CHECK(!remanence_machine_declare_boot_device(machine, "hdd0", &category, &message,
-                                                &rule),
-          "declaring a device the machine lacks was accepted");
+    /* One bay holds one drive: the taken slot is refused by name. */
+    CHECK(remanence_machine_add_device_at(machine, "gpt-hd", 0, &category, &message,
+                                          &rule) == NULL,
+          "a taken slot accepted a second drive");
     CHECK(message != NULL, "the refusal carried no message");
     if (message != NULL) {
         CHECK(strstr(message, "hdd0") != NULL,
-              "the refusal did not name the attachment asked for");
+              "the refusal did not name the slot asked for");
         remanence_string_free(message);
         message = NULL;
     }
     remanence_string_free(rule);
     rule = NULL;
 
-    /* Nothing was declared, so withdrawing one answers false. */
-    CHECK(!remanence_machine_clear_boot_device(machine),
-          "withdrawing an undeclared boot device claimed to have withdrawn one");
+    /* Releasing frees the slot; releasing an empty one is refused. */
+    CHECK(remanence_machine_release_device(machine, "hdd0", &category, &message, &rule),
+          "the device could not be released");
+    CHECK(remanence_machine_device_count(machine) == 0,
+          "the released device was still counted");
+    CHECK(!remanence_machine_release_device(machine, "hdd0", &category, &message, &rule),
+          "releasing an empty slot was accepted");
+    remanence_string_free(message);
+    message = NULL;
+    remanence_string_free(rule);
+    rule = NULL;
 
     /* Every accessor answers on null rather than dereferencing it. */
-    CHECK(remanence_machine_report_identity(NULL) == NULL,
-          "a null report answered an identity");
-    CHECK(remanence_machine_report_drive_count(NULL) == 0,
-          "a null report answered a drive count");
-    CHECK(remanence_machine_report_volume_count(NULL) == 0,
-          "a null report answered a volume count");
-    CHECK(remanence_machine_report_disk_count(NULL) == 0,
-          "a null report answered a disk count");
-    CHECK(remanence_machine_report_boot_attachment(NULL) == NULL,
-          "a null report answered a boot attachment");
-    CHECK(remanence_machine_report_drive_letter(NULL, 0) == 0,
-          "a null report answered a letter");
-    CHECK(!remanence_machine_report_boot_declared(NULL),
-          "a null report claimed a declared boot");
-    remanence_machine_report_free(NULL);
-
-    /* And the claimed rules are still an enumerated claim. */
-    CHECK(remanence_dos_rule_count() == 2, "the claimed rule count changed");
-    CHECK(remanence_dos_rule_name(0) != NULL, "the first claimed rule has no name");
-    CHECK(remanence_dos_rule_reading(0) != NULL, "the first claimed rule says nothing");
-    CHECK(remanence_dos_rule_name(99) == NULL, "an out-of-range rule answered a name");
-    CHECK(remanence_dos_condition_is_claimed("lastdrive=E"),
-          "a claimed condition was refused");
-    CHECK(!remanence_dos_condition_is_claimed("dblspace"),
-          "an unclaimed condition was accepted");
+    CHECK(remanence_machine_identity(NULL) == NULL,
+          "a null machine answered an identity");
+    CHECK(remanence_machine_device_count(NULL) == 0,
+          "a null machine answered a device count");
+    CHECK(remanence_machine_device(NULL, "hdd0") == NULL,
+          "a null machine resolved an attachment");
+    CHECK(!remanence_machine_device_attachment(NULL, 0, &attachment),
+          "a null machine answered an attachment identity");
 
     remanence_session_free(session);
 }

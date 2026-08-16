@@ -58,6 +58,67 @@ removes it is the record either way.
 
 ## Decisions
 
+### D57 — Guest volume mapping and drive lettering leave the claim, and the seam stops at one filesystem's own tree
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-16. **Supports** S1, S2, S3; in-force P19, U3, U4. Strikes
+pledged **U16**, **U30** and **P35**, the pledged P19 amendment that
+re-homed the composer, and proposed **U13**; retires **D55**.
+
+**The claim was that this library could say what a guest called a
+volume.** In-force P19 carried a namespace-mapping composer with three
+constraints; pledged P35 owned the machine namespace it fed; pledged U16
+and U30 were the consumed and derived journeys over it, and proposed U13
+was the Windows one. The delivered half was DOS: an assignment rule
+chosen from the installation read off the booting volume, applied over a
+machine's device set, answering letters with provenance.
+
+**What is withdrawn is the question, not an answer to it.** The
+composer's constraints were good ones and the DOS derivation honored
+them; nothing here says the letters it produced were wrong. What the
+project no longer claims is that deriving them is *its* job. A guest-side
+name is a fact about an operating system's own configuration, one seam
+above the storage this library reads, and every consumer that wanted a
+letter already held the volume identity the inspection report issues —
+which is the durable half, and the half a consumer can map in whatever
+terms its own world uses. Carrying the other half obliged the project to
+claim an OS-configuration seam, per family and per version, for a
+correspondence the caller was better placed to state.
+
+**The refusal is silence rather than an undetermined reading.** P19 now
+says the question is outside the claim, which is a different answer from
+the composer's `Undetermined`: undetermined asserts that a letter exists
+and could not be settled, and that assertion is itself a claim about a
+guest. A seam that answers nothing cannot be read as answering wrongly.
+
+**The machine survives; only what it was asked survives less.** A
+`Session` still holds machines, machines still hold devices in
+attachment order, and a device still links one medium — P32's model is
+untouched, and U4's per-disk `inspect()` is the whole of what a caller
+walks. What went with the letters is what only they demanded: DOS
+installation recognition, the boot outcome, the machine-level report,
+and `declare_boot_device`, whose one purpose was settling which
+installation's rule applied. An empty drive stays first-class
+configuration on its own account — the machine held it — rather than
+because a letter reached it.
+
+**Weighed and declined:** keeping the machine report and the boot
+outcome without the letters (the report's content past the device list
+was the installation recognition, which existed to choose an assignment
+rule; kept, it would be a seam claiming to recognize operating systems
+with nothing downstream asking); keeping the derivation crate-private
+against a later consumer (unreachable code is not a capability, and the
+git history holds it); and answering every letter `Undetermined`
+(that is a claim about a guest wearing a refusal's clothes, and it is
+the reading this entry specifically refuses).
+
+**Reopens if:** a use case arrives that cannot be served by the volume
+identity plus the consumer's own mapping — the case to make is that the
+correspondence is unavailable to the caller, not merely inconvenient
+for it. Proposed U13 and U15 are where the Windows form of that argument
+was written; U15 stands, and it now reads as the general rule rather
+than as the case that lacked a hive.
+
 ### D56 — Only the core is a default member, because the audience stopped being contributors alone
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -136,94 +197,6 @@ own it, where `default-members` states it in one place a reader of the
 workspace meets first).
 
 **No changelog entry.** How the suite is invoked is not release-facing.
-
-### D55 — U22 rested on a false premise about DOS, and is struck rather than amended
-
-**Decided** Paul Galbraith (via the owner-directed implementation),
-2026-08-14. **Supports** S1, S2, S3; P3, P4, P19, P32. Retires **T7**,
-whose number evaporates with it, and amends in-force P19 and pledged
-U16. `DECISIONS.md` was searched first and returned D23, which settled
-the machine/letters relationship and was annotated on F53's delivery;
-nothing there adjudicated letter *detection*, and nothing forecloses it.
-
-**The premise.** In-force U22 held that "DOS persists nothing, so the
-mapping is a *rule* applied to machine facts", and split itself from
-U13/U16 on exactly that: those journeys read a persisted mapping, this
-one could not. Its exclusion list refused "inferring one from a
-`CONFIG.SYS` the images may not even hold", and its composer therefore
-asked the caller to assert the DOS variant, the `LASTDRIVE` ceiling, and
-every resident condition.
-
-**The premise is false, and its falsity is not a detail.** DOS persists
-no drive-letter *map* — nothing records "C: was this volume" — but it
-persists every input the map was derived from: the kernel files that say
-which DOS is installed, and the startup files that say what it was told.
-`CONFIG.SYS` is to DOS what the registry is to Windows. A composer asking
-its caller for a fact recorded on the disk in front of it contradicted
-U22's own second constraint, that evidence outranks a rule; the seam had
-been reading past its own evidence and calling the result an assertion.
-
-**Struck, not amended.** Once the premise goes, nothing holds U22 apart
-from pledged U16, which already describes this journey for Windows and
-Unix — seat the disks, inspect, detect installation candidates, compose
-the namespace the installed system's own configuration establishes. The
-DOS case is that journey with a DOS adapter, not a second journey beside
-it. And two of U22's three sections were already duplicated into in-force
-entries: its label policy is U4's ("the label is one whole answer,
-decided where the format is known"), its 8.3 name rules are U3's. Only
-the letters were uniquely U22's, and they relocate. Striking loses no
-in-force claim; amending would have left a third journey asserting what
-the other two read.
-
-**U-22 retires and is never reissued.** The four in-force cross-references
-to it now name the capability rather than the handle, because the journey
-they point at is pledged and an in-force document citing a pledged one
-cites upward.
-
-**P19 is amended rather than left to drift.** Its namespace-mapping
-paragraph said the composer derives from "the machine facts its caller
-asserts" and "opens nothing"; both are now false. The amended text says
-what the caller states is the *machine*, that every input to the rule is
-read from the media it holds, and — added as its own clause — that
-evidence outranks a rule *including the rule's own inputs*, so a future
-composer asking for a persisted fact is violating the principle rather
-than serving it.
-
-**One assertion survives, and it moved.** Which device the firmware
-booted is set by a stopped machine's host and recorded on no disk, so it
-is a property of the machine model (`declare_boot_device`) rather than an
-argument to a composer, and a report marks it configuration rather than
-evidence. Pledged U16 is softened to match: it had forbidden the active
-flag and attachment order from selecting a candidate at all, which was
-written for two Windows installs and is wrong for an era whose boot order
-is simple enough to state as a rule. Applying a named rule is not
-guessing; what stays excluded is reaching for a tie-breaker no rule
-authorized.
-
-**FreeDOS is claimed, from its own source rather than from write-ups.**
-Two secondary sources described `DLASORT` as a `CONFIG.SYS` directive;
-the kernel's own directive table has no such entry, and `SYS CONFIG`
-patches it into `KERNEL.SYS`. The implementation that had been written
-against those write-ups would never have fired. What ships instead reads
-nothing for it and records that it did not, the kernel's documented
-default being the order applied.
-
-**Weighed and declined:** amending U22 in place (it would have kept a
-third journey beside U13/U16 with no premise left to justify the split);
-keeping `DosMachine` beside the machine reading for facts a session
-cannot hold (the gap was `Format::Raw` refusing a floppy, which is fixed
-where it was rather than worked around); reading `DLASORT` out of
-`KERNEL.SYS` (its layout is version-specific and the default is near
-universal, so the honest answer is a stated omission rather than a
-fragile read); and inferring a raw floppy's article from image size (a
-1.44M and a 720K image are both bytes, and deriving the article from the
-length is the guess this project refuses — the declared device carries
-it instead).
-
-**Reopens if:** a claimed DOS is found whose letter order its own
-installation does not determine, or a second operating-system family is
-given a recognition seam, at which point whether `dos_install.rs`
-generalizes or is joined by a sibling is a live question.
 
 ### D54 — The C++ header covers the whole ABI, so an unwrapped function is a defect rather than a boundary
 
@@ -405,8 +378,11 @@ exposed that.
 **It wraps the storage model, and says so rather than trailing off.**
 Every node the storage model has is here — session, machines, devices,
 media, discoveries, partitions, volumes, filesystems, files — with the
-records they hand back, the inspection report, and the DOS drive-letter
-composition: 334 of the ABI's 470 functions. The 136 left are the flux
+records they hand back and the inspection report: 334 of the ABI's 470
+functions at the time. *[D57 removed the drive-letter composition from
+both, so the counts are historical; the rule they were counted to
+establish — the header covers the whole ABI, and an unwrapped function
+is a defect — is unchanged.]* The 136 left are the flux
 presentations (`remanence_flux_*`, `remanence_c1541_*`, `remanence_p64_*`,
 `remanence_g64_*`, `remanence_d64_*` and the two medium doors onto them),
 which are not storage-model nodes, carry their own presentation ladder,
@@ -644,8 +620,8 @@ five of which say in their own doc comments that they *build their images
 by hand and run without fixtures*. The real test is who calls
 `ensure_fixture`, and that was six files: four wholly dependent
 (`freedos_qcow2`, `flux_media`, `hdos_files`, `identify_hdos_image`) and
-two barely so — `dos_drive_letters` at 6 tests of 15, `geometry` at 2 of
-10. Recorded because the wrong number nearly bought a much larger change
+two barely so — the drive-letter suite at 6 tests of 15, `geometry` at 2
+of 10. Recorded because the wrong number nearly bought a much larger change
 than the right one needed.
 
 **The split is cargo's own mechanism.** A `fixtures` feature, and
@@ -659,20 +635,21 @@ it simply fired for the whole suite instead of the part that needed it.
 **The two mixed files were split rather than gated**, which kept 17
 synthetic tests in the default run that whole-file gating would have
 hidden. That cost more than it should have: the section comment marking
-the fixture-dependent half of `dos_drive_letters` did not match the real
-boundary — tests below it still used the image builders above it — and
-the resolution was to move the whole helper layer into a shared
-`tests/dos_letters/mod.rs`. The structure is better than before; it was
+the fixture-dependent half of the drive-letter suite did not match the
+real boundary — tests below it still used the image builders above it —
+and the resolution was to move the whole helper layer into a shared
+module. The structure is better than before; it was
 reached by trial rather than by reading first.
 
 **And then the rig layout stopped needing a download at all.** The
 FreeDOS artifact was there for one shape — two DOS primaries and an
-extended chain of two logicals, which is what the claimed drive-letter
-variants disagree over — and that shape is wholly specified. It is now
+extended chain of two logicals, a richer table than any
+single-partition image puts in front of the partition and volume seams —
+and that shape is wholly specified. It is now
 built: `fat16_volume` writes a labelled FAT16 with files in its root, and
-`synthetic_rig_disk` lays out the four volumes with a real EBR chain. All
-six tests that needed the qcow2 run without it, so `dos_drive_letters`
-folds back into one ungated file.
+`synthetic_rig_disk` lays out the four volumes with a real EBR chain
+(`tests/rig_disk/mod.rs`). All
+six tests that needed the qcow2 ran without it.
 
 **The built layout is asserted before anything trusts it.**
 `rig_layout.rs` exists so a synthetic fixture that quietly differs from
@@ -708,8 +685,8 @@ needs a format that declares its own geometry, and that format nested in
 an archive. The remaining fixtures are the ones whose authenticity is the
 thing under test — which is the right place for that line to fall.
 
-**Weighed and declined:** gating `dos_drive_letters` and `geometry`
-whole (simpler, and it hides 17 tests that need nothing); `#[ignore]`
+**Weighed and declined:** gating the drive-letter suite and `geometry`
+whole (simpler, and it hid 17 tests that needed nothing); `#[ignore]`
 instead of a feature (`cargo test` prints "ignored" and nobody reads it);
 and synthesising the remaining four (two are not realistically
 synthesisable, and for the other two a built artifact would test the
@@ -2288,10 +2265,9 @@ The alternative — a virtual slot kept behind the report — was weighed
 and rejected for D23's reason one tier down: it would make the archive
 the one device kind a caller cannot see, paid for at every seam that
 lists devices, and it buys nothing. What the restriction would have been
-written for is already handled by family: a namespace composer passes an
-archive device over because an archive has no partition or volume for an
-assignment rule to reach, and the mapping's provenance says it did.
-`arc0` is an ordinary attachment identity.
+written for is already handled by the receiver's own answer: it records
+no device type, so anything reasoning by family passes it over without a
+rule about archives. `arc0` is an ordinary attachment identity.
 
 **The backing relationship is settled by what the child holds, not by an
 outliving rule.** A stored entry is source-backed through the archive's
@@ -2343,9 +2319,10 @@ would rather refuse than half-answer.
 **In-force P19's serialized-artifact provider form dissolves**, which is
 what D25 deferred to here. A medium may bear its namespace directly —
 an archive, a flat catalog on an unpartitioned disk — its grammar being
-a P12 adapter at that seam. The composer's three constraints stay in
-P19: P35 is still unbuilt, and D25's reasoning for leaving them is
-unchanged.
+a P12 adapter at that seam. *[The clause that followed, holding the
+composer's three constraints in P19 pending P35, is overtaken by D57:
+the composer and P35 are both struck, and P19 states the question as
+outside the claim.]*
 
 **Weighed and declined:** recognizing an archive by its leading bytes
 rather than by the extension its grammar answers to (a ZIP's signature
@@ -2405,9 +2382,10 @@ shape was right, and the gap it leaves is scope rather than handle-ness.
 unpledged.** A composition is reached from the smallest scope that can
 compose it — a namespace on one device's medium from that device, a
 volume spanning that device's partitions from the device, a volume
-spanning devices from the machine, and a namespace composed over several
-filesystems from the machine, which is where P35 already puts it. The
-rule is recorded here because it settles where future compositions hang;
+spanning devices from the machine. *[D57 struck P35, so the
+namespace-composed-over-several-filesystems case named here no longer
+exists; the scope rule stands for whatever future composition does.]*
+The rule is recorded here because it settles where future compositions hang;
 the surface is not pledged, because multi-device volume composition is
 not claimed (P17 defers it, U14 is proposed), and a machine-level
 enumeration added today would flatten over devices without delivering a
@@ -2447,6 +2425,10 @@ Rulings made delivering the `Filesystem` node and the container
 retirement it pays. The delivery itself is recorded by the commit; these
 are the calls made in its course, and the first is the one a later
 reader most needs.
+
+*[Overtaken in part by D57: the composer half of the amendment is moot,
+its subject having left the claim with P35. The archive half landed at
+D27 and the reading below stands for it.]*
 
 **The P19 amendment could not fully arm, and landed in the part that
 could.** The amendment says P19 keeps the convergence claim and loses two
@@ -2542,15 +2524,15 @@ word would split one vocabulary across two surfaces); and giving the
 resolver a whole-medium scan with no bound, which is the P27 violation the
 HDOS reader's existing bound was written to prevent.
 
-**Reopens if:** the machine namespace lands and P35 arms — at which point
-the composer's three constraints move out of P19 as the amendment says,
-and this entry's first ruling is spent.
+**Reopens if:** nothing. D57 struck P35 and the composer both, so the
+first ruling's subject is gone; what survives here is the "container"
+vocabulary split and the one-node file access, which stand.
 
 ### D24 — The file-view load waits for the node that mints the view
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
-2026-08-05. **Supports** S1, S2, S3; the P19 amendment, P35; in-force
-P7.
+2026-08-05. **Supports** S1, S2, S3; in-force P7, P19.
+*[Its P19-amendment and P35 citations are spent: D57 struck both.]*
 
 F51 said `load_media` accepts "a path, a file view, or a discovery", and
 two of the three landed with it. A **file view** is not something this
@@ -2577,7 +2559,8 @@ type exactly as this entry said it would.*
 ### D23 — Rulings made pledging the storage model
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
-2026-08-05. **Supports** S1, S2, S3; P7, P14, P19, P27, P32, P35.
+2026-08-05. **Supports** S1, S2, S3; P7, P14, P19, P27, P32.
+*[Its P35 citation is spent: D57 struck that principle.]*
 
 The promotion itself is recorded by the commit that moved the documents,
 not here. These are the rulings made in its course, which the moved text
@@ -2614,7 +2597,7 @@ rival rule.
 
 **One storage handle, two model nodes.** The device/medium split was
 argued three times and survives as *model*, because U23 and D19's three
-facts, U22's letters, and U24's flippy each need two nodes. It does not
+facts and U24's flippy each need two nodes. It does not
 survive as two *handles*: a caller never holds a medium outside a device
 — discovery returns a discovery, every load goes into a device, a child
 artifact gets its own device — so `Disk` merges into `StorageDevice`,
@@ -2643,18 +2626,16 @@ machine — one machine, not one conjured per call, so the unanswerable
 "which device?" that killed the media-first one-step does not arise. The
 anonymous machine is the one whose identity is **null**: the same kind of
 thing as every other machine rather than one distinguished by a
-behavior, which is also what U16's installation selection and P35's
-provenance need in order to name a machine at all. It holds no
+behavior. It holds no
 privileged position — it is not "machine zero", no attachment order it
 carries is more meaningful than any other's, and moving a device from it
 into a named machine is a reconfiguration rather than a rename.
 
-**Every machine composes a namespace, the anonymous one included, and
-provenance is the guard rather than a refusal.** Restricting the
-anonymous machine from composing was weighed and rejected: it buys
-nothing P35 does not already provide, since a derived mapping travels
-with the machine facts and the applied rule and is never evidence. A
-caller who adds two unrelated floppies and asks for letters gets a
+**Every verb a named machine answers, the anonymous one answers too.**
+Restricting it was weighed and rejected: it buys
+nothing, and it would make the anonymous machine the one that behaves
+unlike every other. A
+caller who adds two unrelated floppies gets a
 deterministic answer stating exactly what produced it — surprising to a
 naive caller, perhaps, and never dishonest. The archive case such a
 restriction would have been written for is handled one level down by
@@ -2682,9 +2663,9 @@ keeping `Disk` as a `Medium` type beside the device (no journey produces
 one, and the delegation it would require is the merge with extra
 ceremony); renaming `Session` to `Machine` as the earlier draft had it
 (the nesting case needs both words, and both already carry their meaning
-in P7, P27, U22 and P35); loading a nested entry into a named machine
+in P7 and P27); loading a nested entry into a named machine
 that also holds the host's archive (it would put a host-side wrapper in
-an emulated machine's configuration and hand its composer a slot to
+an emulated machine's configuration and hand anything reading that set a slot to
 letter); an anonymous machine forbidden to compose a namespace
 (provenance already states what a mapping was derived from, and the
 restriction would have made one machine behave unlike the rest); and
@@ -3666,8 +3647,8 @@ than "my automation layer" — that concreteness is exactly what goes stale
 inside a published artifact, and the use cases are the first library-side
 document a newcomer reads.
 
-**Folded into:** root [USE-CASES.md](../USE-CASES.md) (U3's title, opening
-and drive-letter clause; U4's opening); [AGENTS.md](../AGENTS.md); D2's
+**Folded into:** root [USE-CASES.md](../USE-CASES.md) (U3's title and
+opening; U4's opening); [AGENTS.md](../AGENTS.md); D2's
 weighed alternative; `crates/remanence/src/disk.rs` and
 `crates/remanence/src/fat.rs` doc comments.
 
@@ -3854,3 +3835,99 @@ notes".
 
 Overruled or no longer relevant, kept intact for the record. A
 retired decision binds nothing.
+
+### D55 — U22 rested on a false premise about DOS, and is struck rather than amended
+
+*Retired by D57, which withdrew guest volume mapping and drive lettering
+from the claim altogether. Everything below adjudicated how the DOS
+derivation should read its own inputs; there is no derivation left for
+it to bind. Kept for the FreeDOS reading it records — `DLASORT` is
+patched into `KERNEL.SYS` by `SYS CONFIG` and is no `CONFIG.SYS`
+directive, contrary to two secondary sources — which cost real work to
+establish and would cost it again.*
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-14. **Supports** S1, S2, S3; P3, P4, P19, P32. Retires **T7**,
+whose number evaporates with it, and amends in-force P19 and pledged
+U16. `DECISIONS.md` was searched first and returned D23, which settled
+the machine/letters relationship and was annotated on F53's delivery;
+nothing there adjudicated letter *detection*, and nothing forecloses it.
+
+**The premise.** In-force U22 held that "DOS persists nothing, so the
+mapping is a *rule* applied to machine facts", and split itself from
+U13/U16 on exactly that: those journeys read a persisted mapping, this
+one could not. Its exclusion list refused "inferring one from a
+`CONFIG.SYS` the images may not even hold", and its composer therefore
+asked the caller to assert the DOS variant, the `LASTDRIVE` ceiling, and
+every resident condition.
+
+**The premise is false, and its falsity is not a detail.** DOS persists
+no drive-letter *map* — nothing records "C: was this volume" — but it
+persists every input the map was derived from: the kernel files that say
+which DOS is installed, and the startup files that say what it was told.
+`CONFIG.SYS` is to DOS what the registry is to Windows. A composer asking
+its caller for a fact recorded on the disk in front of it contradicted
+U22's own second constraint, that evidence outranks a rule; the seam had
+been reading past its own evidence and calling the result an assertion.
+
+**Struck, not amended.** Once the premise goes, nothing holds U22 apart
+from pledged U16, which already describes this journey for Windows and
+Unix — seat the disks, inspect, detect installation candidates, compose
+the namespace the installed system's own configuration establishes. The
+DOS case is that journey with a DOS adapter, not a second journey beside
+it. And two of U22's three sections were already duplicated into in-force
+entries: its label policy is U4's ("the label is one whole answer,
+decided where the format is known"), its 8.3 name rules are U3's. Only
+the letters were uniquely U22's, and they relocate. Striking loses no
+in-force claim; amending would have left a third journey asserting what
+the other two read.
+
+**U-22 retires and is never reissued.** The four in-force cross-references
+to it now name the capability rather than the handle, because the journey
+they point at is pledged and an in-force document citing a pledged one
+cites upward.
+
+**P19 is amended rather than left to drift.** Its namespace-mapping
+paragraph said the composer derives from "the machine facts its caller
+asserts" and "opens nothing"; both are now false. The amended text says
+what the caller states is the *machine*, that every input to the rule is
+read from the media it holds, and — added as its own clause — that
+evidence outranks a rule *including the rule's own inputs*, so a future
+composer asking for a persisted fact is violating the principle rather
+than serving it.
+
+**One assertion survives, and it moved.** Which device the firmware
+booted is set by a stopped machine's host and recorded on no disk, so it
+is a property of the machine model (`declare_boot_device`) rather than an
+argument to a composer, and a report marks it configuration rather than
+evidence. Pledged U16 is softened to match: it had forbidden the active
+flag and attachment order from selecting a candidate at all, which was
+written for two Windows installs and is wrong for an era whose boot order
+is simple enough to state as a rule. Applying a named rule is not
+guessing; what stays excluded is reaching for a tie-breaker no rule
+authorized.
+
+**FreeDOS is claimed, from its own source rather than from write-ups.**
+Two secondary sources described `DLASORT` as a `CONFIG.SYS` directive;
+the kernel's own directive table has no such entry, and `SYS CONFIG`
+patches it into `KERNEL.SYS`. The implementation that had been written
+against those write-ups would never have fired. What ships instead reads
+nothing for it and records that it did not, the kernel's documented
+default being the order applied.
+
+**Weighed and declined:** amending U22 in place (it would have kept a
+third journey beside U13/U16 with no premise left to justify the split);
+keeping `DosMachine` beside the machine reading for facts a session
+cannot hold (the gap was `Format::Raw` refusing a floppy, which is fixed
+where it was rather than worked around); reading `DLASORT` out of
+`KERNEL.SYS` (its layout is version-specific and the default is near
+universal, so the honest answer is a stated omission rather than a
+fragile read); and inferring a raw floppy's article from image size (a
+1.44M and a 720K image are both bytes, and deriving the article from the
+length is the guess this project refuses — the declared device carries
+it instead).
+
+**Reopens if:** a claimed DOS is found whose letter order its own
+installation does not determine, or a second operating-system family is
+given a recognition seam, at which point whether `dos_install.rs`
+generalizes or is joined by a sibling is a live question.

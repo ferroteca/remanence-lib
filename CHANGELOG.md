@@ -20,8 +20,7 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
-- **The storage model has an optical drive, and a machine's optical
-  letter is placed on it.** `DeviceType` gains a third class,
+- **The storage model has an optical drive.** `DeviceType` gains a third class,
   `Optical`, with `OpticalDrive::CdRom` (`cdrom`) in it: a device
   configured like every other one, taking the bay `cdrom0`, served the
   pressed 120 mm disc, and addressing what it reads by logical block.
@@ -52,27 +51,52 @@ rather than bridged. Read every entry below in that light.
   here claims them, no optical active layer exists, and the article
   declares none of them.
 
+### Removed
+
+- **Guest volume mapping and drive lettering leave the claim.** This
+  library reads what is *on* a disk — its partition schema, its volumes,
+  their filesystems and the files in them — and no longer derives or
+  reports what an operating system running above them called any of it.
+  A drive letter, a mount point, a volume-GUID path: each is a fact
+  about a guest's own configuration, one seam above the storage here,
+  and a consumer that wants one holds the volume identity the inspection
+  report issues and maps it in its own terms.
+
+  **The question is outside the claim rather than answered
+  undetermined.** Nothing reports a letter it could not settle, because
+  reporting that a letter *exists* and could not be settled is itself a
+  claim about a guest. Per-disk inspection, volume composition,
+  filesystem recognition and every file verb are untouched, as are
+  sessions, machines, devices, attachment order and the insert/eject
+  edge; what a machine no longer does is read itself.
+
+  Gone from the Rust crate: `MachineReport`, `MachineDisk`,
+  `MachineVolume`, `BootOutcome`, `BootCandidate`,
+  `MachineView::inspect`, `MachineView::declare_boot_device` and
+  `clear_boot_device`, `Machine::boot_device`, `DosAssignmentRule`,
+  `DriveMapping`, `LetterOutcome`, `ResidentCondition`,
+  `DosInstallation`, `DosKernel`, `DosVersion`, `VersionReading`,
+  `VersionSource` and `InstallRule`. Gone from the C ABI:
+  `remanence_machine_inspect`, `remanence_machine_declare_boot_device`,
+  `remanence_machine_clear_boot_device`, every
+  `remanence_machine_report_*` accessor, `remanence_dos_rule_count`,
+  `remanence_dos_rule_name`, `remanence_dos_rule_reading` and
+  `remanence_dos_condition_is_claimed`, with the C++ header's
+  `MachineReport`, `DriveMapEntry`, `MachineVolume`, `MachineDisk`,
+  `LetterOutcome`, `BootOutcome` and `dos_rules()` moving with it. Gone
+  from Python: `MachineReport`, `MachineDisk`, `MachineVolume`,
+  `DriveMapping`, `DosAssignmentRule`, `dos_assignment_rules()`,
+  `Machine.inspect()`, `Machine.declare_boot_device()` and
+  `Machine.clear_boot_device()`.
+
+  An **empty drive stays first-class configuration** on its own
+  account — the machine held the drive whether or not a disk was in
+  it — rather than because a letter reached it.
+
 ### Changed
 
-- **An optical drive letter now names the drive the machine holds.**
-  `LetterOutcome::OpticalDrive` carries an `attachment` beside the
-  startup line that placed it, and the two are separate facts: **the
-  device says there is a drive and the `MSCDEX /L:` line says which
-  letter it took**, so neither is inferred from the other. A drive the
-  machine holds that no `MSCDEX` line places takes **no** letter —
-  `MSCDEX` without `/L:` takes the first free letter, which depends on
-  what the rest of the machine took — and is accounted for in the
-  report's provenance rather than left unmentioned. A placement the
-  machine holds no drive for keeps both readings: the letter stands
-  with `attachment` absent, because the line was written by the machine
-  that ran and the device set is the caller's.
-
-  In the C ABI and the Python module this is the existing
-  `attachment` on a drive mapping, now non-null for an optical letter
-  the machine holds a drive for; no symbol was added.
-
-- The device class a slot and a machine's disk report — `class`,
-  `device_class`, `family` — now also answers `optical`.
+- The device class a slot answers — `class`, `device_class` — now also
+  answers `optical`.
 
 ## 0.0.1-alpha.5 - 2026-08-15
 ## 0.0.1-alpha.4 - 2026-08-15

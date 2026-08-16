@@ -3,21 +3,21 @@
 
 //! The rig layout, built rather than downloaded (D49).
 //!
-//! `dos_drive_letters_rig.rs` needed the FreeDOS artifact for one thing:
-//! a disk carrying **two DOS primaries and an extended chain of two
-//! logicals**, which is the shape the claimed drive-letter variants
-//! disagree over. That shape is wholly specified, so this suite builds
-//! it — and these tests are what say the built one is the shape claimed,
-//! before anything else relies on it.
+//! The FreeDOS artifact was wanted for one thing: a disk carrying **two
+//! DOS primaries and an extended chain of two logicals**, which is a
+//! richer table than any single-partition image puts in front of the
+//! partition and volume seams. That shape is wholly specified, so
+//! [`rig_disk`] builds it — and these tests are what say the built one
+//! is the shape claimed, before anything else relies on it.
 //!
-//! Written first and separately on purpose: a synthetic fixture that
-//! quietly differs from the artifact it replaces would move every test
-//! that trusts it onto a false footing.
+//! Written separately from the builder on purpose: a synthetic fixture
+//! that quietly differs from the artifact it replaces would move every
+//! test that trusts it onto a false footing.
 
 use remanence::{Format, HardDrive, RegionRole, Session};
 
-mod dos_letters;
-use dos_letters::{synthetic_rig_disk, write_image};
+mod rig_disk;
+use rig_disk::{synthetic_rig_disk, write_image};
 
 fn pooled(path: &std::path::PathBuf) -> (Session, remanence::MediaId) {
     let mut session = Session::new();
@@ -95,7 +95,7 @@ fn every_volume_composes_and_reads_as_fat() {
 }
 
 #[test]
-fn the_first_primary_carries_the_marker_a_letter_is_proved_by() {
+fn the_first_primary_carries_the_marker_a_volume_is_proved_by() {
     let path = write_image("rig-marker", synthetic_rig_disk());
     let (mut session, id) = pooled(&path);
     let medium = session.medium_mut(id).expect("pooled");

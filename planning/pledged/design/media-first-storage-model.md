@@ -17,7 +17,7 @@ deliver.
 **What it is designed around.** The medium is the content handle — the
 node the user holds — and everything the recording can answer, answers
 on it. Machines, devices, and the attachment edge exist for the
-problems only they can own: the machine namespace (P35), multi-region
+problems only they can own: multi-region
 volumes (P17), and the hardware-emulation seam with its multi-drive
 hook (P15). Their surface structure is fixed now so their plumbing
 lands later without user-facing model changes.
@@ -56,9 +56,6 @@ Machine "pc"                                   identity (a real name, never null
    ├── DEVICE POOL — configuration
    │     .add_device(hdd0)? · .device(hdd0) → Option · .devices()
    │     .release_device(hdd0)?       ejects first — sever, never destroy
-   │
-   │   ★ .namespace()?  → MachineSpace        P35's seat (plumbing later)
-   │     .compose_dos_letters()               its derived-mapping half, delivered
    ▼
 StorageDevice hdd0                             config only: slot · device type
    │     .insert(media_id)? / .eject()?       the ONE edge crossing config→state:
@@ -271,8 +268,8 @@ Medium                                         pool-owned, holdable — ALL cont
     could physically hold but never serve, which the article alone
     cannot catch; eject severs only — claim, geometry, and buffered
     writes survive in the pool. An empty device is first-class
-    configuration (U22 letters it; P15 will answer not-ready through
-    it). *Delivered.*
+    configuration — the machine held the drive whether or not a disk
+    was in it, and P15 will answer not-ready through it. *Delivered.*
 
 ## Reserved seats (structure now, plumbing later)
 
@@ -285,21 +282,19 @@ Medium                                         pool-owned, holdable — ALL cont
 - **P17** — `partition.volume()` is the arity-1 composition act;
   multi-region volumes arrive as an additive compose-from-several at
   the medium. Nothing moves.
-- **P35** — `machine.namespace()` is the machine-composed namespace's
-  seat; `compose_dos_letters()` is its derived-mapping half, delivered.
 
 ## The use cases
 
-The model is pledged against ten first-class use cases — **U25 through
-U34** in [../USE-CASES.md](../USE-CASES.md) — every one carrying the
+The model is pledged against the media-first walks in
+[../USE-CASES.md](../USE-CASES.md), every one carrying the
 tier's defining attribute: **no discovery, complete user
 specification**, declarations throughout, partition information
 included — specified, never probed. U25–U29
 are the walks this design was argued over (the loose-capture mastering,
 the zip to the CBM DOS directory, the LBA hard disk to a FAT root
 listing, COMMAND.COM off a CHS disk, the boot block through the volume
-door); U30–U34 close the concept coverage (the reconstructed machine
-and its letters, the write and the commit point, authored media, pool
+door); the rest close the concept coverage (the write and the commit
+point, authored media, pool
 independence and machine teardown, the single-`File` source). *U25,
 U26, U32 and U33 are in force at the root list.* The
 simplified workflows where discovery does the specifying work belong to

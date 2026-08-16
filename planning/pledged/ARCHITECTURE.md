@@ -15,9 +15,7 @@ SPDX-License-Identifier: GPL-3.0-only
 >
 > P22, P29 and P30 have left this file for that one, the flux family
 > they govern being delivered; the P10 amendment with them, the DOS
-> 8.3 rule set that first populated its field being delivered; the
-> P19 composer amendment likewise, the DOS drive-letter composer that
-> was its only demand being delivered; the P23 amendment in the two
+> 8.3 rule set that first populated its field being delivered; the P23 amendment in the two
 > halves it was armed in, its correction at the bottom on the delivered
 > flux stack and its extension above the medium once the two layers it
 > named were built; P28, the degraded,
@@ -831,8 +829,7 @@ row at any rung, as flux capture takes none at its own.
 ## P32 — A session holds a dynamic set of family-typed storage devices
 
 There is no separate machine object. A `Session` is itself the scope within
-which device identity and drive-letter-style reasoning (in-force U22 and
-P19's namespace-mapping composer) are resolved; nothing above it groups
+which device identity is resolved; nothing above it groups
 several sessions into one
 machine, and nothing needs to.
 
@@ -868,14 +865,13 @@ from a VM or from bare-metal device enumeration. The caller may choose the
 but never an arbitrary name; an attach that does not name a slot takes the
 lowest free index for that family. Placement here does change semantics and
 cannot be inferred, which is precisely P21's condition: which slot a medium
-occupies is what a drive-letter rule reasons over, and no evidence in any
+occupies is a fact about the machine it came out of, and no evidence in any
 image records it.
 
 That predictability is correct only because of what the identity is a fact
-about. A device is machine configuration the caller supplies, the same class
-of fact U22 already calls out as owned by the caller rather than read as
-evidence; a region, volume or filesystem identity is read off a disk, and
-stays opaque. Because attach and detach are machine-down operations, an
+about. A device is machine configuration the caller supplies rather than
+something read as evidence; a region, volume or filesystem identity is read
+off a disk, and stays opaque. Because attach and detach are machine-down operations, an
 index freed by detaching may be reused by a later same-family attach that
 does not name a slot; nothing depends on the old occupant once the machine
 is down, so this is not the renumbering U4 refuses for evidence-bearing
@@ -929,13 +925,6 @@ unexplained tracks are opaque. Where a region does bear files and the
 result is hierarchical, it is a container whose directories are themselves
 containers rather than a flat namespace addressed only by path strings.
 
-The device set is what the delivered DOS drive-letter composer would reason
-over when it reads its facts from a session rather than from an assertion
-(below): it sees every attached device and produces an answer only for the
-families its claimed rule understands, so an attached `cbm-floppy0`
-legitimately receives no DOS drive letter rather than an error or an
-omission.
-
 D5's deferrals are otherwise untouched. This principle puts several devices
 in one session; it does not compose a volume spanning devices, and it adds
 no cross-source transaction. What D5 declined and this revisits is the
@@ -943,17 +932,6 @@ multiple-source open with `hdd0`-style assignment, which in-force P21 had
 already routed to its own proposal rather than refused.
 
 ### Knock-on requirements
-
-**This requirement is settled and the answer is in force.** The P19 composer
-amendment had the caller assert the machine facts — medium, slot, attachment
-order — because before this principle nothing in a session held them, and
-whichever of the two arrived second owed a statement of where the composer
-reads them. The composer arrived second, and in-force P19 now says: from the
-caller, because a session's device set holds only the block family and
-cannot express a floppy slot, a CD-ROM drive, or DOS attachment order. What
-this principle owes when it arms is the other half of that sentence — with
-the floppy and optical families claimed, a composer may take the same facts
-from a session's devices, and nothing else about it changes.
 
 The pledged P19 scope-of-claim amendment obliges a file-bearing view to
 account for every addressable unit of its floor. Nested directory containers
@@ -1059,32 +1037,7 @@ catalog stays declarative, and a media type outside it still refuses by
 name. What the amendment forecloses is treating the archive as anything
 else: not a device, not a container node, not a filesystem on a phantom
 volume — a medium, loaded into a virtual slot (P32 amendment), whose
-content is walked through the one namespace node (P35).
-
-## P19 amendment — the namespace converges, and the composer moves to P35
-
-In-force P19 carries the file-access seam and, lodged inside it, the
-namespace-mapping composer with its three constraints. This amendment
-slims P19 to the claim its title makes and re-homes the composer in P35,
-which owns the machine namespace the composer exists to serve.
-
-What P19 keeps: one file-access interface however reached — a
-volume-backed filesystem, an archive medium's own content, and the
-machine-composed namespace all present it — with the layers, identities,
-and evidence that produced each result retained; transparency when every
-seam has exactly one supported answer, and explicit exposure or refusal
-when it does not; honest absence — valid non-file content is never
-called empty and never forced through the seam as pseudo-files; and the
-rule that selecting a file yields a byte stream only independent P12
-recognition can make more of.
-
-What P19 loses: the "serialized-container adapter" provider form — an
-archive is a medium (P14 amendment) whose grammar is a P12 adapter at
-the namespace seam, not a fourth kind of thing — and the
-namespace-mapping composer with its three constraints, which are P35's.
-The pledged P19 amendment ("a file-bearing interpretation states the
-scope of its claim") is untouched by this one and folds into the slimmed
-text as written.
+content is walked through the one file-access seam (P19).
 
 ## P32 amendment — devices are added, media are loaded, and families form a lineage
 
@@ -1094,18 +1047,18 @@ sessions into a machine. This amendment inserts the machine rather than
 renaming anything: the **session** keeps the meaning the principles
 already give it — the P7 claims, the P27 cache budget and private
 session storage — and a **machine** is one device set within it, owning
-the attachment identities, the attachment order, and the configuration
-U22 and P35 reason over. What P32 says about devices is unchanged; only
-the scope that holds them moves one level in.
+the attachment identities and the attachment order. What P32 says about
+devices is unchanged; only the scope that holds them moves one level
+in.
 
 The layer earns itself where artifacts nest. An archive on the host was
 never part of the machine whose disk it contains, so reading
 `games.zip/boot.h8d` need not put both in one machine's configuration —
 and because every machine sits in one session, a disk's medium may be
 source-backed through the claim the session already holds, with no
-lifetime question between them. A machine's namespace composes over its
-own devices and no others, so a composer never letters a slot that
-belongs elsewhere.
+lifetime question between them. A machine reaches its own devices and no
+others, so nothing reading one machine's set can see a slot that belongs
+elsewhere.
 
 **A machine carries an identity, and the anonymous one is null.** A
 session has one anonymous machine; devices may be added to it directly,
@@ -1116,14 +1069,11 @@ privileged position: it is not "machine zero", no attachment order it
 carries is more meaningful than any other's, and moving a device from it
 into a named machine is a reconfiguration rather than a rename.
 
-**Every machine composes a namespace, the anonymous one included, and
-provenance is the guard rather than a refusal** (D23). A derived mapping
-travels with the machine facts and the applied rule and is never
-evidence (P35), so composing over devices a caller assembled without
-declaring a machine yields a deterministic answer which states exactly
-what produced it. That may surprise a naive caller; it cannot mislead a
-careful one, and a refusal would buy nothing the provenance does not
-already carry while making the anonymous machine behave unlike every
+**Every verb a named machine answers, the anonymous one answers too**
+(D23). It holds devices, orders them, and hands back what is in them on
+the same terms; a caller who assembled devices without declaring a
+machine gets the same deterministic answers rather than a refusal, which
+would buy nothing while making the anonymous machine behave unlike every
 other.
 
 *Annotation (D33, 2026-08-12): F57 delivered the device tier's catalog
@@ -1146,8 +1096,8 @@ grouping, which is a floppy drive. The lineage is data in the family
 catalog, never a type hierarchy, mirroring P30's profile catalog one
 seam down and P14's media-type catalog beside it. **Interior names
 classify; only concrete entries instantiate.** A device added as "some
-floppy" exists in no machine, declares nothing `load_media` could check
-a medium against, and letters nothing U22 could reason over — vagueness
+floppy" exists in no machine and declares nothing `load_media` could
+check a medium against — vagueness
 in a machine fact is the refusal the CHS/LBA split below already makes,
 one rung up the lineage. What P32 already states is unchanged by this:
 identification and file access need none of a concrete device's
@@ -1171,41 +1121,3 @@ storage model design carries. *Delivered and settled: `arc0` is an
 ordinary attachment identity (D27), and the receiver is spelled as the
 one slot that is no device type — an archive was recorded by no device
 (D33).*
-
-## P35 — The machine namespace composes filesystems under a consumed or derived mapping
-
-A **machine namespace** (`MachineFilesystem`) is one navigable
-namespace over a machine's several filesystems — drive letters, mount
-trees — presenting the same file-access interface every filesystem
-presents (P19), and adding exactly one thing of its own: the mapping
-that names each child.
-
-The mapping has two sources and a strict precedence. **Where the
-installed system persists its mapping, it is consumed**: Windows drive
-letters, a Unix fstab — read as evidence, never derived. **Where the
-system persists nothing, the mapping is derived** — a DOS machine's
-letters were assigned at boot by a rule over machine configuration, and
-nothing on the disks records the result — under three constraints:
-
-- **The rule is an enumerated claim (P3).** The composer names the rule
-  it applied, claims the system variants it implements and refuses the
-  rest by name, and reports a mapping the claimed variants disagree on
-  as undetermined rather than settled by the more common rule.
-- **Evidence outranks a rule.** A persisted mapping governs, and
-  derivation is never a fallback for a persisted mapping that could not
-  be read.
-- **A derived mapping is not evidence.** The asserted machine facts and
-  the applied rule travel with the result as provenance (P4), and
-  whatever the rule cannot settle is undetermined at the granularity it
-  failed to establish — never filled from position, size, order, label,
-  or which volume happened to read cleanly.
-
-The machine namespace is a view, never an instance (P23): its mutations
-project into the filesystems that compose it, and it holds no mutable
-truth of its own. The mapping's machine facts — slot, family,
-attachment order — are the machine's own configuration (P32), read from
-the device set where the claimed families live there.
-
-Pledged U16 is the consumed case; in-force U22 is the derived case,
-served today by the composer in-force P19 carries and this principle
-re-homes.

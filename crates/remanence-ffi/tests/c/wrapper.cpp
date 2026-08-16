@@ -145,7 +145,6 @@ void group_catalogs()
     CHECK(!remanence::partition_types().empty(), "the release claims no partition types");
     CHECK(!remanence::assurance_conditions().empty(), "the release claims no assurance conditions");
     CHECK(!remanence::geometry_sources().empty(), "the release claims no geometry sources");
-    CHECK(!remanence::dos_rules().empty(), "the release claims no DOS rules");
 }
 
 /* --------------------------------------------------------- refusals
@@ -874,65 +873,56 @@ void group_report(const char* path)
 
 } // namespace
 
-// The machine reading through the wrapper: what only the C++ surface can
-// be wrong about. The report is an owned handle that frees itself, an
-// absence stays an empty std::optional rather than becoming a zero, and a
+// The machine's device set through the wrapper: what only the C++
+// surface can be wrong about. A device is an owned handle, an absence
+// stays an empty std::optional rather than becoming a zero, and a
 // refusal arrives as remanence::Error carrying its category.
-//
-// The surface this replaced was never called through the wrapper at all,
-// which is exactly how a hand-written wrapper falls behind unnoticed.
 void group_machine()
 {
     remanence::Session session;
     remanence::Machine machine = session.add_machine("pc");
 
-    // A machine holding nothing reads, and says nothing booted rather
-    // than refusing.
-    remanence::MachineReport report = machine.inspect();
-    CHECK(report.boot() == remanence::BootOutcome::NothingBootable,
-          "an empty machine claimed something booted");
-    CHECK(report.size() == 0, "an empty machine was given drive letters");
-    CHECK(report.volume_count() == 0, "an empty machine held a volume");
-    CHECK(report.disk_count() == 0, "an empty machine held a device");
-
-    // The identity crosses as an owned string, and an absence as an
-    // empty optional rather than an empty one.
-    std::optional<std::string> identity = report.machine();
+    // The identity crosses as an owned string rather than a borrowed
+    // pointer into the session.
+    std::optional<std::string> identity = machine.identity();
     CHECK(identity.has_value() && *identity == "pc",
-          "the report did not carry the machine's own identity");
-    CHECK(!report.boot_attachment().has_value(),
-          "a machine that booted nothing named a device");
-    CHECK(!report.boot_system().has_value(),
-          "a machine that booted nothing named a system");
-    CHECK(!report.boot_version().has_value(),
-          "a machine that booted nothing answered a version");
-    CHECK(!report.boot_declared(), "an unread machine claimed a declared boot");
+          "the machine did not carry the identity it was given");
 
-    // A letter the machine has no drive at is an empty optional, which is
-    // a different answer from a letter that exists and is undetermined.
-    CHECK(!report.find('C').has_value(), "an empty machine answered for C:");
+    CHECK(machine.device_count() == 0, "a fresh machine already held a device");
 
-    // Provenance says why it is empty rather than leaving it bare.
-    CHECK(!report.provenance().empty(), "the report carried no provenance");
+    remanence::StorageDevice drive = machine.add_device("mbr-sector-hd");
+    CHECK(machine.device_count() == 1, "the added device was not counted");
+    CHECK(drive.attachment() == "hdd0", "the first hard drive was not attached at hdd0");
+    CHECK(machine.device_attachments() == std::vector<std::string>{"hdd0"},
+          "the attachment order did not read back");
 
-    // A boot device this machine does not hold is refused as a typed
-    // exception carrying its category, not a bool a caller may ignore.
+    // An attachment resolves to the device in it; one nothing is at is an
+    // empty optional rather than a manufactured refusal.
+    CHECK(machine.device("hdd0").has_value(), "the attachment did not resolve");
+    CHECK(!machine.device("hdd9").has_value(), "an empty slot resolved to a device");
+
+    // One bay holds one drive, and the refusal is a typed exception
+    // naming the slot rather than a status a caller may drop.
     bool refused = false;
     try {
-        machine.declare_boot_device("hdd0");
+        machine.add_device_at("gpt-hd", 0);
     } catch (const remanence::Error& error) {
         refused = true;
         CHECK(std::string(error.what()).find("hdd0") != std::string::npos,
-              "the refusal did not name the attachment asked for");
-        CHECK(error.category() != remanence::ErrorCategory::Io
-                  || std::string(error.what()).length() > 0,
-              "the refusal carried no message");
+              "the refusal did not name the slot asked for");
     }
-    CHECK(refused, "declaring a device the machine lacks did not throw");
+    CHECK(refused, "a taken slot accepted a second drive");
 
-    // Nothing was declared, so withdrawing one answers false.
-    CHECK(!machine.clear_boot_device(),
-          "withdrawing an undeclared boot device claimed to have withdrawn one");
+    // Releasing frees the slot; releasing an empty one throws.
+    machine.release_device("hdd0");
+    CHECK(machine.device_count() == 0, "the released device was still counted");
+    refused = false;
+    try {
+        machine.release_device("hdd0");
+    } catch (const remanence::Error&) {
+        refused = true;
+    }
+    CHECK(refused, "releasing an empty slot was accepted");
 }
 
 int main(int argc, char** argv)

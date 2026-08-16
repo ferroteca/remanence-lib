@@ -102,10 +102,10 @@ pub enum OpticalDrive {
     /// addressing what it reads by logical block.
     ///
     /// **It is claimed at the block vantage and no further.** A data
-    /// disc's user blocks are what this release reads and what its
-    /// letter is placed on; the disc's sessions, tracks, gaps, audio and
-    /// subchannels are the optical state model, which this release does
-    /// not claim and this type does not stand in for.
+    /// disc's user blocks are what this release reads; the disc's
+    /// sessions, tracks, gaps, audio and subchannels are the optical
+    /// state model, which this release does not claim and this type does
+    /// not stand in for.
     CdRom,
 }
 

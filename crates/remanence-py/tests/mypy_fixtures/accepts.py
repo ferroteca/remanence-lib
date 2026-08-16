@@ -111,20 +111,13 @@ with remanence.FluxImage("disk.remanence", cache_bytes=1 << 20) as image:
     missing: list[remanence.D64Block] = d64.missing
     written: remanence.FluxWriteReport = image.write("copy.remanence")
 
-# --- the machine, and the DOS letters it reads off its own disks --------
+# --- the machine's device set ------------------------------------------
 machine = session.add_machine("pc")
-machine.declare_boot_device("hdd0")
-withdrawn: bool = machine.clear_boot_device()
-machine_report: remanence.MachineReport = machine.inspect()
-boot: str = machine_report.boot
-system: str | None = machine_report.boot_system
-dos_version: tuple[int, int] | None = machine_report.boot_version
-declared: bool = machine_report.boot_declared
-mappings: list[remanence.DriveMapping] = machine_report.drives
-machine_volumes: list[remanence.MachineVolume] = machine_report.volumes
-disks: list[remanence.MachineDisk] = machine_report.disks
-c_drive: int | None = machine_report.volume_at("C")
-established: int = machine_report.established_count()
+machine_identity: str | None = machine.identity
+seated: remanence.StorageDevice = machine.add_device("hard-drive-mbr-sector")
+attachments: list[str] = machine.devices
+found: remanence.StorageDevice | None = machine.device(seated.attachment)
+machine.release_device(seated.attachment)
 
 # --- refusals ----------------------------------------------------------
 try:

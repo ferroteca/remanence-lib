@@ -120,8 +120,8 @@ drive = session.add_device_for("disk.h8d", writable=False)
 ## Beyond the basics
 
 There is more than fits here: flux captures decoded down to bit and byte
-level, KryoFlux capture sets loaded as a group, CBM DOS directories, DOS
-drive letter assignment, and creating blank disks from scratch. The
+level, KryoFlux capture sets loaded as a group, CBM DOS directories, and
+creating blank disks from scratch. The
 [full documentation](https://github.com/ferroteca/remanence-lib/blob/main/README.md)
 covers all of it with examples.
 

@@ -23,9 +23,8 @@ One core, two bindings:
   disagreement reported rather than settled — the assurance gate that
   meets a
   short source with a bounded read-only reading, and the commit-point
-  session cache that keeps every write revocable until committed. The
-  **namespace composer** above that stack, which derives a DOS
-  drive-letter mapping rather than consuming one. And the **magnetic
+  session cache that keeps every write revocable until committed. And
+  the **magnetic
   family** beside it, never crossing into it: the flux-capture and
   flux-medium models, the drive-profile seam, the gap-first
   reconstruction and the remanence image it answers with, the C1541
@@ -72,8 +71,7 @@ never reused.
   namespace I/O, with the file verbs living there and nowhere else —
   `Identification` and the layer/layout types,
   `Assurance` and the outcome, condition and byte-range types beside it,
-  `Error`/`ErrorCategory`/`Result` and the rule sets refusals name,
-  `MachineReport` and the drive-letter mapping a machine reads, and
+  `Error`/`ErrorCategory`/`Result` and the rule sets refusals name, and
   the remaining public disk and filesystem records. Defined by the crate's `pub` items; `cargo
   doc` output is a representation of it.
 - **S2 — The C ABI.** Every `remanence_*` symbol exported by
@@ -469,8 +467,8 @@ A namespace exposes a rooted tree of named files and directories, with
 their metadata and data operations, independently of what backs that view.
 This is the high-level convergence point for file access: a
 supported composition may pass through archives, image
-formats, partition layouts, volume composition, filesystems, or namespace
-mappings, and every file-bearing result presents this interface, retaining
+formats, partition layouts, volume composition, or filesystems, and every
+file-bearing result presents this interface, retaining
 the layers, identities, and evidence that produced it. Multiple roots or
 ambiguous paths are exposed or refused explicitly rather than flattened or
 guessed.
@@ -496,52 +494,23 @@ neither calls valid non-file data empty nor manufactures pseudo-files to
 force it through P19, and opening specifically for file access returns a
 named absence or refusal when no file-bearing interpretation is claimed.
 
-Three provider forms meet here. **A medium may bear its namespace
+Two provider forms meet here. **A medium may bear its namespace
 directly** — an archive, a flat catalog on an unpartitioned disk — the
 grammar that recognizes the artifact being a P12 adapter at this seam
-rather than a serialized form of its own; filesystem adapters (P18)
-consume volumes; namespace-composition adapters consume namespaces plus
-explicit drive, mount, folder, or volume mappings. Composition preserves
-the identity and provenance of its sources rather than flattening or
-copying them, so a namespace may be backed by a whole volume, by part of
-a storage graph, or by several mounted filesystems.
+rather than a serialized form of its own; and **filesystem adapters
+(P18) consume volumes**. Either way the result preserves the identity
+and provenance of its sources rather than flattening or copying them.
 
-A **namespace-mapping composer** *derives* the mapping the third form
-consumes, from composed volumes with their identities plus the machine
-whose devices hold them, applying one named assignment rule. **What the
-caller states is the machine** — its devices, the order they attach, and
-the media in them — and every input to the rule is read from those
-media. Producing a mapping and composing a namespace over it are
-separate acts: the mapping answers on its own, and a composer that can
-establish only part of one still answers with that part. Three
-constraints keep the derivation from becoming a guess:
-
-- **The rule is an enumerated claim (P3).** The composer names the rule it
-  applied, claims the system variants it implements and refuses the rest
-  by name, and reports a mapping the claimed variants disagree on as
-  undetermined rather than settling it by the more common rule.
-- **Evidence outranks a rule, including the rule's own inputs.** Where a
-  system persists its own mapping, that mapping governs. Where it
-  persists the *configuration the mapping was derived from* — which
-  system is installed, what it was told at startup — that configuration
-  is read rather than asserted, and a composer that asked its caller for
-  a fact recorded on the disk in front of it would be violating this
-  constraint rather than serving it. This form remains for systems which
-  persist no mapping, and never becomes a fallback for a persisted
-  mapping that could not be read.
-- **A derived mapping is not evidence.** The applied rule and what it was
-  applied to travel with the result as provenance, keeping a derivation
-  out of the evidence a seam carries (P4). Whatever the rule cannot
-  settle is undetermined at the granularity it failed to establish, never
-  filled from position, size, order, label, or which volume happened to
-  read cleanly.
-
-**One machine fact is no artifact's to hold, and it is asserted.** Which
-device a stopped machine's firmware booted is set by its host and
-recorded nowhere on its disks, so a caller may declare it; where none is
-declared, the era's own firmware order is a claimed rule like any other.
-A declaration governs over what the disks make look bootable, and travels
-into the result marked as configuration rather than as something read.
+**The seam presents what a filesystem names, and never what a guest
+called it.** A drive letter, a mount point, a volume-GUID path — the
+name one operating system's own configuration gave a volume — is a fact
+about a *guest*, and this library composes no namespace over a machine's
+several filesystems and derives no such name. Neither the reading nor
+its refusal is offered: the question is outside the claim rather than
+answered undetermined, and a consumer that wants it holds the volume
+identity this library issues and maps it in its own terms. What a caller
+gets here is one filesystem's own tree, reached through the volume that
+composed it.
 
 The namespace view is not a disk representation and declares no image
 layer, media, geometry, partition layout, or volume semantics. Raw

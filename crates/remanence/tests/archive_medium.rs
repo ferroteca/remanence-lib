@@ -166,8 +166,10 @@ fn an_archive_loads_into_its_own_device_and_answers_for_the_medium() {
 fn the_archive_slot_is_a_device_like_any_other() {
     // The question this feature settles: the slot is visible in its
     // machine's attachment namespace. A device a caller cannot see would
-    // be the one kind that behaves unlike every other, and the composer
-    // below already passes it over by family.
+    // be the one kind that behaves unlike every other — and being
+    // visible costs nothing, because the receiver records no device
+    // type, so anything reasoning by family passes it over on its own
+    // answer rather than on a special case.
     let bytes = payload();
     let path = write_zip("visible", &[("disk.h8d", &bytes)]);
     let image = write_image("beside");
@@ -202,21 +204,23 @@ fn the_archive_slot_is_a_device_like_any_other() {
         .collect();
     assert_eq!(attachments, vec!["arc0".to_owned(), "hdd0".to_owned()]);
 
-    // And a namespace composer passes it over **by family**, which is
-    // what makes the visibility harmless: an archive has no partition or
-    // volume for an assignment rule to reach.
-    let report = session
-        .anonymous_mut()
-        .inspect()
-        .expect("the machine reads");
+    // And it answers about itself honestly: the receiver records no
+    // device type, where the disk beside it records one. That absence is
+    // what a caller walking the set reads, and it is the archive's own
+    // answer rather than a rule about archives.
+    let receiver = session
+        .device(AttachmentId::parse("arc0").expect("a well-formed attachment"))
+        .expect("the receiver is attached");
     assert!(
-        report.disks.iter().any(|disk| disk.attachment == "arc0"
-            && disk
-                .note
-                .as_deref()
-                .is_some_and(|note| note.contains("bears a namespace"))),
-        "the archive slot is passed over and said so: {:?}",
-        report.disks
+        receiver.device_type().is_none(),
+        "an archive was recorded by no device, so its slot names none"
+    );
+    let drive = session
+        .device(AttachmentId::parse("hdd0").expect("a well-formed attachment"))
+        .expect("the disk is attached");
+    assert!(
+        drive.device_type().is_some(),
+        "a hard drive names the device that recorded what it holds"
     );
 
     drop(session);

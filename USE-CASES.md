@@ -57,9 +57,7 @@ namespace opens under the type that scheme declares, or under my own
 reading where nothing declares one, and what answers is the one type
 carrying file verbs; a path within it names the file. It states the
 volume identity this disk's inspection report issued, so the volume I
-worked through and the volume I reported are the same one. Where the
-guest was DOS, asking the machine to read itself maps that same volume
-identity to the drive letter I show a user. All of
+worked through and the volume I reported are the same one. All of
 this without booting the guest and without any external helper
 process: the library does
 the format work itself. Reading never changes the image. Writing is
@@ -156,8 +154,8 @@ if let Err(error) = fat.write_file("OUT/report.2026.txt", &bytes) {
 
 My automation layer's drive reporting runs on host-side facts about a
 stopped machine's disk images, and this library is where those facts come
-from (the guest's own drive letters come from asking the machine to read
-itself, over these same disks). For each disk — qcow2, VDI or
+from. What the *guest* called those volumes is not among them and I do
+not ask for it here. For each disk — qcow2, VDI or
 raw — one inspection answers, keeping each fact at the seam that owns
 it rather than flattening them into one snapshot.
 
@@ -252,9 +250,7 @@ The two halves stay apart throughout: a drive is configuration I state,
 a medium is session state, and only the insert crosses. Ejecting severs
 that link and leaves the disk in the pool with its claim and its
 buffered writes intact; releasing the machine takes the configuration
-down and never the media. The same device set, in the same order, is
-what the machine reads to answer which letter its own DOS would have
-shown — I assert nothing twice. And every fact above comes
+down and never the media. And every fact above comes
 off the image alone: nothing boots, and reading changes no byte.
 
 I need what the disk turned out to be, *stated*: blank, a recognized
@@ -280,9 +276,11 @@ literal bytes of any structure I care about without opening a sector.
 I need two counts, not one: how many volumes composed, and how many
 carry a filesystem the host read. A disk holding none is a disk I show as
 holding none, and an unreadable volume stays in the report rather than
-vanishing to keep that number right. Which volume a guest's drive letter
-named is not a count and not mine to derive: that is the machine's own
-reading, over a rule this library owns. A disk that cannot be read answers with the reason it could not
+vanishing to keep that number right. Neither count says what a guest
+called any of them, and I would not want one that pretended to: which
+volume a guest's drive letter named is a fact about that guest, and I
+carry the volume identity below and name it in my own terms. A disk that
+cannot be read answers with the reason it could not
 be read, never the symptom.
 
 For one disk layout, an identity names exactly the same region, volume,

@@ -599,11 +599,6 @@ pub struct Machine {
     /// Null for the session's anonymous machine.
     identity: Option<String>,
     devices: Vec<StorageDevice>,
-    /// The device this machine's firmware was set to boot, where its host
-    /// set one. It is configuration and not evidence: an emulator's
-    /// blueprint declares it, and it governs over what the disks
-    /// themselves make look bootable.
-    boot: Option<AttachmentId>,
 }
 
 impl Machine {
@@ -611,7 +606,6 @@ impl Machine {
         Self {
             identity: None,
             devices: Vec::new(),
-            boot: None,
         }
     }
 
@@ -619,15 +613,7 @@ impl Machine {
         Self {
             identity: Some(identity),
             devices: Vec::new(),
-            boot: None,
         }
-    }
-
-    /// The device this machine's firmware was declared to boot, or `None`
-    /// where nothing declared one and the evidence on the disks settles
-    /// it instead.
-    pub fn boot_device(&self) -> Option<AttachmentId> {
-        self.boot
     }
 
     /// This machine's identity, or `None` where it is the session's
@@ -637,7 +623,8 @@ impl Machine {
     }
 
     /// Every device in this machine, in the order they were added — the
-    /// attachment order a namespace composer reads.
+    /// machine's own attachment order, which a caller walking its drives
+    /// reads.
     pub fn devices(&self) -> &[StorageDevice] {
         &self.devices
     }
@@ -827,55 +814,12 @@ impl<'a> MachineView<'a> {
             device.eject()?;
         }
         self.discard(attachment);
-        // A boot declaration names a device. Releasing that device
-        // withdraws the declaration with it rather than leaving one
-        // pointing at an attachment nothing is at.
-        if self.machine.boot == Some(attachment) {
-            self.machine.boot = None;
-        }
         Ok(())
     }
 
     /// Every device in this machine, in the order they were added.
     pub fn devices(&self) -> &[StorageDevice] {
         self.machine.devices()
-    }
-
-    /// Declares which device this machine's firmware booted, overriding
-    /// what the disks themselves make look bootable.
-    ///
-    /// This is the one machine fact no artifact holds. A stopped
-    /// machine's host set its boot order — an emulator's blueprint
-    /// declares it, and can boot a fixed disk with a bootable floppy
-    /// still in the slot — so declaring it here is how a caller says
-    /// "the firmware booted something other than the default". It is
-    /// configuration, carried into a report as provenance and never as
-    /// evidence read off a disk.
-    ///
-    /// The attachment must be a device this machine holds; another
-    /// machine's `hdd0` is refused by name, as is an attachment nothing
-    /// is at.
-    pub fn declare_boot_device(&mut self, attachment: AttachmentId) -> Result<()> {
-        if self.machine.device(attachment).is_none() {
-            return Err(Error::not_found(format!(
-                "no device is attached at {attachment}, so this machine cannot \
-                 be declared to boot it"
-            )));
-        }
-        self.machine.boot = Some(attachment);
-        Ok(())
-    }
-
-    /// Withdraws a declared boot device, returning this machine to the
-    /// evidence on its own disks. Answers whether one had been declared.
-    pub fn clear_boot_device(&mut self) -> bool {
-        self.machine.boot.take().is_some()
-    }
-
-    /// The device this machine was declared to boot, or `None` where
-    /// nothing declared one.
-    pub fn boot_device(&self) -> Option<AttachmentId> {
-        self.machine.boot_device()
     }
 
     /// The attachment identities currently in use.

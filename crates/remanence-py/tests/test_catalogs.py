@@ -87,8 +87,8 @@ def test_the_optical_class_is_in_the_catalog_and_takes_its_own_bay():
     device = session.add_device("cdrom")
     assert device.attachment == "cdrom0"
     assert not device.is_occupied, (
-        "an empty drive is configuration in its own right — a drive is "
-        "lettered whether or not a disc is in it"
+        "an empty drive is configuration in its own right — the machine "
+        "held the drive whether or not a disc was in it"
     )
 
 
@@ -110,11 +110,7 @@ def test_partition_schemes_and_types_are_paired_spellings():
             )
 
 
-def test_the_rule_and_condition_catalogs_are_stated():
-    assert remanence.dos_assignment_rules()
-    for rule in remanence.dos_assignment_rules():
-        assert rule.name and rule.reading
-
+def test_the_reading_catalogs_are_stated():
     assert remanence.geometry_sources()
     assert "authorship" in remanence.geometry_sources(), (
         "authorship is the one reading an authored medium's geometry has"
