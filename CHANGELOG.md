@@ -60,7 +60,8 @@ rather than bridged. Read every entry below in that light.
   archive in one machine and the disk inside it in another — is a
   journey this release does not walk. Building against it now would fix
   the seam's shape before the demand that has to shape it, so the code
-  stops anticipating it and the pledge stands unbuilt.
+  stops anticipating it and the tier goes back to being an argument
+  rather than a promise.
 
   **Nothing a single-machine caller wrote has changed.** `add_device`,
   `add_device_at`, `add_device_for`, `device`, `devices`, `attachments`

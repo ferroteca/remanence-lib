@@ -22,11 +22,11 @@
 //! **The session is the device scope, and there is no machine object.**
 //! The attachment identities — `hdd0`, `fd0` — are the session's, and so
 //! is the order they were added in. A tier grouping devices into named
-//! machines is pledged rather than built (P32's own amendment): it earns
-//! itself where artifacts nest, one machine holding a host's archive and
-//! another the disk inside it, and this release resolves nesting one
-//! level deep and reads no device set as a set, so building the tier now
-//! would be structure ahead of the demand that has to shape it.
+//! machines is *proposed* rather than built: it earns itself where
+//! artifacts nest, one machine holding a host's archive and another the
+//! disk inside it, and this release resolves nesting one level deep and
+//! reads no device set as a set, so building the tier now would be
+//! structure ahead of the demand that has to shape it.
 //!
 //! **Both halves run the same three verbs: create, look up, release.** A
 //! lookup answers with an `Option` — absence is an answer, and nothing is

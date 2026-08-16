@@ -86,13 +86,18 @@ against a journey nobody has walked is a guess about what that journey
 will need, and it was being carried on every surface, in three
 languages, at a cost paid per call.
 
-**The pledge stands; the code stops anticipating it.** P32's own base
-text already says there is no separate machine object and that the
-session is the scope, so the code now honors the principle as written
-rather than the amendment that is still owed. The amendment keeps its
-place in `pledged/` and carries a banner saying its machine tier is
-unbuilt — which is what `pledged/` means, and the honest reading of a
-tier that was delivered early and withdrawn.
+**The code stops anticipating it, and so does the shelf it sat on.**
+P32's own base text already says there is no separate machine object and
+that the session is the scope, so the code now honors the principle as
+written. The pledged P32 amendment that inserted the tier is **split**:
+what it claims about devices — concrete entries, the family lineage, the
+addressing nature, the archive's virtual slot — is delivered and stays
+pledged, and the machine tier itself is **withdrawn to `proposed/`**. A
+pledge says the project will do it; the tier's own justification is a
+nesting journey that is unbuilt and whose recursion (P25) is itself only
+proposed, so pledging the tier would rest a pledge on an unmade
+decision. Argued and binding nothing is exactly what `proposed/` is
+for.
 
 **What a caller loses is one word.** Every device verb kept its
 spelling: `add_device`, `device`, `devices`, `release_device` were
@@ -115,11 +120,11 @@ unanswered — what was wrong was building against it early, not making
 it).
 
 **Reopens when:** an artifact-nesting journey needs two device sets in
-one claim scope — which is the amendment's own argument, and the point
-at which the tier's shape can be read off a real journey rather than
-guessed. The names are spent either way: `Machine` and `MachineView`
-were issued and withdrawn, and the tier that returns should be named
-for what that journey shows it to be.
+one claim scope — which is the proposed amendment's own argument, and
+the point at which the tier's shape can be read off a real journey
+rather than guessed. The names are spent either way: `Machine` and
+`MachineView` were issued and withdrawn, and the tier that returns
+should be named for what that journey shows it to be.
 
 ### D57 — Guest volume mapping and drive lettering leave the claim, and the seam stops at one filesystem's own tree
 

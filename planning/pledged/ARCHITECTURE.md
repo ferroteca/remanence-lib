@@ -957,11 +957,7 @@ attachment identities and its machine-down add and remove, held by the
 session itself, as this principle's own text has it; the two acts that
 fill a slot; and a family catalog
 whose entries are as concrete as the machine fact they assert, carrying
-their lineage as data. **Not delivered**: the machine tier the amendment
-below inserts between the session and its devices — it was built, found
-to carry no library behaviour once the drive-letter composer went, and
-withdrawn (D58), so it now waits on the nesting demand that shapes it; a
-family-typed capability
+their lineage as data. **Not delivered**: a family-typed capability
 obtained from a device rather than a shared `StorageDevice` method set;
 family-declared region enumeration at a device's root, which the
 delivered inspection report already supplies for block devices and which
@@ -1043,52 +1039,13 @@ else: not a device, not a container node, not a filesystem on a phantom
 volume — a medium, loaded into a virtual slot (P32 amendment), whose
 content is walked through the one file-access seam (P19).
 
-## P32 amendment — devices are added, media are loaded, and families form a lineage
+## P32 amendment — a device is as concrete as the fact it asserts, and families form a lineage
 
-> **The machine tier of this amendment is unbuilt.** It was delivered
-> once and withdrawn (D58): with the drive-letter composer gone nothing
-> in the library read a device set as a set, so the tier carried no
-> behaviour and its own justification — nesting — is the part still
-> unbuilt. What the amendment says below stands as the pledge; the
-> session is the device scope until an artifact-nesting journey needs
-> two device sets in one claim. Everything else here (the three acts,
-> the family lineage, the CHS/LBA split, the archive's virtual slot) is
-> unaffected and delivered.
-
-**A session holds machines; a machine holds devices.** Pledged P32 makes
-the session itself the device set and states that nothing groups
-sessions into a machine. This amendment inserts the machine rather than
-renaming anything: the **session** keeps the meaning the principles
-already give it — the P7 claims, the P27 cache budget and private
-session storage — and a **machine** is one device set within it, owning
-the attachment identities and the attachment order. What P32 says about
-devices is unchanged; only the scope that holds them moves one level
-in.
-
-The layer earns itself where artifacts nest. An archive on the host was
-never part of the machine whose disk it contains, so reading
-`games.zip/boot.h8d` need not put both in one machine's configuration —
-and because every machine sits in one session, a disk's medium may be
-source-backed through the claim the session already holds, with no
-lifetime question between them. A machine reaches its own devices and no
-others, so nothing reading one machine's set can see a slot that belongs
-elsewhere.
-
-**A machine carries an identity, and the anonymous one is null.** A
-session has one anonymous machine; devices may be added to it directly,
-deterministically — it is one machine, not one conjured per call — and
-it serves the caller who is opening artifacts rather than reconstructing
-a machine. It is the same kind of thing as a named machine, holding no
-privileged position: it is not "machine zero", no attachment order it
-carries is more meaningful than any other's, and moving a device from it
-into a named machine is a reconfiguration rather than a rename.
-
-**Every verb a named machine answers, the anonymous one answers too**
-(D23). It holds devices, orders them, and hands back what is in them on
-the same terms; a caller who assembled devices without declaring a
-machine gets the same deterministic answers rather than a refusal, which
-would buy nothing while making the anonymous machine behave unlike every
-other.
+**A device names a real machine fact, never a vague one.** Pledged P32
+says a device is family-typed; this amendment says what that typing has
+to be worth — an entry concrete enough to check a medium against, a
+lineage stated as data, an addressing nature independent of the family,
+and a receiver for the medium no device recorded.
 
 *Annotation (D33, 2026-08-12): F57 delivered the device tier's catalog
 as the **device type** — two enumerated levels, the class then the

@@ -112,6 +112,59 @@ different active representations, not concurrently mutable peers. A derived
 eligible block presentation over optical state does not make block active;
 an ISO opened only as blocks does not make optical active.
 
+## P32 amendment — a machine is a named device set within a session
+
+Pledged P32 makes the session itself the device set and states that
+nothing groups sessions into a machine. This amendment would insert a
+**machine** between them, without renaming anything: the **session**
+keeps the meaning the principles already give it — the P7 claims, the
+P27 cache budget and private session storage — and a **machine** is one
+device set within it, owning the attachment identities and the
+attachment order. What P32 says about devices is unchanged; only the
+scope that holds them moves one level in.
+
+**The layer earns itself where artifacts nest, and nowhere else has yet
+asked for it.** An archive on the host was never part of the machine
+whose disk it contains, so reading `games.zip/boot.h8d` need not put
+both in one machine's configuration — and because every machine sits in
+one session, a disk's medium may be source-backed through the claim the
+session already holds, with no lifetime question between them. A machine
+would reach its own devices and no others, so nothing reading one
+machine's set could see a slot that belongs elsewhere.
+
+**A machine would carry an identity, and the anonymous one would be
+null.** A session would have one anonymous machine; devices could be
+added to it directly, deterministically — one machine, not one conjured
+per call — serving the caller who is opening artifacts rather than
+reconstructing a machine. It would be the same kind of thing as a named
+machine, holding no privileged position: not "machine zero", no
+attachment order more meaningful than any other's, and moving a device
+out of it a reconfiguration rather than a rename. Every verb a named
+machine answered, the anonymous one would answer too (D23).
+
+**This was built once and withdrawn, which is why it sits here rather
+than in `pledged/`** (D58). Delivered alongside the DOS drive-letter
+composer, it lost its only consumer when that composer did: nothing in
+the library read a device set as a set or read attachment order at all,
+and what remained was a scope whose every mechanism existed because
+there could be more than one machine, with nothing needing two. The
+nesting argument above is undamaged by that — it was never the reason
+the tier was built — but it is an argument for work not yet done, and
+this shelf is where an argument binding nothing belongs. Pledging it
+again means answering the question the first attempt did not: what shape
+does the tier take when read off a real nesting journey, rather than
+guessed ahead of one?
+
+**What it depends on.** Nesting resolves one level deep today and is
+special-cased to ZIP and 7z by file extension; P25 (proposed) is the
+recursion this amendment's own justification assumes. An amendment
+pledged before that would be pledged on a prerequisite the project has
+not agreed to, which is the flaw the reference rule names.
+
+**The names `Machine` and `MachineView` are spent.** They were issued on
+the first attempt and withdrawn with it; a tier that returns takes
+whatever the journey shows it to be called.
+
 ## P26 — Computer tape has a family-owned active layer
 
 A computer-tape capture uses exactly one durable active representation owned

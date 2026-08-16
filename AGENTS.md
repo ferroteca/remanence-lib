@@ -63,9 +63,9 @@ ABI, or Python module.
   (configuration) and the **media** (state) independently of each other,
   and holding the attachment identities and the attachment order
   directly. **There is no machine object**: the tier grouping devices
-  into named machines is pledged rather than built, earning itself where
-  artifacts nest, and building it now would be structure ahead of the
-  demand that has to shape it. **Both halves run the same three verbs —
+  into named machines is *proposed* rather than built (D58), earning
+  itself where artifacts nest, and building it now would be structure
+  ahead of the demand that has to shape it. **Both halves run the same three verbs —
   create, look up, release** — where a lookup (`device`, `medium`)
   answers with an
   `Option` and nothing is manufactured to report absence, there is no

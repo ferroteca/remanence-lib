@@ -405,13 +405,14 @@ work belong to the question tier
 proposed and argued separately — and **these walks are permanent**:
 they remain valid, supported workflows even when discovery and other
 conveniences evolve to make the same results easier to achieve.
-Conveniences layer above the declared tier; they never replace it. Together the ten walks exercise every core
+Conveniences layer above the declared tier; they never replace it. Together the walks exercise every core
 concept the media-first storage model
 ([design/media-first-storage-model.md](design/media-first-storage-model.md))
-pledges: the pools and their lifecycles, the declared creation grammar
+pledges: the session's devices and media and their lifecycles, the
+declared creation grammar
 and its source shapes, the device types, the partition pool and
-the vantage doors, the edge, writing and the commit point, authorship,
-and the machine tier's own half.
+the vantage doors, the edge, writing and the commit point, and
+authorship.
 
 ## U27 — I walk a qcow2 hard disk to its DOS root directory
 

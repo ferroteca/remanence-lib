@@ -20,10 +20,10 @@ on it. Devices and the attachment edge exist for the
 problems only they can own: multi-region
 volumes (P17), and the hardware-emulation seam with its multi-drive
 hook (P15). Their surface structure is fixed now so their plumbing
-lands later without user-facing model changes. **The named-machine tier
-above the devices is pledged and unbuilt**: it earns itself where
-artifacts nest, and until that demand exists the session is the device
-scope.
+lands later without user-facing model changes. **A named-machine tier
+above the devices is proposed rather than pledged**: it earns itself
+where artifacts nest, and until that journey exists the session is the
+device scope.
 
 **One sentence per tier:** a session owns devices and media; a device
 links at most one medium; a medium
@@ -52,8 +52,8 @@ Session::new()                                 OWNED root
    ├── DEVICE SET — configuration
    │     .add_device(hdd0)? · .device(hdd0) → Option · .devices()
    │     .release_device(hdd0)?       ejects first — sever, never destroy
-   │   ★ .add_machine("pc")?          the named-machine tier: PLEDGED, unbuilt
-   │                                  — it earns itself where artifacts nest
+   │   ★ a named-machine tier above this one: PROPOSED, unbuilt — it
+   │     earns itself where artifacts nest, and waits on the recursion
    ▼
 StorageDevice hdd0                             config only: slot · device type
    │     .insert(media_id)? / .eject()?       the ONE edge crossing config→state:
@@ -412,7 +412,8 @@ the features that make each real.
 ## Open questions carried
 
 - "Machine" is the wrong name for the named-device-set tier, and the
-  tier is unbuilt; both wait for the nesting demand that shapes them.
+  tier is proposed rather than pledged; both wait for the nesting
+  journey that shapes them.
 - The spelling of `Location` addressing. *The declared partition
   reading is settled: `check_type` takes an enumerated `PartitionType` and
   answers `Result<()>`, the check being the whole of it (D32).*
