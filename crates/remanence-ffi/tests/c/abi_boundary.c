@@ -212,15 +212,15 @@ static void group_nulls(void)
     remanence_string_free(NULL);
 }
 
-/* --------------------------------------------- the machine's device set
+/* ------------------------------------------------- the session's devices
  *
- * A machine is configuration: devices in the order they were attached,
- * each answering to an identity the library assigns. What this checks is
- * that the set behaves from C as it does from Rust -- a slot is filled
- * once, an attachment resolves to the device in it, releasing frees the
- * slot, and every accessor answers on null rather than dereferencing it.
+ * A device is configuration: a slot in the session, answering to an
+ * identity the library assigns. What this checks is that the set behaves
+ * from C as it does from Rust -- a slot is filled once, an attachment
+ * resolves to the device in it, releasing frees the slot, and every
+ * accessor answers on null rather than dereferencing it.
  */
-static void group_machine(void)
+static void group_devices(void)
 {
     RemanenceErrorCategory category = REMANENCE_ERROR_CATEGORY_IO;
     char *message = NULL;
@@ -229,40 +229,32 @@ static void group_machine(void)
     RemanenceSession *session = remanence_session_new();
     CHECK(session != NULL, "a session could not be created");
 
-    RemanenceMachine *machine =
-        remanence_session_add_machine(session, "pc", &category, &message, &rule);
-    CHECK(machine != NULL, "a machine could not be added");
-
-    const char *identity = remanence_machine_identity(machine);
-    CHECK(identity != NULL && strcmp(identity, "pc") == 0,
-          "the machine did not carry the identity it was given");
-
-    /* A fresh machine holds nothing until a device is added to it. */
-    CHECK(remanence_machine_device_count(machine) == 0,
-          "a fresh machine already held a device");
+    /* A fresh session holds nothing until a device is added to it. */
+    CHECK(remanence_session_device_count(session) == 0,
+          "a fresh session already held a device");
 
     RemanenceDevice *first =
-        remanence_machine_add_device(machine, "mbr-sector-hd", &category, &message, &rule);
+        remanence_session_add_device(session, "mbr-sector-hd", &category, &message, &rule);
     CHECK(first != NULL, "a hard drive could not be added");
-    CHECK(remanence_machine_device_count(machine) == 1,
+    CHECK(remanence_session_device_count(session) == 1,
           "the added device was not counted");
 
     /* The attachment identity is the bay's prefix plus its index, and it
      * is the library's to assign rather than the caller's to choose. */
     char *attachment = NULL;
-    CHECK(remanence_machine_device_attachment(machine, 0, &attachment),
+    CHECK(remanence_session_device_attachment(session, 0, &attachment),
           "the first device answered no attachment identity");
     if (attachment != NULL) {
         CHECK(strcmp(attachment, "hdd0") == 0,
               "the first hard drive was not attached at hdd0");
-        CHECK(remanence_machine_device(machine, attachment) != NULL,
+        CHECK(remanence_session_device(session, attachment) != NULL,
               "the attachment did not resolve to the device in it");
         remanence_string_free(attachment);
         attachment = NULL;
     }
 
     /* One bay holds one drive: the taken slot is refused by name. */
-    CHECK(remanence_machine_add_device_at(machine, "gpt-hd", 0, &category, &message,
+    CHECK(remanence_session_add_device_at(session, "gpt-hd", 0, &category, &message,
                                           &rule) == NULL,
           "a taken slot accepted a second drive");
     CHECK(message != NULL, "the refusal carried no message");
@@ -276,11 +268,11 @@ static void group_machine(void)
     rule = NULL;
 
     /* Releasing frees the slot; releasing an empty one is refused. */
-    CHECK(remanence_machine_release_device(machine, "hdd0", &category, &message, &rule),
+    CHECK(remanence_session_release_device(session, "hdd0", &category, &message, &rule),
           "the device could not be released");
-    CHECK(remanence_machine_device_count(machine) == 0,
+    CHECK(remanence_session_device_count(session) == 0,
           "the released device was still counted");
-    CHECK(!remanence_machine_release_device(machine, "hdd0", &category, &message, &rule),
+    CHECK(!remanence_session_release_device(session, "hdd0", &category, &message, &rule),
           "releasing an empty slot was accepted");
     remanence_string_free(message);
     message = NULL;
@@ -288,14 +280,12 @@ static void group_machine(void)
     rule = NULL;
 
     /* Every accessor answers on null rather than dereferencing it. */
-    CHECK(remanence_machine_identity(NULL) == NULL,
-          "a null machine answered an identity");
-    CHECK(remanence_machine_device_count(NULL) == 0,
-          "a null machine answered a device count");
-    CHECK(remanence_machine_device(NULL, "hdd0") == NULL,
-          "a null machine resolved an attachment");
-    CHECK(!remanence_machine_device_attachment(NULL, 0, &attachment),
-          "a null machine answered an attachment identity");
+    CHECK(remanence_session_device_count(NULL) == 0,
+          "a null session answered a device count");
+    CHECK(remanence_session_device(NULL, "hdd0") == NULL,
+          "a null session resolved an attachment");
+    CHECK(!remanence_session_device_attachment(NULL, 0, &attachment),
+          "a null session answered an attachment identity");
 
     remanence_session_free(session);
 }
@@ -316,8 +306,8 @@ int main(int argc, char **argv)
         group_refusal();
     } else if (strcmp(group, "nulls") == 0) {
         group_nulls();
-    } else if (strcmp(group, "machine") == 0) {
-        group_machine();
+    } else if (strcmp(group, "devices") == 0) {
+        group_devices();
     } else if (strcmp(group, "discovery") == 0) {
         if (argc < 3) {
             printf("the discovery group needs an artifact path\n");

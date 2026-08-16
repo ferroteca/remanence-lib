@@ -88,9 +88,9 @@ for entry in filesystem.entries():
 data = filesystem.get_file("HDOS.SYS").bytes()
 ```
 
-### Drives and machines
+### Drives
 
-You can model the machine a disk belonged to, with drives as specific as
+You can model the drive a disk belonged in, as specific as
 the real ones — a Commodore 1541, a Heathkit H-17, a hard disk. Putting a
 disk in a drive and taking it out again changes nothing about the disk:
 

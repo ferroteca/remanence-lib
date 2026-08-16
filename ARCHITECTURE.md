@@ -14,7 +14,7 @@ One core, two bindings:
   The **identification model** and the adapters beneath it: executable
   image formats, archives, partition layouts and
   filesystems, each enrolled in its own catalog. The **storage model**:
-  the session's media pool and the machines beside it, the claim in its
+  the session's media pool and the devices beside it, the claim in its
   two classes — the library's own deny-write open, and the caller's
   handle honoured as it was afforded — the native qcow2 and VDI drivers with
   their backing and differencing chains, MBR partition discovery,
@@ -54,13 +54,13 @@ application surface?" by lookup, not judgement. Numbers are permanent and
 never reused.
 
 - **S1 — The Rust crate API.** The public surface of `crates/remanence`:
-  `Session` and its two pools, `Medium`, `MediaId` and `Format` — the
+  `Session`, its devices and its media pool, `Medium`, `MediaId` and `Format` — the
   medium being the pool-owned content handle, created by a declared
   reading over the caller's own opened file and carrying every content
-  verb — `Machine`, `MachineView`, `StorageDevice`, `DeviceView`,
+  verb — `StorageDevice`, `DeviceView`,
   `AttachmentId`, `DeviceSlot`, `DeviceType`, `FloppyDrive` and
-  `HardDrive` — the device being the slot, typed by the device that
-  fills it, with `insert`/`eject` the one edge between configuration and
+  `HardDrive` — the device being the slot the session holds, typed by
+  the device that fills it, with `insert`/`eject` the one edge between configuration and
   state and device-type equality the check it makes —
   `Claim` beside the access mode,
   `Partition`, `PartitionView`, `PartitionScheme` and `PartitionType` —

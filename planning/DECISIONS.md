@@ -58,6 +58,69 @@ removes it is the record either way.
 
 ## Decisions
 
+### D58 — The machine tier is withdrawn, the session being the device scope until nesting needs otherwise
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-16. **Supports** S1, S2, S3; in-force P19, U3, U4, U33; pledged
+P32. Follows **D57**.
+
+**D57 took the tier's only consumer.** The pledged P32 amendment
+inserted a machine between the session and its devices, and its
+strongest justification was written into its own text: a machine's
+namespace composes over its own devices and no others, *so a composer
+never letters a slot that belongs elsewhere*. With guest volume mapping
+withdrawn, nothing in the library read a device set as a set or read
+attachment order at all. What remained was a scope whose every
+mechanism — attachment identities scoped per machine, the link address
+carrying a machine name, the teardown cascade — existed only because
+there could be more than one machine, and nothing needed two.
+
+**Structure ahead of demand is not the same as structure ahead of
+plumbing.** Pre-building a seam is right when the demand is known and
+only the implementation is missing; it is wrong when the demand is what
+would *shape* the seam. The tier's surviving justification is artifact
+nesting — a host's archive in one machine and the disk inside it in
+another — and that journey is unbuilt: nesting is still special-cased to
+ZIP and 7z by file extension and resolves one level deep. A tier built
+against a journey nobody has walked is a guess about what that journey
+will need, and it was being carried on every surface, in three
+languages, at a cost paid per call.
+
+**The pledge stands; the code stops anticipating it.** P32's own base
+text already says there is no separate machine object and that the
+session is the scope, so the code now honors the principle as written
+rather than the amendment that is still owed. The amendment keeps its
+place in `pledged/` and carries a banner saying its machine tier is
+unbuilt — which is what `pledged/` means, and the honest reading of a
+tier that was delivered early and withdrawn.
+
+**What a caller loses is one word.** Every device verb kept its
+spelling: `add_device`, `device`, `devices`, `release_device` were
+already on `Session`, delegating to the anonymous machine, so a
+single-machine caller's code is unchanged. What goes is `Machine`,
+`MachineView`, `add_machine`, `machine`, `machines`, `release_machine`
+and their C and Python mirrors — the surface only a caller who wanted
+two device sets ever touched, and no journey in the use cases wanted
+one.
+
+**Weighed and declined:** leaving the tier standing as pre-built
+structure (the cheapest option, and it leaves the documents claiming a
+load the code does not carry — S1 naming types no journey reaches, and
+tests asserting a separation nothing consumes); keeping `Machine` as a
+deprecated alias for `Session` (pre-1.0 promises no compatibility, and
+an alias is a second name for one thing, which is what the vocabulary
+rules refuse); and striking the pledged amendment outright rather than
+banner-flagging it (the nesting argument is still good and still
+unanswered — what was wrong was building against it early, not making
+it).
+
+**Reopens when:** an artifact-nesting journey needs two device sets in
+one claim scope — which is the amendment's own argument, and the point
+at which the tier's shape can be read off a real journey rather than
+guessed. The names are spent either way: `Machine` and `MachineView`
+were issued and withdrawn, and the tier that returns should be named
+for what that journey shows it to be.
+
 ### D57 — Guest volume mapping and drive lettering leave the claim, and the seam stops at one filesystem's own tree
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -1952,8 +2015,10 @@ a mutable borrow of the same medium. So the pool answers with
 **`Partition`**, a borrow-free record carrying every fact the scheme
 declared, and `partition(n)` answers with **`PartitionView`**, the borrow
 that holds a partition and its medium at once. That is the split
-`Machine`/`MachineView` and `StorageDevice`/`DeviceView` already are, one
-tier down, rather than a new shape.
+`StorageDevice`/`DeviceView` already is, one
+tier down, rather than a new shape. *[The entry also cited
+`Machine`/`MachineView` as the same pair; D58 withdrew those, and the
+device pair carries the point unchanged.]*
 
 **Opening a door spends the view, which is the identity rule carried by
 the type.** F56 says both doors hand out *the one* `StorageSpace` the
@@ -2628,16 +2693,12 @@ entry may back a drive elsewhere in the same session without a lifetime
 question. P32's "nothing groups sessions into a machine" is
 untouched: the containment runs the other way.
 
-**A session has one anonymous machine, and a machine carries an
-identity.** Devices may be added to a session directly, landing in that
-machine — one machine, not one conjured per call, so the unanswerable
-"which device?" that killed the media-first one-step does not arise. The
-anonymous machine is the one whose identity is **null**: the same kind of
-thing as every other machine rather than one distinguished by a
-behavior. It holds no
-privileged position — it is not "machine zero", no attachment order it
-carries is more meaningful than any other's, and moving a device from it
-into a named machine is a reconfiguration rather than a rename.
+*[Overtaken by D58, which withdrew the machine tier: the session is
+the device scope again, so there is no anonymous machine to be the same
+kind of thing as a named one. What survives is the ruling the paragraph
+was written to protect — devices are added to a scope that already
+exists, never to one conjured per call, so the unanswerable "which
+device?" that killed the media-first one-step does not arise.]*
 
 **Every verb a named machine answers, the anonymous one answers too.**
 Restricting it was weighed and rejected: it buys

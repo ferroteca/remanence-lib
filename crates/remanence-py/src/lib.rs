@@ -3,8 +3,8 @@
 
 //! Python bindings for the Remanence disk image analysis library.
 //!
-//! The module mirrors the Rust crate's public surface: a `Session` owns
-//! two pools — `Machine`s, which are configuration, and media, which are
+//! The module mirrors the Rust crate's public surface: a `Session` holds
+//! devices, which are configuration, and media, which are
 //! state — and the **medium is the content handle**.
 //! `Session.load_media(source, format)` takes the caller's own open
 //! file — or a list of them, or a `FileSource` taken from an archive
@@ -1237,53 +1237,9 @@ impl Session {
         }
     }
 
-    /// Adds a machine carrying `identity` and returns it.
-    ///
-    /// An identity already in use is refused by name rather than
-    /// resolving to the machine holding it, and the empty identity is
-    /// refused too — the machine with no identity is this session's
-    /// anonymous one, and there is exactly one of it.
-    fn add_machine(&self, identity: &str) -> PyResult<Machine> {
-        self.lock().add_machine(identity).map_err(to_py_err)?;
-        Ok(Machine {
-            session: Arc::clone(&self.inner),
-            identity: Some(identity.to_owned()),
-        })
-    }
-
-    /// Every machine identity in the session, in the order the machines
-    /// were added; `None` is the anonymous machine's.
-    #[getter]
-    fn machines(&self) -> Vec<Option<String>> {
-        self.lock()
-            .machines()
-            .iter()
-            .map(|machine| machine.identity().map(str::to_owned))
-            .collect()
-    }
-
-    /// The machine carrying `identity`, or the anonymous machine when
-    /// `identity` is `None` — the anonymous machine being exactly the
-    /// one whose identity is null.
-    ///
-    /// **`None` where the session holds no machine of that identity** —
-    /// absence is an answer, not a manufactured error, and asking never
-    /// creates one. The anonymous machine always answers, a session
-    /// having exactly one of it.
-    #[pyo3(signature = (identity = None))]
-    fn machine(&self, identity: Option<&str>) -> Option<Machine> {
-        if let Some(identity) = identity {
-            self.lock().machine(identity)?;
-        }
-        Some(Machine {
-            session: Arc::clone(&self.inner),
-            identity: identity.map(str::to_owned),
-        })
-    }
-
     /// Adds a device of `device` (a stable spelling from
     /// `device_slots()` — a device type such as `"mbr-block-hd"`, or
-    /// `"archive"`) to the session's anonymous machine, taking the
+    /// `"archive"`) to the session, taking the
     /// lowest free slot of that bay, and returns it — empty, until
     /// `StorageDevice.insert` puts a medium in it.
     ///
@@ -1302,7 +1258,6 @@ impl Session {
         drop(session);
         Ok(StorageDevice {
             session: Arc::clone(&self.inner),
-            machine: None,
             attachment,
         })
     }
@@ -1521,15 +1476,9 @@ impl Session {
             .map_err(to_py_err)
     }
 
-    /// Releases a machine and everything it configures, **taking no
-    /// state with it**: every device is ejected first — severing, so each
-    /// medium stays pooled — then the devices go, then the machine.
-    fn release_machine(&self, identity: &str) -> PyResult<()> {
-        self.lock().release_machine(identity).map_err(to_py_err)
-    }
-
-    /// Adds a device for the artifact at `path` to the session's
-    /// anonymous machine, as `Machine.add_device_for` does there.
+    /// Adds a device for the artifact at `path` — one of the device type
+    /// the artifact's format records — loads the medium into it, and
+    /// returns it. A format recording several types is refused by name.
     #[pyo3(signature = (path, *, writable, cache_bytes = None))]
     fn add_device_for(
         &self,
@@ -1547,7 +1496,6 @@ impl Session {
         drop(session);
         Ok(StorageDevice {
             session: Arc::clone(&self.inner),
-            machine: None,
             attachment,
         })
     }
@@ -1585,7 +1533,6 @@ impl Session {
         }
         Ok(Some(StorageDevice {
             session: Arc::clone(&self.inner),
-            machine: None,
             attachment,
         }))
     }
@@ -1613,172 +1560,15 @@ impl Session {
     }
 }
 
-/// One machine in a session: a set of family-typed storage devices,
-/// their attachment identities, and the order they were attached in.
-///
-/// The device set is the machine's own. Two machines in one session may
-/// each hold an `"hdd0"`, and neither can reach the other's.
-#[pyclass(module = "remanence")]
-pub struct Machine {
-    session: Arc<Mutex<remanence::Session>>,
-    /// `None` for the session's anonymous machine.
-    identity: Option<String>,
-}
-
-impl Machine {
-    /// The machine this handle names, or a refusal where the session no
-    /// longer holds it.
-    ///
-    /// The lookup answers with absence; this is the demand written over
-    /// it, because a handle whose machine was released is a stale handle
-    /// rather than a question about an identity.
-    fn get<'a>(
-        &self,
-        session: &'a mut MutexGuard<'_, remanence::Session>,
-    ) -> PyResult<remanence::MachineView<'a>> {
-        match &self.identity {
-            Some(identity) => session.machine_mut(identity).ok_or_else(|| {
-                categorized_py_err(
-                    remanence::ErrorCategory::NotFound,
-                    format!("this session holds no machine identified '{identity}'"),
-                )
-            }),
-            None => Ok(session.anonymous_mut()),
-        }
-    }
-
-    fn lock(&self) -> MutexGuard<'_, remanence::Session> {
-        self.session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-#[pymethods]
-impl Machine {
-    /// This machine's identity, or `None` where it is the session's
-    /// anonymous machine.
-    #[getter]
-    fn identity(&self) -> Option<String> {
-        self.identity.clone()
-    }
-
-    /// Adds a device of `device` to this machine, taking the lowest free
-    /// slot of its bay — or `slot`, where the caller chooses one — and
-    /// returns it, empty.
-    #[pyo3(signature = (device, *, slot = None))]
-    fn add_device(&self, device: &str, slot: Option<u32>) -> PyResult<StorageDevice> {
-        let device = remanence::DeviceSlot::from_id(device).map_err(to_py_err)?;
-        let mut session = self.lock();
-        let mut machine = self.get(&mut session)?;
-        let added = match slot {
-            Some(slot) => machine.add_device_at(device, slot),
-            None => machine.add_device(device),
-        };
-        let attachment = added.map_err(to_py_err)?.attachment();
-        drop(session);
-        Ok(StorageDevice {
-            session: Arc::clone(&self.session),
-            machine: self.identity.clone(),
-            attachment,
-        })
-    }
-
-    /// Adds a device of the **device type the artifact's format
-    /// records**, loads the medium at `path` into it, and returns that
-    /// device.
-    ///
-    /// It is the one convenience over discovery, and it composes the two
-    /// acts without changing the access path: one claim is held from the
-    /// question to the load, and the device it answers with is an
-    /// ordinary device in this machine's own set — a fresh one, never a
-    /// slot already there.
-    ///
-    /// **A format that records several device types raises by name**,
-    /// toward the explicit acts (`Session.load_media` then `add_device`
-    /// and `StorageDevice.insert`), naming the types a declaration may
-    /// state. A refused call leaves no device behind.
-    #[pyo3(signature = (path, *, writable, cache_bytes = None))]
-    fn add_device_for(
-        &self,
-        path: PathBuf,
-        writable: bool,
-        cache_bytes: Option<u64>,
-    ) -> PyResult<StorageDevice> {
-        let intent = access_intent(writable);
-        let mut session = self.lock();
-        let mut machine = self.get(&mut session)?;
-        let added = match cache_bytes {
-            Some(cache_bytes) => machine.add_device_for_with_cache(path, intent, cache_bytes),
-            None => machine.add_device_for(path, intent),
-        };
-        let attachment = added.map_err(to_py_err)?.attachment();
-        drop(session);
-        Ok(StorageDevice {
-            session: Arc::clone(&self.session),
-            machine: self.identity.clone(),
-            attachment,
-        })
-    }
-
-    /// Releases the device at `attachment` from this machine, **ejecting
-    /// first**: the link is severed and the medium stays in the session's
-    /// pool, claim and buffered changes intact. The slot is freed.
-    ///
-    /// Destroying a medium's state is `Session.release_media`, and it is
-    /// the one verb that does. An `attachment` this machine holds no
-    /// device at raises — a release names what resolves to nothing,
-    /// unlike `device`, which answers `None`.
-    fn release_device(&self, attachment: &str) -> PyResult<()> {
-        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
-        let mut session = self.lock();
-        self.get(&mut session)?
-            .release_device(attachment)
-            .map_err(to_py_err)
-    }
-
-    /// This machine's attachment identities, in slot-fill order — the
-    /// machine's own attachment order.
-    #[getter]
-    fn devices(&self) -> PyResult<Vec<String>> {
-        let mut session = self.lock();
-        Ok(self
-            .get(&mut session)?
-            .attachments()
-            .iter()
-            .map(ToString::to_string)
-            .collect())
-    }
-
-    /// The device at `attachment` in this machine, or **`None` where
-    /// this machine has no device there** — another machine's `"hdd0"`
-    /// is not this one's. The session owns it; the returned object stays
-    /// valid until that device is released.
-    fn device(&self, attachment: &str) -> PyResult<Option<StorageDevice>> {
-        let attachment = remanence::AttachmentId::parse(attachment).map_err(to_py_err)?;
-        let mut session = self.lock();
-        if self.get(&mut session)?.device(attachment).is_none() {
-            return Ok(None);
-        }
-        Ok(Some(StorageDevice {
-            session: Arc::clone(&self.session),
-            machine: self.identity.clone(),
-            attachment,
-        }))
-    }
-}
-
 /// One storage device — the durable slot and its family, and the link to
 /// whichever pooled medium currently occupies it.
 ///
 /// **The device is the slot, not the disk**: every content verb lives on
 /// `Medium`, and this carries `insert`, `eject` and `medium` — the one
-/// edge between a machine's configuration and the session's state.
+/// edge between configuration and state.
 #[pyclass(module = "remanence")]
 pub struct StorageDevice {
     session: Arc<Mutex<remanence::Session>>,
-    /// `None` for the session's anonymous machine.
-    machine: Option<String>,
     attachment: remanence::AttachmentId,
 }
 
@@ -1790,7 +1580,6 @@ pub struct StorageDevice {
 /// rather than reaching freed state.
 struct DeviceGuard<'a> {
     session: MutexGuard<'a, remanence::Session>,
-    machine: Option<String>,
     attachment: remanence::AttachmentId,
 }
 
@@ -1798,33 +1587,24 @@ impl std::ops::Deref for DeviceGuard<'_> {
     type Target = remanence::StorageDevice;
 
     fn deref(&self) -> &Self::Target {
-        let machine = match &self.machine {
-            Some(identity) => self.session.machine(identity),
-            None => Some(self.session.anonymous()),
-        };
-        machine
-            .and_then(|machine| machine.device(self.attachment))
+        self.session
+            .device(self.attachment)
             .expect("the device was present when this guard was taken")
     }
 }
 
 /// The same borrow with the session's media pool beside it — what the
-/// edge verbs need, configuration being the machine's and state the
-/// session's.
+/// edge verbs need, since linking is the one act crossing configuration
+/// into state.
 struct DeviceViewGuard<'a> {
     session: MutexGuard<'a, remanence::Session>,
-    machine: Option<String>,
     attachment: remanence::AttachmentId,
 }
 
 impl DeviceViewGuard<'_> {
     fn view(&mut self) -> remanence::DeviceView<'_> {
-        let machine = match &self.machine {
-            Some(identity) => self.session.machine_mut(identity),
-            None => Some(self.session.anonymous_mut()),
-        };
-        machine
-            .and_then(|machine| machine.into_device(self.attachment))
+        self.session
+            .device_mut(self.attachment)
             .expect("the device was present when this guard was taken")
     }
 }
@@ -1835,13 +1615,7 @@ impl StorageDevice {
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let present = match &self.machine {
-            Some(identity) => session
-                .machine(identity)
-                .is_some_and(|machine| machine.device(self.attachment).is_some()),
-            None => session.device(self.attachment).is_some(),
-        };
-        if !present {
+        if session.device(self.attachment).is_none() {
             return Err(categorized_py_err(
                 remanence::ErrorCategory::NotFound,
                 "this device was released",
@@ -1853,7 +1627,6 @@ impl StorageDevice {
     fn get(&mut self) -> PyResult<DeviceGuard<'_>> {
         Ok(DeviceGuard {
             session: self.present()?,
-            machine: self.machine.clone(),
             attachment: self.attachment,
         })
     }
@@ -1861,7 +1634,6 @@ impl StorageDevice {
     fn view(&mut self) -> PyResult<DeviceViewGuard<'_>> {
         Ok(DeviceViewGuard {
             session: self.present()?,
-            machine: self.machine.clone(),
             attachment: self.attachment,
         })
     }
@@ -4941,7 +4713,6 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FilesystemLayout>()?;
     m.add_class::<Discovery>()?;
     m.add_class::<Session>()?;
-    m.add_class::<Machine>()?;
     m.add_class::<StorageDevice>()?;
     m.add_class::<Medium>()?;
     m.add_class::<Partition>()?;

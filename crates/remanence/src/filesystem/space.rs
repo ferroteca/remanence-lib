@@ -561,9 +561,8 @@ impl File<'_> {
     ///
     /// **Recursion is the same journey again.** An entry recognized as
     /// an image is not read through the namespace that names it: it is
-    /// loaded into a device of its own — in a machine of its own where a
-    /// machine is being reconstructed, because the host's archive was
-    /// never part of the machine whose disk it holds. The claim is the
+    /// loaded into a device of its own, the host's archive and the disk
+    /// it holds being two media rather than one. The claim is the
     /// one the archive already holds, so nothing is re-opened and no
     /// window exists between naming the entry and loading it.
     ///

@@ -16,14 +16,17 @@ deliver.
 
 **What it is designed around.** The medium is the content handle — the
 node the user holds — and everything the recording can answer, answers
-on it. Machines, devices, and the attachment edge exist for the
+on it. Devices and the attachment edge exist for the
 problems only they can own: multi-region
 volumes (P17), and the hardware-emulation seam with its multi-drive
 hook (P15). Their surface structure is fixed now so their plumbing
-lands later without user-facing model changes.
+lands later without user-facing model changes. **The named-machine tier
+above the devices is pledged and unbuilt**: it earns itself where
+artifacts nest, and until that demand exists the session is the device
+scope.
 
-**One sentence per tier:** a session owns two pools (machines, media);
-a machine owns devices; a device links at most one medium; a medium
+**One sentence per tier:** a session owns devices and media; a device
+links at most one medium; a medium
 owns its evidence (partitions, spaces, files) and answers for its
 recording.
 
@@ -32,12 +35,7 @@ recording.
 ```
 Session::new()                                 OWNED root
    │
-   ├── MACHINE POOL — configuration
-   │     .add_machine("pc")? · .machine("pc") → Option · .machines()
-   │     .release_machine("pc")?      cascade: eject each device (sever; media
-   │                                  stay pooled) → release devices → machine
-   │
-   ├── MEDIA POOL — state, independent of every machine
+   ├── MEDIA POOL — state, independent of every device
    │     .load_media(source, format)?  → &mut Medium    declared reading —
    │                                     the source: the caller's own opened
    │                                     std::fs::File(s), or File(s) from
@@ -50,12 +48,12 @@ Session::new()                                 OWNED root
    │     .release_media(id)?          severs its own link if inserted, then ends
    │                                  the claim and discards uncommitted state —
    │                                  THE one state-destroying verb
-   ▼
-Machine "pc"                                   identity (a real name, never null)
    │
-   ├── DEVICE POOL — configuration
+   ├── DEVICE SET — configuration
    │     .add_device(hdd0)? · .device(hdd0) → Option · .devices()
    │     .release_device(hdd0)?       ejects first — sever, never destroy
+   │   ★ .add_machine("pc")?          the named-machine tier: PLEDGED, unbuilt
+   │                                  — it earns itself where artifacts nest
    ▼
 StorageDevice hdd0                             config only: slot · device type
    │     .insert(media_id)? / .eject()?       the ONE edge crossing config→state:
@@ -101,19 +99,19 @@ Medium                                         pool-owned, holdable — ALL cont
    error manufactured. Creation, linking, and everything touching
    evidence → `Result`: the world can refuse, and refusals are named
    (P10). `stat` keeps `Result<Option<…>>` — failure to read and
-   honest absence are different answers (U3). *Delivered: the machine,
-   device and media pools answer with `Option`, and so do the partition
+   honest absence are different answers (U3). *Delivered: the device
+   set and the media pool answer with `Option`, and so do the partition
    pool's lookup and the two vantage doors.*
 3. **Lifecycle.** Create / lookup / release at every pool. No
    get-or-create, no auto-creation, no `require_*` forms — a caller
    who wants a demand writes it. Releasing configuration cascades
    through configuration and severs links; state is destroyed only by
    `release_media` and session drop. Destruction order is construction
-   order reversed, every step spoken. *Delivered for the three pools
-   that exist: the `require_*` forms are gone, and `release_machine` /
-   `release_device` / `release_media` are the removal vocabulary.*
+   order reversed, every step spoken. *Delivered for the two halves
+   that exist: the `require_*` forms are gone, and `release_device` /
+   `release_media` are the removal vocabulary.*
 4. **Fact classes.** *Evidence is discovered onto media; declarations
-   are configured onto machines; authorship creates media whole.*
+   are configured onto devices; authorship creates media whole.*
    Nothing crosses. A medium's geometry is discovered (format
    declaration, BPB, MBR end-tuples — with provenance, `Undetermined`
    on conflict) or authored at creation — never declared onto an
@@ -185,7 +183,7 @@ Medium                                         pool-owned, holdable — ALL cont
    `FloppyDrive::HeathH17` and `FloppyDrive::HeathH37`, the Heathkit
    product classes (hard- and soft-sectored); `FloppyDrive::Sector`,
    the generic schemeless sector floppy, geometry per-media. The
-   hard-drive class — the machine vantages, the partition scheme part
+   hard-drive class — the addressing vantages, the partition scheme part
    of the spec: `HardDrive::MbrSector`, `HardDrive::MbrBlock`,
    `HardDrive::Gpt` (GPT implying block addressing by its own
    definition) — so every partition pool populates kind-determined,
@@ -278,7 +276,7 @@ Medium                                         pool-owned, holdable — ALL cont
   DOS device seam), never a common method set on `StorageDevice`.
   Mechanism state (P33) will live behind these — never on the medium.
   The P32 addressing-nature amendment is exercised here, when a
-  machine view exists to need it.
+  presentation exists to need it.
 - **P17** — `partition.volume()` is the arity-1 composition act;
   multi-region volumes arrive as an additive compose-from-several at
   the medium. Nothing moves.
@@ -295,7 +293,7 @@ the zip to the CBM DOS directory, the LBA hard disk to a FAT root
 listing, COMMAND.COM off a CHS disk, the boot block through the volume
 door); the rest close the concept coverage (the write and the commit
 point, authored media, pool
-independence and machine teardown, the single-`File` source). *U25,
+independence and drive teardown, the single-`File` source). *U25,
 U26, U32 and U33 are in force at the root list.* The
 simplified workflows where discovery does the specifying work belong to
 the question tier, proposed; when they arrive they layer above these
@@ -335,8 +333,7 @@ to be argued as one thing.
 Conveniences, restorable without moving the model. The test:
 *admissible where it declares, refused where it would guess.*
 
-- The anonymous machine; get-or-create; the `require_*` forms; the
-  one-act attach.
+- Get-or-create; the `require_*` forms; the one-act attach.
 - Policy deviation surfaces (nonstandard channel handling, declared
   geometry overrides); plan preview (the loss account before
   creation); capture-inspection reporting (runs, observations, marker
@@ -414,8 +411,8 @@ the features that make each real.
 
 ## Open questions carried
 
-- "Machine" is the wrong name for the machine node; kept until a
-  better one arrives.
+- "Machine" is the wrong name for the named-device-set tier, and the
+  tier is unbuilt; both wait for the nesting demand that shapes them.
 - The spelling of `Location` addressing. *The declared partition
   reading is settled: `check_type` takes an enumerated `PartitionType` and
   answers `Result<()>`, the check being the whole of it (D32).*

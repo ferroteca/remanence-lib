@@ -58,29 +58,31 @@ ABI, or Python module.
   **`model/`** — the session model: the pools, the node a caller holds,
   and the three fact classes that fill them.
 
-  `machine.rs` is the session and its two pools (P32) — the session
-  being the claim and cache scope, owning the **media pool** (state) and
-  the machines (configuration) independently of each other, a machine
-  being one device set with its own attachment identities and attachment
-  order, and the anonymous machine being the one whose identity is null;
-  **every pool runs the same three verbs — create, look up, release** —
-  where a lookup (`machine`, `device`, `medium`) answers with an
+  `pools.rs` is the session, its device set and its media pool (P32) —
+  the session being the claim and cache scope, owning the **devices**
+  (configuration) and the **media** (state) independently of each other,
+  and holding the attachment identities and the attachment order
+  directly. **There is no machine object**: the tier grouping devices
+  into named machines is pledged rather than built, earning itself where
+  artifacts nest, and building it now would be structure ahead of the
+  demand that has to shape it. **Both halves run the same three verbs —
+  create, look up, release** — where a lookup (`device`, `medium`)
+  answers with an
   `Option` and nothing is manufactured to report absence, there is no
   `require_*` form at all (a caller who wants a demand writes it, where
   they know what the absence means), creation still refuses by name
-  (duplicate identity, taken slot, empty identity), and the removals are
-  all spelled `release_*`: `release_machine` cascades through the
-  configuration below it, `release_device` ejects first, and
+  (a taken slot), and the removals are
+  both spelled `release_*`: `release_device` ejects first, and
   `release_media` severs its own link then ends the claim. `load_media`
   and `load_discovery`/`load_discovery_as` — the plain door and the
   declared one, the second taking the device type a format recording
   several leaves to the caller — fill the media pool, as does
   `new_media`, the authorship door where the caller has no artifact at
-  all, and `MachineView`/`DeviceView` are the borrows that hold a node
-  and the pool at once, since linking is the one act that crosses.
+  all, and `DeviceView` is the borrow that holds a device and the pool
+  at once, since linking is the one act that crosses.
 
   `storage_device.rs` is the **slot**: its attachment identity (`hdd0`),
-  the acts that fill it (`add_device` on the machine view, then
+  the acts that fill it (`add_device` on the session, then
   `insert`/`eject`, with an empty device first-class configuration, a
   medium in the wrong drive refused naming both sides, and **eject
   severing only** so the claim and buffered writes survive pooled), and

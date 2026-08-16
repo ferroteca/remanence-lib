@@ -69,19 +69,16 @@ then the file work on the space that opens.**
 
 ```rust
 let mut session = Session::new();
-let mut guest   = session.add_machine("guest-042")?;
-let hdd0        = guest.add_device(HardDrive::MbrSector)?.attachment();
+let hdd0        = session.add_device(HardDrive::MbrSector)?.attachment();
 
 // My open affords the write, and nothing else does: the library checks
 // this handle for what it allows and the medium's mode echoes it.
 let media = session.load_media(
     File::options().read(true).write(true).open("system.qcow2")?,
     Format::Qcow2 { device: HardDrive::MbrSector })?.id();
-session.machine_mut("guest-042").expect("just added")
-    .device_mut(hdd0).expect("just added").insert(media)?;
+session.device_mut(hdd0).expect("just added").insert(media)?;
 
-let mut drive = session.machine_mut("guest-042").expect("still here")
-    .into_device(hdd0).expect("still here");
+let mut drive = session.device_mut(hdd0).expect("still here");
 let disk = drive.medium_mut().expect("the disk I just inserted");
 assert_eq!(disk.mode(), AccessMode::ReadWrite);
 
@@ -159,43 +156,41 @@ not ask for it here. For each disk — qcow2, VDI or
 raw — one inspection answers, keeping each fact at the seam that owns
 it rather than flattening them into one snapshot.
 
-**The steps have the machine's own shape**: a machine in my session, a
-drive in it for each image, the medium loaded into that drive, and one
+**The steps have the machine's own shape**: a session standing for the
+stopped machine, a drive in it for each image, the medium loaded into
+that drive, and one
 inspection per drive — because which drive a fact came from is the fact
 my drive reporting is *about*.
 
 ```rust
-let mut session = Session::new();
-let mut guest   = session.add_machine("guest-042")?;  // the stopped machine
+let mut session = Session::new();       // the scope the stopped machine's
+                                        // disks are reconstructed in
 
-// One drive per image, in the order this machine attaches them. The
+// One drive per image, in the order I attach them. The
 // convenience composes three acts over one claim: discover the artifact,
 // add a device of the type its format records, load it and insert it.
-let hdd0 = guest.add_device_for("system.vdi", AccessIntent::Read)?
-                .attachment();                        // → hdd0
+let hdd0 = session.add_device_for("system.vdi", AccessIntent::Read)?
+                  .attachment();                      // → hdd0
 
 // The same three acts said one at a time — the door for a format that
 // records several device types, nothing in a qcow2 saying which drive
 // wrote it, so the device is mine to declare:
-let hdd1 = guest.add_device(HardDrive::MbrSector)?.attachment();
+let hdd1 = session.add_device(HardDrive::MbrSector)?.attachment();
 let data = session.load_media(                        // my open, my lock
     File::open("data.qcow2")?,
     Format::Qcow2 { device: HardDrive::MbrSector })?.id();
-session.machine_mut("guest-042").expect("just added")
-    .device_mut(hdd1).expect("just added")
+session.device_mut(hdd1).expect("just added")
     .insert(data)?;              // checked both ways: a drive takes only
                                  // the recordings its device type made
 ```
 
-Then the reporting itself: I walk the machine's own drives, in
-attachment order, and each answers for what is in it.
+Then the reporting itself: I walk the drives in attachment order, and
+each answers for what is in it.
 
 ```rust
-let mut guest = session.machine_mut("guest-042").expect("still here");
-
-for attachment in guest.attachments() {   // attachment order, which is
+for attachment in session.attachments() { // attachment order, which is
                                           // configuration I own
-    let mut drive = guest.device_mut(attachment).expect("just listed");
+    let mut drive = session.device_mut(attachment).expect("just listed");
     let Some(disk) = drive.medium_mut() else { continue };  // an empty
                                  // drive is an answer, not a refusal
     let report = disk.inspect()?;         // once: the whole layered report
@@ -249,8 +244,8 @@ for attachment in guest.attachments() {   // attachment order, which is
 The two halves stay apart throughout: a drive is configuration I state,
 a medium is session state, and only the insert crosses. Ejecting severs
 that link and leaves the disk in the pool with its claim and its
-buffered writes intact; releasing the machine takes the configuration
-down and never the media. And every fact above comes
+buffered writes intact; releasing the drive takes the configuration
+down and never the medium. And every fact above comes
 off the image alone: nothing boots, and reading changes no byte.
 
 I need what the disk turned out to be, *stated*: blank, a recognized
@@ -481,12 +476,12 @@ partition editor consumes my geometry into MBR end tuples and BPBs,
 after which any later discovery recovers it as evidence — the artifact
 testifying for itself.
 
-## U33 — The disk outlives its source, and enters a machine of its own
+## U33 — The disk outlives its source, and enters a drive of its own
 
-Media are session state, independent of every machine and of each
+Media are session state, independent of every device and of each
 other. The archive I mastered a disk out of is not the disk's parent —
 I can release it, and the disk keeps answering; I can seat the disk in
-a reconstructed machine, unseat it, and tear the machine down, and the
+a drive, unseat it, and release the drive, and the
 disk is untouched throughout.
 
 ```rust
@@ -498,19 +493,16 @@ session.release_media(arc_id)?;          // the source archive leaves the
 let mut b = [0u8; 1];
 disk.bytestream()?.location(Location::track(1))?.read_at(0, &mut b)?;
 
-let mut c64 = session.add_machine("c64")?;
-let unit8 = c64                          // the drive an emulator will one
+let unit8 = session                      // the drive an emulator will one
     .add_device(FloppyDrive::Commodore1541)?   // day address as unit 8
     .attachment();
-session.machine_mut("c64").expect("just added")
-    .device_mut(unit8).expect("just added")
+session.device_mut(unit8).expect("just added")
     .insert(disk_id)?;
 
-session.machine_mut("c64").expect("still here")
-    .device_mut(unit8).expect("still here")
+session.device_mut(unit8).expect("still here")
     .eject()?;                           // sever — claim and state survive
-session.release_machine("c64")?;         // the cascade: configuration falls
-                                         // with its owner; state never does
+session.release_device(unit8)?;          // configuration falls; state
+                                         // never does
 ```
 
 ## U34 — I load the one image inside an archive, by naming it

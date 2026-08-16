@@ -27,7 +27,7 @@
  * disagreement between the two is a defect here, the ABI being the norm.
  *
  * **It covers the whole ABI.** Every node of the storage model is here
- * — the session and its two pools, machines, devices, media,
+ * — the session with its devices and its media,
  * discoveries, partitions, volumes, filesystems and files — with the
  * records they hand back: assurance, geometry, identification,
  * inspection reports, directory listings, file bytes and load sources.
@@ -44,7 +44,7 @@
  * and the rule identity where the refusal broke one of an enumerated set
  * (P10). Nothing here returns a status code a caller can drop on the
  * floor. Where the ABI distinguishes an *absence* from a *failure* —
- * a filesystem with no label field, a lookup of a machine that is not
+ * a filesystem with no label field, a lookup of a device that is not
  * there — the absence comes back as an empty `std::optional` and only
  * the failure throws.
  *
@@ -52,12 +52,12 @@
  * A handle the ABI gives you to free — a discovery, a partition, a
  * space, a file, a report — is held by a move-only RAII class whose
  * destructor calls that handle's `_free`. A handle the session owns and
- * documents as "never free it" — a machine, a device, a medium — is a
+ * documents as "never free it" — a device, a medium — is a
  * copyable **view**, because there is no ownership for a destructor to
  * discharge. The distinction is the ABI's, not this header's invention.
  *
- * **View lifetimes are documented, not enforced.** A `Machine`, a
- * `StorageDevice` and a `Medium` stay valid until the session releases
+ * **View lifetimes are documented, not enforced.** A `StorageDevice`
+ * and a `Medium` stay valid until the session releases
  * them or dies; a `Layer`, an `Entry`, a `ReportRegion` and their kin
  * are borrowed from the handle that answered them and stay valid until
  * it dies. C++ cannot enforce those bounds in general and this header
@@ -3670,11 +3670,11 @@ private:
 // StorageDevice — the slot, typed by the device that fills it
 // ---------------------------------------------------------------------
 
-/// One storage device of a machine: the slot, what it is, and the state
+/// One storage device of a session: the slot, what it is, and the state
 /// of the medium in it.
 ///
 /// **A view, as `Medium` is.** The session owns it, and it names the
-/// device by session, machine and attachment identity rather than by
+/// device by session and attachment identity rather than by
 /// pointer, so a later attach cannot leave it dangling.
 class StorageDevice {
 public:
@@ -3729,8 +3729,8 @@ public:
                         "the medium could not be inserted");
     }
 
-    /// Severs the link and nothing more: the device stays in its
-    /// machine, the medium stays in the pool with everything buffered
+    /// Severs the link and nothing more: the device stays in the
+    /// session, the medium stays in the pool with everything buffered
     /// intact. Ejecting is not a commit point.
     void eject()
     {
@@ -3744,116 +3744,17 @@ private:
     RemanenceDevice* handle_;
 };
 
-/// is freed or the machine released.
-class Machine {
-public:
-    explicit Machine(RemanenceMachine* borrowed) noexcept : handle_(borrowed) {}
-
-    RemanenceMachine* get() const noexcept { return handle_; }
-
-    /// This machine's identity, absent for the anonymous machine, whose
-    /// identity is null.
-    std::optional<std::string> identity() const
-    {
-        return detail::optional_copied(remanence_machine_identity(handle_));
-    }
-
-    /// Adds a device of the named slot at the next free index.
-    StorageDevice add_device(const std::string& slot)
-    {
-        detail::Outcome outcome;
-        RemanenceDevice* added = remanence_machine_add_device(
-            handle_, slot.c_str(), outcome.category(), outcome.message(), outcome.rule());
-        return StorageDevice(outcome.require(added, "the device could not be added"));
-    }
-
-    /// The same, at a stated index — a taken slot is refused by name.
-    StorageDevice add_device_at(const std::string& slot, std::uint32_t index)
-    {
-        detail::Outcome outcome;
-        RemanenceDevice* added = remanence_machine_add_device_at(
-            handle_, slot.c_str(), index, outcome.category(), outcome.message(), outcome.rule());
-        return StorageDevice(outcome.require(added, "the device could not be added there"));
-    }
-
-    /// Adds a device of the format-declared default family for the
-    /// artifact at `path`, and seats the artifact in it. A format
-    /// declaring no single family is refused by name.
-    StorageDevice add_device_for(const std::string& path,
-                                 AccessIntent intent = AccessIntent::Read)
-    {
-        detail::Outcome outcome;
-        RemanenceDevice* added = remanence_machine_add_device_for(
-            handle_, path.c_str(), static_cast<RemanenceAccessIntent>(intent), outcome.category(),
-            outcome.message(), outcome.rule());
-        return StorageDevice(outcome.require(added, "no device was added for that artifact"));
-    }
-
-    void release_device(const std::string& attachment)
-    {
-        detail::Outcome outcome;
-        outcome.require(remanence_machine_release_device(handle_, attachment.c_str(),
-                                                         outcome.category(), outcome.message(),
-                                                         outcome.rule()),
-                        "the device could not be released");
-    }
-
-    std::size_t device_count() const noexcept { return remanence_machine_device_count(handle_); }
-
-    /// The `index`th device's attachment identity, in attachment order.
-    std::optional<std::string> device_attachment(std::size_t index) const
-    {
-        char* attachment = nullptr;
-        if (!remanence_machine_device_attachment(handle_, index, &attachment)) {
-            return std::nullopt;
-        }
-        return detail::owned_text(attachment);
-    }
-
-    std::vector<std::string> device_attachments() const
-    {
-        const std::size_t count = device_count();
-        std::vector<std::string> found;
-        found.reserve(count);
-        for (std::size_t at = 0; at < count; at += 1) {
-            std::optional<std::string> attachment = device_attachment(at);
-            if (!attachment.has_value()) {
-                break;
-            }
-            found.push_back(std::move(*attachment));
-        }
-        return found;
-    }
-
-    /// One device by attachment identity, absent where this machine has
-    /// none. Nothing is manufactured to report absence.
-    std::optional<StorageDevice> device(const std::string& attachment)
-    {
-        RemanenceDevice* found = remanence_machine_device(handle_, attachment.c_str());
-        if (found == nullptr) {
-            return std::nullopt;
-        }
-        return StorageDevice(found);
-    }
-
-private:
-    RemanenceMachine* handle_;
-};
-
 // ---------------------------------------------------------------------
-// Session — the claim and cache scope, and its two pools (P32)
+// Session — the claim and cache scope, its devices and its media (P32)
 // ---------------------------------------------------------------------
 
 /// An open session.
 ///
-/// It owns the **media pool** (state) and the **machines**
+/// It owns the **media pool** (state) and the **devices**
 /// (configuration) independently of each other, and it is the one thing
 /// here whose destructor ends a claim: freeing it releases every medium,
 /// closes every handle it took ownership of, and invalidates every view
 /// taken from it.
-///
-/// The device and machine verbs without a machine named are the
-/// anonymous machine's, which is the one whose identity is null.
 class Session : public detail::Held<RemanenceSession> {
 public:
     Session() : Held(remanence_session_new())
@@ -4021,65 +3922,9 @@ public:
                         "the medium could not be released");
     }
 
-    // --- machines and devices
+    // --- devices
 
-    /// Adds a machine of the stated identity. A duplicate identity and
-    /// an empty one are each refused by name.
-    Machine add_machine(const std::string& identity)
-    {
-        detail::Outcome outcome;
-        RemanenceMachine* added = remanence_session_add_machine(
-            get(), identity.c_str(), outcome.category(), outcome.message(), outcome.rule());
-        return Machine(outcome.require(added, "the machine could not be added"));
-    }
-
-    std::size_t machine_count() const noexcept { return remanence_session_machine_count(get()); }
-
-    std::optional<std::string> machine_identity(std::size_t index) const
-    {
-        char* identity = nullptr;
-        if (!remanence_session_machine_identity(get(), index, &identity)) {
-            return std::nullopt;
-        }
-        return detail::owned_text(identity);
-    }
-
-    std::vector<std::string> machine_identities() const
-    {
-        const std::size_t count = machine_count();
-        std::vector<std::string> found;
-        found.reserve(count);
-        for (std::size_t at = 0; at < count; at += 1) {
-            std::optional<std::string> identity = machine_identity(at);
-            if (!identity.has_value()) {
-                break;
-            }
-            found.push_back(std::move(*identity));
-        }
-        return found;
-    }
-
-    /// One machine by identity, absent where the session holds none.
-    std::optional<Machine> machine(const std::string& identity)
-    {
-        RemanenceMachine* found = remanence_session_machine(get(), identity.c_str());
-        if (found == nullptr) {
-            return std::nullopt;
-        }
-        return Machine(found);
-    }
-
-    /// Releases a machine, cascading through the configuration below it.
-    void release_machine(const std::string& identity)
-    {
-        detail::Outcome outcome;
-        outcome.require(remanence_session_release_machine(get(), identity.c_str(),
-                                                          outcome.category(), outcome.message(),
-                                                          outcome.rule()),
-                        "the machine could not be released");
-    }
-
-    /// Adds a device to the anonymous machine.
+    /// Adds a device in the lowest free slot of its bay.
     StorageDevice add_device(const std::string& slot)
     {
         detail::Outcome outcome;
@@ -4108,7 +3953,7 @@ public:
         return StorageDevice(outcome.require(added, "no device was added for that artifact"));
     }
 
-    /// Ejects first, then removes the device from its machine.
+    /// Ejects first, then removes the device from the session.
     void release_device(const std::string& attachment)
     {
         detail::Outcome outcome;

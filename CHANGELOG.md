@@ -53,6 +53,34 @@ rather than bridged. Read every entry below in that light.
 
 ### Removed
 
+- **The machine tier is withdrawn; a session holds its devices
+  directly.** With the drive-letter composer gone, nothing in the
+  library read a device set as a set or read attachment order at all,
+  and the tier's remaining justification — artifact nesting, a host's
+  archive in one machine and the disk inside it in another — is a
+  journey this release does not walk. Building against it now would fix
+  the seam's shape before the demand that has to shape it, so the code
+  stops anticipating it and the pledge stands unbuilt.
+
+  **Nothing a single-machine caller wrote has changed.** `add_device`,
+  `add_device_at`, `add_device_for`, `device`, `devices`, `attachments`
+  and `release_device` were already on `Session`, delegating to the
+  anonymous machine; they are the implementation now. Gone from the Rust
+  crate: `Machine`, `MachineView`, `Session::add_machine`,
+  `Session::machine`, `Session::machines`, `Session::release_machine`,
+  `Session::anonymous` and `anonymous_mut`. Gone from the C ABI: the
+  `RemanenceMachine` handle with `remanence_session_add_machine`,
+  `remanence_session_machine`, `remanence_session_machine_count`,
+  `remanence_session_machine_identity`,
+  `remanence_session_release_machine`, `remanence_machine_identity`,
+  `remanence_machine_add_device`, `remanence_machine_add_device_at`,
+  `remanence_machine_add_device_for`, `remanence_machine_release_device`,
+  `remanence_machine_device`, `remanence_machine_device_count` and
+  `remanence_machine_device_attachment`, with the C++ header's `Machine`
+  class moving with them. Gone from Python: `Machine`,
+  `Session.add_machine`, `Session.machine`, `Session.machines` and
+  `Session.release_machine`.
+
 - **Guest volume mapping and drive lettering leave the claim.** This
   library reads what is *on* a disk — its partition schema, its volumes,
   their filesystems and the files in them — and no longer derives or

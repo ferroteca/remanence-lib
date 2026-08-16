@@ -73,7 +73,7 @@ def test_the_optical_class_is_in_the_catalog_and_takes_its_own_bay():
     optical = [
         slot for slot in remanence.device_slots() if slot.device_class == "optical"
     ]
-    assert optical, "no slot is an optical device, so a machine cannot state one"
+    assert optical, "no slot is an optical device, so a session cannot state one"
     for slot in optical:
         assert slot.addressing == "block", (
             f"{slot.id} is told a block number rather than a cylinder and a head"

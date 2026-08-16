@@ -51,8 +51,7 @@ and signal bundles rather than CPU addresses or 6522 registers:
 let mut session = Session::new();
 let disk = session.load_media(File::open(floppy_path)?, Format::P64)?;
 
-let c64 = session.add_machine("c64")?;
-let unit8 = c64.add_device(cbmfloppy0)?;
+let unit8 = session.add_device(cbmfloppy0)?;
 unit8.insert(disk.id())?;
 
 let mut hardware = unit8.hardware(C1541DriveOptions {

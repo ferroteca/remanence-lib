@@ -111,13 +111,11 @@ with remanence.FluxImage("disk.remanence", cache_bytes=1 << 20) as image:
     missing: list[remanence.D64Block] = d64.missing
     written: remanence.FluxWriteReport = image.write("copy.remanence")
 
-# --- the machine's device set ------------------------------------------
-machine = session.add_machine("pc")
-machine_identity: str | None = machine.identity
-seated: remanence.StorageDevice = machine.add_device("hard-drive-mbr-sector")
-attachments: list[str] = machine.devices
-found: remanence.StorageDevice | None = machine.device(seated.attachment)
-machine.release_device(seated.attachment)
+# --- the session's device set ------------------------------------------
+seated: remanence.StorageDevice = session.add_device("mbr-sector-hd")
+attachments: list[str] = session.devices
+found: remanence.StorageDevice | None = session.device(seated.attachment)
+session.release_device(seated.attachment)
 
 # --- refusals ----------------------------------------------------------
 try:

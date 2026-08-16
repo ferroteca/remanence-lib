@@ -54,15 +54,11 @@ fn accessors_answer_on_a_null_handle() {
     group("nulls", &[]);
 }
 
-/// The machine reading, as a C caller meets it: a machine with nothing in
-/// it reads and says nothing booted, a boot device it does not hold is
-/// refused naming the attachment asked for, and every accessor answers on
-/// a null report rather than dereferencing it.
-///
-/// The surface this replaced was never called from C at all — it compiled
-/// and nothing exercised it — so this group exists to keep the new one
-/// out of that position.
+/// The session's device set, as a C caller meets it: a slot is filled
+/// once, an attachment resolves to the device in it, releasing frees the
+/// slot, and every accessor answers on a null handle rather than
+/// dereferencing it.
 #[test]
-fn a_machine_reads_across_the_boundary() {
-    group("machine", &[]);
+fn the_device_set_crosses_the_boundary() {
+    group("devices", &[]);
 }

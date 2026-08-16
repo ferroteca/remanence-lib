@@ -383,29 +383,27 @@ fn the_disk_outlives_its_source(session: &mut Session, arc_id: MediaId, disk_id:
         .read_at(0, &mut byte)
         .expect("and still reads");
 
-    // It enters a machine of its own, and leaves it untouched.
-    let mut c64 = session.add_machine("c64").expect("the machine is added");
-    let drive = c64
+    // It enters a drive of its own, and leaves it untouched.
+    let drive = session
         .add_device(FloppyDrive::Commodore1541)
         .expect("the drive an emulator will one day address as unit 8")
         .attachment();
     session
-        .machine_mut("c64")
-        .expect("just added")
         .device_mut(drive)
         .expect("just added")
         .insert(disk_id)
         .expect("device-type equality admits the disk");
     assert!(session.medium(disk_id).expect("pooled").is_linked());
     session
-        .machine_mut("c64")
-        .expect("still here")
         .device_mut(drive)
         .expect("still here")
         .eject()
         .expect("sever — claim and state survive pooled");
-    session.release_machine("c64").expect("the cascade");
-    assert!(!session.medium(disk_id).expect("pooled").is_linked());
+    session.release_device(drive).expect("configuration falls");
+    assert!(
+        !session.medium(disk_id).expect("pooled").is_linked(),
+        "state never falls with it"
+    );
 }
 
 // --------------------------------------------------- the cheap refusals

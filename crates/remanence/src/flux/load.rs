@@ -495,7 +495,7 @@ mod tests {
         Derivation, FluxMedium, LocationKey, MediumBuilder, Pulse, Strength,
     };
     use crate::model::device_type::DeviceType;
-    use crate::model::machine::Session;
+    use crate::model::pools::Session;
     use crate::model::media::Format;
 
     /// A small medium of the family, written out as a P64 artifact —

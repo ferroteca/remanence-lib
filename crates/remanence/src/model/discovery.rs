@@ -80,10 +80,10 @@ use crate::model::session::Identification;
 /// built when a load asks for one, under the bound that load declares.
 ///
 /// Discovery answers a question; it configures nothing. Adding a device
-/// is [`crate::MachineView::add_device`], loading a medium is
+/// is [`crate::Session::add_device`], loading a medium is
 /// [`crate::Session::load_media`], and the one convenience that composes
 /// the acts over a discovery is
-/// [`crate::MachineView::add_device_for`].
+/// [`crate::Session::add_device_for`].
 pub fn discover_media(path: impl AsRef<Path>, intent: AccessIntent) -> Result<Discovery> {
     let path = path.as_ref();
     let recognized = MediumRecognition::at_path(path, intent)?;

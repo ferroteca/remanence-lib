@@ -53,9 +53,9 @@ no lock of its own.
 When two candidate formats match equally well, the result is "unknown"
 rather than whichever one happened to be checked first.
 
-### Drives and machines
+### Drives
 
-You can model the machine a disk belonged to, with drives as specific as
+You can model the drive a disk belonged in, as specific as
 the real ones. Putting a disk in a drive and taking it out again changes
 nothing about the disk:
 

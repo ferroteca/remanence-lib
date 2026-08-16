@@ -494,10 +494,7 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
         .load_discovery(discovery)
         .expect("the disk pools")
         .id();
-    session.add_machine("h89").expect("the machine is added");
     session
-        .machine_mut("h89")
-        .expect("is there")
         .add_device(FloppyDrive::HeathH17)
         .expect("added")
         .insert(disk)
@@ -510,17 +507,17 @@ fn an_entry_is_loaded_into_a_device_of_its_own_in_a_machine_of_its_own() {
     assert_eq!(identification.layers[0].id, "zip");
     assert_eq!(identification.layers[1].id, "h8d");
 
-    // The archive stays in the host machine, and the disk is in its own.
-    assert_eq!(session.attachments(), vec![arc0()]);
+    // Two media, two devices: the archive keeps its receiver and the
+    // disk takes the drive its own format records. Neither displaces
+    // the other, and the nesting is in the identification above rather
+    // than in the device set.
     assert_eq!(
         session
-            .machine("h89")
-            .expect("is there")
             .attachments()
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
-        vec!["heathfloppy0".to_owned()]
+        vec!["arc0".to_owned(), "heathfloppy0".to_owned()]
     );
 
     drop(session);

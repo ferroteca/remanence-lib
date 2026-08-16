@@ -4,7 +4,7 @@
 """Authorship, the third fact class — and the suite's only fixture.
 
 Evidence is discovered onto media and declarations are configured onto
-machines; `new_media` is neither. It creates a medium whole from what the
+devices; `new_media` is neither. It creates a medium whole from what the
 author states, which is what lets this suite exercise real journeys
 **without shipping a single disk image**: the project's fixtures are
 vintage third-party media it claims no copyright in, and they are not in

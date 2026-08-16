@@ -644,21 +644,16 @@ impl fmt::Display for MediaId {
     }
 }
 
-/// Where a medium is currently linked: the machine whose device holds
-/// it, and that device's slot.
+/// Where a medium is currently linked: the slot of the device holding
+/// it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MediaLink {
-    /// Null for the session's anonymous machine.
-    pub(crate) machine: Option<String>,
     pub(crate) attachment: AttachmentId,
 }
 
 impl fmt::Display for MediaLink {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.machine {
-            Some(machine) => write!(f, "{} of machine '{machine}'", self.attachment),
-            None => write!(f, "{} of the anonymous machine", self.attachment),
-        }
+        write!(f, "the device at {}", self.attachment)
     }
 }
 
@@ -666,7 +661,7 @@ impl fmt::Display for MediaLink {
 ///
 /// Every content verb lives here. A medium answers whether or not a
 /// device links it — a disk mastered out of an archive answers before
-/// any machine exists to seat it — and the verbs a namespace-native
+/// any drive exists to seat it — and the verbs a namespace-native
 /// medium has no space for refuse by name rather than by failing further
 /// in.
 #[derive(Debug)]
@@ -1323,18 +1318,6 @@ impl MediaPool {
         Ok(self.media.remove(at))
     }
 
-    /// Severs every link naming `machine` — the cascade a machine's
-    /// teardown runs, which takes no state with it.
-    pub(crate) fn sever_machine(&mut self, machine: Option<&str>) {
-        for medium in &mut self.media {
-            if medium
-                .link()
-                .is_some_and(|link| link.machine.as_deref() == machine)
-            {
-                medium.set_link(None);
-            }
-        }
-    }
 }
 
 #[cfg(test)]

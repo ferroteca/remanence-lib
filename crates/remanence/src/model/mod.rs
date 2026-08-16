@@ -4,10 +4,10 @@
 //! The session model: the pools, the nodes a caller holds, and the
 //! three fact classes that fill them.
 //!
-//! [`machine`] owns the session and its two pools (P32) — media as
-//! state, machines as configuration — with [`storage_device`] the slot
-//! that links them and [`media`] the medium a caller holds, over the
-//! private [`disk`] state it homes.
+//! [`pools`] owns the session, its device set and its media pool (P32)
+//! — media as state, devices as configuration — with [`storage_device`]
+//! the slot that links them and [`media`] the medium a caller holds,
+//! over the private [`disk`] state it homes.
 //!
 //! The three fact classes meet here. **Discovery** reads
 //! ([`discovery`], answering on no handle at all), **declaration**
@@ -26,7 +26,7 @@ pub(crate) mod device_type;
 pub(crate) mod discovery;
 pub(crate) mod disk;
 pub(crate) mod geometry;
-pub(crate) mod machine;
+pub(crate) mod pools;
 pub(crate) mod media;
 pub(crate) mod media_profile;
 pub(crate) mod report;

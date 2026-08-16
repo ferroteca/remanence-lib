@@ -953,11 +953,15 @@ no separate account.
 
 Part of this is delivered and part is not, so the principle stays here
 until all of it is. **Delivered**: the device collection with its
-attachment identities and its machine-down add and remove, held by a
-machine within the session rather than by the session itself (the
-amendment below); the two acts that fill a slot; and a family catalog
+attachment identities and its machine-down add and remove, held by the
+session itself, as this principle's own text has it; the two acts that
+fill a slot; and a family catalog
 whose entries are as concrete as the machine fact they assert, carrying
-their lineage as data. **Not delivered**: a family-typed capability
+their lineage as data. **Not delivered**: the machine tier the amendment
+below inserts between the session and its devices — it was built, found
+to carry no library behaviour once the drive-letter composer went, and
+withdrawn (D58), so it now waits on the nesting demand that shapes it; a
+family-typed capability
 obtained from a device rather than a shared `StorageDevice` method set;
 family-declared region enumeration at a device's root, which the
 delivered inspection report already supplies for block devices and which
@@ -1040,6 +1044,16 @@ volume — a medium, loaded into a virtual slot (P32 amendment), whose
 content is walked through the one file-access seam (P19).
 
 ## P32 amendment — devices are added, media are loaded, and families form a lineage
+
+> **The machine tier of this amendment is unbuilt.** It was delivered
+> once and withdrawn (D58): with the drive-letter composer gone nothing
+> in the library read a device set as a set, so the tier carried no
+> behaviour and its own justification — nesting — is the part still
+> unbuilt. What the amendment says below stands as the pledge; the
+> session is the device scope until an artifact-nesting journey needs
+> two device sets in one claim. Everything else here (the three acts,
+> the family lineage, the CHS/LBA split, the archive's virtual slot) is
+> unaffected and delivered.
 
 **A session holds machines; a machine holds devices.** Pledged P32 makes
 the session itself the device set and states that nothing groups

@@ -1,16 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The session and its two pools, and the machines within it (P32).
+//! The session: its device set and its media pool (P32).
 //!
 //! A **session** is the outermost scope and keeps the meaning the
 //! principles already give it: the P7 claims, the P27 cache budget and
 //! private session storage, and the lifetime everything below it lives
-//! within. It owns exactly two pools — **machines**, which are
-//! configuration, and **media**, which are state — and they are
-//! independent of each other by construction. A **machine** is one device
-//! set inside that scope, owning its own attachment identities and its
-//! own attachment order.
+//! within. Within it sit **devices**, which are configuration, and
+//! **media**, which are state, and they are independent of each other by
+//! construction.
 //!
 //! **The medium is the content handle, and the pool is where media
 //! live.** [`Session::load_media`] takes the caller's own opened file and
@@ -19,26 +17,25 @@
 //! configuration a medium may be *inserted* into; ejecting severs and
 //! takes nothing away. That independence is the point: an archive a disk
 //! was mastered out of may be released while the disk keeps answering,
-//! and a reconstructed machine may be torn down without touching a
-//! single disk it held.
+//! and a drive may be torn down without touching the disk it held.
 //!
-//! **A machine carries an identity, and the session's anonymous machine
-//! is the one whose identity is null.** A session always has exactly one
-//! of those, and it behaves as any other machine in every respect: it is
-//! not "machine zero", and no attachment order it carries is more
-//! meaningful than any other's. It serves the caller who is opening
-//! artifacts rather than reconstructing a machine.
+//! **The session is the device scope, and there is no machine object.**
+//! The attachment identities — `hdd0`, `fd0` — are the session's, and so
+//! is the order they were added in. A tier grouping devices into named
+//! machines is pledged rather than built (P32's own amendment): it earns
+//! itself where artifacts nest, one machine holding a host's archive and
+//! another the disk inside it, and this release resolves nesting one
+//! level deep and reads no device set as a set, so building the tier now
+//! would be structure ahead of the demand that has to shape it.
 //!
-//! **Every pool here runs the same three verbs: create, look up,
-//! release.** A lookup answers with an `Option` — absence is an answer,
-//! and nothing is manufactured to report it — so there is no `require_*`
-//! form and a caller who wants a demand writes it, at the place that
-//! knows what the demand means. Creation still refuses by name (a
-//! duplicate identity, a taken slot, an empty identity), because those
-//! are the world saying no rather than a lookup finding nothing. And the
-//! removals are all spelled `release_*`: [`Session::release_machine`]
-//! cascades through the configuration below it,
-//! [`MachineView::release_device`] ejects first, and
+//! **Both halves run the same three verbs: create, look up, release.** A
+//! lookup answers with an `Option` — absence is an answer, and nothing is
+//! manufactured to report it — so there is no `require_*` form and a
+//! caller who wants a demand writes it, at the place that knows what the
+//! demand means. Creation still refuses by name (a taken slot), because
+//! that is the world saying no rather than a lookup finding nothing. And
+//! the removals are both spelled `release_*`:
+//! [`Session::release_device`] ejects first, and
 //! [`Session::release_media`] severs its own link and then ends the
 //! claim.
 
@@ -53,32 +50,22 @@ use crate::model::disk::{MediumRecognition, MediumState};
 use crate::model::media::{Format, MediaId, MediaPool, MediaSource, Medium};
 use crate::model::storage_device::{AttachmentId, DeviceView, StorageDevice};
 
-/// An open session: the claim scope, the cache budget, the machines
+/// An open session: the claim scope, the cache budget, the devices
 /// configured within it, and the media it holds.
 ///
-/// Every medium loaded anywhere in the session holds its own P7 claim for
-/// as long as the session holds the medium — through inserts and ejects
-/// alike. Dropping the session drops every machine and every medium, and
-/// every claim with them.
-#[derive(Debug)]
+/// Every medium loaded in the session holds its own P7 claim for as long
+/// as the session holds the medium — through inserts and ejects alike.
+/// Dropping the session drops every device and every medium, and every
+/// claim with them.
+#[derive(Debug, Default)]
 pub struct Session {
-    machines: Vec<Machine>,
+    devices: Vec<StorageDevice>,
     media: MediaPool,
 }
 
-impl Default for Session {
-    fn default() -> Self {
-        Self {
-            machines: vec![Machine::anonymous()],
-            media: MediaPool::default(),
-        }
-    }
-}
-
 impl Session {
-    /// A session holding nothing but its anonymous machine. Machines,
-    /// devices and media are added and removed over its life; no set is
-    /// fixed at open.
+    /// A session holding nothing. Devices and media are added and removed
+    /// over its life; no set is fixed at open.
     pub fn new() -> Self {
         Self::default()
     }
@@ -350,145 +337,63 @@ impl Session {
             .ok_or_else(|| Error::not_found(format!("this session holds no {id}")))?
             .link()
             .cloned();
-        if let Some(link) = link {
-            let machine = self
-                .machine_at(link.machine.as_deref())
-                .expect("a link names a machine this session holds");
-            if let Some(device) = machine.device_mut(link.attachment) {
-                device.set_media_id(None);
-            }
+        if let Some(link) = link
+            && let Some(device) = self.device_mut_raw(link.attachment)
+        {
+            device.set_media_id(None);
         }
         self.media.take(id).map(drop)
     }
 
-    // --------------------------------------------------- the machine pool
+    // ---------------------------------------------------- the device set
 
-    /// Adds a machine carrying `identity` and answers with it.
+    /// Adds a device in the lowest free slot of its bay, and answers
+    /// with it — empty, until a medium is inserted into it.
     ///
-    /// An identity already in use is refused by name rather than
-    /// resolving to the machine that holds it — two machines answering
-    /// to one name is a configuration error, not a lookup. The empty
-    /// identity is refused too: the machine with no identity is the
-    /// anonymous one, and there is exactly one of it.
-    pub fn add_machine(&mut self, identity: impl Into<String>) -> Result<MachineView<'_>> {
-        let identity = identity.into();
-        if identity.is_empty() {
-            return Err(Error::unsupported(
-                "a machine identity may not be empty; the machine with no \
-                 identity is the session's anonymous one"
-                    .to_owned(),
-            ));
-        }
-        if self.machine(&identity).is_some() {
-            return Err(Error::unsupported(format!(
-                "this session already holds a machine identified '{identity}'"
-            )));
-        }
-        self.machines.push(Machine::named(identity));
-        Ok(MachineView {
-            machine: self.machines.last_mut().expect("just pushed"),
-            pool: &mut self.media,
-        })
-    }
-
-    /// Every machine in the session, the anonymous one among them, in
-    /// the order they were added.
-    pub fn machines(&self) -> &[Machine] {
-        &self.machines
-    }
-
-    /// The machine identified `identity`, or `None` — absence is an
-    /// answer, and asking never creates one.
-    pub fn machine(&self, identity: &str) -> Option<&Machine> {
-        self.machines
-            .iter()
-            .find(|machine| machine.identity() == Some(identity))
-    }
-
-    /// The same, with the media pool beside it — the borrow the verbs
-    /// that cross configuration and state are spelled on.
-    pub fn machine_mut(&mut self, identity: &str) -> Option<MachineView<'_>> {
-        let machine = self
-            .machines
-            .iter_mut()
-            .find(|machine| machine.identity() == Some(identity))?;
-        Some(MachineView {
-            machine,
-            pool: &mut self.media,
-        })
-    }
-
-    /// Releases a machine and everything it configures, **taking no
-    /// state with it**: every device is ejected first — severing, so each
-    /// medium stays pooled with its claim and its buffered changes — then
-    /// the devices go, then the machine.
-    ///
-    /// The session's anonymous machine is not releasable: a session
-    /// always has exactly one of it, and releasing it would leave the
-    /// session in a shape no other verb can restore.
-    pub fn release_machine(&mut self, identity: &str) -> Result<()> {
-        let at = self
-            .machines
-            .iter()
-            .position(|machine| machine.identity() == Some(identity))
-            .ok_or_else(|| {
-                Error::not_found(format!(
-                    "this session holds no machine identified '{identity}'"
-                ))
-            })?;
-        self.media.sever_machine(Some(identity));
-        self.machines.remove(at);
-        Ok(())
-    }
-
-    /// The anonymous machine — the one whose identity is null.
-    pub fn anonymous(&self) -> &Machine {
-        self.machines
-            .iter()
-            .find(|machine| machine.identity().is_none())
-            .expect("a session always holds its anonymous machine")
-    }
-
-    pub fn anonymous_mut(&mut self) -> MachineView<'_> {
-        let machine = self
-            .machines
-            .iter_mut()
-            .find(|machine| machine.identity().is_none())
-            .expect("a session always holds its anonymous machine");
-        MachineView {
-            machine,
-            pool: &mut self.media,
-        }
-    }
-
-    fn machine_at(&mut self, identity: Option<&str>) -> Option<&mut Machine> {
-        self.machines
-            .iter_mut()
-            .find(|machine| machine.identity() == identity)
-    }
-
-    // ------------------------- the anonymous machine's device set, in reach
-
-    /// Adds a device to the session's anonymous machine, as
-    /// [`MachineView::add_device`] does there.
+    /// **A device is as concrete as the machine fact it asserts**: one
+    /// device type, or the archive receiver. There is no vaguer thing to
+    /// pass — "some floppy" is not a value, because a device type the
+    /// library does not know fails to compile — and the type is what the
+    /// insert check weighs a medium's recording against (P3).
     pub fn add_device(&mut self, slot: impl Into<DeviceSlot>) -> Result<DeviceView<'_>> {
-        self.anonymous_mut().into_added_device(slot.into(), None)
+        let slot = slot.into();
+        let index = self.lowest_free_index(slot);
+        self.add_device_at(slot, index)
     }
 
-    /// Adds a device at the named slot of the anonymous machine, as
-    /// [`MachineView::add_device_at`] does there.
+    /// Adds a device at the named slot.
+    ///
+    /// The caller chooses the **slot**, never the name: an attachment
+    /// identity is always its bay's prefix plus its index. A slot already
+    /// taken is refused by name rather than displacing what is there —
+    /// releasing a device is [`Session::release_device`], and it is a
+    /// separate act.
     pub fn add_device_at(
         &mut self,
         slot: impl Into<DeviceSlot>,
         index: u32,
     ) -> Result<DeviceView<'_>> {
-        self.anonymous_mut()
-            .into_added_device(slot.into(), Some(index))
+        let attachment = self.place(slot.into(), Some(index))?;
+        Ok(self.device_mut(attachment).expect("just placed"))
     }
 
-    /// Adds a device for the artifact at `path` to the session's
-    /// anonymous machine and loads it, as [`MachineView::add_device_for`]
-    /// does there.
+    /// Adds a fresh device of the **device type the artifact's format
+    /// records**, loads the medium into the session's pool, inserts it,
+    /// and answers with that device.
+    ///
+    /// This is the one convenience over discovery, and it composes the
+    /// three acts without changing the access path: it discovers the
+    /// artifact at `path`, adds a device — a fresh one, never a slot
+    /// already in the session — pools the discovery and inserts it, so
+    /// one claim is held from the question to the load (P7) and nothing
+    /// expensive runs twice.
+    ///
+    /// **A format that records several device types refuses by name**,
+    /// toward the declared load: nothing in a qcow2 says which hard
+    /// drive wrote it, and a type guessed from the article would be the
+    /// library asserting a drive nobody stated (P3). The refusal names
+    /// the types the adapter records, which is exactly what a
+    /// declaration may say.
     pub fn add_device_for(
         &mut self,
         path: impl AsRef<Path>,
@@ -498,50 +403,150 @@ impl Session {
     }
 
     /// [`Session::add_device_for`] under a caller-declared session cache
-    /// bound (P27).
+    /// bound (P27). The bound belongs to the load half of this
+    /// convenience — the discovery it opens with creates nothing and has
+    /// nothing to bound — and the medium it makes keeps it.
     pub fn add_device_for_with_cache(
         &mut self,
         path: impl AsRef<Path>,
         intent: AccessIntent,
         cache_bytes: u64,
     ) -> Result<DeviceView<'_>> {
-        let attachment = self
-            .anonymous_mut()
-            .add_device_for_with_cache(path, intent, cache_bytes)?
-            .attachment();
-        Ok(self
-            .anonymous_mut()
-            .into_device(attachment)
-            .expect("just added"))
+        let discovery = discover_media(path, intent)?;
+        let slot = discovered_slot(&discovery)?;
+        let attachment = self.place(slot, None)?;
+        let mut state = discovery.into_medium(cache_bytes);
+        let partitions = match state.establish_partitions() {
+            Ok(partitions) => partitions,
+            Err(error) => {
+                self.discard(attachment);
+                return Err(error);
+            }
+        };
+        let geometry = state.establish_geometry(&partitions);
+        let media = self.media.admit(state, partitions, geometry);
+        let mut device = self.device_mut(attachment).expect("just placed");
+        match device.insert(media) {
+            Ok(()) => Ok(self.device_mut(attachment).expect("just placed")),
+            Err(error) => {
+                // The convenience is one act to a caller, so a refused
+                // insert leaves neither a slot nor a pooled medium behind
+                // for them to clean up. The explicit path is where each
+                // outlives a failure, because there the caller made them
+                // deliberately.
+                let _ = self.media.take(media);
+                self.discard(attachment);
+                Err(error)
+            }
+        }
     }
 
-    /// Releases the device at `attachment` from the anonymous machine,
-    /// ejecting first, as [`MachineView::release_device`] does there.
+    /// Releases the device, **ejecting first**: the link is severed and
+    /// the medium stays in the session's pool, claim and buffered changes
+    /// intact. The slot is freed.
+    ///
+    /// Adding and releasing a device are **machine-down operations**.
+    /// Nothing may be running over a device while it is reconfigured,
+    /// which is exactly why the freed slot can be reused: no live state
+    /// refers to the old occupant. This is not the renumbering U4 refuses
+    /// for evidence-bearing lists — a slot is caller-supplied
+    /// configuration, not evidence.
+    ///
+    /// An empty slot is refused by name: this is a removal rather than a
+    /// lookup, and a caller told the device is gone learns something a
+    /// silent success would hide.
     pub fn release_device(&mut self, attachment: AttachmentId) -> Result<()> {
-        self.anonymous_mut().release_device(attachment)
+        let mut device = self
+            .device_mut(attachment)
+            .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))?;
+        if device.is_occupied() {
+            device.eject()?;
+        }
+        self.discard(attachment);
+        Ok(())
     }
 
-    /// The anonymous machine's devices, in the order its slots were
-    /// filled.
+    /// Every device in this session, in the order they were added.
     pub fn devices(&self) -> &[StorageDevice] {
-        self.anonymous().devices()
+        &self.devices
     }
 
-    /// The attachment identities in use in the anonymous machine.
+    /// The attachment identities currently in use.
     pub fn attachments(&self) -> Vec<AttachmentId> {
-        self.anonymous().attachments()
+        self.devices.iter().map(StorageDevice::attachment).collect()
     }
 
-    /// The anonymous machine's device at `attachment`, or `None` where
-    /// no device is attached there.
+    /// The device at `attachment`, or `None` where nothing is attached
+    /// there — absence is an answer, and asking never creates one.
     pub fn device(&self, attachment: AttachmentId) -> Option<&StorageDevice> {
-        self.anonymous().device(attachment)
+        self.position(attachment).map(|at| &self.devices[at])
     }
 
     /// The same, with the media pool beside it — the handle `insert`,
-    /// `eject` and the medium answer on.
+    /// `eject` and the medium answer on, since linking is the one act
+    /// that crosses configuration into state.
     pub fn device_mut(&mut self, attachment: AttachmentId) -> Option<DeviceView<'_>> {
-        self.anonymous_mut().into_device(attachment)
+        let at = self.position(attachment)?;
+        Some(DeviceView {
+            device: &mut self.devices[at],
+            pool: &mut self.media,
+        })
+    }
+
+    fn device_mut_raw(&mut self, attachment: AttachmentId) -> Option<&mut StorageDevice> {
+        self.position(attachment).map(|at| &mut self.devices[at])
+    }
+
+    fn position(&self, attachment: AttachmentId) -> Option<usize> {
+        self.devices
+            .iter()
+            .position(|device| device.attachment() == attachment)
+    }
+
+    /// The lowest free slot in the bay `slot` fills.
+    ///
+    /// It counts by **bay, not by device type**: two hard drives of
+    /// different types cannot both be `hdd0`, because a slot is a place
+    /// in the machine and only one drive sits in it.
+    fn lowest_free_index(&self, slot: DeviceSlot) -> u32 {
+        let mut used: Vec<u32> = self
+            .devices
+            .iter()
+            .filter(|device| device.attachment().prefix() == slot.slot_prefix())
+            .map(|device| device.attachment().index())
+            .collect();
+        used.sort_unstable();
+        let mut next = 0;
+        for index in used {
+            if index == next {
+                next += 1;
+            } else if index > next {
+                break;
+            }
+        }
+        next
+    }
+
+    /// Puts a fresh device in a slot — the caller's, or the lowest free
+    /// one in its bay — and answers with its attachment identity.
+    fn place(&mut self, slot: DeviceSlot, index: Option<u32>) -> Result<AttachmentId> {
+        let index = index.unwrap_or_else(|| self.lowest_free_index(slot));
+        let attachment = AttachmentId::new(slot, index);
+        if self.device(attachment).is_some() {
+            return Err(Error::unsupported(format!(
+                "{attachment} is already taken; release that device before \
+                 adding another there"
+            )));
+        }
+        self.devices.push(StorageDevice::new(slot, attachment));
+        Ok(attachment)
+    }
+
+    /// Drops the device at `attachment` from the set. The caller has
+    /// already dealt with whatever occupied it.
+    fn discard(&mut self, attachment: AttachmentId) {
+        self.devices
+            .retain(|device| device.attachment() != attachment);
     }
 }
 
@@ -589,350 +594,17 @@ fn discovered_slot(discovery: &Discovery) -> Result<DeviceSlot> {
         .ok_or_else(|| undeclared_recognition(discovery.recognized()))
 }
 
-/// One machine within a session: a set of storage devices, their
-/// attachment identities, and the order they were attached in.
-///
-/// The device set is the machine's own. Two machines in one session may
-/// each hold an `hdd0`, and neither can reach the other's.
-#[derive(Debug)]
-pub struct Machine {
-    /// Null for the session's anonymous machine.
-    identity: Option<String>,
-    devices: Vec<StorageDevice>,
-}
-
-impl Machine {
-    fn anonymous() -> Self {
-        Self {
-            identity: None,
-            devices: Vec::new(),
-        }
-    }
-
-    fn named(identity: String) -> Self {
-        Self {
-            identity: Some(identity),
-            devices: Vec::new(),
-        }
-    }
-
-    /// This machine's identity, or `None` where it is the session's
-    /// anonymous machine.
-    pub fn identity(&self) -> Option<&str> {
-        self.identity.as_deref()
-    }
-
-    /// Every device in this machine, in the order they were added — the
-    /// machine's own attachment order, which a caller walking its drives
-    /// reads.
-    pub fn devices(&self) -> &[StorageDevice] {
-        &self.devices
-    }
-
-    /// The attachment identities currently in use.
-    pub fn attachments(&self) -> Vec<AttachmentId> {
-        self.devices.iter().map(StorageDevice::attachment).collect()
-    }
-
-    pub fn device(&self, attachment: AttachmentId) -> Option<&StorageDevice> {
-        self.position(attachment).map(|at| &self.devices[at])
-    }
-
-    pub(crate) fn device_mut(&mut self, attachment: AttachmentId) -> Option<&mut StorageDevice> {
-        self.position(attachment).map(|at| &mut self.devices[at])
-    }
-
-    fn position(&self, attachment: AttachmentId) -> Option<usize> {
-        self.devices
-            .iter()
-            .position(|device| device.attachment() == attachment)
-    }
-
-    /// The lowest free slot in the bay `slot` fills.
-    ///
-    /// It counts by **bay, not by device type**: two hard drives of
-    /// different types cannot both be `hdd0`, because a slot is a place
-    /// in the machine and only one drive sits in it.
-    fn lowest_free_index(&self, slot: DeviceSlot) -> u32 {
-        let mut used: Vec<u32> = self
-            .devices
-            .iter()
-            .filter(|device| device.attachment().prefix() == slot.slot_prefix())
-            .map(|device| device.attachment().index())
-            .collect();
-        used.sort_unstable();
-        let mut next = 0;
-        for index in used {
-            if index == next {
-                next += 1;
-            } else if index > next {
-                break;
-            }
-        }
-        next
-    }
-}
-
-/// A machine reached with its session's media pool beside it.
-///
-/// Configuration is the machine's and state is the session's, so the
-/// verbs that touch both — adding a device you can immediately insert
-/// into, tearing a machine's device down without touching its disks —
-/// are spelled here, where the borrow holds both and can outlive
-/// neither.
-#[derive(Debug)]
-pub struct MachineView<'a> {
-    machine: &'a mut Machine,
-    pool: &'a mut MediaPool,
-}
-
-impl<'a> MachineView<'a> {
-    /// This machine's identity, or `None` where it is the session's
-    /// anonymous machine.
-    pub fn identity(&self) -> Option<&str> {
-        self.machine.identity()
-    }
-
-    /// The machine this view names, as configuration.
-    pub fn machine(&self) -> &Machine {
-        self.machine
-    }
-
-    /// Adds a device in the lowest free slot of its bay, and answers
-    /// with it — empty, until a medium is inserted into it.
-    ///
-    /// **A device is as concrete as the machine fact it asserts**: one
-    /// device type, or the archive receiver. There is no vaguer thing to
-    /// pass — "some floppy" is not a value, because a device type the
-    /// library does not know fails to compile — and the type is what the
-    /// insert check weighs a medium's recording against (P3).
-    pub fn add_device(&mut self, slot: impl Into<DeviceSlot>) -> Result<DeviceView<'_>> {
-        let slot = slot.into();
-        let index = self.machine.lowest_free_index(slot);
-        self.add_device_at(slot, index)
-    }
-
-    /// Adds a device at the named slot.
-    ///
-    /// The caller chooses the **slot**, never the name: an attachment
-    /// identity is always its bay's prefix plus its index. A slot already
-    /// taken is refused by name rather than displacing what is there —
-    /// releasing a device is [`MachineView::release_device`], and it is a
-    /// separate act.
-    pub fn add_device_at(
-        &mut self,
-        slot: impl Into<DeviceSlot>,
-        index: u32,
-    ) -> Result<DeviceView<'_>> {
-        let attachment = self.place(slot.into(), Some(index))?;
-        Ok(self.device_mut(attachment).expect("just placed"))
-    }
-
-    /// Adds a fresh device of the **device type the artifact's format
-    /// records**, loads the medium into the session's pool, inserts it,
-    /// and answers with that device.
-    ///
-    /// This is the one convenience over discovery, and it composes the
-    /// three acts without changing the access path: it discovers the
-    /// artifact at `path`, adds a device — a fresh one, never a slot
-    /// already in the machine — pools the discovery and inserts it, so
-    /// one claim is held from the question to the load (P7) and nothing
-    /// expensive runs twice.
-    ///
-    /// **A format that records several device types refuses by name**,
-    /// toward the declared load: nothing in a qcow2 says which hard
-    /// drive wrote it, and a type guessed from the article would be the
-    /// library asserting a drive nobody stated (P3). The refusal names
-    /// the types the adapter records, which is exactly what a
-    /// declaration may say.
-    pub fn add_device_for(
-        &mut self,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-    ) -> Result<DeviceView<'_>> {
-        self.add_device_for_with_cache(path, intent, crate::DEFAULT_CACHE_BYTES)
-    }
-
-    /// [`MachineView::add_device_for`] under a caller-declared session
-    /// cache bound (P27). The bound belongs to the load half of this
-    /// convenience — the discovery it opens with creates nothing and has
-    /// nothing to bound — and the medium it makes keeps it.
-    pub fn add_device_for_with_cache(
-        &mut self,
-        path: impl AsRef<Path>,
-        intent: AccessIntent,
-        cache_bytes: u64,
-    ) -> Result<DeviceView<'_>> {
-        let discovery = discover_media(path, intent)?;
-        let slot = discovered_slot(&discovery)?;
-        let attachment = self.place(slot, None)?;
-        let mut state = discovery.into_medium(cache_bytes);
-        let partitions = match state.establish_partitions() {
-            Ok(partitions) => partitions,
-            Err(error) => {
-                self.discard(attachment);
-                return Err(error);
-            }
-        };
-        let geometry = state.establish_geometry(&partitions);
-        let media = self.pool.admit(state, partitions, geometry);
-        let mut device = self.device_mut(attachment).expect("just placed");
-        match device.insert(media) {
-            Ok(()) => Ok(self.device_mut(attachment).expect("just placed")),
-            Err(error) => {
-                // The convenience is one act to a caller, so a refused
-                // insert leaves neither a slot nor a pooled medium behind
-                // for them to clean up. The explicit path is where each
-                // outlives a failure, because there the caller made them
-                // deliberately.
-                let _ = self.pool.take(media);
-                self.discard(attachment);
-                Err(error)
-            }
-        }
-    }
-
-    /// Releases the device, **ejecting first**: the link is severed and
-    /// the medium stays in the session's pool, claim and buffered changes
-    /// intact. The slot is freed.
-    ///
-    /// Adding and releasing a device are **machine-down operations**.
-    /// Nothing may be running over a device while it is reconfigured,
-    /// which is exactly why the freed slot can be reused: no live state
-    /// refers to the old occupant. This is not the renumbering U4 refuses
-    /// for evidence-bearing lists — a slot is caller-supplied
-    /// configuration, not evidence.
-    ///
-    /// An empty slot is refused by name: this is a removal rather than a
-    /// lookup, and a caller told the device is gone learns something a
-    /// silent success would hide.
-    pub fn release_device(&mut self, attachment: AttachmentId) -> Result<()> {
-        let mut device = self
-            .device_mut(attachment)
-            .ok_or_else(|| Error::not_found(format!("no device is attached at {attachment}")))?;
-        if device.is_occupied() {
-            device.eject()?;
-        }
-        self.discard(attachment);
-        Ok(())
-    }
-
-    /// Every device in this machine, in the order they were added.
-    pub fn devices(&self) -> &[StorageDevice] {
-        self.machine.devices()
-    }
-
-    /// The attachment identities currently in use.
-    pub fn attachments(&self) -> Vec<AttachmentId> {
-        self.machine.attachments()
-    }
-
-    /// The device at `attachment`, or `None` where this machine has no
-    /// device there — another machine's `hdd0` is not this one's.
-    pub fn device(&self, attachment: AttachmentId) -> Option<&StorageDevice> {
-        self.machine.device(attachment)
-    }
-
-    /// The same, with the media pool beside it — the handle the edge
-    /// verbs live on.
-    pub fn device_mut(&mut self, attachment: AttachmentId) -> Option<DeviceView<'_>> {
-        let machine = self.machine.identity().map(ToOwned::to_owned);
-        let device = self.machine.device_mut(attachment)?;
-        Some(DeviceView {
-            device,
-            pool: self.pool,
-            machine,
-        })
-    }
-
-    /// Adds a device and answers with it, consuming this view — the
-    /// spelling a session-level convenience needs, where the machine
-    /// borrow and the device borrow have the same life.
-    fn into_added_device(mut self, slot: DeviceSlot, index: Option<u32>) -> Result<DeviceView<'a>> {
-        let attachment = self.place(slot, index)?;
-        Ok(self.into_device(attachment).expect("just placed"))
-    }
-
-    /// The device at `attachment`, consuming this view.
-    ///
-    /// The consuming form is what a caller who reached the machine
-    /// through a lookup needs: the device borrow lives as long as the
-    /// machine borrow did rather than nested inside it.
-    pub fn into_device(self, attachment: AttachmentId) -> Option<DeviceView<'a>> {
-        let machine = self.machine.identity().map(ToOwned::to_owned);
-        let device = self.machine.device_mut(attachment)?;
-        Some(DeviceView {
-            device,
-            pool: self.pool,
-            machine,
-        })
-    }
-
-    /// Puts a fresh device in a slot — the caller's, or the lowest free
-    /// one in its bay — and answers with its attachment identity.
-    fn place(&mut self, slot: DeviceSlot, index: Option<u32>) -> Result<AttachmentId> {
-        let index = index.unwrap_or_else(|| self.machine.lowest_free_index(slot));
-        let attachment = AttachmentId::new(slot, index);
-        if self.machine.device(attachment).is_some() {
-            return Err(Error::unsupported(format!(
-                "{attachment} is already taken; release that device before \
-                 adding another there"
-            )));
-        }
-        self.machine
-            .devices
-            .push(StorageDevice::new(slot, attachment));
-        Ok(attachment)
-    }
-
-    /// Drops the device at `attachment` from the machine's set. The
-    /// caller has already dealt with whatever occupied it.
-    fn discard(&mut self, attachment: AttachmentId) {
-        self.machine
-            .devices
-            .retain(|device| device.attachment() != attachment);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::device_type::HardDrive;
 
     #[test]
-    fn a_session_starts_with_its_anonymous_machine_and_no_media() {
+    fn a_session_starts_with_no_devices_and_no_media() {
         let session = Session::new();
-        assert_eq!(session.machines().len(), 1);
-        assert_eq!(session.anonymous().identity(), None);
+        assert!(session.devices().is_empty());
         assert!(session.media().is_empty());
-    }
-
-    #[test]
-    fn a_machine_identity_is_stated_once_and_never_empty() {
-        let mut session = Session::new();
-        session.add_machine("pc").expect("added");
-        assert!(session.add_machine("pc").is_err(), "one name, one machine");
-        assert!(
-            session.add_machine("").is_err(),
-            "the machine with no identity is the anonymous one"
-        );
-        assert!(session.machine("pc").is_some());
-        assert!(session.machine("laptop").is_none(), "absence is an answer");
-    }
-
-    #[test]
-    fn a_released_machine_takes_its_configuration_and_nothing_else() {
-        let mut session = Session::new();
-        {
-            let mut pc = session.add_machine("pc").expect("added");
-            pc.add_device(HardDrive::MbrBlock).expect("added");
-        }
-        session.release_machine("pc").expect("released");
-        assert!(session.machine("pc").is_none());
-        assert!(
-            session.release_machine("pc").is_err(),
-            "the second release names what is no longer there"
-        );
+        assert!(session.attachments().is_empty());
     }
 
     #[test]
@@ -969,6 +641,30 @@ mod tests {
                 .to_string(),
             "arc0",
             "a receiver fills its own bay, not the drives'"
+        );
+    }
+
+    /// A released slot is reusable because adding and releasing are
+    /// machine-down operations: no live state refers to the old occupant.
+    #[test]
+    fn a_released_slot_is_free_again_and_an_empty_one_refuses() {
+        let mut session = Session::new();
+        session.add_device(HardDrive::MbrSector).expect("added");
+        let hdd0 = AttachmentId::new(HardDrive::MbrSector.into(), 0);
+        session.release_device(hdd0).expect("released");
+        assert!(session.devices().is_empty(), "the slot is free again");
+        assert!(
+            session.release_device(hdd0).is_err(),
+            "a removal names what is no longer there"
+        );
+        assert_eq!(
+            session
+                .add_device(HardDrive::MbrSector)
+                .expect("added")
+                .attachment()
+                .to_string(),
+            "hdd0",
+            "the freed bay is the lowest free one again"
         );
     }
 }

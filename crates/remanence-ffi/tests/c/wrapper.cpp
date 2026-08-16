@@ -307,10 +307,9 @@ void group_authorship()
 
 /* ------------------------------------------------------------ views
  *
- * Machines and devices are configuration, and the wrapper presents them
- * as views because the ABI says the session owns them. What that has to
- * mean is that copying one costs nothing and destroying one releases
- * nothing.
+ * Devices are configuration, and the wrapper presents them as views
+ * because the ABI says the session owns them. What that has to mean is
+ * that copying one costs nothing and destroying one releases nothing.
  */
 void group_views()
 {
@@ -338,18 +337,6 @@ void group_views()
 
     const std::vector<std::string> attachments = session.device_attachments();
     CHECK(attachments.size() == 1, "the session lists a different number of devices");
-
-    // A named machine beside the anonymous one.
-    remanence::Machine machine = session.add_machine("workbench");
-    CHECK(machine.identity() == std::string_view{"workbench"}, "the machine has another identity");
-    remanence::StorageDevice owned = machine.add_device("h17");
-    CHECK(machine.device_count() == 1, "the machine did not take its device");
-    CHECK(machine.device(std::string{owned.attachment()}).has_value(),
-          "the machine cannot find its own device");
-    CHECK(!session.machine("no-such-machine").has_value(), "an unknown machine answered");
-
-    session.release_machine("workbench");
-    CHECK(!session.machine("workbench").has_value(), "a released machine still answers");
 
     // Insert and eject are the one edge between configuration and
     // state, and ejecting takes nothing away.
@@ -430,7 +417,6 @@ void group_absences()
     CHECK(!blank.partition_scheme().has_value(), "an authored medium answered a scheme");
     CHECK(!blank.partition(7).has_value(), "an ordinal the pool lacks answered a partition");
     CHECK(!session.medium(9999).has_value(), "an identity the pool lacks answered a medium");
-    CHECK(!session.machine("nowhere").has_value(), "an identity no machine has answered one");
 
     remanence::Assurance assurance = blank.assurance();
     CHECK(!assurance.condition().has_value(), "a verified open named a withholding condition");
@@ -873,39 +859,32 @@ void group_report(const char* path)
 
 } // namespace
 
-// The machine's device set through the wrapper: what only the C++
+// The session's device set through the wrapper: what only the C++
 // surface can be wrong about. A device is an owned handle, an absence
 // stays an empty std::optional rather than becoming a zero, and a
 // refusal arrives as remanence::Error carrying its category.
-void group_machine()
+void group_devices()
 {
     remanence::Session session;
-    remanence::Machine machine = session.add_machine("pc");
 
-    // The identity crosses as an owned string rather than a borrowed
-    // pointer into the session.
-    std::optional<std::string> identity = machine.identity();
-    CHECK(identity.has_value() && *identity == "pc",
-          "the machine did not carry the identity it was given");
+    CHECK(session.device_count() == 0, "a fresh session already held a device");
 
-    CHECK(machine.device_count() == 0, "a fresh machine already held a device");
-
-    remanence::StorageDevice drive = machine.add_device("mbr-sector-hd");
-    CHECK(machine.device_count() == 1, "the added device was not counted");
+    remanence::StorageDevice drive = session.add_device("mbr-sector-hd");
+    CHECK(session.device_count() == 1, "the added device was not counted");
     CHECK(drive.attachment() == "hdd0", "the first hard drive was not attached at hdd0");
-    CHECK(machine.device_attachments() == std::vector<std::string>{"hdd0"},
+    CHECK(session.device_attachments() == std::vector<std::string>{"hdd0"},
           "the attachment order did not read back");
 
     // An attachment resolves to the device in it; one nothing is at is an
     // empty optional rather than a manufactured refusal.
-    CHECK(machine.device("hdd0").has_value(), "the attachment did not resolve");
-    CHECK(!machine.device("hdd9").has_value(), "an empty slot resolved to a device");
+    CHECK(session.device("hdd0").has_value(), "the attachment did not resolve");
+    CHECK(!session.device("hdd9").has_value(), "an empty slot resolved to a device");
 
     // One bay holds one drive, and the refusal is a typed exception
     // naming the slot rather than a status a caller may drop.
     bool refused = false;
     try {
-        machine.add_device_at("gpt-hd", 0);
+        session.add_device_at("gpt-hd", 0);
     } catch (const remanence::Error& error) {
         refused = true;
         CHECK(std::string(error.what()).find("hdd0") != std::string::npos,
@@ -914,11 +893,11 @@ void group_machine()
     CHECK(refused, "a taken slot accepted a second drive");
 
     // Releasing frees the slot; releasing an empty one throws.
-    machine.release_device("hdd0");
-    CHECK(machine.device_count() == 0, "the released device was still counted");
+    session.release_device("hdd0");
+    CHECK(session.device_count() == 0, "the released device was still counted");
     refused = false;
     try {
-        machine.release_device("hdd0");
+        session.release_device("hdd0");
     } catch (const remanence::Error&) {
         refused = true;
     }
@@ -946,8 +925,8 @@ int main(int argc, char** argv)
             group_lifetimes();
         } else if (group == "absences") {
             group_absences();
-        } else if (group == "machine") {
-            group_machine();
+        } else if (group == "devices") {
+            group_devices();
         } else if (group == "flux_refusals") {
             group_flux_refusals();
         } else if (group == "flux_capture") {

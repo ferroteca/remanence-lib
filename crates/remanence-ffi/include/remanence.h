@@ -190,11 +190,10 @@ typedef struct RemanenceD64Report RemanenceD64Report;
 // **The session owns this; never free it.** It stays valid until the
 // device is released or the session is freed.
 //
-// It names the device by session, machine and attachment identity
-// rather than by pointer, and re-resolves on every call. That is
-// deliberate: a later attach may reallocate the machine's device
-// storage, so a cached pointer to the device itself would dangle
-// silently.
+// It names the device by session and attachment identity rather than
+// by pointer, and re-resolves on every call. That is deliberate: a
+// later attach may reallocate the session's device storage, so a
+// cached pointer to the device itself would dangle silently.
 typedef struct RemanenceDevice RemanenceDevice;
 
 // What one artifact turned out to be, and the claim under which that was
@@ -248,12 +247,6 @@ typedef struct RemanenceGeometry RemanenceGeometry;
 // The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
 
-// A borrowed view of one machine in a session.
-//
-// **The session owns this; never free it.** It stays valid until the
-// session is freed.
-typedef struct RemanenceMachine RemanenceMachine;
-
 // A borrowed view of one medium in a session's media pool — the content
 // handle, and where every content verb lives.
 //
@@ -282,7 +275,7 @@ typedef struct RemanenceP64Report RemanenceP64Report;
 // what comes back: both doors compose the same node.
 typedef struct RemanencePartition RemanencePartition;
 
-// An open session: the claim and cache scope, holding the machines
+// An open session: the claim and cache scope, holding the devices
 // within it (P32).
 typedef struct RemanenceSession RemanenceSession;
 
@@ -1138,36 +1131,22 @@ bool remanence_session_release_media(RemanenceSession *session,
                                      char **error_out,
                                      char **error_rule_out);
 
-// Releases a machine and everything it configures, **taking no state
-// with it**: every device is ejected first — severing, so each medium
-// stays pooled — then the devices go, then the machine. The session's
-// anonymous machine has no identity and is not releasable. Returns
-// false when no machine answers to `identity`.
-bool remanence_session_release_machine(RemanenceSession *session,
-                                       const char *identity,
-                                       RemanenceErrorCategory *error_category_out,
-                                       char **error_out,
-                                       char **error_rule_out);
-
 // Opens an empty session — the claim and cache scope, holding nothing
-// but its anonymous machine. Machines and devices are added over its
-// life; neither set is fixed at open. Free with
-// `remanence_session_free`.
+// at all. Devices and media are added over its life; neither set is
+// fixed at open. Free with `remanence_session_free`.
 RemanenceSession *remanence_session_new(void);
 
 // Frees a session, dropping every device and releasing every P7 claim.
-// Every borrowed machine and device view obtained from it becomes
-// invalid.
+// Every borrowed device view obtained from it becomes invalid.
 void remanence_session_free(RemanenceSession *session);
 
 // Adds a device of `slot` (UTF-8, a stable spelling from
 // `remanence_device_slot_id` — a device type such as `mbr-block-hd`, or
-// `archive`) to the session's **anonymous machine**, taking the lowest
+// `archive`) to the session, taking the lowest
 // free slot of that bay, and returns a **borrowed** view of it — empty,
 // until `remanence_device_insert` puts a medium in it.
 //
-// The session owns the view; never free it.
-// `remanence_machine_add_device` does the same in a named machine. A
+// The session owns the view; never free it. A
 // device this release does not claim is refused by name (P3). Returns
 // null on failure.
 RemanenceDevice *remanence_session_add_device(RemanenceSession *session,
@@ -1187,9 +1166,10 @@ RemanenceDevice *remanence_session_add_device_at(RemanenceSession *session,
                                                  char **error_out,
                                                  char **error_rule_out);
 
-// Adds a device for the artifact at `path` (UTF-8) to the session's
-// **anonymous machine** and returns a **borrowed** view of it, as
-// `remanence_machine_add_device_for` does in a named machine.
+// Adds a device for the artifact at `path` (UTF-8) to the session — one
+// of the device type the artifact's format records — loads the medium
+// into it, and returns a **borrowed** view of it. A format recording
+// several device types is refused by name, toward the declared load.
 RemanenceDevice *remanence_session_add_device_for(RemanenceSession *session,
                                                   const char *path,
                                                   RemanenceAccessIntent intent,
@@ -1197,16 +1177,16 @@ RemanenceDevice *remanence_session_add_device_for(RemanenceSession *session,
                                                   char **error_out,
                                                   char **error_rule_out);
 
-// Releases the device at `attachment` from the session's anonymous
-// machine, as `remanence_machine_release_device` does in a named
-// machine.
+// Releases the device at `attachment`, **ejecting first**: the link is
+// severed and the medium stays pooled with its claim and buffered
+// changes intact. Returns false when nothing is attached there.
 bool remanence_session_release_device(RemanenceSession *session,
                                       const char *attachment,
                                       RemanenceErrorCategory *error_category_out,
                                       char **error_out,
                                       char **error_rule_out);
 
-// How many devices the session's anonymous machine holds.
+// How many devices the session holds.
 size_t remanence_session_device_count(const RemanenceSession *session);
 
 // Writes the attachment identity of device `index` to
@@ -1216,121 +1196,7 @@ bool remanence_session_device_attachment(const RemanenceSession *session,
                                          size_t index,
                                          char **attachment_out);
 
-// Adds a machine carrying `identity` (UTF-8) to the session and returns
-// a **borrowed** view of it.
-//
-// The session owns it; never free it. An identity already in use is
-// refused by name rather than resolving to the machine holding it, and
-// the empty identity is refused too — the machine with no identity is
-// the session's anonymous one, and there is exactly one of it. Returns
-// null on failure.
-RemanenceMachine *remanence_session_add_machine(RemanenceSession *session,
-                                                const char *identity,
-                                                RemanenceErrorCategory *error_category_out,
-                                                char **error_out,
-                                                char **error_rule_out);
-
-// How many machines the session holds, the anonymous one among them.
-size_t remanence_session_machine_count(const RemanenceSession *session);
-
-// Writes the identity of machine `index` to `identity_out`, freed with
-// `remanence_string_free`. Returns false when `index` is out of range;
-// writes null for the anonymous machine, whose identity is null.
-bool remanence_session_machine_identity(const RemanenceSession *session,
-                                        size_t index,
-                                        char **identity_out);
-
-// A **borrowed** view of the machine carrying `identity` (UTF-8), or of
-// the session's **anonymous machine** when `identity` is null — the
-// anonymous machine being exactly the one whose identity is null.
-//
-// The session owns it; never free it. **Null where the session holds no
-// machine of that identity** — absence is an answer, so this takes no
-// error outs to leave untouched, and asking never creates a machine.
-RemanenceMachine *remanence_session_machine(RemanenceSession *session, const char *identity);
-
-// The machine's identity, or null where it is the session's anonymous
-// machine. Owned by the view; do not free.
-const char *remanence_machine_identity(const RemanenceMachine *machine);
-
-// Adds a device of `slot` (UTF-8) to this machine, taking the lowest
-// free slot of that bay, and returns a **borrowed** view of it. The
-// session owns the view; never free it. Returns null on failure.
-RemanenceDevice *remanence_machine_add_device(RemanenceMachine *machine,
-                                              const char *slot,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out,
-                                              char **error_rule_out);
-
-// Adds a device of `slot` at index `index` in this machine. The caller
-// chooses the slot, never the name; a slot already taken is refused
-// rather than displaced.
-RemanenceDevice *remanence_machine_add_device_at(RemanenceMachine *machine,
-                                                 const char *slot,
-                                                 uint32_t index,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
-
-// Adds a device of the **device type the artifact's format records** to
-// this machine, loads the medium at `path` (UTF-8) into it, and returns
-// a **borrowed** view of that device. The session owns the view; never
-// free it.
-//
-// It is the one convenience over discovery, and it composes the two
-// acts without changing the access path: one claim is held from the
-// question to the load (P7), and the device it answers with is an
-// ordinary device in this machine's own set — a fresh one, never a slot
-// already there.
-//
-// **A format that records several device types is refused by name**,
-// toward the explicit acts (`remanence_machine_add_device` then
-// `remanence_session_load_media` then `remanence_device_insert`), with
-// the refusal naming the types a declaration may state. A refused call
-// leaves no device behind. Returns null on failure.
-RemanenceDevice *remanence_machine_add_device_for(RemanenceMachine *machine,
-                                                  const char *path,
-                                                  RemanenceAccessIntent intent,
-                                                  RemanenceErrorCategory *error_category_out,
-                                                  char **error_out,
-                                                  char **error_rule_out);
-
-// Releases the device at `attachment` from this machine, **ejecting
-// first**: the link is severed and the medium stays in the session's
-// pool, its claim and everything buffered intact. The slot is freed and
-// borrowed device views for that device become invalid.
-//
-// Destroying a medium's state is `remanence_session_release_media`, and
-// it is the one verb that does. Returns false when this machine has no
-// device at `attachment` — a release names what resolves to nothing,
-// unlike the lookups, which answer null.
-bool remanence_machine_release_device(RemanenceMachine *machine,
-                                      const char *attachment,
-                                      RemanenceErrorCategory *error_category_out,
-                                      char **error_out,
-                                      char **error_rule_out);
-
-// How many devices this machine holds.
-size_t remanence_machine_device_count(const RemanenceMachine *machine);
-
-// Writes the attachment identity of device `index` in this machine to
-// `attachment_out`, freed with `remanence_string_free`. Returns false
-// when `index` is out of range.
-bool remanence_machine_device_attachment(const RemanenceMachine *machine,
-                                         size_t index,
-                                         char **attachment_out);
-
-// A **borrowed** view of the device at `attachment` in this machine.
-//
-// The session owns it; never free it. It stays valid until that device
-// is released or the session is freed. **Null where this machine has no
-// device there** — absence is an answer, and this takes no error outs to
-// leave untouched.
-RemanenceDevice *remanence_machine_device(RemanenceMachine *machine, const char *attachment);
-
-// A **borrowed** view of the device at `attachment` in the session's
-// anonymous machine — `remanence_machine_device` reaches a named
-// machine's.
+// A **borrowed** view of the device at `attachment`.
 //
 // The session owns it; never free it. It stays valid until that device
 // is released or the session is freed. **Null where nothing is attached

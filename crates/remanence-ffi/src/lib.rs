@@ -1633,13 +1633,10 @@ fn access_mode(mode: AccessMode) -> RemanenceAccessMode {
     }
 }
 
-/// An open session: the claim and cache scope, holding the machines
+/// An open session: the claim and cache scope, holding the devices
 /// within it (P32).
 pub struct RemanenceSession {
     session: Session,
-    /// Borrowed machine views handed to callers, owned here and freed
-    /// with the session.
-    machines: Vec<Box<RemanenceMachine>>,
     /// Borrowed device views handed to callers. Owned here so their
     /// strings outlive the call that produced them, and freed with the
     /// session.
@@ -1717,45 +1714,18 @@ unsafe fn medium_view(session: *mut RemanenceSession, id: MediaId) -> *mut Reman
     handle.media.last_mut().expect("just pushed").as_mut() as *mut RemanenceMedium
 }
 
-/// A borrowed view of one machine in a session.
-///
-/// **The session owns this; never free it.** It stays valid until the
-/// session is freed.
-pub struct RemanenceMachine {
-    session: *mut RemanenceSession,
-    /// Null for the session's anonymous machine.
-    identity: Option<String>,
-    identity_c: Option<CString>,
-}
-
-impl RemanenceMachine {
-    /// The machine this view names. The anonymous one always resolves;
-    /// a named one resolves for as long as the session holds it.
-    #[allow(clippy::mut_from_ref)]
-    fn machine(&self) -> Option<remanence::MachineView<'_>> {
-        let session = unsafe { &mut (*self.session).session };
-        match &self.identity {
-            Some(identity) => session.machine_mut(identity),
-            None => Some(session.anonymous_mut()),
-        }
-    }
-}
-
 /// A borrowed view of one storage device — the slot, what it is, and
 /// the state of the medium in it.
 ///
 /// **The session owns this; never free it.** It stays valid until the
 /// device is released or the session is freed.
 ///
-/// It names the device by session, machine and attachment identity
-/// rather than by pointer, and re-resolves on every call. That is
-/// deliberate: a later attach may reallocate the machine's device
-/// storage, so a cached pointer to the device itself would dangle
-/// silently.
+/// It names the device by session and attachment identity rather than
+/// by pointer, and re-resolves on every call. That is deliberate: a
+/// later attach may reallocate the session's device storage, so a
+/// cached pointer to the device itself would dangle silently.
 pub struct RemanenceDevice {
     session: *mut RemanenceSession,
-    /// Null for the session's anonymous machine.
-    machine: Option<String>,
     attachment: AttachmentId,
     /// The slot-side facts, which do not change while the device exists.
     /// **They are all a device has**: every content-side fact answers on
@@ -1771,21 +1741,13 @@ impl RemanenceDevice {
     /// removed.
     fn view(&self) -> Option<remanence::DeviceView<'_>> {
         let session = unsafe { &mut (*self.session).session };
-        let machine = match &self.machine {
-            Some(identity) => session.machine_mut(identity)?,
-            None => session.anonymous_mut(),
-        };
-        machine.into_device(self.attachment)
+        session.device_mut(self.attachment)
     }
 
     /// The device as configuration, for the slot-side readers.
     fn device(&self) -> Option<&StorageDevice> {
         let session = unsafe { &*self.session };
-        let machine = match &self.machine {
-            Some(identity) => session.session.machine(identity)?,
-            None => session.session.anonymous(),
-        };
-        machine.device(self.attachment)
+        session.session.device(self.attachment)
     }
 }
 
@@ -2682,61 +2644,20 @@ pub unsafe extern "C" fn remanence_session_release_media(
     }
 }
 
-/// Releases a machine and everything it configures, **taking no state
-/// with it**: every device is ejected first — severing, so each medium
-/// stays pooled — then the devices go, then the machine. The session's
-/// anonymous machine has no identity and is not releasable. Returns
-/// false when no machine answers to `identity`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_release_machine(
-    session: *mut RemanenceSession,
-    identity: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> bool {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { session.as_mut() }) else {
-        let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let Some(identity) = (unsafe { utf8_arg(identity) }) else {
-        let error = remanence::Error::io("null identity");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match handle.session.release_machine(identity.as_ref()) {
-        Ok(()) => {
-            handle
-                .machines
-                .retain(|view| view.identity.as_deref() != Some(identity.as_ref()));
-            true
-        }
-        Err(error) => {
-            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-            false
-        }
-    }
-}
-
 /// Opens an empty session — the claim and cache scope, holding nothing
-/// but its anonymous machine. Machines and devices are added over its
-/// life; neither set is fixed at open. Free with
-/// `remanence_session_free`.
+/// at all. Devices and media are added over its life; neither set is
+/// fixed at open. Free with `remanence_session_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_new() -> *mut RemanenceSession {
     Box::into_raw(Box::new(RemanenceSession {
         session: Session::new(),
-        machines: Vec::new(),
         views: Vec::new(),
         media: Vec::new(),
     }))
 }
 
 /// Frees a session, dropping every device and releasing every P7 claim.
-/// Every borrowed machine and device view obtained from it becomes
-/// invalid.
+/// Every borrowed device view obtained from it becomes invalid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) {
     if !session.is_null() {
@@ -2746,12 +2667,11 @@ pub unsafe extern "C" fn remanence_session_free(session: *mut RemanenceSession) 
 
 /// Adds a device of `slot` (UTF-8, a stable spelling from
 /// `remanence_device_slot_id` — a device type such as `mbr-block-hd`, or
-/// `archive`) to the session's **anonymous machine**, taking the lowest
+/// `archive`) to the session, taking the lowest
 /// free slot of that bay, and returns a **borrowed** view of it — empty,
 /// until `remanence_device_insert` puts a medium in it.
 ///
-/// The session owns the view; never free it.
-/// `remanence_machine_add_device` does the same in a named machine. A
+/// The session owns the view; never free it. A
 /// device this release does not claim is refused by name (P3). Returns
 /// null on failure.
 #[unsafe(no_mangle)]
@@ -2765,7 +2685,6 @@ pub unsafe extern "C" fn remanence_session_add_device(
     unsafe {
         add_device(
             session,
-            None,
             slot,
             None,
             error_category_out,
@@ -2791,7 +2710,6 @@ pub unsafe extern "C" fn remanence_session_add_device_at(
     unsafe {
         add_device(
             session,
-            None,
             slot,
             Some(index),
             error_category_out,
@@ -2801,9 +2719,10 @@ pub unsafe extern "C" fn remanence_session_add_device_at(
     }
 }
 
-/// Adds a device for the artifact at `path` (UTF-8) to the session's
-/// **anonymous machine** and returns a **borrowed** view of it, as
-/// `remanence_machine_add_device_for` does in a named machine.
+/// Adds a device for the artifact at `path` (UTF-8) to the session — one
+/// of the device type the artifact's format records — loads the medium
+/// into it, and returns a **borrowed** view of it. A format recording
+/// several device types is refused by name, toward the declared load.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_add_device_for(
     session: *mut RemanenceSession,
@@ -2816,7 +2735,6 @@ pub unsafe extern "C" fn remanence_session_add_device_for(
     unsafe {
         add_device_for(
             session,
-            None,
             path,
             intent,
             error_category_out,
@@ -2826,9 +2744,9 @@ pub unsafe extern "C" fn remanence_session_add_device_for(
     }
 }
 
-/// Releases the device at `attachment` from the session's anonymous
-/// machine, as `remanence_machine_release_device` does in a named
-/// machine.
+/// Releases the device at `attachment`, **ejecting first**: the link is
+/// severed and the medium stays pooled with its claim and buffered
+/// changes intact. Returns false when nothing is attached there.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_release_device(
     session: *mut RemanenceSession,
@@ -2840,7 +2758,6 @@ pub unsafe extern "C" fn remanence_session_release_device(
     unsafe {
         release_device(
             session,
-            None,
             attachment,
             error_category_out,
             error_out,
@@ -2849,7 +2766,7 @@ pub unsafe extern "C" fn remanence_session_release_device(
     }
 }
 
-/// How many devices the session's anonymous machine holds.
+/// How many devices the session holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_session_device_count(session: *const RemanenceSession) -> usize {
     unsafe { session.as_ref() }.map_or(0, |handle| handle.session.devices().len())
@@ -2876,305 +2793,7 @@ pub unsafe extern "C" fn remanence_session_device_attachment(
     true
 }
 
-/// Adds a machine carrying `identity` (UTF-8) to the session and returns
-/// a **borrowed** view of it.
-///
-/// The session owns it; never free it. An identity already in use is
-/// refused by name rather than resolving to the machine holding it, and
-/// the empty identity is refused too — the machine with no identity is
-/// the session's anonymous one, and there is exactly one of it. Returns
-/// null on failure.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_add_machine(
-    session: *mut RemanenceSession,
-    identity: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceMachine {
-    unsafe { clear_error(error_out, error_rule_out) };
-    let Some(handle) = (unsafe { session.as_mut() }) else {
-        let error = remanence::Error::io("null session");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let Some(identity) = (unsafe { utf8_arg(identity) }) else {
-        let error = remanence::Error::io("null machine identity");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let identity = identity.into_owned();
-    if let Err(error) = handle.session.add_machine(identity.clone()) {
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    }
-    unsafe { machine_view(session, Some(identity)) }
-}
-
-/// How many machines the session holds, the anonymous one among them.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_machine_count(
-    session: *const RemanenceSession,
-) -> usize {
-    unsafe { session.as_ref() }.map_or(0, |handle| handle.session.machines().len())
-}
-
-/// Writes the identity of machine `index` to `identity_out`, freed with
-/// `remanence_string_free`. Returns false when `index` is out of range;
-/// writes null for the anonymous machine, whose identity is null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_machine_identity(
-    session: *const RemanenceSession,
-    index: usize,
-    identity_out: *mut *mut c_char,
-) -> bool {
-    let Some(handle) = (unsafe { session.as_ref() }) else {
-        return false;
-    };
-    let Some(machine) = handle.session.machines().get(index) else {
-        return false;
-    };
-    if !identity_out.is_null() {
-        unsafe {
-            *identity_out = match machine.identity() {
-                Some(identity) => to_owned_c_char(identity),
-                None => ptr::null_mut(),
-            }
-        };
-    }
-    true
-}
-
-/// A **borrowed** view of the machine carrying `identity` (UTF-8), or of
-/// the session's **anonymous machine** when `identity` is null — the
-/// anonymous machine being exactly the one whose identity is null.
-///
-/// The session owns it; never free it. **Null where the session holds no
-/// machine of that identity** — absence is an answer, so this takes no
-/// error outs to leave untouched, and asking never creates a machine.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_session_machine(
-    session: *mut RemanenceSession,
-    identity: *const c_char,
-) -> *mut RemanenceMachine {
-    let Some(handle) = (unsafe { session.as_ref() }) else {
-        return ptr::null_mut();
-    };
-    let identity = unsafe { utf8_arg(identity) }.map(|identity| identity.into_owned());
-    if let Some(identity) = &identity {
-        if handle.session.machine(identity).is_none() {
-            return ptr::null_mut();
-        }
-    }
-    unsafe { machine_view(session, identity) }
-}
-
-/// The machine's identity, or null where it is the session's anonymous
-/// machine. Owned by the view; do not free.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_identity(
-    machine: *const RemanenceMachine,
-) -> *const c_char {
-    match unsafe { machine.as_ref() } {
-        Some(handle) => handle
-            .identity_c
-            .as_ref()
-            .map_or(ptr::null(), |identity| identity.as_ptr()),
-        None => ptr::null(),
-    }
-}
-
-/// Adds a device of `slot` (UTF-8) to this machine, taking the lowest
-/// free slot of that bay, and returns a **borrowed** view of it. The
-/// session owns the view; never free it. Returns null on failure.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_add_device(
-    machine: *mut RemanenceMachine,
-    slot: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceDevice {
-    let Some(handle) = (unsafe { machine.as_ref() }) else {
-        let error = remanence::Error::io("null machine");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let (session, identity) = (handle.session, handle.identity.clone());
-    unsafe {
-        add_device(
-            session,
-            identity,
-            slot,
-            None,
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-/// Adds a device of `slot` at index `index` in this machine. The caller
-/// chooses the slot, never the name; a slot already taken is refused
-/// rather than displaced.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_add_device_at(
-    machine: *mut RemanenceMachine,
-    slot: *const c_char,
-    index: u32,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceDevice {
-    let Some(handle) = (unsafe { machine.as_ref() }) else {
-        let error = remanence::Error::io("null machine");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let (session, identity) = (handle.session, handle.identity.clone());
-    unsafe {
-        add_device(
-            session,
-            identity,
-            slot,
-            Some(index),
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-/// Adds a device of the **device type the artifact's format records** to
-/// this machine, loads the medium at `path` (UTF-8) into it, and returns
-/// a **borrowed** view of that device. The session owns the view; never
-/// free it.
-///
-/// It is the one convenience over discovery, and it composes the two
-/// acts without changing the access path: one claim is held from the
-/// question to the load (P7), and the device it answers with is an
-/// ordinary device in this machine's own set — a fresh one, never a slot
-/// already there.
-///
-/// **A format that records several device types is refused by name**,
-/// toward the explicit acts (`remanence_machine_add_device` then
-/// `remanence_session_load_media` then `remanence_device_insert`), with
-/// the refusal naming the types a declaration may state. A refused call
-/// leaves no device behind. Returns null on failure.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_add_device_for(
-    machine: *mut RemanenceMachine,
-    path: *const c_char,
-    intent: RemanenceAccessIntent,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> *mut RemanenceDevice {
-    let Some(handle) = (unsafe { machine.as_ref() }) else {
-        let error = remanence::Error::io("null machine");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let (session, identity) = (handle.session, handle.identity.clone());
-    unsafe {
-        add_device_for(
-            session,
-            identity,
-            path,
-            intent,
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-/// Releases the device at `attachment` from this machine, **ejecting
-/// first**: the link is severed and the medium stays in the session's
-/// pool, its claim and everything buffered intact. The slot is freed and
-/// borrowed device views for that device become invalid.
-///
-/// Destroying a medium's state is `remanence_session_release_media`, and
-/// it is the one verb that does. Returns false when this machine has no
-/// device at `attachment` — a release names what resolves to nothing,
-/// unlike the lookups, which answer null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_release_device(
-    machine: *mut RemanenceMachine,
-    attachment: *const c_char,
-    error_category_out: *mut RemanenceErrorCategory,
-    error_out: *mut *mut c_char,
-    error_rule_out: *mut *mut c_char,
-) -> bool {
-    let Some(handle) = (unsafe { machine.as_ref() }) else {
-        let error = remanence::Error::io("null machine");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    let (session, identity) = (handle.session, handle.identity.clone());
-    unsafe {
-        release_device(
-            session,
-            identity,
-            attachment,
-            error_category_out,
-            error_out,
-            error_rule_out,
-        )
-    }
-}
-
-/// How many devices this machine holds.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_device_count(machine: *const RemanenceMachine) -> usize {
-    unsafe { machine.as_ref() }
-        .and_then(RemanenceMachine::machine)
-        .map_or(0, |machine| machine.devices().len())
-}
-
-/// Writes the attachment identity of device `index` in this machine to
-/// `attachment_out`, freed with `remanence_string_free`. Returns false
-/// when `index` is out of range.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_device_attachment(
-    machine: *const RemanenceMachine,
-    index: usize,
-    attachment_out: *mut *mut c_char,
-) -> bool {
-    let Some(target) = (unsafe { machine.as_ref() }).and_then(RemanenceMachine::machine) else {
-        return false;
-    };
-    let Some(device) = target.devices().get(index) else {
-        return false;
-    };
-    if !attachment_out.is_null() {
-        unsafe { *attachment_out = to_owned_c_char(&device.attachment().to_string()) };
-    }
-    true
-}
-
-/// A **borrowed** view of the device at `attachment` in this machine.
-///
-/// The session owns it; never free it. It stays valid until that device
-/// is released or the session is freed. **Null where this machine has no
-/// device there** — absence is an answer, and this takes no error outs to
-/// leave untouched.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn remanence_machine_device(
-    machine: *mut RemanenceMachine,
-    attachment: *const c_char,
-) -> *mut RemanenceDevice {
-    let Some(handle) = (unsafe { machine.as_ref() }) else {
-        return ptr::null_mut();
-    };
-    let session = handle.session;
-    let identity = handle.identity.clone();
-    unsafe { device_view(session, identity, attachment) }
-}
-
-/// A **borrowed** view of the device at `attachment` in the session's
-/// anonymous machine — `remanence_machine_device` reaches a named
-/// machine's.
+/// A **borrowed** view of the device at `attachment`.
 ///
 /// The session owns it; never free it. It stays valid until that device
 /// is released or the session is freed. **Null where nothing is attached
@@ -3185,17 +2804,12 @@ pub unsafe extern "C" fn remanence_session_device(
     session: *mut RemanenceSession,
     attachment: *const c_char,
 ) -> *mut RemanenceDevice {
-    unsafe { device_view(session, None, attachment) }
+    unsafe { device_view(session, attachment) }
 }
 
-/// Adds a device in one machine of one session, and answers with the
-/// borrowed view of it. Both spellings — the session's anonymous machine
-/// and a named one — land here, because the act is the machine's either
-/// way.
-#[allow(clippy::too_many_arguments)]
+/// Adds a device to a session, and answers with the borrowed view of it.
 unsafe fn add_device(
     session: *mut RemanenceSession,
-    machine: Option<String>,
     slot: *const c_char,
     index: Option<u32>,
     error_category_out: *mut RemanenceErrorCategory,
@@ -3220,18 +2834,9 @@ unsafe fn add_device(
             return ptr::null_mut();
         }
     };
-    let target = match &machine {
-        Some(identity) => handle.session.machine_mut(identity),
-        None => Some(handle.session.anonymous_mut()),
-    };
-    let Some(mut target) = target else {
-        let error = remanence::Error::io("null or retired machine");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
     let added = match index {
-        Some(index) => target.add_device_at(slot, index),
-        None => target.add_device(slot),
+        Some(index) => handle.session.add_device_at(slot, index),
+        None => handle.session.add_device(slot),
     };
     let attachment = match added {
         Ok(device) => device.attachment(),
@@ -3241,16 +2846,13 @@ unsafe fn add_device(
         }
     };
     let attachment = to_cstring(&attachment.to_string());
-    unsafe { device_view(session, machine, attachment.as_ptr()) }
+    unsafe { device_view(session, attachment.as_ptr()) }
 }
 
-/// Adds a device for one artifact in one machine of one session, and
-/// answers with the borrowed view of it. Both spellings land here, as
-/// they do for the two-act form.
-#[allow(clippy::too_many_arguments)]
+/// Adds a device for one artifact in a session, and answers with the
+/// borrowed view of it.
 unsafe fn add_device_for(
     session: *mut RemanenceSession,
-    machine: Option<String>,
     path: *const c_char,
     intent: RemanenceAccessIntent,
     error_category_out: *mut RemanenceErrorCategory,
@@ -3268,16 +2870,10 @@ unsafe fn add_device_for(
         unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
         return ptr::null_mut();
     };
-    let target = match &machine {
-        Some(identity) => handle.session.machine_mut(identity),
-        None => Some(handle.session.anonymous_mut()),
-    };
-    let Some(mut target) = target else {
-        let error = remanence::Error::io("null or retired machine");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return ptr::null_mut();
-    };
-    let attachment = match target.add_device_for(path.as_ref(), access_intent(intent)) {
+    let attachment = match handle
+        .session
+        .add_device_for(path.as_ref(), access_intent(intent))
+    {
         Ok(device) => device.attachment(),
         Err(error) => {
             unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
@@ -3285,14 +2881,13 @@ unsafe fn add_device_for(
         }
     };
     let attachment = to_cstring(&attachment.to_string());
-    unsafe { device_view(session, machine, attachment.as_ptr()) }
+    unsafe { device_view(session, attachment.as_ptr()) }
 }
 
-/// Releases a device from one machine of one session and invalidates
-/// every borrowed view of it.
+/// Releases a device from a session and invalidates every borrowed view
+/// of it.
 unsafe fn release_device(
     session: *mut RemanenceSession,
-    machine: Option<String>,
     attachment: *const c_char,
     error_category_out: *mut RemanenceErrorCategory,
     error_out: *mut *mut c_char,
@@ -3316,20 +2911,9 @@ unsafe fn release_device(
             return false;
         }
     };
-    let target = match &machine {
-        Some(identity) => handle.session.machine_mut(identity),
-        None => Some(handle.session.anonymous_mut()),
-    };
-    let Some(mut target) = target else {
-        let error = remanence::Error::io("null or retired machine");
-        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
-        return false;
-    };
-    match target.release_device(attachment) {
+    match handle.session.release_device(attachment) {
         Ok(()) => {
-            handle
-                .views
-                .retain(|view| view.machine != machine || view.attachment != attachment);
+            handle.views.retain(|view| view.attachment != attachment);
             true
         }
         Err(error) => {
@@ -3339,36 +2923,10 @@ unsafe fn release_device(
     }
 }
 
-/// The borrowed machine view for `identity`, reusing the one already
-/// handed out where there is one so a caller's pointers stay stable.
-unsafe fn machine_view(
-    session: *mut RemanenceSession,
-    identity: Option<String>,
-) -> *mut RemanenceMachine {
-    let Some(handle) = (unsafe { session.as_mut() }) else {
-        return ptr::null_mut();
-    };
-    if let Some(at) = handle
-        .machines
-        .iter()
-        .position(|view| view.identity == identity)
-    {
-        return handle.machines[at].as_mut() as *mut RemanenceMachine;
-    }
-    let identity_c = identity.as_deref().map(to_cstring);
-    handle.machines.push(Box::new(RemanenceMachine {
-        session,
-        identity,
-        identity_c,
-    }));
-    handle.machines.last_mut().expect("just pushed").as_mut() as *mut RemanenceMachine
-}
-
-/// The borrowed device view for one attachment in one machine, reusing
-/// the one already handed out where there is one.
+/// The borrowed device view for one attachment, reusing the one already
+/// handed out where there is one.
 unsafe fn device_view(
     session: *mut RemanenceSession,
-    machine: Option<String>,
     attachment: *const c_char,
 ) -> *mut RemanenceDevice {
     let Some(handle) = (unsafe { session.as_mut() }) else {
@@ -3383,30 +2941,22 @@ unsafe fn device_view(
     if let Some(at) = handle
         .views
         .iter()
-        .position(|view| view.machine == machine && view.attachment == attachment)
+        .position(|view| view.attachment == attachment)
     {
         return handle.views[at].as_mut() as *mut RemanenceDevice;
     }
     // The slot the device is typed by comes off the device itself: an
     // attachment identity names the bay, and several device types share
     // one, so the identity alone cannot say what is in it.
-    let slot = match &machine {
-        Some(identity) => handle
-            .session
-            .machine(identity)
-            .and_then(|machine| machine.device(attachment).map(|device| device.slot())),
-        None => handle
-            .session
-            .anonymous()
-            .device(attachment)
-            .map(|device| device.slot()),
-    };
-    let Some(slot) = slot else {
+    let Some(slot) = handle
+        .session
+        .device(attachment)
+        .map(|device| device.slot())
+    else {
         return ptr::null_mut();
     };
     handle.views.push(Box::new(RemanenceDevice {
         session,
-        machine,
         attachment,
         attachment_c: to_cstring(&attachment.to_string()),
         slot_c: to_cstring(slot.id()),

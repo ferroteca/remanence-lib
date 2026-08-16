@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The storage-device tier (P32): a machine holds a set of devices, and
+//! The storage-device tier (P32): a session holds a set of devices, and
 //! a device is a durable slot distinct from whatever medium currently
 //! occupies it.
 //!
@@ -12,14 +12,14 @@
 //! the session's pool. Every content verb lives on
 //! [`Medium`](crate::Medium): the recording answers for itself whether
 //! or not a drive is configured for it, which is what lets a disk
-//! mastered out of an archive answer before any machine exists to seat
-//! it, and what lets a machine be torn down without taking a disk with
+//! mastered out of an archive answer before any drive exists to seat
+//! it, and what lets a drive be released without taking a disk with
 //! it.
 //!
 //! **Devices are added; media are loaded; the two are linked — three
-//! acts.** A machine adds the device
-//! ([`MachineView::add_device`](crate::MachineView::add_device)), the
-//! session loads the medium
+//! acts.** The session adds the device
+//! ([`Session::add_device`](crate::Session::add_device)), loads the
+//! medium
 //! ([`Session::load_media`](crate::Session::load_media)), and
 //! [`DeviceView::insert`] links them. That is what makes an *empty*
 //! device first-class configuration: the machine held the drive whether
@@ -184,16 +184,14 @@ impl StorageDevice {
 /// A device reached with its session's media pool beside it — the handle
 /// the edge verbs live on.
 ///
-/// A [`StorageDevice`] is configuration a machine owns; the pool is state
-/// the session owns. Linking them is the one act that crosses, so it is
+/// A [`StorageDevice`] is configuration and the pool is state, both the
+/// session's. Linking them is the one act that crosses, so it is
 /// spelled on the object that holds both, and the borrow cannot outlive
 /// either.
 #[derive(Debug)]
 pub struct DeviceView<'a> {
     pub(crate) device: &'a mut StorageDevice,
     pub(crate) pool: &'a mut MediaPool,
-    /// Null for the session's anonymous machine.
-    pub(crate) machine: Option<String>,
 }
 
 impl DeviceView<'_> {
@@ -285,10 +283,7 @@ impl DeviceView<'_> {
                 served_reading(slot),
             )));
         }
-        medium.set_link(Some(MediaLink {
-            machine: self.machine.clone(),
-            attachment,
-        }));
+        medium.set_link(Some(MediaLink { attachment }));
         self.device.set_media_id(Some(media));
         Ok(())
     }

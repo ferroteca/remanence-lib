@@ -558,7 +558,7 @@ impl fmt::Display for DeviceType {
 /// What an archive is loaded into is a receiver rather than a machine's
 /// hardware, and it is a device for the reason every other holder is —
 /// a caller never holds a medium outside one, and D27 keeps `arc0`
-/// visible in its machine's attachment namespace.
+/// visible in the session's attachment namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeviceSlot {
     /// A recording device of one concrete type.

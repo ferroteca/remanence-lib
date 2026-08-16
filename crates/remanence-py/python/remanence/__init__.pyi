@@ -75,7 +75,7 @@ def new_media_kinds() -> list[tuple[str, str, str, bool]]:
     """Every authored-media kind: `(id, name, article, takes_geometry)`."""
 
 def device_slots() -> list[DeviceSlot]:
-    """Every device slot a machine can be given, and the archive receiver."""
+    """Every device slot a session can be given, and the archive receiver."""
 
 def partition_schemes() -> list[tuple[str, str]]:
     """Every partition scheme this release reads: `(id, name)`."""
@@ -146,7 +146,7 @@ class Discovery:
 
 @final
 class Session:
-    """The pool of machines (configuration) and media (state)."""
+    """The devices (configuration) and the media pool (state)."""
 
     def __init__(self) -> None: ...
     def load_media(
@@ -192,11 +192,6 @@ class Session:
     def release_media(self, media_id: int, /) -> None:
         """The one state-destroying verb."""
 
-    def add_machine(self, identity: str, /) -> Machine: ...
-    @property
-    def machines(self) -> list[str | None]: ...
-    def machine(self, identity: str | None = None, /) -> Machine | None: ...
-    def release_machine(self, identity: str, /) -> None: ...
     def add_device(self, device: str, *, slot: int | None = None) -> StorageDevice: ...
     def add_device_for(
         self, path: _Path, *, writable: bool, cache_bytes: int | None = None
@@ -207,21 +202,6 @@ class Session:
     def release_device(self, attachment: str, /) -> None: ...
     def __enter__(self) -> Session: ...
     def __exit__(self, exc_type: object, exc: object, tb: object, /) -> bool: ...
-
-@final
-class Machine:
-    """One machine's configuration: the devices it held."""
-
-    @property
-    def identity(self) -> str | None: ...
-    def add_device(self, device: str, *, slot: int | None = None) -> StorageDevice: ...
-    def add_device_for(
-        self, path: _Path, *, writable: bool, cache_bytes: int | None = None
-    ) -> StorageDevice: ...
-    @property
-    def devices(self) -> list[str]: ...
-    def device(self, attachment: str, /) -> StorageDevice | None: ...
-    def release_device(self, attachment: str, /) -> None: ...
 
 @final
 class StorageDevice:
@@ -252,7 +232,7 @@ class StorageDevice:
 
 @final
 class DeviceSlot:
-    """One slot a machine can be given, as the catalog states it."""
+    """One slot a session can be given, as the catalog states it."""
 
     @property
     def id(self) -> str: ...

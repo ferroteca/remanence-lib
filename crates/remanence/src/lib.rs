@@ -3,8 +3,8 @@
 
 //! Self-contained disk image analysis library.
 //!
-//! A [`Session`] owns two pools — the [`Machine`]s that hold devices,
-//! which are configuration, and the media, which are state — and **the
+//! A [`Session`] holds two things — the devices, which are
+//! configuration, and the media, which are state — and **the
 //! medium is the content handle**: [`Medium`] is the node a caller
 //! holds, and everything a recording can answer answers on it.
 //!
@@ -32,7 +32,7 @@
 //! location-dependent journeys by name and serves everything else.
 //!
 //! **Devices are configuration beside that, and linking is the one
-//! edge.** [`MachineView::add_device`] takes a [`DeviceSlot`] — a
+//! edge.** [`Session::add_device`] takes a [`DeviceSlot`] — a
 //! [`DeviceType`] as concrete as the drive the machine actually had, or
 //! the archive receiver — [`DeviceView::insert`] links a pooled medium
 //! into it by **device-type equality**, refusing a medium another device
@@ -41,14 +41,13 @@
 //! [`Session::release_media`] is the one state-destroying verb.
 //!
 //! **Every pool runs the same three verbs: create, look up, release.**
-//! A lookup — [`Session::machine`], [`Session::device`],
-//! [`Session::medium`] and their `_mut` forms — answers with an
+//! A lookup — [`Session::device`], [`Session::medium`] and their
+//! `_mut` forms — answers with an
 //! `Option`, absence being an answer rather than a manufactured error,
 //! and there is no `require_*` form: a caller who wants a demand writes
 //! it, where they know what the absence means. Creation still refuses by
 //! name, and so do the removals, which are all spelled `release_*` —
-//! [`Session::release_machine`] cascading through the configuration
-//! below it, [`MachineView::release_device`] ejecting first, and
+//! [`Session::release_device`] ejecting first, and
 //! [`Session::release_media`] severing its own link before it ends the
 //! claim.
 //!
@@ -64,7 +63,7 @@
 //! runs twice — the plain door, opening where the recognizing format
 //! records one device type, with [`Session::load_discovery_as`] taking
 //! the caller's declaration where it records several.
-//! [`MachineView::add_device_for`] composes the acts over a discovery
+//! [`Session::add_device_for`] composes the acts over a discovery
 //! that knows what recorded it, and refuses by name where none does.
 //!
 //! On the medium: [`Medium::identify`] reports the layers of the
@@ -87,7 +86,7 @@
 //!
 //! **Authorship is the third fact class, and it creates media whole.**
 //! Evidence is discovered onto media and declarations are configured
-//! onto machines; [`Session::new_media`] is neither.
+//! onto devices; [`Session::new_media`] is neither.
 //! It takes one enumerated [`NewMedia`] kind — the **blank article
 //! kinds**, each naming one article of the catalog and creating that
 //! manufactured substrate with nothing recorded on it, and
@@ -230,7 +229,7 @@ pub use crate::model::disk::DiskFormat;
 pub use crate::model::geometry::{
     Geometry, GeometryReading, GeometryRule, GeometrySource, GeometryState, RecordingGeometry,
 };
-pub use crate::model::machine::{Machine, MachineView, Session};
+pub use crate::model::pools::Session;
 pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
 pub use crate::model::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
