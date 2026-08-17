@@ -346,6 +346,33 @@ fn mingw_generator() -> &'static str {
     );
 }
 
+/// A directory-safe name for a CMake generator.
+///
+/// `Visual Studio 18 2026` becomes `visual-studio-18-2026` and `Ninja`
+/// becomes `ninja`, so the build tree says which generator wrote it and
+/// two of them can sit side by side. `None` — CMake choosing unaided,
+/// which is the MSVC case — is `default` rather than an empty suffix, so
+/// the name never trails a bare dash.
+fn generator_slug(generator: Option<&str>) -> String {
+    let Some(generator) = generator else {
+        return "default".to_owned();
+    };
+    let mut slug = String::new();
+    for character in generator.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() {
+        "default".to_owned()
+    } else {
+        slug.to_owned()
+    }
+}
+
 fn run(what: &str, command: &mut Command) -> String {
     let output = command.output().unwrap_or_else(|error| {
         panic!(
@@ -371,7 +398,50 @@ static BUILD: OnceLock<PathBuf> = OnceLock::new();
 pub fn build_dir() -> &'static PathBuf {
     BUILD.get_or_init(|| {
         let source = crate_dir().join("tests/c");
-        let build = target_dir().join("c-tests");
+
+        // The toolchain is not a preference. MSVC is what CMake finds
+        // unaided and what D46 is written around, and where the library
+        // is MSVC-built that is the native match — but a MinGW import
+        // library is not something `cl.exe` can link, so naming gcc
+        // there is the only way the caller meets the library at all.
+        // Both overrides still win: this only supplies a default where
+        // CMake's own would be wrong.
+        //
+        // Settled before the build directory is chosen, because the
+        // directory is named after it.
+        let mut generator = std::env::var_os(GENERATOR);
+        let mut compilers = [
+            (CC_OVERRIDE, "CMAKE_C_COMPILER", "gcc"),
+            (CXX_OVERRIDE, "CMAKE_CXX_COMPILER", "g++"),
+        ]
+        .map(|(variable, cmake, mingw)| (cmake, std::env::var(variable).ok(), mingw));
+        if shipped_build().toolchain == Toolchain::MinGw {
+            generator.get_or_insert_with(|| mingw_generator().into());
+            for (_, compiler, mingw) in &mut compilers {
+                compiler.get_or_insert_with(|| (*mingw).to_owned());
+            }
+        }
+
+        // **A build tree belongs to the generator that wrote it.** CMake
+        // refuses to reconfigure one a different generator wrote, so a
+        // single directory shared by both makes each shell evict the
+        // other: the MSVC build from PowerShell and the Ninja build from
+        // an MSYS2 shell take turns failing with "does not match the
+        // generator used previously", curable only by deleting the tree
+        // by hand. Naming the directory after the generator lets both
+        // stay configured, and switching shells costs nothing.
+        //
+        // **It sits under `OUT_DIR` because cargo owns that.** Cargo made
+        // it and cargo tracks it, so `cargo clean -p remanence-ffi` takes
+        // it away with the rest of the crate's output. A directory the
+        // harness invents elsewhere under `target/` is invisible to cargo:
+        // it survives every `clean -p`, which is how a stale cache outlives
+        // the clean meant to clear it.
+        let generator_name = generator.as_deref().map(|name| name.to_string_lossy());
+        let build = PathBuf::from(env!("OUT_DIR")).join(format!(
+            "c-tests-{}",
+            generator_slug(generator_name.as_deref())
+        ));
 
         let mut configure = Command::new("cmake");
         configure
@@ -399,27 +469,7 @@ pub fn build_dir() -> &'static PathBuf {
             probe_build().link.display()
         ));
 
-        // The toolchain is not a preference. MSVC is what CMake finds
-        // unaided and what D46 is written around, and where the library
-        // is MSVC-built that is the native match — but a MinGW import
-        // library is not something `cl.exe` can link, so naming gcc
-        // there is the only way the caller meets the library at all.
-        // Both overrides still win: this only supplies a default where
-        // CMake's own would be wrong.
-        let mut generator = std::env::var_os(GENERATOR);
-        let mut compilers = [
-            (CC_OVERRIDE, "CMAKE_C_COMPILER", "gcc"),
-            (CXX_OVERRIDE, "CMAKE_CXX_COMPILER", "g++"),
-        ]
-        .map(|(variable, cmake, mingw)| (cmake, std::env::var(variable).ok(), mingw));
-        if shipped_build().toolchain == Toolchain::MinGw {
-            generator.get_or_insert_with(|| mingw_generator().into());
-            for (_, compiler, mingw) in &mut compilers {
-                compiler.get_or_insert_with(|| (*mingw).to_owned());
-            }
-        }
-
-        if let Some(generator) = generator {
+        if let Some(generator) = &generator {
             configure.arg("-G").arg(generator);
         }
         for (cmake, compiler, _) in &compilers {
