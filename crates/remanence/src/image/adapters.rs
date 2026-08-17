@@ -711,6 +711,14 @@ static IMD_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
     disk: None,
 };
 
+/// The floppy types a MAME floppy image may be declared as recorded by:
+/// the enrolled flux families, since the container states no drive of
+/// its own and the family supplies the rate and encoding.
+pub(crate) static MFI_RECORDED_DEVICES: [DeviceType; 2] = [
+    DeviceType::Floppy(FloppyDrive::HeathH37),
+    DeviceType::Floppy(FloppyDrive::HeathH37Dd),
+];
+
 /// The floppy types an ImageDisk artifact may be declared as recorded
 /// by.
 pub(crate) static IMD_RECORDED_DEVICES: [DeviceType; 2] = [
@@ -1146,7 +1154,7 @@ fn adapter_for(format: Format) -> &'static dyn ImageFormatAdapter {
         Format::Zip | Format::SevenZip => {
             unreachable!("an archive grammar is opened by its own catalog")
         }
-        Format::KryoFlux { .. } | Format::P64 => {
+        Format::Mfi { .. } | Format::KryoFlux { .. } | Format::P64 => {
             unreachable!("a flux format builds a flux medium, and no image adapter opens one")
         }
     }

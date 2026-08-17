@@ -167,6 +167,28 @@ impl MediumState {
                         cache_bytes,
                     )?))
                 }
+                FluxFormat::Mfi { device } => {
+                    let claimed = match shape {
+                        SourceShape::Handle(file) => source::claim_handle(file)?,
+                        SourceShape::Entry(entry) => entry.claim(),
+                        SourceShape::Handles(_) | SourceShape::Entries(_) => {
+                            unreachable!("the shape check admitted one artifact")
+                        }
+                    };
+                    let path = claimed
+                        .source_path
+                        .as_deref()
+                        .map(|path| path.display().to_string());
+                    let claim = claimed.claim_class;
+                    let source = claimed.resolve(cache_bytes);
+                    Ok(Self::Flux(FluxState::load_mfi(
+                        &source,
+                        path,
+                        device,
+                        claim,
+                        cache_bytes,
+                    )?))
+                }
                 FluxFormat::P64 => {
                     let claimed = match shape {
                         SourceShape::Handle(file) => source::claim_handle(file)?,

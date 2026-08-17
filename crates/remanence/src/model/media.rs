@@ -125,6 +125,12 @@ pub enum Format {
     /// declared family with the verdicts, the policy and the
     /// declared-loss account as provenance (P29, P30).
     KryoFlux { device: FloppyDrive },
+    /// MAME floppy image — cell transitions around a revolution, which
+    /// is a flux artifact rather than a sector one. The container states
+    /// no rate, encoding or drive, so the load declares which family
+    /// recorded it and the artifact's geometry is checked against that
+    /// family rather than overriding it.
+    Mfi { device: FloppyDrive },
     /// P64 flux container — a Commodore 1541 recording, and the format
     /// admits no other. A P64 already holds a flux medium at rest, so
     /// the load takes the served form straight in (D31).
@@ -193,7 +199,7 @@ impl FormatClaim {
 
 /// Every format a load may declare, and what each admits. The catalog is
 /// the claim: a pairing absent from it is refused by name.
-static CLAIMED: [FormatClaim; 9] = [
+static CLAIMED: [FormatClaim; 10] = [
     FormatClaim {
         id: "raw",
         name: "Raw disk image",
@@ -251,6 +257,13 @@ static CLAIMED: [FormatClaim; 9] = [
         collection: true,
     },
     FormatClaim {
+        id: "mfi",
+        name: "MAME floppy image",
+        devices: &crate::image::adapters::MFI_RECORDED_DEVICES,
+        block_bytes: false,
+        collection: false,
+    },
+    FormatClaim {
         id: "p64",
         name: "P64 flux image",
         devices: &[DeviceType::Floppy(FloppyDrive::Commodore1541)],
@@ -274,6 +287,7 @@ impl Format {
             Self::Vdi { .. } => "vdi",
             Self::H8d => "h8d",
             Self::Imd { .. } => "imd",
+            Self::Mfi { .. } => "mfi",
             Self::Zip => "zip",
             Self::SevenZip => "7z",
             Self::KryoFlux { .. } => "kryoflux",
@@ -289,6 +303,7 @@ impl Format {
             Self::Vdi { .. } => "VirtualBox disk image",
             Self::H8d => "Heathkit H8 H17 disk image",
             Self::Imd { .. } => "ImageDisk sector image",
+            Self::Mfi { .. } => "MAME floppy image",
             Self::Zip => "ZIP archive",
             Self::SevenZip => "7z archive",
             Self::KryoFlux { .. } => "KryoFlux capture set",
@@ -312,6 +327,7 @@ impl Format {
             Self::Qcow2 { device } | Self::Vdi { device } => Some(DeviceType::HardDrive(device)),
             Self::H8d => Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
             Self::Imd { device } => Some(DeviceType::Floppy(device)),
+            Self::Mfi { device } => Some(DeviceType::Floppy(device)),
             Self::KryoFlux { device } => Some(DeviceType::Floppy(device)),
             Self::P64 => Some(DeviceType::Floppy(FloppyDrive::Commodore1541)),
             Self::Zip | Self::SevenZip => None,
@@ -484,6 +500,9 @@ impl Format {
             "imd" => Self::Imd {
                 device: floppy(device)?,
             },
+            "mfi" => Self::Mfi {
+                device: floppy(device)?,
+            },
             "zip" => Self::Zip,
             "7z" => Self::SevenZip,
             "kryoflux" => Self::KryoFlux {
@@ -530,6 +549,7 @@ impl Format {
             | Self::H8d
             | Self::Imd { .. }
             | Self::KryoFlux { .. }
+            | Self::Mfi { .. }
             | Self::P64 => None,
         }
     }
@@ -540,6 +560,7 @@ impl Format {
     pub(crate) fn flux_family(self) -> Option<FluxFormat> {
         match self {
             Self::KryoFlux { device } => Some(FluxFormat::KryoFlux { device }),
+            Self::Mfi { device } => Some(FluxFormat::Mfi { device }),
             Self::P64 => Some(FluxFormat::P64),
             Self::Raw { .. }
             | Self::Qcow2 { .. }
@@ -563,6 +584,7 @@ impl fmt::Display for Format {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum FluxFormat {
     KryoFlux { device: FloppyDrive },
+    Mfi { device: FloppyDrive },
     P64,
 }
 

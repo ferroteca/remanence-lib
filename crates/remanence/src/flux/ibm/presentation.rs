@@ -355,12 +355,12 @@ mod tests {
 
         let mut cells = Vec::new();
         let mut last = false;
-        let mut write = |bytes: &[u8], cells: &mut Vec<bool>, last: &mut bool| {
+        let write = |bytes: &[u8], cells: &mut Vec<bool>, last: &mut bool| {
             let (bits, end) = encode(encoding, bytes, *last);
             cells.extend(bits);
             *last = end;
         };
-        let mut marks = |kind: u8, cells: &mut Vec<bool>, last: &mut bool| match encoding {
+        let marks = |kind: u8, cells: &mut Vec<bool>, last: &mut bool| match encoding {
             Encoding::Mfm => {
                 for _ in 0..3 {
                     cells.extend(encode_mark(MFM_A1_CELLS));

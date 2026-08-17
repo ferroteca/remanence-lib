@@ -613,10 +613,23 @@ fn one_article_bears_two_recordings_and_the_type_is_what_tells_them_apart() {
     );
     assert_ne!(DeviceSlot::from(h37), DeviceSlot::from(c1541));
 
-    // And the flux path is the 1541's alone, which is the other half of
-    // what the type carries that the article cannot.
+    // And the flux path is the other half of what the type carries that
+    // the article cannot: one disk, two drives, two recording
+    // disciplines, and each names its own.
     assert_eq!(c1541.flux_path(), Some("c1541"));
-    assert_eq!(h37.flux_path(), None);
+    assert_eq!(h37.flux_path(), Some("heath-h17-1-soft"));
+    assert_ne!(
+        c1541.flux_path(),
+        h37.flux_path(),
+        "the article cannot tell these apart and the type must"
+    );
+
+    // The second Heath mechanism makes the same point once more, and
+    // against a nearer neighbour: it takes the same article as the
+    // first and records it differently again.
+    let h37dd = DeviceType::Floppy(FloppyDrive::HeathH37Dd);
+    assert_eq!(h37dd.article(), h37.article());
+    assert_ne!(h37dd.flux_path(), h37.flux_path());
 }
 
 #[test]

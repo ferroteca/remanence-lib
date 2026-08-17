@@ -44,6 +44,7 @@ pub(crate) mod ibm;
 pub(crate) mod kryoflux;
 pub(crate) mod load;
 pub(crate) mod medium;
+pub(crate) mod mfi;
 pub(crate) mod p64;
 pub(crate) mod presentation;
 pub(crate) mod remanence;

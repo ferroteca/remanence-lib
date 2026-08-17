@@ -159,11 +159,26 @@ pub(crate) static HEATH_H17_1_SOFT: DriveProfile = DriveProfile {
 /// The cell rate doubles with the density: MFM at 300 RPM puts a hundred
 /// thousand cells on a revolution where single density puts fifty.
 ///
-/// **No artifact of this family has been read.** The facts are the
-/// published ones and the rate is the standard double-density one, and
-/// the declaration is answerable: an artifact stating another rate, or
-/// another side or track count, refuses by name showing both numbers
-/// rather than being read at a rate nobody stated.
+/// **An artifact of this family has now been read, and it corrected the
+/// record count.** A double-density Heath image — 80 cylinders, two
+/// heads, `525 DSQD` — confirms the geometry and the rate outright: its
+/// transitions fall two, three and four cells apart and nowhere else,
+/// which is the MFM population, and the cell those intervals imply puts
+/// a hundred thousand of them on a revolution. At 300 RPM that is the
+/// 500 kHz declared below.
+///
+/// What it refuted is the sector count. This entry declared nine records
+/// to a track, taken from what "standard double density" usually means;
+/// the recording holds **sixteen of 256 bytes**, which is 640 KB to the
+/// disk and is Heath's own double-density format rather than the PC's.
+/// Every one of its id and data fields checks: sixteen sectors a track
+/// with both CRCs agreeing, on the first cylinder, the last, and both
+/// heads.
+///
+/// The artifact is not redistributable and is therefore not a fixture,
+/// so what it settles is recorded here rather than in a test. The
+/// declaration stays answerable either way: an artifact stating another
+/// rate, side or track count refuses by name showing both numbers.
 pub(crate) static HEATH_H17_4_SOFT: DriveProfile = DriveProfile {
     id: "heath-h17-4-soft",
     name: "Heath H-17-4, soft-sectored double density",
@@ -190,10 +205,14 @@ pub(crate) static HEATH_H17_4_SOFT: DriveProfile = DriveProfile {
     density: &[DensityZone {
         first_location: 0,
         last_location: 79,
-        // 500 kHz of cells: a 32-cycle cell against the reference clock.
+        // 500 kHz of cells: a 32-cycle cell against the reference
+        // clock, and the rate a read artifact's own intervals imply.
         rate_numerator: 500_000,
         rate_denominator: 1,
-        records: 9,
+        // Sixteen 256-byte sectors, read off a double-density Heath
+        // recording. Not the nine of a PC double-density track, which
+        // is what this said before an artifact was read against it.
+        records: 16,
     }],
     materialization: MATERIALIZATION,
     presentation: Presentation {
@@ -278,6 +297,42 @@ mod tests {
             "each sector's marks and gaps come to {spare_bytes_per_sector} bytes, which \
              is the range a real track leaves"
         );
+    }
+
+    #[test]
+    fn a_double_density_revolution_holds_the_track_heath_records_on_it() {
+        // The same check as its single-density sibling, at the count a
+        // real double-density Heath recording turned out to carry:
+        // sixteen 256-byte sectors, not the nine a PC track holds.
+        //
+        // The artifact that settled it is not redistributable, so this
+        // stands in for it — arithmetic the corrected declaration has to
+        // satisfy, which the value it replaced does not.
+        let zone = &HEATH_H17_4_SOFT.density[0];
+        let (cell, per) = zone.nominal_cell(&HEATH_H17_4_SOFT.rotation);
+        let cells_per_revolution =
+            HEATH_H17_4_SOFT.rotation.cycles_per_rotation / (cell / per) as u64;
+        assert_eq!(cells_per_revolution, 100_000, "twice single density's");
+
+        // Two cells to a bit, so a 256-byte sector is 4,096 cells.
+        let payload_cells = u64::from(zone.records) * 256 * 8 * 2;
+        assert!(payload_cells < cells_per_revolution);
+        let spare_bytes_per_sector =
+            (cells_per_revolution - payload_cells) / 16 / u64::from(zone.records);
+        assert!(
+            (80..200).contains(&spare_bytes_per_sector),
+            "each sector's marks and gaps come to {spare_bytes_per_sector} bytes, which \
+             is the range an MFM track leaves"
+        );
+
+        // And the capacity that count implies is Heath's own figure for
+        // the drive, which is the cross-check that it is not a PC
+        // format wearing a Heath name.
+        let bytes = u64::from(zone.records)
+            * 256
+            * u64::from(HEATH_H17_4_SOFT.surfaces.recorded)
+            * (zone.last_location - zone.first_location + 1);
+        assert_eq!(bytes, 640 * 1024);
     }
 
     #[test]

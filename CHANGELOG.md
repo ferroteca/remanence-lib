@@ -210,6 +210,39 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **MAME floppy images are read** (F73). `Format::Mfi { device }` loads
+  one: the header, the track table, each track's deflate-compressed run
+  of cell transitions, and those transitions projected onto the declared
+  family's circle. It is a flux artifact rather than a sector one, so it
+  loads into a medium and reaches bytes through the family's own channel
+  and codec the way a capture does.
+
+  **The turn is the container's unit and the clock is the family's.** MFI
+  divides a revolution into two hundred million parts and states each
+  transition's distance from the last in them; the one division that
+  projects those onto the family's own cycles states its remainder rather
+  than swallowing it, and a transition that does not land on a whole
+  cycle is counted into the declared-loss account.
+
+  **What the container does not carry is not invented.** MFI states no
+  rate, no encoding and no drive. All three are the declared family's,
+  and the artifact's own head count is checked against that family rather
+  than overriding it — a recording of two heads declared as a
+  single-surface family is refused showing both numbers.
+
+  A cell record whose type is not the transition record is refused by
+  name: what an unmagnetized or damaged region means for a *served*
+  medium is a real question, and answering it from the format's shape
+  alone would be inventing evidence.
+
+- **Both Heath soft-sectored mechanisms are enrolled as device types.**
+  `FloppyDrive::HeathH37` is the controller driving the single-sided
+  48 TPI H-17-1 unit, and `HeathH37Dd` the double-sided 96 TPI H-17-4.
+  They take the same article and record it differently, which is the
+  distinction a device type exists to carry and an article cannot — and
+  each now names its own flux profile where the class previously named
+  none.
+
 - **PC-DOS 1.x volumes read, from the release that wrote no parameter
   block.** A 1.x boot sector has code where a later one puts its BPB, so
   the layout was never on the disk in a form a reader could look up — it

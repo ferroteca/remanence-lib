@@ -222,33 +222,6 @@ F69 and F70 are prerequisites.
 Companion design:
 [design/record-structured-sector-images.md](design/record-structured-sector-images.md).
 
-## F73 — MAME floppy image read
-
-Read a MAME `.mfi` artifact. It sits a level below the HxC MFM container
-pledged as F77: a track is a run
-of cell transition positions across one revolution, angular rather than
-timed, and each track is stored deflate-compressed — which the library's
-own encoder and decoder already serve, so nothing is added to the
-dependency-free claim.
-
-Being a level below is the point. MFI and HxC MFM are the two sources that
-say whether the framing pledged as F78 is a channel or a container reader:
-one hands it cells, the other hands it bits already framed at a uniform
-rate, and both must arrive at the same sector claims by the same rules.
-Where the two representations differ, the difference is stated rather than
-normalized away — a cell stream can carry a density variation and a
-uniform bitstream cannot, so what MFI knows is not silently levelled down
-to what MFM knows.
-
-Read only.
-
-Touches: S1, S2, S3. Supports: U1, U2; P1, P3–P5, P8, P10, P12–P14, P21–P23,
-P27. F76 is a prerequisite, and F78 is a prerequisite for its sector
-claims; F77 is not — this format reaches the ladder by its own container.
-
-Companion design:
-[design/bitstream-and-cell-floppy-images.md](design/bitstream-and-cell-floppy-images.md).
-
 ## F74 — Mastering out to HxC MFM and MAME floppy image
 
 Write `.mfm` and `.mfi` artifacts from evidence the session already holds,
@@ -266,7 +239,8 @@ is a refusal, and the artifact is built alongside and moved into place
 whole.
 
 Touches: S1, S2, S3. Supports: U1, U2; P6, P8, P9, P12, P13, P22, P29, P30.
-F77 is a prerequisite for the MFM destination; F73 for the MFI destination.
+F77 is a prerequisite for the MFM destination; the MFI reader that the
+other destination writes back out is delivered.
 
 Companion design:
 [design/bitstream-and-cell-floppy-images.md](design/bitstream-and-cell-floppy-images.md).

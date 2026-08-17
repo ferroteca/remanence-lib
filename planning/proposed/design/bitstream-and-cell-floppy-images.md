@@ -6,7 +6,6 @@ SPDX-License-Identifier: GPL-3.0-only
 # Bitstream and cell floppy images
 
 Design for
-[F73](../FEATURES.md#f73--mame-floppy-image-read),
 [F74](../FEATURES.md#f74--mastering-out-to-hxc-mfm-and-mame-floppy-image),
 [F75](../FEATURES.md#f75--writing-in-place-at-a-bitstream-authoritative-layer)
 and [F79](../FEATURES.md#f79--hxc-floppy-emulator-hfe-read), serving U1 and
@@ -32,7 +31,9 @@ that declares an *interface mode* and can carry more than one encoding.
 What it tests is whether the tier below assumes the encoding that happened
 to be loaded first.
 
-**MAME `.mfi`** is a track of **cell transitions around the revolution**:
+**MAME `.mfi`** — now **delivered**, and the first artifact to reach the
+FM/MFM channel from outside a test — is a track of **cell transitions
+around the revolution**:
 positions as a fraction of a turn rather than as bits, each carrying what
 kind of region it opens — magnetized one way, the other, unmagnetized, or
 damaged — with the track stored deflate-compressed. It is angular where a

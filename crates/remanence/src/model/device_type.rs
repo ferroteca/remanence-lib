@@ -71,9 +71,16 @@ pub enum FloppyDrive {
     /// The Heathkit H-17 — the hard-sectored Heathkit product class,
     /// served the ten-sector article whose holes divide the revolution.
     HeathH17,
-    /// The Heathkit H-37 — the soft-sectored Heathkit product class,
-    /// served the same soft-sectored article a 1541 is.
+    /// The Heathkit H-37 with the H-17-1 mechanism — the soft-sectored
+    /// Heathkit controller driving the single-sided 48 TPI unit, which
+    /// records single density.
     HeathH37,
+    /// The Heathkit H-37 with the H-17-4 mechanism — the same controller
+    /// driving the double-sided 96 TPI unit, which records double
+    /// density. It is a second product class rather than a mode of the
+    /// first: the two differ in surfaces and in step pitch, and a
+    /// profile pairs one mechanism with one recording.
+    HeathH37Dd,
     /// The generic schemeless sector floppy: sector-addressed recording
     /// with geometry per-media — discovered evidence, never a type fact.
     Sector,
@@ -254,7 +261,17 @@ static H37_SPEC: FloppySpec = FloppySpec {
     article: &FLEXIBLE_5_25_SOFT,
     slot_prefix: "heathfloppy",
     addressing: Addressing::Sector,
-    flux_path: None,
+    flux_path: Some(&crate::flux::ibm::profiles::HEATH_H17_1_SOFT),
+};
+
+static H37_DD_SPEC: FloppySpec = FloppySpec {
+    id: "h37-dd",
+    name: "Heathkit H-37 floppy drive, double-density unit",
+    provenance: "declared from the published H37 conventions and Heath's own drive                  descriptions: the soft-sectored controller driving the double-sided                  96 TPI unit, recording double density on the same 5.25-inch                  soft-sectored article the single-density unit takes",
+    article: &FLEXIBLE_5_25_SOFT,
+    slot_prefix: "heathfloppy",
+    addressing: Addressing::Sector,
+    flux_path: Some(&crate::flux::ibm::profiles::HEATH_H17_4_SOFT),
 };
 
 static SECTOR_FLOPPY_SPEC: FloppySpec = FloppySpec {
@@ -327,6 +344,7 @@ impl FloppyDrive {
             Self::Commodore1541 => &C1541_SPEC,
             Self::HeathH17 => &H17_SPEC,
             Self::HeathH37 => &H37_SPEC,
+            Self::HeathH37Dd => &H37_DD_SPEC,
             Self::Sector => &SECTOR_FLOPPY_SPEC,
         }
     }
@@ -369,10 +387,11 @@ impl OpticalDrive {
 
 impl DeviceType {
     /// Every device type this release claims, class by class.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Floppy(FloppyDrive::Commodore1541),
         Self::Floppy(FloppyDrive::HeathH17),
         Self::Floppy(FloppyDrive::HeathH37),
+        Self::Floppy(FloppyDrive::HeathH37Dd),
         Self::Floppy(FloppyDrive::Sector),
         Self::HardDrive(HardDrive::MbrSector),
         Self::HardDrive(HardDrive::MbrBlock),
@@ -837,6 +856,7 @@ mod tests {
             FloppyDrive::Commodore1541,
             FloppyDrive::HeathH17,
             FloppyDrive::HeathH37,
+            FloppyDrive::HeathH37Dd,
             FloppyDrive::Sector,
         ] {
             assert_eq!(
@@ -874,9 +894,45 @@ mod tests {
             Some("c1541")
         );
         assert_eq!(drive_profile::C1541.media.id, "flexible-5.25-soft");
+
+        // The two soft-sectored Heath mechanisms each declare their own
+        // path, because a profile pairs one mechanism with one
+        // recording and these differ in surfaces and in step pitch.
+        assert_eq!(
+            DeviceType::Floppy(FloppyDrive::HeathH37).flux_path(),
+            Some("heath-h17-1-soft")
+        );
+        assert_eq!(
+            DeviceType::Floppy(FloppyDrive::HeathH37Dd).flux_path(),
+            Some("heath-h17-4-soft")
+        );
+
+        // And the agreement this test is really about: a type served one
+        // article whose profile is declared over another would be
+        // describing two drives.
+        for (device, profile) in [
+            (
+                DeviceType::Floppy(FloppyDrive::HeathH37),
+                &crate::flux::ibm::profiles::HEATH_H17_1_SOFT,
+            ),
+            (
+                DeviceType::Floppy(FloppyDrive::HeathH37Dd),
+                &crate::flux::ibm::profiles::HEATH_H17_4_SOFT,
+            ),
+        ] {
+            assert_eq!(
+                device.article(),
+                profile.media.id,
+                "{} and its profile disagree about the article",
+                device.id()
+            );
+        }
+
+        // The hard-sectored Heathkit reads no flux path yet, and neither
+        // does the generic sector floppy: a type with no profile behind
+        // it says so rather than borrowing a neighbour's.
         for fluxless in [
             DeviceType::Floppy(FloppyDrive::HeathH17),
-            DeviceType::Floppy(FloppyDrive::HeathH37),
             DeviceType::Floppy(FloppyDrive::Sector),
             DeviceType::HardDrive(HardDrive::MbrBlock),
         ] {
@@ -890,7 +946,10 @@ mod tests {
             .iter()
             .map(|device| device.id())
             .collect();
-        assert_eq!(soft, vec!["c1541", "h37", "sector-floppy"]);
+        // Four drives take the soft-sectored 5.25-inch article now, and
+        // that they do is exactly what the article cannot tell you about
+        // the recordings they each make on it.
+        assert_eq!(soft, vec!["c1541", "h37", "h37-dd", "sector-floppy"]);
 
         let hard: Vec<&str> = DeviceType::accepting(&FLEXIBLE_5_25_HARD_10)
             .iter()

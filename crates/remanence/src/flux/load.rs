@@ -301,6 +301,52 @@ impl FluxState {
 
     /// Loads a P64 container's served form straight in (D31): the one
     /// format whose artifact already holds a flux medium at rest.
+    /// Loads a MAME floppy image: cell transitions projected onto the
+    /// declared family's circle (F73).
+    ///
+    /// The family is the caller's declaration, because the container
+    /// states no drive; what the artifact *does* state — its cylinder
+    /// and head counts — is checked against that family rather than
+    /// overriding it.
+    pub(crate) fn load_mfi(
+        source: &ImageSource,
+        path: Option<String>,
+        device: FloppyDrive,
+        claim: Claim,
+        cache_bytes: u64,
+    ) -> Result<Self> {
+        let device_id = DeviceType::Floppy(device).id();
+        let profile = device.flux_profile().ok_or_else(|| {
+            Error::unsupported(format!(
+                "a {device_id} claims no flux path, so no profile can read a MAME                  floppy image against it"
+            ))
+        })?;
+        let named = crate::model::media::named(path.as_deref());
+        let (medium, report) = crate::flux::mfi::decode(source, &named, profile, cache_bytes)?;
+
+        let mut evidence = report.evidence.clone();
+        push_loss(&mut evidence, "the container", &report.declared_loss);
+
+        let mut assurance = Assurance::verified(source.len(), AccessMode::ReadOnly, claim);
+        assurance.evidence = evidence;
+
+        Ok(Self {
+            path,
+            device,
+            profile,
+            format_id: "mfi",
+            format_name: "MAME floppy image",
+            source_bytes: source.len(),
+            _claims: vec![source.claim_handle()],
+            medium,
+            assurance,
+            cache_bytes,
+            bitstream: None,
+            bytestream: None,
+            sectors: None,
+        })
+    }
+
     pub(crate) fn load_p64(
         source: &ImageSource,
         path: Option<String>,
