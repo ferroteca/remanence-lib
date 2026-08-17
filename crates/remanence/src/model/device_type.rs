@@ -71,15 +71,27 @@ pub enum FloppyDrive {
     /// The Heathkit H-17 — the hard-sectored Heathkit product class,
     /// served the ten-sector article whose holes divide the revolution.
     HeathH17,
-    /// The Heathkit H-37 with the H-17-1 mechanism — the soft-sectored
-    /// Heathkit controller driving the single-sided 48 TPI unit, which
-    /// records single density.
+    /// The Heathkit H-37 with the H-17-1 mechanism recording **single
+    /// density** — the soft-sectored controller driving the single-sided
+    /// 48 TPI unit at 250 kHz FM, ten 256-byte records to a track.
     HeathH37,
+    /// The same H-17-1 mechanism recording **double density** — 500 kHz
+    /// MFM, sixteen 256-byte records to a track, 160 KB.
+    ///
+    /// **The `Dd` in the sibling below marks the 96 TPI mechanism, not
+    /// the density, which is why this one cannot be spelled to match
+    /// it.** The two axes — which mechanism, which density — are
+    /// independent, and the names here conflate them because this class
+    /// was enrolled when only two of the four combinations were known.
+    /// Renaming the set is a surface change across all three surfaces
+    /// and is deliberately not done here.
+    HeathH37Dd48,
     /// The Heathkit H-37 with the H-17-4 mechanism — the same controller
-    /// driving the double-sided 96 TPI unit, which records double
-    /// density. It is a second product class rather than a mode of the
-    /// first: the two differ in surfaces and in step pitch, and a
-    /// profile pairs one mechanism with one recording.
+    /// driving the double-sided 96 TPI unit at 500 kHz MFM, sixteen
+    /// 256-byte records to a track, 640 KB. It is a separate product
+    /// class rather than a mode of the others: the mechanisms differ in
+    /// surfaces and in step pitch, and a profile pairs one mechanism
+    /// with one recording.
     HeathH37Dd,
     /// The generic schemeless sector floppy: sector-addressed recording
     /// with geometry per-media — discovered evidence, never a type fact.
@@ -274,6 +286,16 @@ static H37_DD_SPEC: FloppySpec = FloppySpec {
     flux_path: Some(&crate::flux::ibm::profiles::HEATH_H17_4_SOFT),
 };
 
+static H37_DD48_SPEC: FloppySpec = FloppySpec {
+    id: "h37-dd48",
+    name: "Heathkit H-37 floppy drive, single-sided unit at double density",
+    provenance: "measured from a recording of the configuration rather than declared                  from convention: the soft-sectored controller driving the                  single-sided 48 TPI unit at double density, which the published                  descriptions do not enumerate separately and which an artifact showed                  to exist",
+    article: &FLEXIBLE_5_25_SOFT,
+    slot_prefix: "heathfloppy",
+    addressing: Addressing::Sector,
+    flux_path: Some(&crate::flux::ibm::profiles::HEATH_H17_1_SOFT_DD),
+};
+
 static SECTOR_FLOPPY_SPEC: FloppySpec = FloppySpec {
     id: "sector-floppy",
     name: "sector floppy drive",
@@ -344,6 +366,7 @@ impl FloppyDrive {
             Self::Commodore1541 => &C1541_SPEC,
             Self::HeathH17 => &H17_SPEC,
             Self::HeathH37 => &H37_SPEC,
+            Self::HeathH37Dd48 => &H37_DD48_SPEC,
             Self::HeathH37Dd => &H37_DD_SPEC,
             Self::Sector => &SECTOR_FLOPPY_SPEC,
         }
@@ -387,10 +410,11 @@ impl OpticalDrive {
 
 impl DeviceType {
     /// Every device type this release claims, class by class.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Floppy(FloppyDrive::Commodore1541),
         Self::Floppy(FloppyDrive::HeathH17),
         Self::Floppy(FloppyDrive::HeathH37),
+        Self::Floppy(FloppyDrive::HeathH37Dd48),
         Self::Floppy(FloppyDrive::HeathH37Dd),
         Self::Floppy(FloppyDrive::Sector),
         Self::HardDrive(HardDrive::MbrSector),
@@ -856,6 +880,7 @@ mod tests {
             FloppyDrive::Commodore1541,
             FloppyDrive::HeathH17,
             FloppyDrive::HeathH37,
+            FloppyDrive::HeathH37Dd48,
             FloppyDrive::HeathH37Dd,
             FloppyDrive::Sector,
         ] {
@@ -949,7 +974,10 @@ mod tests {
         // Four drives take the soft-sectored 5.25-inch article now, and
         // that they do is exactly what the article cannot tell you about
         // the recordings they each make on it.
-        assert_eq!(soft, vec!["c1541", "h37", "h37-dd", "sector-floppy"]);
+        assert_eq!(
+            soft,
+            vec!["c1541", "h37", "h37-dd48", "h37-dd", "sector-floppy"]
+        );
 
         let hard: Vec<&str> = DeviceType::accepting(&FLEXIBLE_5_25_HARD_10)
             .iter()

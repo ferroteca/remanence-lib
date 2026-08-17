@@ -20,6 +20,30 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A third Heath soft-sectored family is enrolled** — the H-17-1
+  mechanism recording *double* density (`h37-dd48`), 500 kHz MFM, sixteen
+  256-byte records to a track, 160 KB.
+
+  **The pair it joins encoded an assumption that turned out to be
+  false.** They read as though the mechanism settled the density —
+  single-sided 48 TPI meaning single density, double-sided 96 TPI meaning
+  double. The H-37 controller writes either density to either mechanism,
+  so the two are independent axes and this is the third of their four
+  combinations. A recording of it read as forty tracks of nothing until
+  the pairing was declared, because the single-density profile accepted
+  the artifact and then clocked FM against an MFM recording.
+
+  Every number in the new entry was measured off a recording rather than
+  reasoned to: 40 cylinders by one head, transitions on a 2000-unit
+  fundamental at intervals of two, three and four — which is MFM — and
+  sixteen id fields to a track each stating size code 1. The test that
+  guards it asserts the *independence* rather than the numbers: the same
+  mechanism at two densities, the same density at two mechanisms.
+
+  The fourth combination — the H-17-4 mechanism at single density — is
+  **not** declared, because no artifact has shown one and this file has
+  already been wrong once about a pairing nobody had read.
+
 - **Single-density (FM) recordings read their own records** (F78). The
   sector rung read an FM field's kind byte one byte late — MFM opens a
   field with three `A1` sync bytes and *then* the byte saying which field

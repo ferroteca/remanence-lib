@@ -229,6 +229,71 @@ pub(crate) static HEATH_H17_4_SOFT: DriveProfile = DriveProfile {
     },
 };
 
+/// The H-17-1 mechanism reading a soft-sectored **double-density**
+/// recording.
+///
+/// **This is the entry that was missing, and the assumption that hid
+/// it.** The pair above read as though mechanism settled density —
+/// single-sided 48 TPI meaning single density, double-sided 96 TPI
+/// meaning double. It does not: the H-37 controller writes either
+/// density to either mechanism, so the mechanisms and the densities are
+/// independent axes and this is the third of their four combinations.
+/// The fourth — the H-17-4 mechanism at single density — is not declared
+/// here, because no artifact has shown one and this file has already
+/// been wrong once about a combination nobody had read.
+///
+/// **Every number here was measured off a recording rather than
+/// reasoned to.** A MAME image of this configuration states 40
+/// cylinders and one head; its transitions fall on a 2000-unit
+/// fundamental with intervals of two, three and four of them, which is
+/// MFM at 500 kHz; and its tracks carry sixteen id fields each stating
+/// size code 1. That is 160 KB, and it is what the entry declares.
+pub(crate) static HEATH_H17_1_SOFT_DD: DriveProfile = DriveProfile {
+    id: "heath-h17-1-soft-dd",
+    name: "Heath H-17-1, soft-sectored double density",
+    version: 1,
+    provenance: "measured from a MAME recording of the configuration: 40 cylinders by                  one head, transitions on a 2000-unit fundamental at intervals of two,                  three and four — MFM at 500 kHz — and sixteen 256-byte records to a                  track, which is 160 KB",
+    media: &FLEXIBLE_5_25_SOFT,
+    stepping: Stepping {
+        // The mechanism is the single-density one's: 48 tracks to the
+        // inch, stepping one track at a time. Only the recording differs.
+        drive_tpi: 48,
+        recorded_tpi: 48,
+        first_location: 0,
+    },
+    rotation: Rotation {
+        nominal_numerator: 5,
+        nominal_denominator: 1,
+        reference_clock: REFERENCE_CLOCK,
+        cycles_per_rotation: CYCLES_PER_ROTATION,
+        index_observed_by_drive: true,
+    },
+    surfaces: Surfaces { recorded: 1 },
+    encoding: MFM_ENCODING,
+    density: &[DensityZone {
+        first_location: 0,
+        last_location: 39,
+        // The same 500 kHz the double-sided unit records at: density is
+        // the controller's business and not the mechanism's, which is
+        // the whole point of this entry existing.
+        rate_numerator: 500_000,
+        rate_denominator: 1,
+        records: 16,
+    }],
+    materialization: MATERIALIZATION,
+    presentation: Presentation {
+        read_channel: READ_CHANNEL,
+        channel_policy: crate::flux::presentation::ReadChannelPolicy {
+            density: crate::flux::presentation::DensityPolicy::Declared,
+            unzoned: crate::flux::presentation::UnzonedPolicy::Omit,
+            weak_pulse: crate::flux::presentation::WeakPulsePolicy::Seeded,
+            seed: 0x0017_0001_0044_0044,
+        },
+        bytestream: crate::flux::ibm::presentation::materialize_declared,
+        sectors: crate::flux::ibm::sectors::recognize_declared,
+    },
+};
+
 /// Which codec an IBM-family profile reads with.
 ///
 /// The pairing is a lookup over the enrolled entries rather than a
@@ -237,6 +302,7 @@ pub(crate) static HEATH_H17_4_SOFT: DriveProfile = DriveProfile {
 pub(crate) fn codec_of(profile: &'static DriveProfile) -> Option<&'static IbmCodec> {
     match profile.id {
         id if id == HEATH_H17_1_SOFT.id => Some(&FM),
+        id if id == HEATH_H17_1_SOFT_DD.id => Some(&MFM),
         id if id == HEATH_H17_4_SOFT.id => Some(&MFM),
         _ => None,
     }
@@ -335,6 +401,88 @@ mod tests {
             * u64::from(HEATH_H17_4_SOFT.surfaces.recorded)
             * (zone.last_location - zone.first_location + 1);
         assert_eq!(bytes, 640 * 1024);
+    }
+
+    /// Mechanism and density are independent axes, and the entries here
+    /// say so.
+    ///
+    /// **This is the assertion whose absence hid a whole family.** The
+    /// first two entries were written as though the mechanism settled
+    /// the density — single-sided 48 TPI meaning single density,
+    /// double-sided 96 TPI meaning double — and nothing said otherwise,
+    /// so nothing caught that the H-37 writes either density to either
+    /// mechanism. A recording of the third combination read as forty
+    /// tracks of nothing until the pairing was declared.
+    ///
+    /// So the test is not "each profile has the right numbers", which
+    /// would have passed throughout. It is that the same mechanism
+    /// appears at two densities and the same density at two mechanisms,
+    /// which is only true if the axes really are independent.
+    #[test]
+    fn the_mechanism_and_the_density_vary_independently_of_each_other() {
+        let single_sided_fm = &HEATH_H17_1_SOFT;
+        let single_sided_mfm = &HEATH_H17_1_SOFT_DD;
+        let double_sided_mfm = &HEATH_H17_4_SOFT;
+
+        // One mechanism, two densities: same surfaces and same pitch,
+        // different encoding and different rate.
+        assert_eq!(
+            single_sided_fm.surfaces.recorded,
+            single_sided_mfm.surfaces.recorded
+        );
+        assert_eq!(
+            single_sided_fm.stepping.drive_tpi,
+            single_sided_mfm.stepping.drive_tpi
+        );
+        assert_eq!(
+            codec_of(single_sided_fm).map(|codec| codec.id),
+            Some("ibm-fm")
+        );
+        assert_eq!(
+            codec_of(single_sided_mfm).map(|codec| codec.id),
+            Some("ibm-mfm")
+        );
+        assert_ne!(
+            single_sided_fm.density[0].rate_numerator,
+            single_sided_mfm.density[0].rate_numerator
+        );
+
+        // One density, two mechanisms: same encoding and same rate,
+        // different surfaces and different pitch.
+        assert_eq!(
+            codec_of(single_sided_mfm).map(|codec| codec.id),
+            codec_of(double_sided_mfm).map(|codec| codec.id)
+        );
+        assert_eq!(
+            single_sided_mfm.density[0].rate_numerator,
+            double_sided_mfm.density[0].rate_numerator
+        );
+        assert_eq!(
+            single_sided_mfm.density[0].records,
+            double_sided_mfm.density[0].records
+        );
+        assert_ne!(
+            single_sided_mfm.surfaces.recorded,
+            double_sided_mfm.surfaces.recorded
+        );
+        assert_ne!(
+            single_sided_mfm.stepping.drive_tpi,
+            double_sided_mfm.stepping.drive_tpi
+        );
+
+        // And what each holds, which is what a caller sees: 100 KB,
+        // 160 KB and 640 KB.
+        for (profile, expected) in [
+            (single_sided_fm, 100 * 1024u64),
+            (single_sided_mfm, 160 * 1024),
+            (double_sided_mfm, 640 * 1024),
+        ] {
+            let zone = &profile.density[0];
+            let tracks = u64::from(zone.last_location - zone.first_location + 1);
+            let held =
+                tracks * u64::from(profile.surfaces.recorded) * u64::from(zone.records) * 256;
+            assert_eq!(held, expected, "{} holds {held} bytes", profile.id);
+        }
     }
 
     #[test]
