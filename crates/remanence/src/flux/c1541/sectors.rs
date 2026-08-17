@@ -698,8 +698,8 @@ fn recognize(
     cache_bytes: u64,
 ) -> Result<C1541Sectors> {
     let profile = &C1541;
-    let grammar = &profile.presentation.record;
-    let codec = &profile.presentation.codec;
+    let grammar = &crate::flux::c1541::declarations::RECORD;
+    let codec = &crate::flux::c1541::declarations::CODEC;
     if bytestream.profile() != profile.id {
         return Err(Error::invalid_image(
             PROFILE,
@@ -1225,7 +1225,7 @@ impl Bytestream {
         }
         recognize(
             self.inner(),
-            profile.presentation.sector_policy,
+            crate::flux::c1541::declarations::SECTOR_POLICY,
             cache_bytes,
         )
     }
@@ -1264,7 +1264,7 @@ mod tests {
 
     /// The bits one byte is recorded as, through the family's own table.
     fn record_byte(bits: &mut Vec<bool>, byte: u8) {
-        let codec = &C1541.presentation.codec;
+        let codec = &crate::flux::c1541::declarations::CODEC;
         for nibble in [byte >> 4, byte & 0x0f] {
             let symbol = codec.symbols[nibble as usize];
             for shift in (0..codec.symbol_bits).rev() {
@@ -1283,7 +1283,7 @@ mod tests {
     /// tail. `corrupt_data` flips one payload byte after the checksum is
     /// taken, which is exactly what a failing block looks like.
     fn recorded_sector(track: u8, sector: u8, fill: u8, corrupt_data: bool) -> Vec<bool> {
-        let grammar = &C1541.presentation.record;
+        let grammar = &crate::flux::c1541::declarations::RECORD;
         let mut bits = Vec::new();
         let id = (0x50u8, 0x43u8);
         sync(&mut bits);
@@ -1516,7 +1516,7 @@ mod tests {
     fn a_header_no_data_block_follows_states_its_address_and_nothing_else() {
         // A header, its gap, and then the next sector: the first header
         // is followed by another header rather than by data.
-        let grammar = &C1541.presentation.record;
+        let grammar = &crate::flux::c1541::declarations::RECORD;
         let mut bits = Vec::new();
         sync(&mut bits);
         let checksum = 5u8 ^ 18 ^ 0x43 ^ 0x50;

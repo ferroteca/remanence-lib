@@ -1164,7 +1164,7 @@ pub(crate) mod tests {
     /// The bits a run of bytes is recorded as: a landmark of ten ones,
     /// then each byte as two five-bit symbols of the declared table.
     pub(crate) fn recorded(bytes: &[u8]) -> Vec<bool> {
-        let codec = &C1541.presentation.codec;
+        let codec = &crate::flux::c1541::declarations::CODEC;
         let mut bits = vec![true; C1541.presentation.read_channel.alignment_one_bits as usize];
         for byte in bytes {
             for nibble in [byte >> 4, byte & 0x0f] {

@@ -210,6 +210,56 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **PC-DOS 1.x volumes read, from the release that wrote no parameter
+  block.** A 1.x boot sector has code where a later one puts its BPB, so
+  the layout was never on the disk in a form a reader could look up — it
+  was in the operating system, selected by the media descriptor, the
+  first byte of the first FAT. A boot sector is now asked whether it
+  states a parameter block at all, and where it does not the descriptor
+  declares the layout: `0xfe` the single-sided 160 KB format, `0xff` the
+  double-sided 320 KB one.
+
+  **One byte is not enough on its own, and the extent is what checks it.**
+  A descriptor matching a disk that does not hold the extent it declares
+  is refused by name rather than read, and a descriptor this release
+  declares no layout for is refused naming the ones it does.
+
+  The single-sided entry is confirmed against the IBM PC-DOS 1.00
+  distribution disk: 320 sectors, root directory at sector three, one
+  sector to a cluster, and its forty files read back at their recorded
+  lengths. The double-sided entry is declared and unconfirmed, and the
+  code says which is which.
+
+- **FM and MFM recordings are read** (F78). CRC-16/CCITT joins CRC-32 in
+  `checksum.rs`, and a new IBM family carries a recording from cells to
+  the sectors it states: the encodings' clock rules, the address marks
+  whose deliberate clock violations are the only thing that can say a
+  field begins, the addresses and both checksums stated beside computed,
+  and the deleted-data mark carried as the fact the recording states
+  rather than a judgement about whether a sector counts.
+
+  Two Heath families are enrolled with it (F77): the **H-17-1**, single
+  surface at 48 tracks to the inch, and the **H-17-4**, two at 96. No
+  `.mfm` container is read yet, so nothing loads into these profiles from
+  an artifact; what is delivered is the channel, the framing, the records
+  and both declarations.
+
+- **Step pitch is a pair of pitches rather than a count.** How many steps
+  a drive takes per track is not a fact about the drive — it is the ratio
+  between the pitch the mechanism steps at and the pitch the recording
+  was laid down at, and a bare count answers for exactly one pairing. A
+  profile now declares both, and the 1541's documented two steps derive
+  from 96 over 48 rather than being asserted. A mechanism coarser than
+  its recording answers zero steps, so every location refuses rather than
+  reading its neighbour.
+
+- **A drive profile's group-code declarations moved to the family that
+  has them.** The shared `Presentation` carried a symbol table, a record
+  grammar and their policies while the 1541 was the only family in it; an
+  FM or MFM family has no symbol table at all and could only have filled
+  them in with values that meant nothing. They are the 1541's own now,
+  and the shared struct holds what every family has.
+
 - **The flux presentation rungs no longer name their family** (F76). The
   bitstream and bytestream a flux medium answers were spelled
   `C1541Bitstream` and `C1541Bytestream`, which made the 1541 part of

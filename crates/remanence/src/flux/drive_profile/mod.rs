@@ -61,20 +61,52 @@ pub(crate) use verdict::recognition;
 use crate::model::media_profile::MediaProfile;
 
 /// How the source's step positions map onto the family's own locations.
+///
+/// **Step pitch is a pair of pitches, not a count.** How many steps a
+/// drive takes per recorded track is not a fact about the drive: it is
+/// the ratio between the pitch the *mechanism* steps at and the pitch
+/// the *recording* was laid down at. A 96 TPI mechanism takes two steps
+/// per track over 48 TPI media and one over 96 TPI media, and the same
+/// media in a 48 TPI mechanism takes one — so a bare count answers for
+/// exactly one pairing and silently mis-addresses every other.
+///
+/// A profile pairs one drive with the media it is served, which is why
+/// both numbers live here. Two profiles differing only in the recording
+/// they read is the honest shape for a mechanism that reads more than
+/// one.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Stepping {
-    /// How many source steps make one family location.
-    pub(crate) steps_per_location: u64,
+    /// The pitch the mechanism steps at, in tracks per inch.
+    pub(crate) drive_tpi: u32,
+    /// The pitch the recording this profile reads was laid down at.
+    pub(crate) recorded_tpi: u32,
     /// The family location source position zero addresses.
     pub(crate) first_location: u64,
 }
 
 impl Stepping {
+    /// How many source steps make one family location.
+    ///
+    /// A mechanism finer than the recording steps more than once per
+    /// track; one coarser than the recording cannot address it at all,
+    /// and answers zero rather than rounding to one — every location
+    /// then refuses, which is the truthful outcome for a drive that
+    /// physically cannot reach half the tracks.
+    pub(crate) fn steps_per_location(&self) -> u64 {
+        if self.recorded_tpi == 0 || self.drive_tpi % self.recorded_tpi != 0 {
+            return 0;
+        }
+        u64::from(self.drive_tpi / self.recorded_tpi)
+    }
+
     /// The family location a source position addresses, or `None` where
     /// the family's addressing has no location there at all.
     fn location_of(&self, position: u64) -> Option<u64> {
-        (position % self.steps_per_location == 0)
-            .then(|| position / self.steps_per_location + self.first_location)
+        let steps = self.steps_per_location();
+        if steps == 0 {
+            return None;
+        }
+        (position % steps == 0).then(|| position / steps + self.first_location)
     }
 }
 
@@ -391,23 +423,32 @@ impl RecordGrammar {
 /// result as provenance (P29). A choice no family convention could make
 /// would refuse by name instead of sitting here as a quiet default.
 #[derive(Debug, Clone, Copy)]
+/// What a family declares about reading its recording back.
+///
+/// **What is here is what every family has; what is not is what only
+/// some do.** A group-code table, a record grammar and the policies over
+/// them are the 1541's own — an FM or MFM family has no symbol table at
+/// all, and framing it by a landmark of one-bits would be meaningless —
+/// so those declarations live in the family's own module and this struct
+/// holds only the two things shared plus the behavior that reaches the
+/// rest.
+///
+/// That boundary was drawn when the second family arrived rather than
+/// guessed at in advance (F76 deferred it deliberately, F77 needed it):
+/// the fields that moved are exactly the ones a second family could not
+/// have filled in honestly.
 pub(crate) struct Presentation {
     pub(crate) read_channel: ReadChannel,
-    pub(crate) codec: GroupCodec,
-    pub(crate) record: RecordGrammar,
     /// The declared medium-to-bitstream policy, for the one channel
     /// every enrolled family is clocked by.
     pub(crate) channel_policy: crate::flux::presentation::ReadChannelPolicy,
-    /// The declared bitstream-to-bytestream policy.
-    pub(crate) codec_policy: crate::flux::c1541::presentation::GcrCodecPolicy,
-    /// The declared bytestream-to-sector reading.
-    pub(crate) sector_policy: crate::flux::c1541::sectors::SectorPolicy,
     /// **The family's own bitstream-to-bytestream transition.** Bits
     /// become bytes by a rule that differs in kind between families, so
     /// the profile carries the transition as behavior rather than as a
     /// declaration central code would have to interpret (P12): enrolling
     /// a family enrols its codec here, and the rung above branches on
-    /// nothing.
+    /// nothing. Whatever declarations that transition reads are the
+    /// family's, held where the family holds them.
     pub(crate) bytestream: fn(
         &crate::flux::presentation::Bitstream,
         u64,

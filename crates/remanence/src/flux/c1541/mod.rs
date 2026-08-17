@@ -21,6 +21,7 @@
 //! analysis machinery, deliberately **not** the sector surface
 //! [`sectors`] presents.
 
+pub(crate) mod declarations;
 pub(crate) mod presentation;
 pub(crate) mod renditions;
 pub(crate) mod sectors;

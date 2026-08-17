@@ -87,7 +87,11 @@ pub(crate) struct GcrCodecPolicy {
 /// policy is read off the profile rather than passed in, which is P30
 /// reached through the type.
 pub(crate) fn materialize_declared(bitstream: &Bitstream, cache_bytes: u64) -> Result<Bytestream> {
-    materialize_bytestream(bitstream, C1541.presentation.codec_policy, cache_bytes)
+    materialize_bytestream(
+        bitstream,
+        crate::flux::c1541::declarations::CODEC_POLICY,
+        cache_bytes,
+    )
 }
 
 /// Materializes an encoded bytestream from a hardware bitstream.
@@ -109,7 +113,7 @@ pub(crate) fn materialize_bytestream(
             ),
         ));
     }
-    let codec = &profile.presentation.codec;
+    let codec = &crate::flux::c1541::declarations::CODEC;
     let symbols_per_byte = codec.symbols_per_byte().ok_or_else(|| {
         refuse(
             PROFILE,

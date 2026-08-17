@@ -32,7 +32,13 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
     // declared in two places rather than one standing in for the other.
     media: &FLEXIBLE_5_25_SOFT,
     stepping: Stepping {
-        steps_per_location: 2,
+        // The 1541's mechanism steps at 96 TPI over media recorded at
+        // 48, which is the two steps per track its documentation states
+        // — derived from the pair rather than asserted as a count, so
+        // the same mechanism over other media is a different profile
+        // rather than a different constant.
+        drive_tpi: 96,
+        recorded_tpi: 48,
         first_location: 1,
     },
     rotation: Rotation {
@@ -119,50 +125,6 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
             // is a pattern the recording cannot mean as data.
             alignment_one_bits: 10,
         },
-        codec: GroupCodec {
-            id: "c1541-gcr",
-            name: "Commodore group-coded recording",
-            symbol_bits: 5,
-            data_bits: 4,
-            symbols: &C1541_GCR_SYMBOLS,
-            provenance: "declared from the published Commodore GCR table: each four-bit \
-                         value is recorded as one of sixteen five-bit symbols, chosen so \
-                         that no symbol and no pair of them runs more than two zeros or \
-                         four ones together",
-        },
-        record: RecordGrammar {
-            id: "cbm-dos-record",
-            name: "CBM DOS sector record",
-            checksum: ChecksumRule::Xor,
-            header: BlockShape {
-                id: "header",
-                mark: 0x08,
-                bytes: 8,
-                checksum_at: 1,
-                checked_from: 2,
-                checked_to: 6,
-            },
-            data: BlockShape {
-                id: "data",
-                mark: 0x07,
-                bytes: 260,
-                checksum_at: 257,
-                checked_from: 1,
-                checked_to: 257,
-            },
-            track_at: 3,
-            sector_at: 2,
-            id_high_at: 5,
-            id_low_at: 4,
-            payload_from: 1,
-            payload_to: 257,
-            provenance: "declared from the published CBM DOS recording conventions: a \
-                         sector is written as an eight-byte header block opening 0x08, \
-                         holding the sector, the track and the two disk-identity bytes \
-                         with their checksum, and then — after a gap and a second sync — \
-                         a 260-byte data block opening 0x07, holding 256 payload bytes \
-                         and their checksum",
-        },
         // The family's declared defaults for the presentation ladder
         // (P30 reached through the type). Every choice states loss
         // rather than stopping, because a protected or damaged disk is
@@ -184,36 +146,12 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
             weak_pulse: crate::flux::presentation::WeakPulsePolicy::Seeded,
             seed: 0x1541_1541_1541_1541,
         },
-        codec_policy: crate::flux::c1541::presentation::GcrCodecPolicy {
-            // Framing begins at the family's declared landmark and
-            // nowhere else: bits before the first sync are unframed
-            // rather than guessed into bytes.
-            alignment: crate::flux::c1541::presentation::AlignmentPolicy::Landmark,
-            // A pattern the table does not assign keeps its own bits,
-            // stated as unresolved and counted.
-            unassigned_symbol:
-                crate::flux::c1541::presentation::UnassignedSymbolPolicy::DeclareLoss,
-        },
-        sector_policy: crate::flux::c1541::sectors::SectorPolicy {
-            checksum_failure: crate::flux::c1541::sectors::ChecksumFailurePolicy::DeclareLoss,
-            unpaired_record: crate::flux::c1541::sectors::UnpairedRecordPolicy::DeclareLoss,
-        },
         // The family's own transition, enrolled as behavior: the rung
         // above reaches the 1541's group code by holding this profile
         // and not by knowing which family it is holding.
         bytestream: crate::flux::c1541::presentation::materialize_declared,
     },
 };
-
-/// The symbol each four-bit value is recorded as, indexed by the value.
-///
-/// It is a declared fact of the family in exactly the sense every other
-/// field of the profile is: a published table, not a pattern any
-/// recording is permitted to establish.
-static C1541_GCR_SYMBOLS: [u16; 16] = [
-    0b01010, 0b01011, 0b10010, 0b10011, 0b01110, 0b01111, 0b10110, 0b10111, 0b01001, 0b11001,
-    0b11010, 0b11011, 0b01101, 0b11101, 0b11110, 0b10101,
-];
 
 #[cfg(test)]
 mod tests {
@@ -223,7 +161,7 @@ mod tests {
     fn the_c1541_entry_declares_the_family_and_derives_nothing_from_a_capture() {
         // Every value here is a published fact of the drive. None is a
         // number a capture is permitted to establish.
-        assert_eq!(C1541.stepping.steps_per_location, 2);
+        assert_eq!(C1541.stepping.steps_per_location(), 2);
         assert_eq!(C1541.stepping.first_location, 1);
         assert_eq!(C1541.rotation.cycles_per_rotation, 3_200_000);
         assert!(!C1541.rotation.index_observed_by_drive);
@@ -307,6 +245,37 @@ mod tests {
     }
 
     #[test]
+    fn the_step_count_is_the_ratio_of_two_pitches_and_not_a_constant() {
+        // The 1541's documented two steps per track is what 96 over 48
+        // comes to, so the pair reproduces the count it replaced.
+        assert_eq!(C1541.stepping.steps_per_location(), 2);
+
+        // A mechanism at the recording's own pitch steps once, which a
+        // bare count could not have said without a second constant.
+        let matched = Stepping {
+            drive_tpi: 48,
+            recorded_tpi: 48,
+            first_location: 0,
+        };
+        assert_eq!(matched.steps_per_location(), 1);
+        assert_eq!(matched.location_of(0), Some(0));
+        assert_eq!(matched.location_of(39), Some(39));
+
+        // The same mechanism over a finer recording reaches every other
+        // track and no more. It answers nothing rather than rounding to
+        // one, because a drive that cannot physically address a track
+        // should refuse it and not read its neighbour.
+        let coarse = Stepping {
+            drive_tpi: 48,
+            recorded_tpi: 96,
+            first_location: 0,
+        };
+        assert_eq!(coarse.steps_per_location(), 0);
+        assert_eq!(coarse.location_of(0), None);
+        assert_eq!(coarse.location_of(2), None);
+    }
+
+    #[test]
     fn a_zone_covers_what_it_declares_and_nothing_past_it() {
         assert_eq!(C1541.zone_for(1).map(|(at, _)| at), Some(0));
         assert_eq!(C1541.zone_for(17).map(|(at, _)| at), Some(0));
@@ -333,7 +302,7 @@ mod tests {
 
     #[test]
     fn the_group_code_is_a_declared_table_and_admits_no_pattern_outside_it() {
-        let codec = &C1541.presentation.codec;
+        let codec = &crate::flux::c1541::declarations::CODEC;
         assert_eq!(codec.symbol_bits, 5);
         assert_eq!(codec.data_bits, 4);
         // Two five-bit symbols to a byte, derived from the widths rather
@@ -362,7 +331,7 @@ mod tests {
         // The whole reason ten one bits can mean "landmark" is that no
         // pair of symbols can produce a run that long. Checking it here
         // is what keeps the two declarations honest about each other.
-        let codec = &C1541.presentation.codec;
+        let codec = &crate::flux::c1541::declarations::CODEC;
         let mut longest = 0u32;
         for left in codec.symbols {
             for right in codec.symbols {
@@ -392,7 +361,7 @@ mod tests {
         // numbers and holds none of its own. Each is a published fact of
         // CBM DOS, and the two marks are distinct because a byte opening
         // both blocks would make the grammar unreadable.
-        let record = &C1541.presentation.record;
+        let record = &crate::flux::c1541::declarations::RECORD;
         assert_eq!(record.header.mark, 0x08);
         assert_eq!(record.data.mark, 0x07);
         assert_ne!(record.header.mark, record.data.mark);

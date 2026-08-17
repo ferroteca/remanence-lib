@@ -75,7 +75,7 @@ pub(crate) fn probe(profile: &'static DriveProfile, capture: &FluxCapture) -> Re
                     "source position {} is not one this family's addressing covers, \
                      which takes {} steps to a location",
                     position_text(&reading.key),
-                    profile.stepping.steps_per_location
+                    profile.stepping.steps_per_location()
                 ));
             };
             let Some(zone) = reading.zone else {

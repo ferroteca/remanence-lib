@@ -125,7 +125,150 @@ fn le32(bytes: &[u8], offset: usize) -> u64 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as u64
 }
 
+/// One layout a media descriptor byte declares, for the disks that carry
+/// no boot-record parameter block at all.
+///
+/// **PC-DOS 1.x wrote no BPB.** The field a later boot record puts at
+/// offset 11 is code on a 1.x disk, so the parameters a reader needs
+/// were not on the disk in any form it could look up — they were in the
+/// operating system, selected by one byte: the media descriptor, which
+/// is the first byte of the first FAT.
+///
+/// That is the CP/M problem in a milder form, and the difference is what
+/// makes this table honest rather than a guess. CP/M offers nothing to
+/// key on, so its layout has to be declared by the caller; DOS 1.x
+/// offers one byte that genuinely narrows the answer, and the artifact's
+/// own size then confirms or refutes it. A descriptor this table knows
+/// whose disk is the wrong size is refused rather than read.
+#[derive(Debug, Clone, Copy)]
+struct MediaLayout {
+    descriptor: u8,
+    name: &'static str,
+    sectors_per_cluster: u64,
+    root_entries: u64,
+    total_sectors: u64,
+    sectors_per_fat: u64,
+    sectors_per_track: u16,
+    heads: u16,
+}
+
+impl MediaLayout {
+    const fn bytes(&self) -> u64 {
+        self.total_sectors * 512
+    }
+}
+
+/// The BPB-less layouts this release reads.
+///
+/// Both are PC-DOS 1.x formats: eight sectors to a track, forty tracks,
+/// 512-byte sectors, two FATs of one sector.
+///
+/// **The single-sided entry is confirmed against the artifact.** The IBM
+/// PC-DOS 1.00 distribution disk in the fixture set states `0xfe`, holds
+/// exactly 320 sectors, puts its root directory at sector three — which
+/// is what one reserved sector and two one-sector FATs come to — and
+/// lays `IBMBIO.COM`'s 1,920 bytes across four clusters, which is one
+/// sector to a cluster. Its forty files read back at their recorded
+/// lengths.
+///
+/// **The double-sided entry is declared and unconfirmed.** No 1.1 disk
+/// has been read against it. The size check below is what keeps that
+/// safe rather than merely hopeful: a descriptor matching a disk of the
+/// wrong extent is refused rather than read on the strength of one
+/// byte.
+static MEDIA_LAYOUTS: [MediaLayout; 2] = [
+    MediaLayout {
+        descriptor: 0xfe,
+        name: "PC-DOS 1.0, single-sided 8-sector 5.25-inch (160 KB)",
+        sectors_per_cluster: 1,
+        root_entries: 64,
+        total_sectors: 320,
+        sectors_per_fat: 1,
+        sectors_per_track: 8,
+        heads: 1,
+    },
+    MediaLayout {
+        descriptor: 0xff,
+        name: "PC-DOS 1.1, double-sided 8-sector 5.25-inch (320 KB)",
+        sectors_per_cluster: 2,
+        root_entries: 112,
+        total_sectors: 640,
+        sectors_per_fat: 1,
+        sectors_per_track: 8,
+        heads: 2,
+    },
+];
+
+/// Whether a boot sector carries a parameter block at all.
+///
+/// The test is the same one [`Bpb::parse`] applies first: a sector size
+/// that is a sane power of two. A 1.x boot sector has code there, and
+/// the odds of code reading as one of four legal sizes are small enough
+/// that this is a recognition rather than a coin toss — and a false
+/// positive is caught by the rest of the block failing to parse.
+fn states_a_parameter_block(sector: &[u8]) -> bool {
+    if sector.len() < 512 {
+        return false;
+    }
+    let bytes_per_sector = le16(sector, 11);
+    (512..=4096).contains(&bytes_per_sector) && bytes_per_sector.is_power_of_two()
+}
+
 impl Bpb {
+    /// The layout a media descriptor declares, checked against the
+    /// extent the artifact actually holds.
+    ///
+    /// `descriptor` is the first byte of the first FAT. On these
+    /// formats the FAT begins at sector one — one reserved sector, the
+    /// boot sector itself — which is a property of the layouts named
+    /// above rather than something read off the disk, and is why this
+    /// path is a table lookup and not a parse.
+    fn from_media_descriptor(descriptor: u8, extent: u64) -> Result<Self> {
+        let layout = MEDIA_LAYOUTS
+            .iter()
+            .find(|layout| layout.descriptor == descriptor)
+            .ok_or_else(|| {
+                let known: Vec<String> = MEDIA_LAYOUTS
+                    .iter()
+                    .map(|layout| format!("{:#04x}", layout.descriptor))
+                    .collect();
+                invalid(format!(
+                    "this boot record states no parameter block, so the layout would have \
+                     to come from the media descriptor {descriptor:#04x} — and this \
+                     release declares layouts for {} only",
+                    known.join(", ")
+                ))
+            })?;
+
+        // The one check that can refute the descriptor. A disk claiming
+        // 160 KB that does not hold 160 KB is not this layout, and
+        // reading it as one would address past its own end.
+        if extent < layout.bytes() {
+            return Err(invalid(format!(
+                "the media descriptor {descriptor:#04x} declares {} — {} bytes — and the \
+                 artifact holds {extent}: the descriptor and the extent do not describe \
+                 the same disk",
+                layout.name,
+                layout.bytes()
+            )));
+        }
+
+        Ok(Self {
+            bytes_per_sector: 512,
+            sectors_per_cluster: layout.sectors_per_cluster,
+            reserved_sectors: 1,
+            fat_count: 2,
+            root_entries: layout.root_entries,
+            total_sectors: layout.total_sectors,
+            sectors_per_fat: layout.sectors_per_fat,
+            sectors_per_track: layout.sectors_per_track,
+            heads: layout.heads,
+            // A 1.x volume has no extended boot record and so no label
+            // field. `None` is that absence rather than an empty name.
+            boot_label: None,
+        })
+    }
+
     fn parse(sector: &[u8]) -> Result<Self> {
         if sector.len() < 512 {
             return Err(invalid("boot sector too short"));
@@ -370,7 +513,16 @@ impl FatVolume {
     pub fn open(device: &mut dyn Device, offset: u64) -> Result<Self> {
         let mut sector = [0u8; 512];
         device.read_at(offset, &mut sector)?;
-        let bpb = Bpb::parse(&sector)?;
+        let bpb = if states_a_parameter_block(&sector) {
+            Bpb::parse(&sector)?
+        } else {
+            // No parameter block: a PC-DOS 1.x disk, whose layout was in
+            // the operating system and is selected by the first byte of
+            // the first FAT.
+            let mut fat = [0u8; 512];
+            device.read_at(offset + 512, &mut fat)?;
+            Bpb::from_media_descriptor(fat[0], device.len().saturating_sub(offset))?
+        };
         let count = bpb.cluster_count();
         // The format's own rule: the width is a function of cluster count.
         let kind = if count < 4085 {
@@ -1247,5 +1399,164 @@ impl FatVolume {
             current = self.create_directory(device, current, slot, *raw_name)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dos1_tests {
+    use super::*;
+
+    /// A device over a plain byte vector, which is all these need.
+    struct Image(Vec<u8>);
+
+    impl Device for Image {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+            let at = offset as usize;
+            let end = at + buf.len();
+            if end > self.0.len() {
+                return Err(invalid("read past the image"));
+            }
+            buf.copy_from_slice(&self.0[at..end]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+            let at = offset as usize;
+            self.0[at..at + data.len()].copy_from_slice(data);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Builds a PC-DOS 1.0 volume: no parameter block anywhere, the
+    /// layout carried only by the media descriptor, and one file in the
+    /// root directory.
+    fn dos1_volume(descriptor: u8, name: &[u8; 11], payload: &[u8]) -> Image {
+        let layout = MEDIA_LAYOUTS
+            .iter()
+            .find(|layout| layout.descriptor == descriptor)
+            .expect("a declared layout");
+        let mut image = vec![0u8; layout.bytes() as usize];
+
+        // The boot sector carries code where a later release puts its
+        // BPB. This is what makes the disk unreadable to a BPB parser.
+        image[0] = 0xeb;
+        image[1] = 0x2f;
+        image[2] = 0x90;
+        for slot in image.iter_mut().take(62).skip(3) {
+            *slot = 0xf6;
+        }
+
+        // Two FATs, each opening with the media descriptor.
+        let fat_start = 512usize;
+        let fat_bytes = (layout.sectors_per_fat * 512) as usize;
+        for copy in 0..2usize {
+            let at = fat_start + copy * fat_bytes;
+            image[at] = descriptor;
+            image[at + 1] = 0xff;
+            image[at + 2] = 0xff;
+            // Cluster 2 is the file's one cluster, and it ends there.
+            image[at + 3] = 0xff;
+            image[at + 4] = 0x0f;
+        }
+
+        // The root directory follows both FATs.
+        let root = fat_start + 2 * fat_bytes;
+        image[root..root + 11].copy_from_slice(name);
+        image[root + 11] = 0x20;
+        image[root + 26] = 2; // first cluster
+        image[root + 27] = 0;
+        let size = (payload.len() as u32).to_le_bytes();
+        image[root + 28..root + 32].copy_from_slice(&size);
+
+        // The data area begins after the root directory.
+        let data = root + (layout.root_entries as usize * 32);
+        image[data..data + payload.len()].copy_from_slice(payload);
+        Image(image)
+    }
+
+    #[test]
+    fn a_dos_1_volume_reads_though_it_states_no_parameter_block() {
+        let payload = b"PC-DOS 1.0 wrote no BPB.\r\n";
+        let mut image = dos1_volume(0xfe, b"README  TXT", payload);
+
+        // The recognition this rests on: the boot sector genuinely does
+        // not state a block, so the ordinary path could never read it.
+        let mut sector = [0u8; 512];
+        image.read_at(0, &mut sector).expect("the sector reads");
+        assert!(!states_a_parameter_block(&sector));
+        assert!(Bpb::parse(&sector).is_err());
+
+        let volume = FatVolume::open(&mut image, 0).expect("the descriptor declares it");
+        let entries = volume.entries(&mut image, &[]).expect("the root lists");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "README.TXT");
+        assert_eq!(entries[0].size_bytes, payload.len() as u64);
+        assert_eq!(
+            volume
+                .read_file(&mut image, &["README.TXT"])
+                .expect("the file reads"),
+            payload
+        );
+    }
+
+    #[test]
+    fn the_double_sided_layout_reads_under_its_own_descriptor() {
+        let payload: Vec<u8> = (0..1024u32).map(|at| (at % 251) as u8).collect();
+        let mut image = dos1_volume(0xff, b"DATA    BIN", &payload);
+        let volume = FatVolume::open(&mut image, 0).expect("the descriptor declares it");
+        let entries = volume.entries(&mut image, &[]).expect("the root lists");
+        assert_eq!(entries[0].name, "DATA.BIN");
+        // Two sectors to a cluster on this layout, so a 1 KB file is one
+        // cluster — which the read has to walk correctly to return.
+        assert_eq!(
+            volume
+                .read_file(&mut image, &["DATA.BIN"])
+                .expect("the file reads"),
+            payload
+        );
+    }
+
+    #[test]
+    fn a_descriptor_this_release_does_not_declare_is_refused_by_name() {
+        // 0xfd is a DOS 2.0 nine-sector format. Those disks carry a
+        // parameter block, so meeting one here means the boot sector
+        // stated none and the descriptor is not one of the two that
+        // ever appeared without one.
+        let mut image = dos1_volume(0xfe, b"README  TXT", b"x");
+        image.0[512] = 0xfd;
+        let error = FatVolume::open(&mut image, 0)
+            .err()
+            .expect("no layout is declared for it");
+        assert!(error.to_string().contains("0xfd"), "{error}");
+        assert!(
+            error.to_string().contains("0xfe"),
+            "names what it does declare: {error}"
+        );
+    }
+
+    #[test]
+    fn a_descriptor_the_extent_contradicts_is_refused_rather_than_read() {
+        // The check that keeps one byte from being enough on its own: a
+        // disk claiming the 320 KB layout that only holds 160 KB is not
+        // that layout, and reading it as one would address past its end.
+        let payload = b"short";
+        let mut image = dos1_volume(0xfe, b"README  TXT", payload);
+        image.0[512] = 0xff;
+        image.0[512 + 512] = 0xff;
+        let error = FatVolume::open(&mut image, 0)
+            .err()
+            .expect("the extent refutes it");
+        assert!(
+            error.to_string().contains("do not describe the same disk"),
+            "{error}"
+        );
     }
 }

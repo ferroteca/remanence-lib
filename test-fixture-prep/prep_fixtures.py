@@ -109,6 +109,27 @@ CPM_2203_SOFT_ZIP_SHA256 = \
 CPM_2203_SOFT_ZIP_NAME = "CPM_2_2_03_soft.zip"
 CPM_2203_SOFT_IMAGE_NAME = "cpm_2_2_03_Disk_1.imd"
 
+# PC-DOS 1.00, the release that wrote no BPB at all. The archive
+# carries the same disk as a raw image and as ImageDisk, which is why
+# it serves two readers: the media-descriptor path that reads a 1.x
+# volume, and the ImageDisk adapter, for which it is the second and
+# first non-Heath artifact.
+PCDOS_100_URL = (
+    "https://winworldpc.com/download/5ee2809d-03c2-b6c2-adc3-9711c3a5c28f/"
+    "from/c3ae6ee2-8099-713d-3411-c3a6e280947e"
+)
+# WinWorld publishes no hash; first fetched 2026-08-16.
+PCDOS_100_ARCHIVE_SHA256 = \
+    "7187788b8c1e4f441428e81785134d433a014f7bd1252fd9f1417a9a55dfe65d"
+PCDOS_100_ARCHIVE_NAME = "IBM PC-DOS 1.00 (5.25-160k).7z"
+PCDOS_100_MEMBERS = (
+    ("IBM PC-DOS 1.00 (5.25-160k)/Images/Raw/Disk01.img", "pcdos-100-disk01.img"),
+    (
+        "IBM PC-DOS 1.00 (5.25-160k)/Images/ImageDisk/DISK01.IMD",
+        "pcdos-100-disk01.imd",
+    ),
+)
+
 PINBALL_URL = (
     "https://archive.org/download/BillBudgePinballConstructionSetCommodore64.7z/"
     "Disk%20Dump/Bill%20Budge%20Pinball%20Construction%20Set%5BCommodore%20"
@@ -206,6 +227,8 @@ def download_archives() -> None:
                       CPM_2203_ZIP_SHA256)
     _download_archive(FIXTURES_DIR / CPM_2203_SOFT_ZIP_NAME,
                       CPM_2203_SOFT_URL, CPM_2203_SOFT_ZIP_SHA256)
+    _download_archive(DOWNLOADS_DIR / PCDOS_100_ARCHIVE_NAME, PCDOS_100_URL,
+                      PCDOS_100_ARCHIVE_SHA256)
     _download_archive(DOWNLOADS_DIR / PINBALL_ARCHIVE_NAME, PINBALL_URL,
                       PINBALL_ARCHIVE_SHA256)
     # A single NIB-compressed disk image, fixture as downloaded — no
@@ -265,6 +288,34 @@ def prepare_cpm_fixtures() -> None:
         print(f"Extracting {member} into fixtures directory...")
         with zipfile.ZipFile(FIXTURES_DIR / archive, "r") as zip_ref:
             zip_ref.extract(member, FIXTURES_DIR)
+
+
+def prepare_pcdos_fixtures() -> None:
+    """Extract the PC-DOS 1.00 disk, as a raw image and as ImageDisk.
+
+    The same disk in two containers, which is why both are taken: the
+    raw one is what the media-descriptor path reads, and the ImageDisk
+    one is the ImageDisk adapter's second artifact and its first from
+    outside the Heath world.
+    """
+    print("==> Preparing PC-DOS 1.00 fixture images...")
+    FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+
+    archive = DOWNLOADS_DIR / PCDOS_100_ARCHIVE_NAME
+    for member, name in PCDOS_100_MEMBERS:
+        target = FIXTURES_DIR / name
+        if target.exists():
+            print(f"{name} already present")
+            continue
+        print(f"Extracting {name} into fixtures directory...")
+        with tempfile.TemporaryDirectory() as staging:
+            subprocess.run(
+                ["7z", "e", "-y", f"-o{staging}", str(archive), member],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            extracted = Path(staging) / Path(member).name
+            shutil.copyfile(extracted, target)
 
 
 def prepare_pinball_fixture() -> None:
@@ -477,6 +528,7 @@ def main() -> None:
     download_archives()
     prepare_hdos_fixtures()
     prepare_cpm_fixtures()
+    prepare_pcdos_fixtures()
     prepare_pinball_fixture()
 
     # Every rig machine builds, harvests and retires in turn; the

@@ -82,6 +82,10 @@ name = "cpm_files"
 required-features = ["fixtures"]
 
 [[test]]
+name = "pcdos_files"
+required-features = ["fixtures"]
+
+[[test]]
 name = "identify_hdos_image"
 required-features = ["fixtures"]
 
