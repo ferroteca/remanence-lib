@@ -99,7 +99,7 @@ fn crc16(covered: &[u8]) -> u16 {
 fn track_cells(cylinder: u8, head: u8, sectors: u8) -> Vec<bool> {
     let mut cells = Vec::new();
     let mut last = false;
-    let mut write = |bytes: &[u8], cells: &mut Vec<bool>, last: &mut bool| {
+    let write = |bytes: &[u8], cells: &mut Vec<bool>, last: &mut bool| {
         let (encoded, ended) = encode_mfm(bytes, *last);
         cells.extend(encoded);
         *last = ended;
