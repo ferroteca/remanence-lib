@@ -490,6 +490,15 @@ pub(crate) struct Presentation {
         &crate::flux::presentation::Bitstream,
         u64,
     ) -> crate::error::Result<crate::flux::presentation::Bytestream>,
+    /// **The family's own bytestream-to-record recognition.** What a
+    /// record *is* differs between families more than either rung below
+    /// does — a CBM DOS claim and an IBM one share no field — so the
+    /// profile carries this transition as behavior too, and the rung
+    /// above holds whichever set the family made.
+    pub(crate) sectors: fn(
+        &crate::flux::presentation::Bytestream,
+        u64,
+    ) -> crate::error::Result<crate::flux::presentation::Sectors>,
 }
 
 /// One family's recording conventions, and the published description

@@ -149,6 +149,7 @@ pub(crate) static HEATH_H17_1_SOFT: DriveProfile = DriveProfile {
             seed: 0x0017_0001_0017_0001,
         },
         bytestream: crate::flux::ibm::presentation::materialize_declared,
+        sectors: crate::flux::ibm::sectors::recognize_declared,
     },
 };
 
@@ -224,6 +225,7 @@ pub(crate) static HEATH_H17_4_SOFT: DriveProfile = DriveProfile {
             seed: 0x0017_0004_0017_0004,
         },
         bytestream: crate::flux::ibm::presentation::materialize_declared,
+        sectors: crate::flux::ibm::sectors::recognize_declared,
     },
 };
 

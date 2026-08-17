@@ -210,6 +210,36 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **The sector rung is shared and its claims are the family's** (F78).
+  `Bytestream.recognize_sectors` answered a CBM DOS sector layer, which
+  made the 1541 part of what the rung *is*. It now answers a `Sectors`
+  that names the record grammar which recognized it and holds that
+  family's reading — `c1541()` for a CBM DOS recording, `ibm()` for an FM
+  or MFM one, and `None` from either for the other's.
+
+  There is one rung and two vocabularies rather than one vocabulary
+  carrying both, because a CBM DOS claim states a track and a sector
+  under a one-byte exclusive-or and an IBM claim states a cylinder, head
+  and size code under a sixteen-bit CRC. A claim carrying both would be
+  half-absent whichever recording it described, and asking a recording
+  for the other family's reading answers the honest absence instead.
+
+  `Sectors.family` names the record grammar rather than the drive
+  profile, because one family's records read the same way under every
+  profile that records them; `Sectors.profile_id` answers the profile.
+
+  The C ABI and the Python module carry the same shape: an
+  `IbmSectors` handle beside the CBM DOS one, reached by
+  `recognize_ibm_sectors`, with the other family's reading refused by
+  name rather than bent.
+
+  **Framing follows the marks the layer below located**, not bytes that
+  read like them: the recognition reads the bytestream's alignment facts
+  rather than scanning for `A1 A1 A1 FE`, so a payload that happens to
+  contain those bytes does not open a field. The ladder was checked
+  end to end against an 80-cylinder double-sided MFM recording — 2,560
+  records, every id and data CRC agreeing.
+
 - **MAME floppy images are read** (F73). `Format::Mfi { device }` loads
   one: the header, the track table, each track's deflate-compressed run
   of cell transitions, and those transitions projected onto the declared

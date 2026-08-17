@@ -278,6 +278,14 @@ fn sectors_and_directory(session: &mut Session, disk_id: MediaId) {
         .expect("the codec resolves it")
         .recognize_sectors(1 << 20)
         .expect("the family's record grammar reads the recording's own sectors");
+    assert_eq!(sectors.family(), "cbm-dos-record");
+    assert!(
+        sectors.ibm().is_none(),
+        "a CBM DOS recording has no IBM reading to give"
+    );
+    let sectors = sectors
+        .c1541()
+        .expect("a CBM DOS recording answers the CBM DOS reading");
     let report = sectors.inspect();
     assert_eq!(report.grammar_id, "cbm-dos-record");
     assert!(report.claims.len() > 600, "{} claims", report.claims.len());

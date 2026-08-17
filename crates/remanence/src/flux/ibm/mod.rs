@@ -29,3 +29,4 @@ pub(crate) mod encoding;
 pub(crate) mod presentation;
 pub(crate) mod profiles;
 pub(crate) mod records;
+pub(crate) mod sectors;

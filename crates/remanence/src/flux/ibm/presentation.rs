@@ -100,7 +100,7 @@ pub(crate) fn materialize_declared(bitstream: &Bitstream, cache_bytes: u64) -> R
         )
     })?;
 
-    let described = describe(codec, bitstream.inner().provenance());
+    let described = describe(profile.id, codec, bitstream.inner().provenance());
     let mut builder = BytestreamBuilder::new(
         profile.id,
         codec.id,
@@ -141,7 +141,7 @@ pub(crate) fn materialize_declared(bitstream: &Bitstream, cache_bytes: u64) -> R
                         at_bit: 0,
                         bits: *first as u64,
                     },
-                    Provenance::new(codec.id).note(
+                    Provenance::new(profile.id).note(
                         "cells before the first address mark, where no byte boundary has \
                          been established",
                     ),
@@ -154,7 +154,7 @@ pub(crate) fn materialize_declared(bitstream: &Bitstream, cache_bytes: u64) -> R
                     at_bit: 0,
                     bits: bits.len() as u64,
                 },
-                Provenance::new(codec.id)
+                Provenance::new(profile.id)
                     .note("this location carries no address mark, so nothing in it is framed"),
             ));
         }
@@ -165,7 +165,7 @@ pub(crate) fn materialize_declared(bitstream: &Bitstream, cache_bytes: u64) -> R
                     at_bit: *start as u64,
                     run_bits: CELLS_PER_BYTE as u64,
                 },
-                Provenance::new(codec.id).note(
+                Provenance::new(profile.id).note(
                     "an address mark: a byte whose clock pattern the encoding forbids, \
                      which is what says a field begins here and nothing about what \
                      follows it",
@@ -190,7 +190,7 @@ pub(crate) fn materialize_declared(bitstream: &Bitstream, cache_bytes: u64) -> R
                         at_bit: at as u64,
                         bits: (end - at) as u64,
                     },
-                    Provenance::new(codec.id)
+                    Provenance::new(profile.id)
                         .note("cells no whole byte covers, stated rather than padded into one"),
                 ));
             }
@@ -235,7 +235,7 @@ pub(crate) fn materialize_declared(bitstream: &Bitstream, cache_bytes: u64) -> R
             key.clone(),
             &records,
             &facts,
-            Provenance::new(codec.id).note(format!(
+            Provenance::new(profile.id).note(format!(
                 "framed from {} address mark(s) in the location's {} clocked cells",
                 marks.len(),
                 bits.len()
@@ -538,8 +538,8 @@ mod tests {
     }
 }
 
-fn describe(codec: &IbmCodec, bitstream: &Provenance) -> Provenance {
-    let mut provenance = Provenance::new(codec.id)
+fn describe(namespace: &'static str, codec: &IbmCodec, bitstream: &Provenance) -> Provenance {
+    let mut provenance = Provenance::new(namespace)
         .note(format!("{}: {}", codec.name, codec.provenance))
         .note(
             "two cells of the recording carry one bit of a byte, and every cell pattern \

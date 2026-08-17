@@ -150,6 +150,7 @@ pub(crate) static C1541: DriveProfile = DriveProfile {
         // above reaches the 1541's group code by holding this profile
         // and not by knowing which family it is holding.
         bytestream: crate::flux::c1541::presentation::materialize_declared,
+        sectors: crate::flux::c1541::sectors::recognize_declared,
     },
 };
 

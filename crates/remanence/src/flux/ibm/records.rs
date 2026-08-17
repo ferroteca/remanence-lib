@@ -31,14 +31,22 @@ use crate::flux::ibm::encoding::{
 
 /// The id-address-mark byte, which follows the sync marks in MFM and is
 /// itself the mark in FM.
-const IDAM: u8 = 0xfe;
+/// What this family's records are called, in the same vocabulary the
+/// other families name theirs. It is not a `RecordGrammar` because that
+/// shape states a one-byte mark and a byte-offset checksum, and these
+/// records have neither: their marks are clock violations three bytes
+/// long and their checksum is a CRC over a run that starts before the
+/// mark.
+pub(crate) const RECORD_FAMILY: &str = "ibm-id-data-record";
+
+pub(crate) const IDAM: u8 = 0xfe;
 /// The data-address-mark byte.
-const DAM: u8 = 0xfb;
+pub(crate) const DAM: u8 = 0xfb;
 /// The deleted-data-address-mark byte.
-const DELETED_DAM: u8 = 0xf8;
+pub(crate) const DELETED_DAM: u8 = 0xf8;
 
 /// How many `A1` marks introduce an MFM field.
-const MFM_SYNC_MARKS: usize = 3;
+pub(crate) const MFM_SYNC_MARKS: usize = 3;
 
 /// The address a sector states for itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,7 +192,7 @@ fn read_bytes(bits: &[bool], at_cell: usize, count: usize) -> Option<Vec<u8>> {
 
 /// The checksum over a field: the marks it was introduced by, then its
 /// own bytes.
-fn checksum(covered: &[u8], payload: &[u8]) -> u16 {
+pub(crate) fn checksum(covered: &[u8], payload: &[u8]) -> u16 {
     let mut crc = Crc16Ccitt::new();
     crc.update(covered);
     crc.update(payload);
@@ -249,21 +257,25 @@ pub(crate) fn recognize(bits: &[bool], encoding: Encoding) -> Vec<SectorRecord> 
     records
 }
 
+/// Writing a track the way a recording holds one, for the tests of this
+/// rung and of the sector rung above it. It lives outside the test
+/// module so both can write the same track rather than each keeping its
+/// own idea of what one looks like.
 #[cfg(test)]
-mod tests {
+pub(crate) mod writing {
     use super::*;
     use crate::flux::ibm::encoding::{encode, encode_mark};
 
     /// Writes one sector the way a recording does: gap, sync, id field,
     /// gap, sync, data field. The bytes are what an IBM track holds.
-    struct TrackWriter {
-        bits: Vec<bool>,
+    pub(crate) struct TrackWriter {
+        pub(crate) bits: Vec<bool>,
         last: bool,
         encoding: Encoding,
     }
 
     impl TrackWriter {
-        fn new(encoding: Encoding) -> Self {
+        pub(crate) fn new(encoding: Encoding) -> Self {
             Self {
                 bits: Vec::new(),
                 last: false,
@@ -271,7 +283,7 @@ mod tests {
             }
         }
 
-        fn bytes(&mut self, data: &[u8]) -> &mut Self {
+        pub(crate) fn bytes(&mut self, data: &[u8]) -> &mut Self {
             let (bits, last) = encode(self.encoding, data, self.last);
             self.bits.extend(bits);
             self.last = last;
@@ -280,7 +292,7 @@ mod tests {
 
         /// The marks that introduce a field, laid down as the violations
         /// they are.
-        fn marks(&mut self, kind: u8) -> &mut Self {
+        pub(crate) fn marks(&mut self, kind: u8) -> &mut Self {
             match self.encoding {
                 Encoding::Mfm => {
                     for _ in 0..MFM_SYNC_MARKS {
@@ -303,7 +315,12 @@ mod tests {
             self
         }
 
-        fn sector(&mut self, address: SectorAddress, data: &[u8], deleted: bool) -> &mut Self {
+        pub(crate) fn sector(
+            &mut self,
+            address: SectorAddress,
+            data: &[u8],
+            deleted: bool,
+        ) -> &mut Self {
             let covered_kind = if deleted { DELETED_DAM } else { DAM };
             let id = [
                 address.cylinder,
@@ -337,7 +354,7 @@ mod tests {
         }
     }
 
-    fn address(sector: u8) -> SectorAddress {
+    pub(crate) fn address(sector: u8) -> SectorAddress {
         SectorAddress {
             cylinder: 0,
             head: 0,
@@ -345,6 +362,12 @@ mod tests {
             size_code: 0,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::writing::{TrackWriter, address};
+    use super::*;
 
     #[test]
     fn a_written_track_reads_back_as_the_sectors_it_states() {

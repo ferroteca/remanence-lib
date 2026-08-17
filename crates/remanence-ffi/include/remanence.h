@@ -245,6 +245,10 @@ typedef struct RemanenceG64Report RemanenceG64Report;
 // `remanence_geometry_free`; every string it returns is owned by it.
 typedef struct RemanenceGeometry RemanenceGeometry;
 
+// An owned FM or MFM sector layer, holding its claims and their
+// payloads in private session storage.
+typedef struct RemanenceIbmSectors RemanenceIbmSectors;
+
 // The result of identifying a medium's image.
 typedef struct RemanenceIdentification RemanenceIdentification;
 
@@ -389,6 +393,43 @@ typedef struct {
   uint8_t sector;
   uint32_t readable_claims;
 } RemanenceContestedAddress;
+
+// One record an FM or MFM recording states, exactly as it states it.
+//
+// Both checks are carried stated beside computed. Nothing is repaired,
+// and a record whose checks disagree is reported here and refused by
+// `remanence_ibm_sectors_read` rather than served as though it read.
+typedef struct {
+  // Which location this record was found in, as the recording's own
+  // coordinate.
+  uint64_t location;
+  // Which surface, where the family records more than one.
+  bool has_surface;
+  uint64_t surface;
+  // Where the id field's mark opens, as a byte of the location.
+  uint64_t at_byte;
+  // The address the record states for itself — not where it sits.
+  uint8_t cylinder;
+  uint8_t head;
+  uint8_t sector;
+  // How large the record says its data field is, as the power-of-two
+  // code the family writes: 0 is 128 bytes, 1 is 256, and so on.
+  uint8_t size_code;
+  uint16_t header_checksum_stated;
+  uint16_t header_checksum_computed;
+  // Whether a data field follows this id field at all. A recording
+  // may state an address and hold no data for it.
+  bool has_data;
+  uint64_t data_at_byte;
+  // Whether the data field was opened by a deleted-data mark. That is
+  // what the recording says, carried as a fact: nothing here decides
+  // on a caller's behalf whether such a record counts.
+  bool data_deleted;
+  uint16_t data_checksum_stated;
+  uint16_t data_checksum_computed;
+  // Whether both checks agree. Only such a record is served.
+  bool readable;
+} RemanenceIbmSectorClaim;
 
 // One index hole, as the image holds it: an exact fraction of a turn
 // for the centre and another for the extent. Nothing radial is stored.
@@ -2307,6 +2348,82 @@ uint64_t remanence_c1541_sectors_declared_loss_amount(const RemanenceC1541Sector
 size_t remanence_c1541_sectors_evidence_count(const RemanenceC1541Sectors *sectors);
 
 const char *remanence_c1541_sectors_evidence(const RemanenceC1541Sectors *sectors, size_t index);
+
+// Recognizes the recording's own sectors out of a bytestream, under the
+// FM or MFM record grammar the profile enrols.
+//
+// The rung beneath is one and the reading is the family's. A bytestream
+// whose records are not FM or MFM sectors is refused here by name
+// rather than read as though they were — use
+// `remanence_bytestream_recognize_sectors` for a CBM DOS recording.
+//
+// Returns null and states the refusal on failure. Free the result with
+// `remanence_ibm_sectors_free`.
+RemanenceIbmSectors *remanence_bytestream_recognize_ibm_sectors(const RemanenceBytestream *bytestream,
+                                                                uint64_t cache_bytes,
+                                                                RemanenceErrorCategory *error_category_out,
+                                                                char **error_out,
+                                                                char **error_rule_out);
+
+// Frees an FM or MFM sector layer, discarding its private session
+// storage.
+void remanence_ibm_sectors_free(RemanenceIbmSectors *sectors);
+
+// Copies one record's payload into `buffer_out`, by the address the
+// recording states for it.
+//
+// Only a record whose checks both agree is served. One whose checksum
+// disagrees holds what it holds and is reported with both numbers by
+// `remanence_ibm_sectors_claim`; serving it as though it read cleanly
+// would answer a question the evidence does not.
+//
+// `length` must be exactly what the record carries, which is what its
+// claim's size code states. Returns false and states the refusal
+// otherwise.
+bool remanence_ibm_sectors_read(const RemanenceIbmSectors *sectors,
+                                uint8_t cylinder,
+                                uint8_t head,
+                                uint8_t sector,
+                                uint8_t *buffer_out,
+                                size_t length,
+                                RemanenceErrorCategory *error_category_out,
+                                char **error_out,
+                                char **error_rule_out);
+
+// The drive profile that read the recording these records came off.
+const char *remanence_ibm_sectors_profile_id(const RemanenceIbmSectors *sectors);
+
+// Which encoding framed these records — the FM or MFM codec the
+// profile enrols, by its own identifier.
+const char *remanence_ibm_sectors_encoding_id(const RemanenceIbmSectors *sectors);
+
+// How many records the recognition claims.
+size_t remanence_ibm_sectors_claim_count(const RemanenceIbmSectors *sectors);
+
+// Copies one claim into `out`. Returns false when `index` is past the
+// end.
+bool remanence_ibm_sectors_claim(const RemanenceIbmSectors *sectors,
+                                 size_t index,
+                                 RemanenceIbmSectorClaim *out);
+
+// What this layer could not resolve, in its own terms, and how much of
+// it there was.
+size_t remanence_ibm_sectors_declared_loss_count(const RemanenceIbmSectors *sectors);
+
+const char *remanence_ibm_sectors_declared_loss_code(const RemanenceIbmSectors *sectors,
+                                                     size_t index);
+
+const char *remanence_ibm_sectors_declared_loss_detail(const RemanenceIbmSectors *sectors,
+                                                       size_t index);
+
+uint64_t remanence_ibm_sectors_declared_loss_amount(const RemanenceIbmSectors *sectors,
+                                                    size_t index);
+
+// The grammar that produced these records, and what it found, in that
+// order.
+size_t remanence_ibm_sectors_evidence_count(const RemanenceIbmSectors *sectors);
+
+const char *remanence_ibm_sectors_evidence(const RemanenceIbmSectors *sectors, size_t index);
 
 // Inspects the medium and returns its layered report, derived from the
 // pool the load established. Null on failure, with the category and

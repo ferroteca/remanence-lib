@@ -27,11 +27,10 @@ use std::sync::Arc;
 
 use crate::error::{Error, ErrorCategory, Result};
 use crate::evidence::DeclaredLoss;
-use crate::flux::c1541::sectors::C1541Sectors;
 use crate::flux::drive_profile::DriveProfile;
 use crate::flux::kryoflux::{self, MemberSource};
 use crate::flux::medium::FluxMedium;
-use crate::flux::presentation::{Bitstream, Bytestream, materialize_bitstream};
+use crate::flux::presentation::{Bitstream, Bytestream, Sectors, materialize_bitstream};
 use crate::flux::remanence::reconstruction::{ReconstructionPolicy, RecordingSelection, plan};
 use crate::io::device::{AccessMode, Claim, read_exact_at};
 use crate::io::source::{FileSource, ImageSource};
@@ -114,7 +113,7 @@ pub(crate) struct FluxState {
     /// declared policies and answered from then on.
     bitstream: Option<Bitstream>,
     bytestream: Option<Bytestream>,
-    sectors: Option<C1541Sectors>,
+    sectors: Option<Sectors>,
 }
 
 impl FluxState {
@@ -483,11 +482,14 @@ impl FluxState {
     /// The recording's own records, recognized once above the
     /// bytestream under the profile's declared record grammar and
     /// sector reading — the layer the CBM DOS namespace opens over.
-    pub(crate) fn sectors(&mut self) -> Result<&C1541Sectors> {
+    pub(crate) fn sectors(&mut self) -> Result<&Sectors> {
         if self.sectors.is_none() {
             let cache_bytes = self.cache_bytes;
+            // The family's own recognition, enrolled on its profile: the
+            // rung is one and what it holds is whichever family made it.
+            let recognize = self.profile.presentation.sectors;
             let bytestream = self.bytestream()?;
-            let sectors = bytestream.recognize_sectors(cache_bytes)?;
+            let sectors = recognize(bytestream, cache_bytes)?;
             self.sectors = Some(sectors);
         }
         Ok(self.sectors.as_ref().expect("just recognized"))

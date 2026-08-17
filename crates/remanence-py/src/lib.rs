@@ -3684,14 +3684,46 @@ impl Bytestream {
     /// untouched and stays exactly what it was; the sector layer is
     /// separate session state, and there is no way back down — a sector
     /// is not lowered into bytes.
+    /// The FM or MFM reading of this bytestream's records.
+    ///
+    /// A bytestream whose records are not FM or MFM sectors is refused
+    /// by name rather than read as though they were — use
+    /// `recognize_sectors` for a CBM DOS recording.
+    #[pyo3(signature = (*, cache_bytes = None))]
+    fn recognize_ibm_sectors(&self, cache_bytes: Option<u64>) -> PyResult<IbmSectors> {
+        let inner = self.provider.with(|bytestream| {
+            bytestream.recognize_sectors(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
+        })?;
+        let family = inner.family().to_string();
+        let Some(reading) = inner.into_ibm() else {
+            return Err(to_py_err(remanence::Error::io(format!(
+                "this recording's records were recognized by the '{family}' family,                  whose claims are not FM or MFM sectors"
+            ))));
+        };
+        let report = IbmSectorReport::new(reading.inspect());
+        Ok(IbmSectors {
+            inner: Arc::new(reading),
+            report,
+        })
+    }
+
     #[pyo3(signature = (*, cache_bytes = None))]
     fn recognize_sectors(&self, cache_bytes: Option<u64>) -> PyResult<C1541Sectors> {
         let inner = self.provider.with(|bytestream| {
             bytestream.recognize_sectors(cache_bytes.unwrap_or(remanence::DEFAULT_CACHE_BYTES))
         })?;
-        let report = SectorReport::new(inner.inspect());
+        // The rung is one and the reading is the family's. A recording
+        // whose records are not CBM DOS sectors is refused here by name
+        // rather than read as though they were.
+        let family = inner.family().to_string();
+        let Some(reading) = inner.into_c1541() else {
+            return Err(to_py_err(remanence::Error::io(format!(
+                "this recording's records were recognized by the '{family}' family,                  whose claims are not CBM DOS sectors"
+            ))));
+        };
+        let report = SectorReport::new(reading.inspect());
         Ok(C1541Sectors {
-            inner: Arc::new(inner),
+            inner: Arc::new(reading),
             report,
         })
     }
@@ -4019,6 +4051,170 @@ impl C1541Sectors {
 
     fn __repr__(&self) -> String {
         format!("C1541Sectors(claims={})", self.inner.claim_count())
+    }
+}
+
+/// One record an FM or MFM recording states, exactly as it states it.
+///
+/// It is a separate type from `SectorClaim` rather than one carrying
+/// both families' fields, because the two vocabularies have nothing in
+/// common to share: a CBM DOS claim states a track and a sector under a
+/// one-byte exclusive-or, and this states a cylinder, head and size code
+/// under a sixteen-bit CRC. A type carrying both would be half-absent
+/// whichever recording it described.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct IbmSectorClaim {
+    /// The location of the family's own addressing this record sits on.
+    pub location: u64,
+    pub surface: Option<u64>,
+    /// The byte of that location's bytestream the id field's mark sits
+    /// at.
+    pub at_byte: u64,
+    /// The address the id field states for itself, as recorded — not
+    /// where the record happens to sit.
+    pub cylinder: u8,
+    pub head: u8,
+    pub sector: u8,
+    /// The size code as recorded; the field it declares is `128 << code`
+    /// bytes, and the code is kept because it is what was written.
+    pub size_code: u8,
+    /// The check the id field states, and the one its own bytes compute.
+    pub header_checksum_stated: u16,
+    pub header_checksum_computed: u16,
+    /// Whether a data field followed the id field, and where it sat.
+    pub has_data: bool,
+    pub data_at_byte: u64,
+    /// Whether the mark opening the data field was the deleted-data one.
+    /// It is what the recording says, carried rather than judged:
+    /// nothing here decides on a caller's behalf whether such a record
+    /// counts.
+    pub data_deleted: bool,
+    pub data_checksum_stated: u16,
+    pub data_checksum_computed: u16,
+    /// Whether both checks agree. Only such a record is served.
+    pub readable: bool,
+}
+
+#[pymethods]
+impl IbmSectorClaim {
+    fn __repr__(&self) -> String {
+        format!(
+            "IbmSectorClaim(cylinder={}, head={}, sector={}, readable={})",
+            self.cylinder, self.head, self.sector, self.readable
+        )
+    }
+}
+
+/// The recognition an FM or MFM recording's records produced.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct IbmSectorReport {
+    pub profile_id: String,
+    /// The FM or MFM codec that framed these records.
+    pub encoding_id: String,
+    pub claims: Vec<IbmSectorClaim>,
+    pub declared_loss: Vec<DeclaredLoss>,
+    pub evidence: Vec<String>,
+}
+
+#[pymethods]
+impl IbmSectorReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "IbmSectorReport(encoding_id={:?}, claims={})",
+            self.encoding_id,
+            self.claims.len()
+        )
+    }
+}
+
+impl IbmSectorReport {
+    fn new(report: &remanence::IbmSectorReport) -> Self {
+        Self {
+            profile_id: report.profile_id.clone(),
+            encoding_id: report.encoding_id.clone(),
+            claims: report
+                .claims
+                .iter()
+                .map(|claim| IbmSectorClaim {
+                    location: claim.location,
+                    surface: claim.surface,
+                    at_byte: claim.at_byte,
+                    cylinder: claim.cylinder,
+                    head: claim.head,
+                    sector: claim.sector,
+                    size_code: claim.size_code,
+                    header_checksum_stated: claim.header_checksum_stated,
+                    header_checksum_computed: claim.header_checksum_computed,
+                    has_data: claim.has_data,
+                    data_at_byte: claim.data_at_byte,
+                    data_deleted: claim.data_deleted,
+                    data_checksum_stated: claim.data_checksum_stated,
+                    data_checksum_computed: claim.data_checksum_computed,
+                    readable: claim.readable(),
+                })
+                .collect(),
+            declared_loss: report
+                .declared_loss
+                .iter()
+                .map(|loss| DeclaredLoss {
+                    code: loss.code.clone(),
+                    detail: loss.detail.clone(),
+                    count: loss.count,
+                })
+                .collect(),
+            evidence: report.evidence.clone(),
+        }
+    }
+}
+
+/// The recording's own sectors as an FM or MFM recording states them,
+/// held in the session. The payloads stay behind this surface and are
+/// read by the address the recording states for them.
+#[pyclass(module = "remanence")]
+pub struct IbmSectors {
+    inner: Arc<remanence::IbmSectors>,
+    report: IbmSectorReport,
+}
+
+#[pymethods]
+impl IbmSectors {
+    /// The recognition that produced these records, with every claim's
+    /// evidence beside it.
+    fn inspect(&self) -> IbmSectorReport {
+        self.report.clone()
+    }
+
+    /// Reads one record by the address the recording states for it.
+    ///
+    /// Only a record whose checks both agree is served. One whose
+    /// checksum disagrees holds what it holds and is reported by
+    /// `inspect` with both numbers; serving it as though it read cleanly
+    /// would answer a question the evidence does not. Nothing is
+    /// repaired and no field is filled in.
+    fn read_sector<'py>(
+        &self,
+        py: Python<'py>,
+        cylinder: u8,
+        head: u8,
+        sector: u8,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let payload = self
+            .inner
+            .read_sector(cylinder, head, sector)
+            .map_err(to_py_err)?;
+        Ok(PyBytes::new(py, &payload))
+    }
+
+    /// How many records the recognition read.
+    #[getter]
+    fn claim_count(&self) -> u64 {
+        self.inner.claim_count()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("IbmSectors(claims={})", self.inner.claim_count())
     }
 }
 
@@ -4698,6 +4894,9 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SectorReport>()?;
     m.add_class::<SectorLocation>()?;
     m.add_class::<SectorClaim>()?;
+    m.add_class::<IbmSectors>()?;
+    m.add_class::<IbmSectorClaim>()?;
+    m.add_class::<IbmSectorReport>()?;
     m.add_class::<ContestedAddress>()?;
     m.add_class::<FluxImage>()?;
     m.add_class::<FluxImageReport>()?;

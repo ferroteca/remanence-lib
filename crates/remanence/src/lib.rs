@@ -211,10 +211,11 @@ pub use crate::flux::c1541::renditions::{D64Block, D64Report, G64HalfTrack, G64R
 pub use crate::flux::c1541::sectors::{
     C1541Sectors, ContestedAddress, SectorClaim, SectorLocation, SectorReport, SectorRule,
 };
+pub use crate::flux::ibm::sectors::{IbmSectorClaim, IbmSectorReport, IbmSectors};
 pub use crate::flux::p64::{P64HalfTrack, P64Report};
 pub use crate::flux::presentation::{
     Bitstream, BitstreamLocation, BitstreamReport, Bytestream, BytestreamLocation,
-    BytestreamReport, Location, LocationBytes,
+    BytestreamReport, Location, LocationBytes, Sectors,
 };
 pub use crate::flux::remanence::format::FluxWriteReport;
 pub use crate::flux::remanence::image::{FluxHole, FluxImage, FluxImageReport, FluxOrbit};

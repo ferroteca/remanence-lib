@@ -55,7 +55,6 @@ use crate::flux::capture::{
 };
 use crate::flux::drive_profile::{BlockShape, C1541, RecordGrammar};
 use crate::flux::medium::{LocationKey, read_location_key, write_location_key};
-use crate::flux::presentation::Bytestream;
 
 /// The profile every rule this layer applies is declared by.
 const PROFILE: &str = "c1541";
@@ -1194,41 +1193,36 @@ impl C1541Sectors {
 
 // ------------------------------------------------------ the entry point
 
-impl Bytestream {
-    /// Recognizes the recording's own sectors out of this bytestream,
-    /// under the family's declared record grammar and sector reading
-    /// (P23, P30 reached through the type).
-    ///
-    /// It takes no policy because the profile carries one, and what was
-    /// used travels into the result as provenance. The bytestream is
-    /// untouched and stays exactly what it was; the sector layer is
-    /// separate session state, carrying this bytestream's provenance
-    /// beneath the grammar and policy that produced it. There is no way
-    /// back down (P33): a sector is not lowered into bytes.
-    pub fn recognize_sectors(&self, cache_bytes: u64) -> Result<C1541Sectors> {
-        let profile = &crate::flux::drive_profile::C1541;
-        // The rung is family-plural and this grammar is not: these are
-        // the 1541's own records, so a bytestream of another family is
-        // refused by name rather than read for headers its recording
-        // never wrote (F76).
-        if self.profile().id != profile.id {
-            return Err(crate::flux::presentation::refuse(
-                profile.id,
-                format!(
-                    "the bytestream was resolved for the family '{}' and these are the \
-                     '{}' record grammar's sectors; a recording states its records in \
-                     the terms its own family declares",
-                    self.profile().id,
-                    profile.id
-                ),
-            ));
-        }
-        recognize(
-            self.inner(),
-            crate::flux::c1541::declarations::SECTOR_POLICY,
-            cache_bytes,
-        )
+/// Recognizes the recording's own sectors out of a bytestream, under
+/// the family's declared record grammar and sector reading (P23, P30
+/// reached through the type).
+///
+/// It takes no policy because the profile carries one, and what was used
+/// travels into the result as provenance. The bytestream is untouched
+/// and stays exactly what it was; the sector layer is separate session
+/// state. There is no way back down (P33): a sector is not lowered into
+/// bytes.
+pub(crate) fn recognize_declared(
+    bytestream: &crate::flux::presentation::Bytestream,
+    cache_bytes: u64,
+) -> Result<crate::flux::presentation::Sectors> {
+    let profile = &crate::flux::drive_profile::C1541;
+    if bytestream.profile().id != profile.id {
+        return Err(crate::flux::presentation::refuse(
+            profile.id,
+            format!(
+                "the bytestream was resolved for the family '{}' and these are the                  '{}' record grammar's sectors; a recording states its records in the                  terms its own family declares",
+                bytestream.profile().id,
+                profile.id
+            ),
+        ));
     }
+    let set = recognize(
+        bytestream.inner(),
+        crate::flux::c1541::declarations::SECTOR_POLICY,
+        cache_bytes,
+    )?;
+    Ok(crate::flux::presentation::Sectors::c1541_set(profile, set))
 }
 
 #[cfg(test)]

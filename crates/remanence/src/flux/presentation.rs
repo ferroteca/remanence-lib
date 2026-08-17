@@ -364,6 +364,141 @@ impl Bytestream {
     pub(crate) fn profile(&self) -> &'static DriveProfile {
         self.profile
     }
+
+    /// Recognizes the recording's own records out of this bytestream,
+    /// under the grammar its family declares (P23, P30 reached through
+    /// the type).
+    ///
+    /// It takes no policy because the profile carries one. What comes
+    /// back is the rung, and the reading inside it is whichever family
+    /// made these bytes — [`Sectors::c1541`] and [`Sectors::ibm`] are
+    /// how a caller asks for the one they expect, and the other answers
+    /// `None` rather than a reading bent to fit.
+    pub fn recognize_sectors(&self, cache_bytes: u64) -> Result<Sectors> {
+        (self.profile.presentation.sectors)(self, cache_bytes)
+    }
+}
+
+/// The recording's own records, recognized above the bytestream.
+///
+/// **This rung is one seam and its claims are not.** The two below it —
+/// bits and bytes — produce the *same thing* by different rules, so
+/// naming them neutrally cost nothing. This one does not: a CBM DOS
+/// record states a track, a sector and two disk-identity bytes with an
+/// exclusive-or check, and an IBM record states a cylinder, a head, a
+/// sector and a size code with a sixteen-bit CRC. Neither vocabulary
+/// carries the other, and a struct wide enough for both would be one
+/// with most of its fields empty for either.
+///
+/// So a caller reaches the rung the same way whatever they loaded, and
+/// then asks for the reading its family actually made. Asking for the
+/// other family's answers `None` — the honest reply to a question about
+/// a recording that was never made that way, and never a bent one.
+pub struct Sectors {
+    profile: &'static DriveProfile,
+    family: FamilySectors,
+}
+
+/// What one family's recognition produced.
+///
+/// It is a value enum rather than a branch: nothing decides *behavior*
+/// from which variant is here, and each family's set is its own type
+/// rather than a shared one carrying both families' fields. That is the
+/// same shape the medium's own state takes for the same reason.
+enum FamilySectors {
+    C1541(crate::flux::c1541::sectors::C1541Sectors),
+    Ibm(crate::flux::ibm::sectors::IbmSectors),
+}
+
+impl std::fmt::Debug for Sectors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sectors")
+            .field("profile", &self.profile.id)
+            .field("claims", &self.claim_count())
+            .finish()
+    }
+}
+
+impl Sectors {
+    pub(crate) fn c1541_set(
+        profile: &'static DriveProfile,
+        set: crate::flux::c1541::sectors::C1541Sectors,
+    ) -> Self {
+        Self {
+            profile,
+            family: FamilySectors::C1541(set),
+        }
+    }
+
+    pub(crate) fn ibm_set(
+        profile: &'static DriveProfile,
+        set: crate::flux::ibm::sectors::IbmSectors,
+    ) -> Self {
+        Self {
+            profile,
+            family: FamilySectors::Ibm(set),
+        }
+    }
+
+    /// The family whose record grammar recognized these — the name of
+    /// the grammar, not of the drive profile that selected it, because
+    /// one family's records are read the same way under every profile
+    /// that records them.
+    pub fn family(&self) -> &str {
+        match &self.family {
+            FamilySectors::C1541(_) => crate::flux::c1541::declarations::RECORD.id,
+            FamilySectors::Ibm(_) => crate::flux::ibm::records::RECORD_FAMILY,
+        }
+    }
+
+    /// The drive profile that read the recording these records came off.
+    pub fn profile_id(&self) -> &str {
+        self.profile.id
+    }
+
+    /// How many records the recognition claims, whatever family made
+    /// them — the one count that means the same thing either way.
+    pub fn claim_count(&self) -> u64 {
+        match &self.family {
+            FamilySectors::C1541(set) => set.claim_count(),
+            FamilySectors::Ibm(set) => set.claim_count(),
+        }
+    }
+
+    /// The CBM DOS reading, where that is the family that made these.
+    pub fn c1541(&self) -> Option<&crate::flux::c1541::sectors::C1541Sectors> {
+        match &self.family {
+            FamilySectors::C1541(set) => Some(set),
+            FamilySectors::Ibm(_) => None,
+        }
+    }
+
+    /// The CBM DOS reading taken out of the rung, where that is the
+    /// family that made these — for a caller that holds the reading on
+    /// its own and has no further use for the rung around it.
+    pub fn into_c1541(self) -> Option<crate::flux::c1541::sectors::C1541Sectors> {
+        match self.family {
+            FamilySectors::C1541(set) => Some(set),
+            FamilySectors::Ibm(_) => None,
+        }
+    }
+
+    /// The IBM reading taken out of the rung, on the same terms as
+    /// [`Sectors::into_c1541`].
+    pub fn into_ibm(self) -> Option<crate::flux::ibm::sectors::IbmSectors> {
+        match self.family {
+            FamilySectors::Ibm(set) => Some(set),
+            FamilySectors::C1541(_) => None,
+        }
+    }
+
+    /// The IBM reading, where that is the family that made these.
+    pub fn ibm(&self) -> Option<&crate::flux::ibm::sectors::IbmSectors> {
+        match &self.family {
+            FamilySectors::Ibm(set) => Some(set),
+            FamilySectors::C1541(_) => None,
+        }
+    }
 }
 
 /// One location of the family's addressing, spelled the family's own

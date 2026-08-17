@@ -492,6 +492,13 @@ struct Release<RemanenceC1541Sectors> {
     }
 };
 template <>
+struct Release<RemanenceIbmSectors> {
+    void operator()(RemanenceIbmSectors* handle) const noexcept
+    {
+        remanence_ibm_sectors_free(handle);
+    }
+};
+template <>
 struct Release<RemanenceD64Report> {
     void operator()(RemanenceD64Report* handle) const noexcept
     {
@@ -2579,6 +2586,7 @@ using BitstreamLocation = RemanenceBitstreamLocation;
 using BytestreamLocation = RemanenceBytestreamLocation;
 using SectorLocation = RemanenceSectorLocation;
 using SectorClaim = RemanenceSectorClaim;
+using IbmSectorClaim = RemanenceIbmSectorClaim;
 using ContestedAddress = RemanenceContestedAddress;
 using FluxHole = RemanenceFluxHole;
 using FluxOrbit = RemanenceFluxOrbit;
@@ -2985,6 +2993,95 @@ public:
     }
 };
 
+/// The FM or MFM sector layer.
+///
+/// It is a separate class from `C1541Sectors` rather than one with a
+/// family tag, because the two claim vocabularies have nothing in common
+/// to share: one states a track and a sector under a one-byte
+/// exclusive-or, the other a cylinder, head and size code under a
+/// sixteen-bit CRC. A class carrying both would be half-absent whichever
+/// recording it described.
+class IbmSectors : public detail::Held<RemanenceIbmSectors> {
+public:
+    using Held::Held;
+
+    /// Reads one record by the address the recording states for it.
+    ///
+    /// Only a record whose checks both agree is served; one whose
+    /// checksum disagrees is reported by `claim` with both numbers and
+    /// refused here.
+    void read(std::uint8_t cylinder, std::uint8_t head, std::uint8_t sector,
+              std::uint8_t* buffer, std::size_t length) const
+    {
+        detail::Outcome outcome;
+        outcome.require(remanence_ibm_sectors_read(get(), cylinder, head, sector, buffer, length,
+                                                   outcome.category(), outcome.message(),
+                                                   outcome.rule()),
+                        "that sector does not read");
+    }
+
+    /// The same read, sized from what the record's own claim states its
+    /// data field holds.
+    std::vector<std::uint8_t> read(std::uint8_t cylinder, std::uint8_t head,
+                                   std::uint8_t sector) const
+    {
+        for (const IbmSectorClaim& found : claims()) {
+            if (found.cylinder == cylinder && found.head == head && found.sector == sector) {
+                std::vector<std::uint8_t> payload(std::size_t{128} << found.size_code);
+                read(cylinder, head, sector, payload.data(), payload.size());
+                return payload;
+            }
+        }
+        detail::Outcome outcome;
+        outcome.require(false, "no record of this recording states that address");
+        return {};
+    }
+
+    std::string profile_id() const
+    {
+        return detail::copied(remanence_ibm_sectors_profile_id(get()));
+    }
+
+    /// The FM or MFM codec that framed these records.
+    std::string encoding_id() const
+    {
+        return detail::copied(remanence_ibm_sectors_encoding_id(get()));
+    }
+
+    std::size_t claim_count() const noexcept { return remanence_ibm_sectors_claim_count(get()); }
+
+    /// One record the recognition read, with both its checks stated
+    /// beside computed.
+    IbmSectorClaim claim(std::size_t index) const
+    {
+        detail::in_range(index, claim_count(), "sector claim index");
+        IbmSectorClaim found{};
+        remanence_ibm_sectors_claim(get(), index, &found);
+        return found;
+    }
+
+    std::vector<IbmSectorClaim> claims() const
+    {
+        return detail::records<IbmSectorClaim>(get(), remanence_ibm_sectors_claim_count,
+                                               remanence_ibm_sectors_claim);
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_ibm_sectors_declared_loss_count,
+                              remanence_ibm_sectors_declared_loss_code,
+                              remanence_ibm_sectors_declared_loss_detail,
+                              remanence_ibm_sectors_declared_loss_amount);
+    }
+
+    /// The grammar that produced these records, and what it found.
+    std::vector<std::string> evidence() const
+    {
+        return detail::lines(get(), remanence_ibm_sectors_evidence_count,
+                             remanence_ibm_sectors_evidence);
+    }
+};
+
 /// The family's encoded bytestream: the bytes a group code resolved out
 /// of the channel, before anything assigns them a meaning.
 ///
@@ -3097,6 +3194,19 @@ public:
     /// Recognizes the recording's own sectors under the family's
     /// declared record grammar. `cache_bytes` is the working-set bound
     /// (P27); the bytestream is untouched.
+    /// The FM or MFM reading of this bytestream's records.
+    ///
+    /// A bytestream whose records are not FM or MFM sectors is refused
+    /// by name rather than read as though they were — use
+    /// `recognize_sectors` for a CBM DOS recording.
+    IbmSectors recognize_ibm_sectors(std::uint64_t cache_bytes = 0) const
+    {
+        detail::Outcome outcome;
+        RemanenceIbmSectors* recognized = remanence_bytestream_recognize_ibm_sectors(
+            get(), cache_bytes, outcome.category(), outcome.message(), outcome.rule());
+        return IbmSectors(outcome.require(recognized, "no sectors were recognized"));
+    }
+
     C1541Sectors recognize_sectors(std::uint64_t cache_bytes = 0) const
     {
         detail::Outcome outcome;

@@ -36,7 +36,7 @@ use crate::error::{Error, Result};
 use crate::filesystem::Catalog;
 use crate::filesystem::catalog::FilesystemAdapter;
 use crate::filesystem::fat::FatEntry;
-use crate::flux::c1541::sectors::C1541Sectors;
+
 use crate::flux::presentation::{Bitstream, Bytestream};
 use crate::image::adapters::{RAW_RECORDED_DEVICES, RECORDED_HARD_DRIVES};
 use crate::io::device::AccessMode;
@@ -1092,8 +1092,20 @@ impl Medium {
     /// The recording's own record layer, for the namespace door: the
     /// sector layer the CBM DOS reading opens over, recognized once
     /// under the profile's declared grammar.
-    pub(crate) fn c1541_sectors(&mut self) -> Result<&C1541Sectors> {
-        self.state.flux_mut("filesystem_as(\"cbmdos\")")?.sectors()
+    pub(crate) fn c1541_sectors(&mut self) -> Result<&crate::flux::c1541::sectors::C1541Sectors> {
+        let sectors = self
+            .state
+            .flux_mut("filesystem_as(\"cbmdos\")")?
+            .sectors()?;
+        // The rung is one; the reading it holds is the family's. A
+        // medium of another family answers `None` here rather than
+        // being read for records its recording never states.
+        sectors.c1541().ok_or_else(|| {
+            Error::unsupported(format!(
+                "this medium's records were recognized by the '{}' family, whose claims                  are not CBM DOS sectors; the CBM DOS namespace opens over a 1541                  recording and nothing else",
+                sectors.family()
+            ))
+        })
     }
 
     // ------------------------------------------------ the partition pool
