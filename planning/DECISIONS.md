@@ -58,6 +58,53 @@ removes it is the record either way.
 
 ## Decisions
 
+### D61 — Step pitch is declared as a rational pair, and consumers never divide it
+
+**Decided** Paul Galbraith, 2026-08-06, in conversation; recorded here
+2026-08-16. **Supports (none)** — a representation choice inside a
+private struct, disturbing no use case and no principle. Shapes
+[design/drive-profile-strata.md](design/drive-profile-strata.md).
+
+**A drive's step pitch and a recording's are two numbers, and what
+matters is their ratio.** How many steps a mechanism takes per recorded
+track is not a property of the mechanism: a 96 TPI head takes two steps
+over 48 TPI media and one over 96 TPI media, and a 96 TPI *instrument*
+capturing 100 TPI media stands in the ratio 24/25. A single count
+answers for exactly one pairing.
+
+**The pair is rational — `tpi_numerator` over `tpi_denominator` — and
+not a float.** A double cannot represent 96/100 = 24/25, so every
+comparison would need an epsilon, and an epsilon is undeclared policy
+wearing a number. That is the deciding argument rather than a
+preference about types.
+
+**What makes the rational form cheap is that consumers never divide.**
+Comparisons cross-multiply; admission is a divisibility check; and the
+one true division — projecting one frame onto another — observes its
+remainder into the declared-loss account rather than discarding it. A
+representation that is only ever multiplied and compared does not need
+the precision a division would.
+
+**Weighed and declined:** a float pitch with epsilon comparison (the
+undeclared policy above); and a bare integer step count, which is what
+the code held and which silently bakes the *capture* drive's pitch into
+a constant belonging to no declared owner.
+
+**Delivered in part.** The pair is stored and the 1541's documented two
+steps derive from 96 over 48 rather than being asserted. The arithmetic
+is still integer: a non-integer ratio answers zero steps and refuses
+every location, where 24/25 should address every twenty-fourth. The
+gap is recorded in the design above rather than left in the code alone.
+
+> **Annotation (2026-08-16, same day):** the remaining half landed.
+> `Stepping` now reports a cadence — steps taken against tracks covered,
+> reduced by the common divisor — so 96 over 100 addresses every
+> twenty-fourth step and advances twenty-five tracks. Finishing it also
+> corrected a claim made above it: a mechanism *coarser* than its
+> recording was said to be unable to address it, and in fact reaches
+> every other track. The clause stands as what was believed when the
+> entry was written.
+
 ### D60 — Sector ordering is resolved by the image format, and only where the format states it
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

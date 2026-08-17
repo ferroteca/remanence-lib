@@ -48,9 +48,7 @@ fn load_entry(
         .get_file(entry)?
         .discover()?;
     let disk = session.load_discovery(discovery)?.id();
-    session
-        .add_device(FloppyDrive::HeathH17)?
-        .insert(disk)?;
+    session.add_device(FloppyDrive::HeathH17)?.insert(disk)?;
     Ok((session, disk))
 }
 

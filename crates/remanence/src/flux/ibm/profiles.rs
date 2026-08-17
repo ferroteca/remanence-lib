@@ -229,8 +229,8 @@ mod tests {
     fn each_mechanism_steps_once_over_the_recording_it_is_paired_with() {
         // Both are at their recording's own pitch, which the pair says
         // and a bare count could only have said for one of them.
-        assert_eq!(HEATH_H17_1_SOFT.stepping.steps_per_location(), 1);
-        assert_eq!(HEATH_H17_4_SOFT.stepping.steps_per_location(), 1);
+        assert_eq!(HEATH_H17_1_SOFT.stepping.cadence(), Some((1, 1)));
+        assert_eq!(HEATH_H17_4_SOFT.stepping.cadence(), Some((1, 1)));
         assert_eq!(HEATH_H17_1_SOFT.stepping.drive_tpi, 48);
         assert_eq!(HEATH_H17_4_SOFT.stepping.drive_tpi, 96);
     }

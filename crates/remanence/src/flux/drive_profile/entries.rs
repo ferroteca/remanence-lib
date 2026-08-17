@@ -161,7 +161,7 @@ mod tests {
     fn the_c1541_entry_declares_the_family_and_derives_nothing_from_a_capture() {
         // Every value here is a published fact of the drive. None is a
         // number a capture is permitted to establish.
-        assert_eq!(C1541.stepping.steps_per_location(), 2);
+        assert_eq!(C1541.stepping.cadence(), Some((2, 1)));
         assert_eq!(C1541.stepping.first_location, 1);
         assert_eq!(C1541.rotation.cycles_per_rotation, 3_200_000);
         assert!(!C1541.rotation.index_observed_by_drive);
@@ -245,10 +245,10 @@ mod tests {
     }
 
     #[test]
-    fn the_step_count_is_the_ratio_of_two_pitches_and_not_a_constant() {
+    fn the_step_relation_is_a_ratio_of_two_pitches_and_not_a_constant() {
         // The 1541's documented two steps per track is what 96 over 48
         // comes to, so the pair reproduces the count it replaced.
-        assert_eq!(C1541.stepping.steps_per_location(), 2);
+        assert_eq!(C1541.stepping.cadence(), Some((2, 1)));
 
         // A mechanism at the recording's own pitch steps once, which a
         // bare count could not have said without a second constant.
@@ -257,22 +257,66 @@ mod tests {
             recorded_tpi: 48,
             first_location: 0,
         };
-        assert_eq!(matched.steps_per_location(), 1);
+        assert_eq!(matched.cadence(), Some((1, 1)));
         assert_eq!(matched.location_of(0), Some(0));
         assert_eq!(matched.location_of(39), Some(39));
+    }
 
-        // The same mechanism over a finer recording reaches every other
-        // track and no more. It answers nothing rather than rounding to
-        // one, because a drive that cannot physically address a track
-        // should refuse it and not read its neighbour.
+    #[test]
+    fn a_mechanism_coarser_than_its_recording_reaches_every_other_track() {
+        // A 48 TPI head over 96 TPI media moves two whole track pitches
+        // a step, so it lands on the even tracks and skips the odd ones.
+        // It is a real reading of a real arrangement, not an error: what
+        // it cannot do is address a track it never passes over.
         let coarse = Stepping {
             drive_tpi: 48,
             recorded_tpi: 96,
             first_location: 0,
         };
-        assert_eq!(coarse.steps_per_location(), 0);
-        assert_eq!(coarse.location_of(0), None);
-        assert_eq!(coarse.location_of(2), None);
+        assert_eq!(coarse.cadence(), Some((1, 2)));
+        assert_eq!(coarse.location_of(0), Some(0));
+        assert_eq!(coarse.location_of(1), Some(2));
+        assert_eq!(coarse.location_of(20), Some(40));
+    }
+
+    #[test]
+    fn a_pitch_pair_that_does_not_divide_still_addresses_every_whole_step() {
+        // D61's worked case: a 96 TPI instrument over 100 TPI media.
+        // Neither pitch divides the other, and the relation is 24 steps
+        // across 25 tracks — which no single step count can state, and
+        // which a float would have to compare within an epsilon.
+        let across = Stepping {
+            drive_tpi: 96,
+            recorded_tpi: 100,
+            first_location: 0,
+        };
+        assert_eq!(across.cadence(), Some((24, 25)));
+
+        // Every twenty-fourth step lands on a track, and the track it
+        // lands on advances by twenty-five.
+        assert_eq!(across.location_of(0), Some(0));
+        assert_eq!(across.location_of(24), Some(25));
+        assert_eq!(across.location_of(48), Some(50));
+
+        // Everything between is a position the mechanism reaches and no
+        // recorded track sits at.
+        for position in [1u64, 12, 23, 25, 47] {
+            assert_eq!(across.location_of(position), None, "step {position}");
+        }
+    }
+
+    #[test]
+    fn the_relation_states_itself_in_the_terms_a_refusal_uses() {
+        assert_eq!(C1541.stepping.describe(), "2 step(s) to a location");
+        assert_eq!(
+            Stepping {
+                drive_tpi: 96,
+                recorded_tpi: 100,
+                first_location: 0,
+            }
+            .describe(),
+            "24 step(s) across every 25 locations"
+        );
     }
 
     #[test]

@@ -84,29 +84,66 @@ pub(crate) struct Stepping {
     pub(crate) first_location: u64,
 }
 
+/// The greatest common divisor, for reducing a pitch pair to lowest
+/// terms.
+const fn gcd(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        let carry = left % right;
+        left = right;
+        right = carry;
+    }
+    left
+}
+
 impl Stepping {
-    /// How many source steps make one family location.
+    /// The pitch relation in lowest terms: how many steps the mechanism
+    /// takes, and how many recorded tracks those steps cover.
     ///
-    /// A mechanism finer than the recording steps more than once per
-    /// track; one coarser than the recording cannot address it at all,
-    /// and answers zero rather than rounding to one — every location
-    /// then refuses, which is the truthful outcome for a drive that
-    /// physically cannot reach half the tracks.
-    pub(crate) fn steps_per_location(&self) -> u64 {
-        if self.recorded_tpi == 0 || self.drive_tpi % self.recorded_tpi != 0 {
-            return 0;
+    /// **Two numbers, because one does not always suffice** (D61). A 96
+    /// TPI mechanism over 48 TPI media is two steps to one track, and
+    /// the second number is redundant; a 96 TPI instrument over 100 TPI
+    /// media is twenty-four steps to twenty-five tracks, and there is no
+    /// single step count that says so. Reducing by the common divisor is
+    /// what makes the first number the step at which a location falls at
+    /// all.
+    pub(crate) fn cadence(&self) -> Option<(u64, u64)> {
+        if self.drive_tpi == 0 || self.recorded_tpi == 0 {
+            return None;
         }
-        u64::from(self.drive_tpi / self.recorded_tpi)
+        let divisor = gcd(self.drive_tpi, self.recorded_tpi);
+        Some((
+            u64::from(self.drive_tpi / divisor),
+            u64::from(self.recorded_tpi / divisor),
+        ))
     }
 
     /// The family location a source position addresses, or `None` where
-    /// the family's addressing has no location there at all.
+    /// the mechanism's steps do not land on a recorded track there.
+    ///
+    /// **The division here is exact and the check ahead of it is what
+    /// makes it so** (D61): admission is the divisibility test, and only
+    /// a position that passes it is divided. Nothing rounds and nothing
+    /// compares within an epsilon.
+    ///
+    /// A mechanism *coarser* than its recording still addresses tracks —
+    /// a 48 TPI head over 96 TPI media steps a whole two track pitches
+    /// at a time, so it reaches every other one. That is a real reading
+    /// of a real arrangement, and it falls out of the same arithmetic
+    /// rather than needing a case of its own.
     fn location_of(&self, position: u64) -> Option<u64> {
-        let steps = self.steps_per_location();
-        if steps == 0 {
-            return None;
+        let (steps, locations) = self.cadence()?;
+        (position % steps == 0).then(|| position / steps * locations + self.first_location)
+    }
+
+    /// The relation in the terms a refusal states it in.
+    pub(crate) fn describe(&self) -> String {
+        match self.cadence() {
+            None => "no step pitch at all".to_owned(),
+            Some((steps, 1)) => format!("{steps} step(s) to a location"),
+            Some((steps, locations)) => {
+                format!("{steps} step(s) across every {locations} locations")
+            }
         }
-        (position % steps == 0).then(|| position / steps + self.first_location)
     }
 }
 
