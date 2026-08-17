@@ -194,14 +194,26 @@ fn reported(stdout: &[u8]) -> Vec<PathBuf> {
 /// What the shipped build produced, under the names the probe build has
 /// just proved this toolchain uses.
 ///
-/// **This is the one lookup that cannot ask cargo.** The `cargo test`
-/// run in progress holds the lock on `target/<profile>`, so a nested
-/// build there would wait on the run waiting for it. It takes the file
-/// names from the probe build instead — same package and same toolchain,
-/// so the same names, in a directory of its own — and looks for exactly
-/// those. Nothing else in the directory is a candidate, which is what
+/// **Prefers what `cargo build` already wrote.** It takes the file names
+/// from the probe build — same package and same toolchain, so the same
+/// names, in a directory of its own — and looks for exactly those in
+/// `target/<profile>`. Nothing else there is a candidate, which is what
 /// keeps an artifact from a toolchain this tree no longer uses out of
 /// the link.
+///
+/// **And builds one itself when that is not there.** `cargo test` does
+/// not build a cdylib, so a test run that follows no `cargo build` — or
+/// one that follows a `cargo build` by a different toolchain — used to
+/// stop here and tell the caller to go and run it. It does not have to:
+/// the lock that forbids a nested build applies to `target/<profile>`
+/// alone, and [`nested_build`] has always sidestepped it for the probe
+/// by building somewhere else. The fallback does the same, so
+/// `cargo test -p remanence-ffi` stands on its own.
+///
+/// The two paths differ in one respect worth naming: the fast path links
+/// the file cargo wrote for the shipped build, and the fallback links an
+/// equivalent one built beside it — same source, same toolchain, same
+/// (absent) features, but not literally that file.
 fn shipped_build() -> &'static Built {
     static SHIPPED: OnceLock<Built> = OnceLock::new();
     SHIPPED.get_or_init(|| {
@@ -210,22 +222,40 @@ fn shipped_build() -> &'static Built {
         let beside = |path: &Path| dir.join(path.file_name().expect("a built file has a name"));
 
         let link = beside(&probe.link);
-        assert!(link.exists(), "{}", absent(&dir, &link));
-        Built {
-            runtime: probe
-                .runtime
-                .as_deref()
-                .map(beside)
-                .filter(|path| path.exists()),
-            link,
-            toolchain: probe.toolchain,
+        if link.exists() {
+            return Built {
+                runtime: probe
+                    .runtime
+                    .as_deref()
+                    .map(beside)
+                    .filter(|path| path.exists()),
+                link,
+                toolchain: probe.toolchain,
+            };
         }
+
+        eprintln!("!! {}", why_building(&dir, &link));
+        nested_build(
+            "the shipped library",
+            &[],
+            &shipped_fallback_dir(),
+            &format!(
+                "The C tests link the shipped cdylib, which `cargo test` \
+                 does not build. Set {SKIP}=1 to skip them deliberately."
+            ),
+        )
     })
 }
 
-/// Why there is nothing to link, including the case worth naming: a
+/// Why the fallback build is running, including the case worth naming: a
 /// leftover from a toolchain this tree used to be built with.
-fn absent(dir: &Path, expected: &Path) -> String {
+///
+/// Reported rather than fatal. What the leftover means is that the
+/// directory holds no artifact this toolchain can link, which the
+/// fallback is about to remedy — but it is worth saying out loud, since
+/// a developer switching between an MSVC shell and a MinGW one will
+/// otherwise wonder why the build ran at all.
+fn why_building(dir: &Path, expected: &Path) -> String {
     let name = expected.file_name().unwrap_or_default().to_string_lossy();
     let strangers: Vec<String> = std::fs::read_dir(dir)
         .into_iter()
@@ -248,13 +278,9 @@ fn absent(dir: &Path, expected: &Path) -> String {
         )
     };
     format!(
-        "no `{name}` in {}, so there is nothing for a C caller to link \
-         against.{stale}\n\n\
-         `cargo test` does not build a cdylib — `cargo build` does, and \
-         AGENTS.md orders it first for exactly this reason:\n\n  \
-         cargo build\n  cargo test\n\n\
-         This does not run cargo itself: a nested build would contend for \
-         the lock the current run already holds.",
+        "no `{name}` in {}, so the C tests are building one of their \
+         own.{stale}\n   Run `cargo build --workspace` first to link what \
+         that writes instead.",
         dir.display()
     )
 }
@@ -276,11 +302,14 @@ fn probe_target_dir() -> PathBuf {
     crate_dir().join("../../target/leak-probe")
 }
 
-/// Builds the library with the leak probe and answers what it wrote.
+/// Builds `remanence-ffi` into a target directory of its own and answers
+/// what cargo reported writing.
 ///
-/// Cold this costs about twenty seconds; warm it is a no-op cargo
-/// resolves in a fifth of a second, which is what makes running the leak
-/// check by default affordable.
+/// **The separate target directory is what makes this safe** (D50).
+/// Cargo locks a target directory rather than a workspace, so a build
+/// here runs happily while the `cargo test` in progress holds the lock
+/// on `target/<profile>`. It is the reason a test can build what it
+/// needs instead of demanding the caller have built it first.
 ///
 /// **The build reports its own output** rather than being searched for
 /// afterwards. Where cargo puts a file and what it calls it are cargo's
@@ -289,38 +318,55 @@ fn probe_target_dir() -> PathBuf {
 /// written on. `json-render-diagnostics` keeps that report on stdout and
 /// leaves the compiler's own errors readable on stderr, so a build that
 /// fails still says why below.
+fn nested_build(what: &str, features: &[&str], target: &Path, hint: &str) -> Built {
+    let mut command = Command::new("cargo");
+    command.args(["build", "-p", "remanence-ffi"]);
+    for feature in features {
+        command.args(["--features", feature]);
+    }
+    let output = command
+        .args(["--message-format", "json-render-diagnostics"])
+        .arg("--target-dir")
+        .arg(target)
+        .current_dir(workspace_dir())
+        .output()
+        .unwrap_or_else(|error| panic!("cannot build {what}: {error}\n\n{hint}"));
+    assert!(
+        output.status.success(),
+        "{what} did not build:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    classify(what, &reported(&output.stdout))
+}
+
+/// Builds the library with the leak probe and answers what it wrote.
+///
+/// Cold this costs about twenty seconds; warm it is a no-op cargo
+/// resolves in a fifth of a second, which is what makes running the leak
+/// check by default affordable.
 fn probe_build() -> &'static Built {
     static PROBE: OnceLock<Built> = OnceLock::new();
     PROBE.get_or_init(|| {
-        let output = Command::new("cargo")
-            .args([
-                "build",
-                "-p",
-                "remanence-ffi",
-                "--features",
-                "leak-probe",
-                "--message-format",
-                "json-render-diagnostics",
-            ])
-            .arg("--target-dir")
-            .arg(probe_target_dir())
-            .current_dir(workspace_dir())
-            .output()
-            .unwrap_or_else(|error| {
-                panic!(
-                    "cannot build the probe-enabled library: {error}\n\n\
-                     The leak check runs by default (D50) and needs a cdylib \
-                     built with `--features leak-probe`, which never ships. \
-                     Set {SKIP}=1 to skip the C tests deliberately."
-                )
-            });
-        assert!(
-            output.status.success(),
-            "the probe-enabled library did not build:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        classify("the probe build", &reported(&output.stdout))
+        nested_build(
+            "the probe-enabled library",
+            &["leak-probe"],
+            &probe_target_dir(),
+            &format!(
+                "The leak check runs by default (D50) and needs a cdylib \
+                 built with `--features leak-probe`, which never ships. \
+                 Set {SKIP}=1 to skip the C tests deliberately."
+            ),
+        )
     })
+}
+
+/// Where a fallback build of the shipped library goes.
+///
+/// Its own directory, for the same reason the probe has one, and never
+/// `target/<profile>`: that is the directory the running `cargo test`
+/// holds the lock on.
+fn shipped_fallback_dir() -> PathBuf {
+    crate_dir().join("../../target/c-shipped")
 }
 
 /// A generator that can drive gcc.
