@@ -26,6 +26,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod encoding;
+pub(crate) mod geometry;
 pub(crate) mod presentation;
 pub(crate) mod profiles;
 pub(crate) mod records;

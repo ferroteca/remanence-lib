@@ -3741,6 +3741,10 @@ pub struct RemanenceSpace {
     /// types rather than through a device. Null for a medium-backed
     /// space, and borrowed from the handle that owns it either way.
     sectors: *const RemanenceC1541Sectors,
+    /// The FM or MFM record layer it is composed over, where that is
+    /// what composed it. Null otherwise, and never set alongside
+    /// `sectors`: a recording belongs to one family.
+    ibm_sectors: *const RemanenceIbmSectors,
     /// The scheme's own ordinal of the partition that composed it, which
     /// is what re-resolution looks the partition up by. `None` where no
     /// pool named it.
@@ -3768,6 +3772,10 @@ pub struct RemanenceFile {
     /// As on `RemanenceSpace`: the sector layer a flux-family namespace
     /// is presented over, or null.
     sectors: *const RemanenceC1541Sectors,
+    /// The FM or MFM record layer it is composed over, where that is
+    /// what composed it. Null otherwise, and never set alongside
+    /// `sectors`: a recording belongs to one family.
+    ibm_sectors: *const RemanenceIbmSectors,
     ordinal: Option<u32>,
     declared: Option<CString>,
     path: CString,
@@ -3788,6 +3796,9 @@ struct SpaceOrigin<'a> {
     session: *mut RemanenceSession,
     media: Option<MediaId>,
     sectors: *const RemanenceC1541Sectors,
+    /// The FM or MFM record layer, where that is what composed it. The
+    /// two are never both set: a recording belongs to one family.
+    ibm_sectors: *const RemanenceIbmSectors,
     ordinal: Option<u32>,
     declared: Option<&'a str>,
 }
@@ -3800,6 +3811,7 @@ impl RemanenceSpace {
             session: self.session,
             media: self.media,
             sectors: self.sectors,
+            ibm_sectors: self.ibm_sectors,
             ordinal: self.ordinal,
             declared: self.declared.as_deref().and_then(|id| id.to_str().ok()),
         }
@@ -3814,6 +3826,7 @@ impl RemanenceFile {
             session: self.session,
             media: self.media,
             sectors: self.sectors,
+            ibm_sectors: self.ibm_sectors,
             ordinal: self.ordinal,
             declared: self.declared.as_deref().and_then(|id| id.to_str().ok()),
         }
@@ -3847,6 +3860,21 @@ unsafe fn with_space<T>(
             .sectors
             .partition()
             .filesystem_as(origin.declared.unwrap_or("cbmdos"))?;
+        return action(&mut space);
+    }
+    // An FM or MFM recording composes an addressed extent instead
+    // (D62), so its declaration reaches the ordinary adapters. There is
+    // no default here: nothing about such a recording determines which
+    // of FAT, HDOS or CP/M it holds, and picking one would be the guess
+    // the declaration exists to prevent.
+    if let Some(held) = unsafe { origin.ibm_sectors.as_ref() } {
+        let declared = origin.declared.ok_or_else(|| {
+            remanence::Error::io(
+                "this partition is composed over an FM or MFM recording, which                  determines no reading of its own; declare one with                  remanence_partition_filesystem_as",
+            )
+        })?;
+        let mut partition = held.sectors.partition()?;
+        let mut space = partition.view().filesystem_as(declared)?;
         return action(&mut space);
     }
     let handle =
@@ -4050,7 +4078,7 @@ pub unsafe extern "C" fn remanence_medium_partition(
     let Some(view) = target.partition(ordinal) else {
         return ptr::null_mut();
     };
-    partition_handle(session, media, ptr::null(), view.partition())
+    partition_handle(session, media, ptr::null(), ptr::null(), view.partition())
 }
 
 // ------------------------------------------------- the partition handle
@@ -4079,6 +4107,10 @@ pub struct RemanencePartition {
     /// Null for a pooled partition, and borrowed from the handle that
     /// owns it either way.
     sectors: *const RemanenceC1541Sectors,
+    /// The FM or MFM record layer it is composed over, where that is
+    /// what composed it. Null otherwise, and never set alongside
+    /// `sectors`: a recording belongs to one family.
+    ibm_sectors: *const RemanenceIbmSectors,
     ordinal: u32,
     direct: bool,
     active: bool,
@@ -4103,12 +4135,14 @@ fn partition_handle(
     session: *mut RemanenceSession,
     media: Option<MediaId>,
     sectors: *const RemanenceC1541Sectors,
+    ibm_sectors: *const RemanenceIbmSectors,
     partition: &Partition,
 ) -> *mut RemanencePartition {
     Box::into_raw(Box::new(RemanencePartition {
         session,
         media,
         sectors,
+        ibm_sectors,
         ordinal: partition.ordinal(),
         direct: partition.is_direct(),
         active: partition.active(),
@@ -4147,6 +4181,10 @@ unsafe fn with_partition<T>(
     // (P13).
     if let Some(held) = unsafe { handle.sectors.as_ref() } {
         return action(held.sectors.partition());
+    }
+    if let Some(held) = unsafe { handle.ibm_sectors.as_ref() } {
+        let mut partition = held.sectors.partition()?;
+        return action(partition.view());
     }
     let session =
         unsafe { handle.session.as_mut() }.ok_or_else(|| remanence::Error::io("null session"))?;
@@ -4504,6 +4542,7 @@ unsafe fn partition_space(
             session: handle.session,
             media: handle.media,
             sectors: handle.sectors,
+            ibm_sectors: handle.ibm_sectors,
             ordinal: Some(handle.ordinal),
             declared: match door {
                 Door::Declared(id) => Some(to_cstring(id)),
@@ -5018,6 +5057,7 @@ pub unsafe extern "C" fn remanence_filesystem_get_file(
             session: handle.session,
             media: handle.media,
             sectors: handle.sectors,
+            ibm_sectors: handle.ibm_sectors,
             ordinal: handle.ordinal,
             declared: handle.declared.clone(),
             path: to_cstring(path.as_ref()),
@@ -6888,7 +6928,13 @@ pub unsafe extern "C" fn remanence_c1541_sectors_partition(
         return ptr::null_mut();
     };
     let view = held.sectors.partition();
-    partition_handle(ptr::null_mut(), None, sectors, view.partition())
+    partition_handle(
+        ptr::null_mut(),
+        None,
+        sectors,
+        ptr::null(),
+        view.partition(),
+    )
 }
 
 /// How many bytes of payload one sector carries.
@@ -7391,6 +7437,122 @@ pub unsafe extern "C" fn remanence_ibm_sectors_claim(
         }
     }
     true
+}
+
+/// The uniform geometry these records state for themselves.
+///
+/// Every number is read off the claims rather than off the drive
+/// profile: a profile declares what the mechanism records, and this says
+/// what this disk holds. Returns false and states the refusal where the
+/// records compose no uniform image — more than one data-field size, or
+/// a gap in the sector numbering.
+#[repr(C)]
+pub struct RemanenceIbmGeometry {
+    pub cylinders: u32,
+    pub heads: u32,
+    pub sectors_per_track: u32,
+    /// The lowest sector number the records state. IBM recordings
+    /// conventionally number from one, but that is a convention and this
+    /// reads what is there.
+    pub first_sector: u8,
+    pub sector_bytes: u32,
+    /// What the whole extent spans, which is the geometry's rather than
+    /// the sum of what reads: a hole still occupies its place.
+    pub length_bytes: u64,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_ibm_sectors_geometry(
+    sectors: *const RemanenceIbmSectors,
+    out: *mut RemanenceIbmGeometry,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(held) = (unsafe { sectors.as_ref() }) else {
+        let error = remanence::Error::io("null sector layer");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    match held.sectors.geometry() {
+        Ok(geometry) => {
+            if !out.is_null() {
+                unsafe {
+                    *out = RemanenceIbmGeometry {
+                        cylinders: geometry.cylinders,
+                        heads: geometry.heads,
+                        sectors_per_track: geometry.sectors_per_track,
+                        first_sector: geometry.first_sector,
+                        sector_bytes: geometry.sector_bytes,
+                        length_bytes: geometry.length_bytes(),
+                    };
+                }
+            }
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
+/// The **direct partition** over this recording — the library's own
+/// composition of the whole content, which is what a namespace above is
+/// reached through (P19).
+///
+/// **Unlike a CBM DOS recording's, this partition is addressable**
+/// (D62). Its records state a cylinder, a head and a sector number, and
+/// those compose exactly the geometry ordering FAT, HDOS and CP/M were
+/// all written against — so a volume here opens through the same seam a
+/// hard-disk image opens through, with no flux vocabulary reaching the
+/// filesystem adapter and none of the filesystem's reaching the
+/// recording.
+///
+/// The namespace vantage is *declared*: nothing about an FM or MFM
+/// recording determines which of those it holds, and this layer will not
+/// pick one. `remanence_partition_filesystem_as` with `"fat"`, `"hdos"`,
+/// `"cpm"` or a `"cpm-*"` layout is the door; `"cbmdos"` is refused
+/// here, because those blocks are addressed by the recording rather than
+/// by position.
+///
+/// The extent's length is the geometry's rather than the sum of what
+/// reads: a record the recording never stated, or one whose CRC
+/// disagrees, is a hole that still occupies its place. Reads that touch
+/// it are refused naming the address and every other read answers —
+/// nothing is zeroed.
+///
+/// Null where the records compose no uniform image, with the refusal
+/// stated. The partition **borrows** the sector layer, and so does every
+/// space composed through it: keep the sectors alive for as long as any
+/// of them, and free them last.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_ibm_sectors_partition(
+    sectors: *const RemanenceIbmSectors,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> *mut RemanencePartition {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(held) = (unsafe { sectors.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let mut partition = match held.sectors.partition() {
+        Ok(partition) => partition,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return ptr::null_mut();
+        }
+    };
+    let view = partition.view();
+    partition_handle(
+        ptr::null_mut(),
+        None,
+        ptr::null(),
+        sectors,
+        view.partition(),
+    )
 }
 
 /// What this layer could not resolve, in its own terms, and how much of

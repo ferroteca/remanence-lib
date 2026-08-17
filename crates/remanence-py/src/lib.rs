@@ -2250,6 +2250,9 @@ pub struct Partition {
     session: Option<Arc<Mutex<remanence::Session>>>,
     media: Option<remanence::MediaId>,
     sectors: Option<Arc<remanence::C1541Sectors>>,
+    /// The FM or MFM record layer, where that is what composed it. Never
+    /// set alongside `sectors`: a recording belongs to one family.
+    ibm_sectors: Option<Arc<remanence::IbmSectors>>,
 }
 
 /// One partition of a pool, in the module's own record, keyed to whatever
@@ -2283,7 +2286,19 @@ fn partition_record(
         session,
         media,
         sectors,
+        ibm_sectors: None,
     }
+}
+
+/// The direct partition over an FM or MFM recording's records, which
+/// unlike a CBM DOS recording's composes an addressed extent (D62).
+fn partition_over_ibm_sectors(sectors: Arc<remanence::IbmSectors>) -> Partition {
+    let mut holder = sectors
+        .partition()
+        .expect("the caller composed it once already");
+    let mut record = partition_record(holder.view().partition(), None, None, None);
+    record.ibm_sectors = Some(sectors);
+    record
 }
 
 impl Partition {
@@ -2302,6 +2317,12 @@ impl Partition {
         // from its medium (P13).
         if let Some(sectors) = &self.sectors {
             return action(sectors.partition());
+        }
+        // An FM or MFM recording composes an addressed extent instead
+        // (D62), and the holder is what owns it for the borrow's life.
+        if let Some(sectors) = &self.ibm_sectors {
+            let mut holder = sectors.partition().map_err(to_py_err)?;
+            return action(holder.view());
         }
         let (Some(session), Some(media)) = (&self.session, self.media) else {
             return Err(categorized_py_err(
@@ -4169,6 +4190,36 @@ impl IbmSectorReport {
     }
 }
 
+/// The uniform geometry an FM or MFM recording's records state for
+/// themselves. Every number is read off the claims rather than off the
+/// drive profile: a profile declares what the mechanism records, and
+/// this says what this disk holds.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+#[derive(Clone)]
+pub struct IbmGeometry {
+    pub cylinders: u32,
+    pub heads: u32,
+    pub sectors_per_track: u32,
+    /// The lowest sector number the records state. IBM recordings
+    /// conventionally number from one, but that is a convention and this
+    /// reads what is there.
+    pub first_sector: u8,
+    pub sector_bytes: u32,
+    /// What the whole extent spans, which is the geometry's rather than
+    /// the sum of what reads: a hole still occupies its place.
+    pub length_bytes: u64,
+}
+
+#[pymethods]
+impl IbmGeometry {
+    fn __repr__(&self) -> String {
+        format!(
+            "IbmGeometry(cylinders={}, heads={}, sectors_per_track={}, sector_bytes={})",
+            self.cylinders, self.heads, self.sectors_per_track, self.sector_bytes
+        )
+    }
+}
+
 /// The recording's own sectors as an FM or MFM recording states them,
 /// held in the session. The payloads stay behind this surface and are
 /// read by the address the recording states for them.
@@ -4211,6 +4262,51 @@ impl IbmSectors {
     #[getter]
     fn claim_count(&self) -> u64 {
         self.inner.claim_count()
+    }
+
+    /// The uniform geometry these records state for themselves, or the
+    /// refusal naming what makes them non-uniform.
+    fn geometry(&self) -> PyResult<IbmGeometry> {
+        let geometry = self.inner.geometry().map_err(to_py_err)?;
+        Ok(IbmGeometry {
+            cylinders: geometry.cylinders,
+            heads: geometry.heads,
+            sectors_per_track: geometry.sectors_per_track,
+            first_sector: geometry.first_sector,
+            sector_bytes: geometry.sector_bytes,
+            length_bytes: geometry.length_bytes(),
+        })
+    }
+
+    /// The **direct partition** over this recording — the library's own
+    /// composition of the whole content, which is what a namespace above
+    /// is reached through (P19).
+    ///
+    /// **Unlike a CBM DOS recording's, this partition is addressable.**
+    /// Its records state a cylinder, a head and a sector number, and
+    /// those compose exactly the geometry ordering FAT, HDOS and CP/M
+    /// were all written against — so a volume here opens through the
+    /// same seam a hard-disk image opens through, with no flux
+    /// vocabulary reaching the filesystem adapter and none of the
+    /// filesystem's reaching the recording.
+    ///
+    /// The namespace vantage is *declared*: nothing about an FM or MFM
+    /// recording determines which of those it holds, and this layer will
+    /// not pick one. `filesystem_as("fat")`, `"hdos"`, `"cpm"` or a
+    /// `"cpm-*"` layout is the door; `"cbmdos"` is refused, because
+    /// those blocks are addressed by the recording rather than by
+    /// position.
+    ///
+    /// The extent's length is the geometry's rather than the sum of what
+    /// reads: a record the recording never stated, or one whose CRC
+    /// disagrees, is a hole that still occupies its place. Reads that
+    /// touch it are refused naming the address and every other read
+    /// answers — nothing is zeroed.
+    fn partition(&self) -> PyResult<Partition> {
+        // Composing it here is the check that the records make a uniform
+        // image; the refusal travels now rather than at the first read.
+        self.inner.partition().map_err(to_py_err)?;
+        Ok(partition_over_ibm_sectors(Arc::clone(&self.inner)))
     }
 
     fn __repr__(&self) -> String {
@@ -4897,6 +4993,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IbmSectors>()?;
     m.add_class::<IbmSectorClaim>()?;
     m.add_class::<IbmSectorReport>()?;
+    m.add_class::<IbmGeometry>()?;
     m.add_class::<ContestedAddress>()?;
     m.add_class::<FluxImage>()?;
     m.add_class::<FluxImageReport>()?;

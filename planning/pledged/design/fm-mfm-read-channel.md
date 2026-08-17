@@ -112,6 +112,18 @@ hard-disk image already uses (P16–P19), with neither side learning about
 the other. Demonstrating that is part of the feature; adding a file
 interface for it would be building a second seam beside a working one.
 
+> **Annotation (D62, 2026-08-17):** this landed, and the shape it took is
+> worth recording. The reach was not free of a *decision*: the CBM DOS
+> sector layer composes no addressed extent, and that had been standing
+> in as a property of flux rather than of CBM DOS. An FM or MFM
+> recording's records state a cylinder, a head and a sector number, which
+> compose the geometry ordering the filesystems were written against — so
+> the layer presents a `Device` and the adapters read it unchanged. What
+> the design did not anticipate is that FAT alone had no device-backed
+> catalog, reading instead through the medium that composed its
+> partition; it has one now, which is what let all three of FAT, HDOS and
+> CP/M arrive through one door rather than FAT through a second.
+
 Two things stay refused throughout:
 
 - **A soft-sectored Heathkit recording read this way is not the H17 hard-

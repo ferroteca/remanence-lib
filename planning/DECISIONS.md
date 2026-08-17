@@ -58,6 +58,59 @@ removes it is the record either way.
 
 ## Decisions
 
+### D62 — A flux recording's sectors compose an addressed extent, and a hole refuses only the reads that touch it
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-17. **Supports** S1, S2, S3; in-force P3, P4, P13, P16–P19, P28.
+Shapes pledged F78.
+
+**The CBM DOS layer composes no addressed extent, and that was read as a
+property of flux rather than of CBM DOS.** A recording's blocks are
+addressed by the recording, so the partition over the 1541's sector layer
+backs onto blocks and has no linear extent at all; the one namespace
+declarable over it is `cbmdos`, and `filesystem_as("fat")` there is
+refused by name. That is right for CBM DOS and wrong as a general rule.
+FAT, HDOS and CP/M all read a linear space, and an FM or MFM recording
+*has* one: its sectors state a cylinder, a head and a sector number that
+compose exactly the geometry ordering every one of those filesystems was
+written against.
+
+**So the IBM sector layer composes an addressed extent, and the reach is
+free.** A FAT or HDOS volume on an MFM floppy opens through the same
+`Device` seam a hard-disk image opens through, with neither side learning
+about the other — no flux vocabulary reaches the filesystem adapter and
+no filesystem vocabulary reaches the recording. This is the payoff F78
+pledged, and it is delivered by presenting an extent rather than by
+teaching any adapter what a recording is.
+
+**The geometry is derived from the claims and refused where it is not
+uniform.** A linear image needs one sector size, one contiguous run of
+sector numbers per track, and every cylinder and head present. All three
+are read off what the records state for themselves — not off the drive
+profile, which declares a nominal geometry the recording may not match.
+A recording that fails any of them is refused by name showing what it
+states, rather than being flattened into an ordering that would put every
+file's contents somewhere other than where they are. Non-uniform
+recordings are proposed F80's subject and are not read here.
+
+**A hole refuses only the reads that touch it.** A sector the recording
+never stated, or one whose CRC disagrees, is a hole in the extent. The
+extent still composes, its length is still the geometry's, and a read
+covering the hole is refused naming the address — every other read
+answers. The alternative, refusing the whole extent, would mean one bad
+sector anywhere costs the entire disk; under this rule the directory
+still lists and every file that does not live on the damaged sector still
+reads whole. That is P28's degraded reading applied at the seam where the
+damage actually is, and it never fills: nothing is zeroed, and the
+refusal carries both checksums.
+
+**Weighed and declined:** materializing the whole recording into a linear
+buffer and handing that to the adapter, which reads well until the hole —
+the buffer has to hold *something* there, and every value is a lie the
+layers above cannot see through; and giving the adapters a sector-shaped
+door beside the byte-shaped one, which is a second seam beside a working
+one for no gain, and is what F78's design already declined.
+
 ### D61 — Step pitch is declared as a rational pair, and consumers never divide it
 
 **Decided** Paul Galbraith, 2026-08-06, in conversation; recorded here

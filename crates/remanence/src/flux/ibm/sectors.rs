@@ -102,6 +102,43 @@ impl IbmSectors {
         self.report.claims.len() as u64
     }
 
+    /// The uniform geometry these records state for themselves, or the
+    /// refusal naming what makes them non-uniform (D62).
+    ///
+    /// Every number is read off the claims rather than off the drive
+    /// profile: a profile declares what the mechanism records, and this
+    /// says what this disk holds.
+    pub fn geometry(&self) -> Result<crate::flux::ibm::geometry::IbmGeometry> {
+        crate::flux::ibm::geometry::geometry_of(self)
+    }
+
+    /// The **direct partition** over this recording — the library's own
+    /// composition of the whole content, which is what a namespace above
+    /// is reached through (P19).
+    ///
+    /// **Unlike a CBM DOS recording's, this partition is addressable**
+    /// (D62). Its records state a cylinder, a head and a sector number,
+    /// and those compose exactly the geometry ordering FAT, HDOS and
+    /// CP/M were all written against — so a volume here opens through
+    /// the same seam a hard-disk image opens through, with no flux
+    /// vocabulary reaching the filesystem adapter and none of the
+    /// filesystem's reaching the recording.
+    ///
+    /// The extent's length is the geometry's rather than the sum of what
+    /// reads: a record the recording never stated, or one whose CRC
+    /// disagrees, is a hole that still occupies its place. Reads that
+    /// touch it are refused naming the address, and every other read
+    /// answers — nothing is zeroed, because a zero here would be
+    /// indistinguishable from one the recording holds.
+    ///
+    /// Refuses where the records compose no uniform image, which is
+    /// [`IbmSectors::geometry`]'s refusal passed out unchanged.
+    pub fn partition(&self) -> Result<IbmPartition<'_>> {
+        Ok(IbmPartition {
+            extent: crate::flux::ibm::geometry::IbmExtent::new(self)?,
+        })
+    }
+
     /// One record's payload, by the address the recording states.
     ///
     /// Only a record whose checks both agree is served. One whose
@@ -144,6 +181,29 @@ impl IbmSectors {
             ));
         }
         Ok(self.payloads[at].clone())
+    }
+}
+
+/// The addressed extent an FM or MFM recording composes, held so the
+/// partition over it can borrow it mutably (D62).
+///
+/// It exists because the adapters read through a device by exclusive
+/// reference while the sector layer is shared: this owns the device and
+/// hands out the one borrow of it.
+pub struct IbmPartition<'a> {
+    extent: crate::flux::ibm::geometry::IbmExtent<'a>,
+}
+
+impl IbmPartition<'_> {
+    /// The geometry the extent is ordered by.
+    pub fn geometry(&self) -> crate::flux::ibm::geometry::IbmGeometry {
+        self.extent.geometry()
+    }
+
+    /// The partition itself, and the namespace door onto it.
+    pub fn view(&mut self) -> crate::PartitionView<'_> {
+        let length = self.extent.geometry().length_bytes();
+        crate::PartitionView::over_device(&mut self.extent, length)
     }
 }
 
@@ -348,10 +408,10 @@ mod tests {
 
     /// The H-17-4 records half a million cells a second against a
     /// sixteen-megahertz clock, so a cell is thirty-two cycles.
-    const CELL_CYCLES: u64 = 32;
-    const CYCLES_PER_ROTATION: u64 = 3_200_000;
+    pub(super) const CELL_CYCLES: u64 = 32;
+    pub(super) const CYCLES_PER_ROTATION: u64 = 3_200_000;
 
-    struct Bytes(Vec<u8>);
+    pub(super) struct Bytes(pub(super) Vec<u8>);
 
     impl ByteSource for Bytes {
         fn read_at(&self, offset: u64, into: &mut [u8]) -> Result<()> {
@@ -543,6 +603,382 @@ mod tests {
         assert!(
             !report.declared_loss.is_empty(),
             "a record that does not read is declared loss"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reach {
+    use super::tests::{Bytes, CELL_CYCLES, CYCLES_PER_ROTATION};
+    use super::*;
+    use crate::evidence::Provenance;
+    use crate::flux::capture::TimeBase;
+    use crate::flux::ibm::encoding::Encoding;
+    use crate::flux::ibm::profiles::HEATH_H17_4_SOFT;
+    use crate::flux::ibm::records::SectorAddress;
+    use crate::flux::ibm::records::writing::TrackWriter;
+    use crate::flux::medium::{
+        Derivation, FluxMedium, LocationKey, MediumBuilder, OriginRule, OriginStatement, Pulse,
+        RotationalFrame, Strength,
+    };
+    use crate::flux::presentation::materialize_bitstream;
+
+    const CYLINDERS: u8 = 4;
+    const HEADS: u8 = 2;
+    const SECTORS: u8 = 9;
+    const SECTOR_BYTES: usize = 512;
+    /// 512 bytes is `128 << 2`.
+    const SIZE_CODE: u8 = 2;
+
+    const TOTAL_SECTORS: usize = CYLINDERS as usize * HEADS as usize * SECTORS as usize;
+
+    const FILE_NAME: &str = "HELLO.TXT";
+    const FILE_BODY: &[u8] = b"a filesystem on a flux recording\r\n";
+
+    /// A FAT12 floppy image with one file in it, laid out for the
+    /// geometry above.
+    ///
+    /// It is built here rather than loaded because the point of the test
+    /// is the path from cells to files: a fixture would prove the FAT
+    /// reader works, which is already proved elsewhere, and not that this
+    /// recording reaches it.
+    fn fat12_image() -> Vec<u8> {
+        const RESERVED: usize = 1;
+        const FATS: usize = 2;
+        const SECTORS_PER_FAT: usize = 1;
+        const ROOT_ENTRIES: usize = 16;
+
+        let mut image = vec![0u8; TOTAL_SECTORS * SECTOR_BYTES];
+
+        // The boot record, which is what the reader recognizes.
+        image[0..3].copy_from_slice(&[0xeb, 0x3c, 0x90]);
+        image[3..11].copy_from_slice(b"REMANENC");
+        image[11..13].copy_from_slice(&(SECTOR_BYTES as u16).to_le_bytes());
+        image[13] = 1; // one sector to a cluster
+        image[14..16].copy_from_slice(&(RESERVED as u16).to_le_bytes());
+        image[16] = FATS as u8;
+        image[17..19].copy_from_slice(&(ROOT_ENTRIES as u16).to_le_bytes());
+        image[19..21].copy_from_slice(&(TOTAL_SECTORS as u16).to_le_bytes());
+        image[21] = 0xf9;
+        image[22..24].copy_from_slice(&(SECTORS_PER_FAT as u16).to_le_bytes());
+        image[24..26].copy_from_slice(&u16::from(SECTORS).to_le_bytes());
+        image[26..28].copy_from_slice(&u16::from(HEADS).to_le_bytes());
+        image[510] = 0x55;
+        image[511] = 0xaa;
+
+        // Both copies of the FAT. The file is one cluster long, so
+        // cluster 2 is the end of its own chain.
+        for fat in 0..FATS {
+            let base = (RESERVED + fat * SECTORS_PER_FAT) * SECTOR_BYTES;
+            image[base] = 0xf9;
+            image[base + 1] = 0xff;
+            image[base + 2] = 0xff;
+            // Cluster 2's 12-bit entry is the low nibble of byte 4 and
+            // all of byte 3: 0xfff ends the chain.
+            image[base + 3] = 0xff;
+            image[base + 4] = 0x0f;
+        }
+
+        // The root directory, and the one file in it.
+        let root = (RESERVED + FATS * SECTORS_PER_FAT) * SECTOR_BYTES;
+        image[root..root + 8].copy_from_slice(b"HELLO   ");
+        image[root + 8..root + 11].copy_from_slice(b"TXT");
+        image[root + 11] = 0x20;
+        image[root + 26..root + 28].copy_from_slice(&2u16.to_le_bytes());
+        image[root + 28..root + 32].copy_from_slice(&(FILE_BODY.len() as u32).to_le_bytes());
+
+        // The file's one cluster. Cluster 2 is the first data cluster.
+        let data = (RESERVED + FATS * SECTORS_PER_FAT + 1) * SECTOR_BYTES;
+        image[data..data + FILE_BODY.len()].copy_from_slice(FILE_BODY);
+
+        image
+    }
+
+    /// Where one record's data field sits in the linear image, under the
+    /// same ordering the extent composes.
+    fn image_offset(cylinder: u8, head: u8, sector: u8) -> usize {
+        let block = (usize::from(cylinder) * usize::from(HEADS) + usize::from(head))
+            * usize::from(SECTORS)
+            + usize::from(sector - 1);
+        block * SECTOR_BYTES
+    }
+
+    /// The whole image written out as MFM cells, one track per location.
+    fn recording(image: &[u8], damage: Option<(u8, u8, u8)>) -> Vec<(LocationKey, Vec<bool>)> {
+        let mut tracks = Vec::new();
+        for cylinder in 0..CYLINDERS {
+            for head in 0..HEADS {
+                let mut track = TrackWriter::new(Encoding::Mfm);
+                for sector in 1..=SECTORS {
+                    let at = image_offset(cylinder, head, sector);
+                    track.sector(
+                        SectorAddress {
+                            cylinder,
+                            head,
+                            sector,
+                            size_code: SIZE_CODE,
+                        },
+                        &image[at..at + SECTOR_BYTES],
+                        false,
+                    );
+                }
+                let mut bits = track.bits.clone();
+                if damage == Some((cylinder, head, 0)) {
+                    // Break one data cell in the first record of this
+                    // track. MFM writes a clock cell before every data
+                    // cell, so the data cells are the odd ones.
+                    let flip = 701;
+                    bits[flip] = !bits[flip];
+                }
+                tracks.push((
+                    LocationKey::new(HEATH_H17_4_SOFT.id, u64::from(cylinder), u64::from(head)),
+                    bits,
+                ));
+            }
+        }
+        tracks
+    }
+
+    fn medium_of(tracks: &[(LocationKey, Vec<bool>)]) -> FluxMedium {
+        let profile = &HEATH_H17_4_SOFT;
+        let frame = RotationalFrame::new(
+            profile.id,
+            TimeBase::new(profile.id, 16_000_000, 1).expect("the rate is stated"),
+            CYCLES_PER_ROTATION,
+            OriginStatement::new(
+                OriginRule::Index,
+                Provenance::new(profile.id).note("placed at the index for the test"),
+            ),
+        )
+        .expect("the frame states a circle");
+        let mut builder = MediumBuilder::new(
+            profile.id,
+            profile.media,
+            frame,
+            Derivation::SelectedAndProjected,
+            Provenance::new(profile.id).note("selected observation 0 of each location"),
+            Vec::new(),
+        )
+        .expect("the policy is stated");
+        for (location, bits) in tracks {
+            let mut pulses = Vec::new();
+            let mut at = 0u64;
+            for bit in bits {
+                at += CELL_CYCLES;
+                if *bit {
+                    pulses.push(Pulse::new(at, Strength::certain(2)));
+                }
+            }
+            builder
+                .add_location(
+                    location.clone(),
+                    &pulses,
+                    &[],
+                    Provenance::new(profile.id).note("reduced for the test"),
+                )
+                .expect("the location");
+        }
+        let (mut medium, bytes, total) = builder.seal().expect("the backing seals");
+        medium.attach_backing(Box::new(Bytes(bytes)), total, 1 << 22);
+        medium
+    }
+
+    fn sectors_of(medium: &FluxMedium) -> IbmSectors {
+        let profile = &HEATH_H17_4_SOFT;
+        let bitstream = materialize_bitstream(
+            medium,
+            profile,
+            profile.presentation.channel_policy,
+            1 << 22,
+        )
+        .expect("the channel clocks it");
+        let bytestream = bitstream
+            .materialize_bytestream(1 << 22)
+            .expect("the codec resolves it");
+        recognize_declared(&bytestream, 1 << 22)
+            .expect("the grammar reads it")
+            .into_ibm()
+            .expect("an IBM recording answers the IBM reading")
+    }
+
+    #[test]
+    fn the_geometry_is_read_off_the_records_rather_than_off_the_profile() {
+        let image = fat12_image();
+        let medium = medium_of(&recording(&image, None));
+        let sectors = sectors_of(&medium);
+
+        let geometry = sectors.geometry().expect("the records compose one image");
+        assert_eq!(geometry.cylinders, u32::from(CYLINDERS));
+        assert_eq!(geometry.heads, u32::from(HEADS));
+        assert_eq!(geometry.sectors_per_track, u32::from(SECTORS));
+        assert_eq!(geometry.first_sector, 1);
+        assert_eq!(geometry.sector_bytes, SECTOR_BYTES as u32);
+        assert_eq!(geometry.length_bytes(), image.len() as u64);
+
+        // The profile declares sixteen 256-byte records to a location.
+        // None of that is what this disk holds, and the geometry is the
+        // disk's rather than the profile's.
+        assert_eq!(HEATH_H17_4_SOFT.density[0].records, 16);
+        assert_ne!(
+            geometry.sectors_per_track,
+            HEATH_H17_4_SOFT.density[0].records
+        );
+    }
+
+    #[test]
+    fn the_extent_is_the_image_the_records_were_written_from() {
+        let image = fat12_image();
+        let medium = medium_of(&recording(&image, None));
+        let sectors = sectors_of(&medium);
+        let mut partition = sectors.partition().expect("the records compose an extent");
+
+        let mut read = vec![0u8; image.len()];
+        crate::io::device::Device::read_at(&mut partition.extent, 0, &mut read)
+            .expect("every record reads");
+        assert_eq!(read, image, "the extent is the image, byte for byte");
+    }
+
+    #[test]
+    fn a_fat_volume_on_an_mfm_recording_opens_through_the_ordinary_seam() {
+        let image = fat12_image();
+        let medium = medium_of(&recording(&image, None));
+        let sectors = sectors_of(&medium);
+        let mut partition = sectors.partition().expect("the records compose an extent");
+
+        // This is the payoff: no flux vocabulary crosses into the
+        // filesystem seam, and none of the filesystem's crosses back.
+        let mut space = partition
+            .view()
+            .filesystem_as("fat")
+            .expect("a FAT volume is declared and the content bears it");
+
+        let entries = space.entries("/").expect("the root directory lists");
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(entries[0].name, FILE_NAME);
+        assert_eq!(entries[0].size_bytes, FILE_BODY.len() as u64);
+
+        let body = space.read_file(FILE_NAME).expect("the file reads");
+        assert_eq!(body, FILE_BODY, "the contents are what was recorded");
+    }
+
+    #[test]
+    fn a_hole_refuses_the_reads_that_touch_it_and_no_others() {
+        let image = fat12_image();
+        // Damage the first record of the last track, which holds no
+        // part of the boot record, the FAT, the root directory or the
+        // file.
+        let damaged = (CYLINDERS - 1, HEADS - 1, 0u8);
+        let medium = medium_of(&recording(&image, Some(damaged)));
+        let sectors = sectors_of(&medium);
+
+        // The extent still composes at its full length: a hole occupies
+        // its place rather than shortening the image.
+        let mut partition = sectors
+            .partition()
+            .expect("the records still compose an extent");
+        assert_eq!(
+            partition.geometry().length_bytes(),
+            image.len() as u64,
+            "the length is the geometry's, not the sum of what reads"
+        );
+
+        // The read that touches the hole is refused, naming the address.
+        let at = image_offset(damaged.0, damaged.1, 1) as u64;
+        let mut buf = [0u8; 16];
+        let error = crate::io::device::Device::read_at(&mut partition.extent, at, &mut buf)
+            .expect_err("the damaged record does not read");
+        let said = error.to_string();
+        assert!(said.contains("not readable"), "{said}");
+        assert!(
+            buf.iter().all(|byte| *byte == 0),
+            "nothing was filled in before the refusal"
+        );
+
+        // And every other read still answers — including the whole
+        // filesystem, which lives nowhere near the damage.
+        let mut space = partition
+            .view()
+            .filesystem_as("fat")
+            .expect("the volume still opens");
+        let entries = space.entries("/").expect("the root directory still lists");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            space.read_file(FILE_NAME).expect("the file still reads"),
+            FILE_BODY
+        );
+    }
+
+    #[test]
+    fn the_reading_is_declared_and_the_wrong_family_is_refused_by_name() {
+        let image = fat12_image();
+        let medium = medium_of(&recording(&image, None));
+        let sectors = sectors_of(&medium);
+        let mut partition = sectors.partition().expect("the records compose an extent");
+
+        // CBM DOS addresses its blocks by the recording rather than by
+        // position, so it is not a reading of an addressed extent. The
+        // refusal says which, rather than reading 256-byte blocks out of
+        // 512-byte sectors and calling the result a directory.
+        let error = partition
+            .view()
+            .filesystem_as("cbmdos")
+            .expect_err("a CBM DOS reading of an IBM recording is refused");
+        let said = error.to_string();
+        assert!(
+            said.contains("addresses its blocks by the recording"),
+            "{said}"
+        );
+
+        // A declaration this release does not read is refused naming
+        // what it does.
+        let error = partition
+            .view()
+            .filesystem_as("ext2")
+            .expect_err("an unclaimed namespace is refused");
+        assert!(error.to_string().contains("fat"), "{error}");
+
+        // And a claimed one reaches its own adapter, which reads the
+        // evidence to verify the declaration rather than to pick one:
+        // this content is FAT, so the HDOS adapter refuses it — and that
+        // it refuses at all is the proof the adapter ran over the
+        // recording's extent.
+        let refused = partition.view().filesystem_as("hdos");
+        assert!(
+            refused.is_err(),
+            "the HDOS adapter read FAT content without objecting"
+        );
+    }
+
+    #[test]
+    fn a_recording_of_more_than_one_data_field_size_composes_no_extent() {
+        let image = fat12_image();
+        let mut tracks = recording(&image, None);
+
+        // Re-record one track with a different size code. A linear
+        // extent has one block size, and this is what makes it not one.
+        let mut odd = TrackWriter::new(Encoding::Mfm);
+        odd.sector(
+            SectorAddress {
+                cylinder: 0,
+                head: 0,
+                sector: 1,
+                size_code: 1,
+            },
+            &[0u8; 256],
+            false,
+        );
+        tracks[0].1 = odd.bits.clone();
+
+        let medium = medium_of(&tracks);
+        let sectors = sectors_of(&medium);
+        let error = sectors
+            .geometry()
+            .expect_err("the records state two data-field sizes");
+        let said = error.to_string();
+        assert!(said.contains("more than one data-field size"), "{said}");
+        assert!(
+            sectors.partition().is_err(),
+            "and no extent composes over them"
         );
     }
 }

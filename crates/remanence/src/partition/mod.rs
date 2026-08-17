@@ -35,6 +35,7 @@ pub(crate) mod mbr;
 use crate::error::{Error, ErrorCategory, Result, RuleIdentity};
 use crate::filesystem::cbm_dos::BlockSource;
 use crate::filesystem::{SpaceExtent, SpaceNamespace, StorageSpace};
+use crate::io::device::Device;
 use crate::model::media::Medium;
 use crate::model::report::{DiskContent, RegionId, RegionRole, VolumeId};
 use crate::partition::mbr::PartitionKind;
@@ -584,6 +585,12 @@ enum Backing<'a> {
     /// addressed extent — only blocks the recording states addresses
     /// for.
     Blocks(&'a dyn BlockSource),
+    /// A layer that composes an addressed extent of its own without a
+    /// medium beneath it (D62) — an FM or MFM recording's sectors,
+    /// ordered by the geometry the records state. The adapters read it
+    /// exactly as they read a partitioned image's extent, which is what
+    /// makes the reach free of any flux vocabulary.
+    Device(&'a mut dyn Device),
 }
 
 impl std::fmt::Debug for Backing<'_> {
@@ -591,6 +598,7 @@ impl std::fmt::Debug for Backing<'_> {
         match self {
             Self::Medium(_) => f.write_str("Medium"),
             Self::Blocks(_) => f.write_str("Blocks"),
+            Self::Device(_) => f.write_str("Device"),
         }
     }
 }
@@ -615,6 +623,25 @@ impl<'a> PartitionView<'a> {
                  synthetic, and never evidence",
             ),
             backing: Backing::Blocks(blocks),
+        }
+    }
+
+    /// The direct partition over a layer that composes its own addressed
+    /// extent with no medium beneath it (D62).
+    ///
+    /// A recording records no partition scheme, so this is synthetic in
+    /// the same way [`PartitionView::over_blocks`] is — but unlike that
+    /// one it *is* addressable, because the records state a cylinder, a
+    /// head and a sector number, and those compose the geometry ordering
+    /// every filesystem that reads a floppy was written against.
+    pub(crate) fn over_device(device: &'a mut dyn Device, length_bytes: u64) -> Self {
+        Self {
+            partition: Partition::direct_over_space(
+                length_bytes,
+                None,
+                "the library's own composition of the whole recording: a                  recording records no partition scheme, so the direct                  partition is what its content is reached through —                  synthetic, and never evidence — and its extent is the                  order the recording's own records state",
+            ),
+            backing: Backing::Device(device),
         }
     }
 
@@ -721,6 +748,29 @@ impl<'a> PartitionView<'a> {
                     Box::new(catalog),
                 ))
             }
+            Backing::Device(device) => {
+                // The extent is the recording's own, and every adapter
+                // reads it exactly as it reads a partitioned image's:
+                // nothing of the recording reaches the adapter and
+                // nothing of the namespace reaches the recording (D62).
+                if id == crate::filesystem::cbm_dos::CBM_DOS {
+                    return Err(refuse(
+                        PartitionRule::UnclaimedNamespace,
+                        format!(
+                            "this partition composes an addressed extent                              ordered by the geometry its records state, and                              '{}' addresses its blocks by the recording                              instead; a CBM DOS recording is read through its                              own sector layer",
+                            crate::filesystem::cbm_dos::CBM_DOS
+                        ),
+                    ));
+                }
+                if id == "fat" {
+                    let catalog =
+                        crate::filesystem::fat_catalog::FatDeviceCatalog::open(device, 0)?;
+                    return Ok(StorageSpace::over_catalog("fat", Box::new(catalog)));
+                }
+                let adapter = crate::filesystem::catalog::by_id(id)?;
+                let catalog = adapter.open(device)?;
+                Ok(StorageSpace::over_catalog(adapter.id(), catalog))
+            }
             Backing::Medium(medium) => {
                 if id == crate::filesystem::cbm_dos::CBM_DOS {
                     // CBM DOS is read off the record layer of a
@@ -771,9 +821,9 @@ impl<'a> PartitionView<'a> {
         let extent = self.partition.extent();
         let declared = self.partition.namespace;
         match self.backing {
-            Backing::Blocks(_) => unreachable!(
-                "a partition over a record layer declares no namespace, so \
-                 neither door opens without one being declared"
+            Backing::Blocks(_) | Backing::Device(_) => unreachable!(
+                "a partition over a recording's own layer declares no \
+                 namespace, so neither door opens without one being declared"
             ),
             Backing::Medium(medium) => {
                 let namespace = match declared {

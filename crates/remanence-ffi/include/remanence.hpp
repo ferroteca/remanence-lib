@@ -2587,6 +2587,7 @@ using BytestreamLocation = RemanenceBytestreamLocation;
 using SectorLocation = RemanenceSectorLocation;
 using SectorClaim = RemanenceSectorClaim;
 using IbmSectorClaim = RemanenceIbmSectorClaim;
+using IbmGeometry = RemanenceIbmGeometry;
 using ContestedAddress = RemanenceContestedAddress;
 using FluxHole = RemanenceFluxHole;
 using FluxOrbit = RemanenceFluxOrbit;
@@ -3064,6 +3065,36 @@ public:
     {
         return detail::records<IbmSectorClaim>(get(), remanence_ibm_sectors_claim_count,
                                                remanence_ibm_sectors_claim);
+    }
+
+    /// The uniform geometry these records state for themselves — read
+    /// off the claims, never off the drive profile. Throws where the
+    /// records compose no uniform image.
+    IbmGeometry geometry() const
+    {
+        detail::Outcome outcome;
+        IbmGeometry found{};
+        outcome.require(remanence_ibm_sectors_geometry(get(), &found, outcome.category(),
+                                                       outcome.message(), outcome.rule()),
+                        "these records compose no uniform geometry");
+        return found;
+    }
+
+    /// The direct partition over this recording, which unlike a CBM DOS
+    /// recording's **is addressable**: the records' own geometry
+    /// ordering is the extent every filesystem that reads a floppy was
+    /// written against. Declare the reading with
+    /// `Partition::filesystem_as`.
+    std::optional<Partition> partition() const
+    {
+        detail::Outcome outcome;
+        RemanencePartition* composed = remanence_ibm_sectors_partition(
+            get(), outcome.category(), outcome.message(), outcome.rule());
+        if (composed == nullptr) {
+            outcome.require(composed, "these records compose no extent");
+            return std::nullopt;
+        }
+        return Partition(composed);
     }
 
     std::vector<DeclaredLoss> declared_losses() const

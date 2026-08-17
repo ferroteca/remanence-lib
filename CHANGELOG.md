@@ -210,6 +210,43 @@ rather than bridged. Read every entry below in that light.
 
 ### Changed
 
+- **A FAT, HDOS or CP/M volume on an FM or MFM recording opens** (F78,
+  D62). This is the reach F78 pledged, and it cost no new seam: the
+  recording's sector layer composes an addressed extent and the ordinary
+  filesystem adapters read it, with no flux vocabulary reaching the
+  adapter and none of the filesystem's reaching the recording.
+
+  **A CBM DOS recording composes no extent and that was the 1541's
+  property, not flux's.** Its blocks are addressed by the recording, so
+  the only namespace declarable over it is `cbmdos`. An FM or MFM
+  recording is the other case — its records state a cylinder, a head and
+  a sector number, and those compose exactly the geometry ordering every
+  filesystem that reads a floppy was written against.
+
+  **The geometry is read off the records, never off the drive profile.**
+  A profile declares what the mechanism records; `IbmSectors::geometry`
+  says what this disk holds. A recording that states more than one
+  data-field size, or a gap in its sector numbering, composes no extent
+  and is refused by name showing what it states — rather than flattened
+  into an ordering that would put every file's contents somewhere other
+  than where they are.
+
+  **A hole refuses only the reads that touch it.** A record the recording
+  never stated, or one whose CRC disagrees, still occupies its place: the
+  extent's length is the geometry's, a read covering the hole is refused
+  naming the address, and every other read answers. One damaged sector
+  costs that sector, not the disk. Nothing is zeroed, because a zero here
+  would be indistinguishable from one the recording holds.
+
+  FAT gained a device-backed catalog so it opens the same way HDOS and
+  CP/M already did; the reading is unchanged, only what it reads through.
+
+  Proved end to end on a synthetic 4-cylinder double-sided FAT12 floppy
+  written as MFM cells: the extent comes back byte-for-byte, the
+  directory lists, and the file's contents are what was recorded — and
+  with one record damaged, the directory still lists and the file still
+  reads whole.
+
 - **The sector rung is shared and its claims are the family's** (F78).
   `Bytestream.recognize_sectors` answered a CBM DOS sector layer, which
   made the 1541 part of what the rung *is*. It now answers a `Sectors`

@@ -431,6 +431,27 @@ typedef struct {
   bool readable;
 } RemanenceIbmSectorClaim;
 
+// The uniform geometry these records state for themselves.
+//
+// Every number is read off the claims rather than off the drive
+// profile: a profile declares what the mechanism records, and this says
+// what this disk holds. Returns false and states the refusal where the
+// records compose no uniform image — more than one data-field size, or
+// a gap in the sector numbering.
+typedef struct {
+  uint32_t cylinders;
+  uint32_t heads;
+  uint32_t sectors_per_track;
+  // The lowest sector number the records state. IBM recordings
+  // conventionally number from one, but that is a convention and this
+  // reads what is there.
+  uint8_t first_sector;
+  uint32_t sector_bytes;
+  // What the whole extent spans, which is the geometry's rather than
+  // the sum of what reads: a hole still occupies its place.
+  uint64_t length_bytes;
+} RemanenceIbmGeometry;
+
 // One index hole, as the image holds it: an exact fraction of a turn
 // for the centre and another for the extent. Nothing radial is stored.
 typedef struct {
@@ -2405,6 +2426,46 @@ size_t remanence_ibm_sectors_claim_count(const RemanenceIbmSectors *sectors);
 bool remanence_ibm_sectors_claim(const RemanenceIbmSectors *sectors,
                                  size_t index,
                                  RemanenceIbmSectorClaim *out);
+
+bool remanence_ibm_sectors_geometry(const RemanenceIbmSectors *sectors,
+                                    RemanenceIbmGeometry *out,
+                                    RemanenceErrorCategory *error_category_out,
+                                    char **error_out,
+                                    char **error_rule_out);
+
+// The **direct partition** over this recording — the library's own
+// composition of the whole content, which is what a namespace above is
+// reached through (P19).
+//
+// **Unlike a CBM DOS recording's, this partition is addressable**
+// (D62). Its records state a cylinder, a head and a sector number, and
+// those compose exactly the geometry ordering FAT, HDOS and CP/M were
+// all written against — so a volume here opens through the same seam a
+// hard-disk image opens through, with no flux vocabulary reaching the
+// filesystem adapter and none of the filesystem's reaching the
+// recording.
+//
+// The namespace vantage is *declared*: nothing about an FM or MFM
+// recording determines which of those it holds, and this layer will not
+// pick one. `remanence_partition_filesystem_as` with `"fat"`, `"hdos"`,
+// `"cpm"` or a `"cpm-*"` layout is the door; `"cbmdos"` is refused
+// here, because those blocks are addressed by the recording rather than
+// by position.
+//
+// The extent's length is the geometry's rather than the sum of what
+// reads: a record the recording never stated, or one whose CRC
+// disagrees, is a hole that still occupies its place. Reads that touch
+// it are refused naming the address and every other read answers —
+// nothing is zeroed.
+//
+// Null where the records compose no uniform image, with the refusal
+// stated. The partition **borrows** the sector layer, and so does every
+// space composed through it: keep the sectors alive for as long as any
+// of them, and free them last.
+RemanencePartition *remanence_ibm_sectors_partition(const RemanenceIbmSectors *sectors,
+                                                    RemanenceErrorCategory *error_category_out,
+                                                    char **error_out,
+                                                    char **error_rule_out);
 
 // What this layer could not resolve, in its own terms, and how much of
 // it there was.

@@ -80,6 +80,7 @@ pub(crate) mod cbm_dos;
 pub(crate) mod cpm;
 pub(crate) mod dos_name;
 pub(crate) mod fat;
+pub(crate) mod fat_catalog;
 pub(crate) mod hdos;
 
 pub(crate) mod contract;
