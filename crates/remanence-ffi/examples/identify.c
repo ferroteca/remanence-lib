@@ -181,6 +181,9 @@ static void print_medium_format(const RemanenceMedium *medium) {
         case REMANENCE_DISK_FORMAT_RAW:
             printf("Format:  raw\n");
             break;
+        case REMANENCE_DISK_FORMAT_IMD:
+            printf("Format:  imd\n");
+            break;
     }
     printf("Size:    %" PRIu64 " bytes\n", remanence_medium_size(medium));
 }
