@@ -40,6 +40,7 @@ pub(crate) mod bytestream;
 pub(crate) mod c1541;
 pub(crate) mod capture;
 pub(crate) mod drive_profile;
+pub(crate) mod hxc_mfm;
 pub(crate) mod ibm;
 pub(crate) mod kryoflux;
 pub(crate) mod load;

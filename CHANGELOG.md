@@ -20,6 +20,33 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **HxC Floppy Emulator MFM containers are read** (F77). `Format::HxcMfm
+  { device }` loads one: the header, the track list, and every track's
+  cells at the rate the file declares — reaching the records, the
+  sectors and the filesystem above them through the ladder F76 and F78
+  built.
+
+  **This container sits *at* the bit tier rather than below it, and the
+  difference is carried rather than levelled.** An MFI track is
+  transitions around a revolution — timing the recording actually had. An
+  HxC MFM track is already-framed cells, laid down before the file
+  existed. So this medium's derivation is **synthetic**: the transitions
+  beneath its cells are this reader's restatement of them, declared as
+  such, and nothing above may present them as recovered timing (P13).
+
+  **What the container does not carry is stated rather than supplied.**
+  An HxC MFM file holds no weak region, no density variation and no
+  second observation of a location. Every cell is certain, every location
+  is read once, and those absences are declared on the medium instead of
+  being filled in with plausible values.
+
+  **Every declaration the file makes is checked against the family, and a
+  mismatch is refused by name showing both numbers**: the side count
+  against the family's surfaces, the bit rate against its cell rate, the
+  RPM against its rotation. A container is not clocked at a rate nobody
+  stated. A track the file holds no cells for is absent from the medium
+  rather than present and empty, and its absence is declared.
+
 - **The storage model has an optical drive.** `DeviceType` gains a third class,
   `Optical`, with `OpticalDrive::CdRom` (`cdrom`) in it: a device
   configured like every other one, taking the bay `cdrom0`, served the
@@ -339,10 +366,10 @@ rather than bridged. Read every entry below in that light.
   rather than a judgement about whether a sector counts.
 
   Two Heath families are enrolled with it (F77): the **H-17-1**, single
-  surface at 48 tracks to the inch, and the **H-17-4**, two at 96. No
-  `.mfm` container is read yet, so nothing loads into these profiles from
-  an artifact; what is delivered is the channel, the framing, the records
-  and both declarations.
+  surface at 48 tracks to the inch, and the **H-17-4**, two at 96. Both
+  now load from an artifact — a MAME floppy image or an HxC MFM
+  container — so what is delivered is the channel, the framing, the
+  records, both declarations, and two ways in.
 
 - **Step pitch is a pair of pitches rather than a count.** How many steps
   a drive takes per track is not a fact about the drive — it is the ratio

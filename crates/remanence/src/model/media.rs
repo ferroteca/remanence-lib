@@ -131,6 +131,14 @@ pub enum Format {
     /// recorded it and the artifact's geometry is checked against that
     /// family rather than overriding it.
     Mfi { device: FloppyDrive },
+    /// HxC Floppy Emulator MFM container — already-framed cells at one
+    /// declared rate, per track and side. It sits *at* the bit tier
+    /// rather than below it: the container states no transition timing,
+    /// so the medium's flux layer is this reader's restatement of the
+    /// cells and is declared synthetic (P13). The rate and rotation the
+    /// file states are checked against the declared family and a
+    /// mismatch is refused by name.
+    HxcMfm { device: FloppyDrive },
     /// P64 flux container — a Commodore 1541 recording, and the format
     /// admits no other. A P64 already holds a flux medium at rest, so
     /// the load takes the served form straight in (D31).
@@ -199,7 +207,7 @@ impl FormatClaim {
 
 /// Every format a load may declare, and what each admits. The catalog is
 /// the claim: a pairing absent from it is refused by name.
-static CLAIMED: [FormatClaim; 10] = [
+static CLAIMED: [FormatClaim; 11] = [
     FormatClaim {
         id: "raw",
         name: "Raw disk image",
@@ -264,6 +272,13 @@ static CLAIMED: [FormatClaim; 10] = [
         collection: false,
     },
     FormatClaim {
+        id: "hxc-mfm",
+        name: "HxC Floppy Emulator MFM container",
+        devices: &crate::image::adapters::MFI_RECORDED_DEVICES,
+        block_bytes: false,
+        collection: false,
+    },
+    FormatClaim {
         id: "p64",
         name: "P64 flux image",
         devices: &[DeviceType::Floppy(FloppyDrive::Commodore1541)],
@@ -288,6 +303,7 @@ impl Format {
             Self::H8d => "h8d",
             Self::Imd { .. } => "imd",
             Self::Mfi { .. } => "mfi",
+            Self::HxcMfm { .. } => "hxc-mfm",
             Self::Zip => "zip",
             Self::SevenZip => "7z",
             Self::KryoFlux { .. } => "kryoflux",
@@ -304,6 +320,7 @@ impl Format {
             Self::H8d => "Heathkit H8 H17 disk image",
             Self::Imd { .. } => "ImageDisk sector image",
             Self::Mfi { .. } => "MAME floppy image",
+            Self::HxcMfm { .. } => "HxC Floppy Emulator MFM container",
             Self::Zip => "ZIP archive",
             Self::SevenZip => "7z archive",
             Self::KryoFlux { .. } => "KryoFlux capture set",
@@ -328,6 +345,7 @@ impl Format {
             Self::H8d => Some(DeviceType::Floppy(FloppyDrive::HeathH17)),
             Self::Imd { device } => Some(DeviceType::Floppy(device)),
             Self::Mfi { device } => Some(DeviceType::Floppy(device)),
+            Self::HxcMfm { device } => Some(DeviceType::Floppy(device)),
             Self::KryoFlux { device } => Some(DeviceType::Floppy(device)),
             Self::P64 => Some(DeviceType::Floppy(FloppyDrive::Commodore1541)),
             Self::Zip | Self::SevenZip => None,
@@ -503,6 +521,9 @@ impl Format {
             "mfi" => Self::Mfi {
                 device: floppy(device)?,
             },
+            "hxc-mfm" => Self::HxcMfm {
+                device: floppy(device)?,
+            },
             "zip" => Self::Zip,
             "7z" => Self::SevenZip,
             "kryoflux" => Self::KryoFlux {
@@ -550,6 +571,7 @@ impl Format {
             | Self::Imd { .. }
             | Self::KryoFlux { .. }
             | Self::Mfi { .. }
+            | Self::HxcMfm { .. }
             | Self::P64 => None,
         }
     }
@@ -561,6 +583,7 @@ impl Format {
         match self {
             Self::KryoFlux { device } => Some(FluxFormat::KryoFlux { device }),
             Self::Mfi { device } => Some(FluxFormat::Mfi { device }),
+            Self::HxcMfm { device } => Some(FluxFormat::HxcMfm { device }),
             Self::P64 => Some(FluxFormat::P64),
             Self::Raw { .. }
             | Self::Qcow2 { .. }
@@ -585,6 +608,7 @@ impl fmt::Display for Format {
 pub(crate) enum FluxFormat {
     KryoFlux { device: FloppyDrive },
     Mfi { device: FloppyDrive },
+    HxcMfm { device: FloppyDrive },
     P64,
 }
 

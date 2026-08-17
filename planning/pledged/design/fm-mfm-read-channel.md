@@ -152,6 +152,18 @@ across all three surfaces — including the C++ wrapper's total-coverage
 rule (D54) and the Python stub, both of which are hand-maintained and
 therefore where a lapse would hide.
 
+> **Annotation (F77 delivered, 2026-08-17):** the container reads, and
+> what settled its shape is worth recording. The companion design says
+> `.mfi` sits below the bit tier and `.mfm` sits at it, which raised the
+> question of whether reading one required a bitstream-authoritative
+> medium the library does not have. It did not: `Derivation::Synthetic`
+> already means "synthesized downward from a higher layer", which is
+> exactly what transitions restated from cells are. So the medium is an
+> ordinary flux medium whose flux layer declares itself a restatement,
+> and nothing above may present it as recovered timing. The artifact
+> below is still owed — synthetic containers prove the reader's
+> arithmetic, not that it agrees with the tool that writes them.
+
 F77 and F78 need artifacts. Third-party fixtures are pinned in
 `test-fixture-prep/prep_fixtures.py` as the existing ones are, and the set
 wanted is specific: one `.mfm` of a disk whose filesystem this library
