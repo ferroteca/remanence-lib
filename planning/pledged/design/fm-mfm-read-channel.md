@@ -147,10 +147,11 @@ them the filesystem reach.
 
 ## What proves it
 
-F76 is proved by the existing suite continuing to pass in the new shape,
+F76 was proved by the existing suite continuing to pass in the new shape,
 across all three surfaces — including the C++ wrapper's total-coverage
 rule (D54) and the Python stub, both of which are hand-maintained and
-therefore where a lapse would hide.
+therefore where a lapse would hide. That standard was met and its number
+has retired; what follows is what remains owed.
 
 > **Annotation (F77 delivered, 2026-08-17):** the container reads, and
 > what settled its shape is worth recording. The companion design says

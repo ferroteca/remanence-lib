@@ -217,9 +217,19 @@ pub(crate) fn recognize_declared(bytestream: &Bytestream, _cache_bytes: u64) -> 
              encoding for it to read with",
         )
     })?;
-    let sync = match codec.encoding {
-        Encoding::Mfm => MFM_SYNC_MARKS,
-        Encoding::Fm => 1,
+    // How a field opens differs between the two encodings, and the
+    // difference is a byte offset that a synthetic test cannot catch —
+    // a writer and a reader sharing one wrong assumption agree with
+    // each other perfectly.
+    //
+    // **MFM** opens a field with three `A1` sync bytes and *then* the
+    // byte saying which field it is, so the run is three marks long and
+    // the kind sits past them. **FM** has no sync bytes at all: its
+    // mark byte *is* the kind byte, its own clock pattern being the
+    // violation, so the run is one mark long and the kind sits at it.
+    let (run_marks, kind_offset) = match codec.encoding {
+        Encoding::Mfm => (MFM_SYNC_MARKS, MFM_SYNC_MARKS),
+        Encoding::Fm => (1, 0),
     };
     let covered = |kind: u8| -> Vec<u8> {
         match codec.encoding {
@@ -268,10 +278,10 @@ pub(crate) fn recognize_declared(bytestream: &Bytestream, _cache_bytes: u64) -> 
                 run += 1;
             }
             index += run;
-            if run < sync {
+            if run < run_marks {
                 continue;
             }
-            let kind_at = start + sync;
+            let kind_at = start + kind_offset;
             if let Some(Some(kind)) = bytes.get(kind_at).copied() {
                 fields.push((kind_at, kind));
             }
@@ -549,6 +559,142 @@ mod tests {
             error.to_string().contains("sector 9"),
             "the refusal names what was asked: {error}"
         );
+    }
+
+    /// The FM family's own cell: 250 kHz against the 16 MHz reference.
+    const FM_CELL_CYCLES: u64 = 64;
+
+    /// The same medium, built for the single-density family.
+    fn fm_medium_of(location: LocationKey, bits: &[bool]) -> FluxMedium {
+        let profile = &crate::flux::ibm::profiles::HEATH_H17_1_SOFT;
+        let mut pulses = Vec::new();
+        let mut at = 0u64;
+        for bit in bits {
+            at += FM_CELL_CYCLES;
+            if *bit {
+                pulses.push(Pulse::new(at, Strength::certain(2)));
+            }
+        }
+        let frame = RotationalFrame::new(
+            profile.id,
+            TimeBase::new(profile.id, 16_000_000, 1).expect("the rate is stated"),
+            CYCLES_PER_ROTATION,
+            OriginStatement::new(
+                OriginRule::Index,
+                Provenance::new(profile.id).note("placed at the index for the test"),
+            ),
+        )
+        .expect("the frame states a circle");
+        let mut builder = MediumBuilder::new(
+            profile.id,
+            profile.media,
+            frame,
+            Derivation::SelectedAndProjected,
+            Provenance::new(profile.id).note("selected observation 0 of each location"),
+            Vec::new(),
+        )
+        .expect("the policy is stated");
+        builder
+            .add_location(
+                location,
+                &pulses,
+                &[],
+                Provenance::new(profile.id).note("reduced for the test"),
+            )
+            .expect("the location");
+        let (mut medium, bytes, total) = builder.seal().expect("the backing seals");
+        medium.attach_backing(Box::new(Bytes(bytes)), total, 1 << 20);
+        medium
+    }
+
+    fn fm_read(location: LocationKey, bits: &[bool]) -> Result<Sectors> {
+        let profile = &crate::flux::ibm::profiles::HEATH_H17_1_SOFT;
+        let medium = fm_medium_of(location, bits);
+        let bitstream = materialize_bitstream(
+            &medium,
+            profile,
+            profile.presentation.channel_policy,
+            1 << 20,
+        )
+        .expect("the channel clocks it");
+        let bytestream = bitstream
+            .materialize_bytestream(1 << 20)
+            .expect("the codec resolves it");
+        recognize_declared(&bytestream, 1 << 20)
+    }
+
+    /// The single-density family reads its own records, by the same
+    /// discipline as the double-density one.
+    ///
+    /// **This is the case a synthetic suite is worst at.** FM and MFM
+    /// open a field differently — MFM writes three `A1` sync bytes and
+    /// then the byte saying which field it is, and FM's mark byte *is*
+    /// that byte, its own clock pattern being the violation. A reader
+    /// that has the offset wrong and a writer that has it wrong the same
+    /// way agree with each other perfectly, and every test between them
+    /// passes. That is exactly what happened: the sector rung read FM's
+    /// kind byte one byte late, every test here passed because none of
+    /// them was FM, and a real single-density disk found it in one read.
+    ///
+    /// So this test exists to make the encodings' *difference* the thing
+    /// under test rather than either encoding alone.
+    #[test]
+    fn the_single_density_family_reads_its_own_records_too() {
+        let profile = &crate::flux::ibm::profiles::HEATH_H17_1_SOFT;
+        let location = LocationKey::new(profile.id, 0, 0);
+        let first = vec![0x10u8; 256];
+        let second = vec![0x80u8; 256];
+
+        let mut track = TrackWriter::new(Encoding::Fm);
+        track.sector(address(0, 0, 1), &first, false);
+        track.sector(address(0, 0, 2), &second, false);
+        let sectors = fm_read(location, &track.bits.clone()).expect("the grammar reads it");
+
+        assert_eq!(sectors.family(), "ibm-id-data-record");
+        assert_eq!(sectors.claim_count(), 2);
+        let reading = sectors
+            .ibm()
+            .expect("an IBM recording answers the IBM reading");
+        let report = reading.inspect();
+        assert_eq!(report.encoding_id, "ibm-fm");
+        assert_eq!(report.claims.len(), 2);
+
+        // The addresses are the ones the records state, and both checks
+        // agree — which is what the byte offset being right means.
+        assert_eq!(reading.read_sector(0, 0, 1).expect("sector 1"), first);
+        assert_eq!(reading.read_sector(0, 0, 2).expect("sector 2"), second);
+        for claim in &report.claims {
+            assert_eq!(claim.header_checksum_stated, claim.header_checksum_computed);
+            assert_eq!(claim.data_checksum_stated, claim.data_checksum_computed);
+            assert!(claim.has_data);
+            assert_eq!(claim.size_code, 1);
+        }
+    }
+
+    /// The mark byte an FM field opens with is itself the byte that says
+    /// which field it is — stated here as an independent fact rather
+    /// than inherited from whatever the writer happens to do.
+    ///
+    /// This is the assertion that would have caught the defect above
+    /// without any disk at all, because it does not go through the
+    /// writer: it decodes the declared mark cells and checks the byte
+    /// they carry against the field kinds directly.
+    #[test]
+    fn an_fm_field_opens_with_the_byte_that_says_which_field_it_is() {
+        use crate::flux::ibm::encoding::{
+            FM_DATA_CELLS, FM_DELETED_CELLS, FM_ID_CELLS, decode_byte,
+        };
+        assert_eq!(decode_byte(FM_ID_CELLS), IDAM);
+        assert_eq!(decode_byte(FM_DATA_CELLS), DAM);
+        assert_eq!(decode_byte(FM_DELETED_CELLS), DELETED_DAM);
+
+        // And MFM's does not: its sync byte is `A1`, and the byte that
+        // says which field it is comes after three of them. The two
+        // encodings differing here is the whole reason the rung has to
+        // ask which one it is reading.
+        assert_ne!(crate::flux::ibm::encoding::MFM_A1, IDAM);
+        assert_ne!(crate::flux::ibm::encoding::MFM_A1, DAM);
+        assert_eq!(MFM_SYNC_MARKS, 3);
     }
 
     #[test]

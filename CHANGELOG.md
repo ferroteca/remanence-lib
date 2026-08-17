@@ -20,6 +20,29 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **Single-density (FM) recordings read their own records** (F78). The
+  sector rung read an FM field's kind byte one byte late — MFM opens a
+  field with three `A1` sync bytes and *then* the byte saying which field
+  it is, and FM has no sync bytes at all: its mark byte *is* that byte,
+  its own clock pattern being the violation. The rung applied MFM's
+  offset to both, so every FM field was tested against the cylinder
+  number and none ever matched.
+
+  **No synthetic test could have found it.** The writer in the suite and
+  the reader under test shared the one wrong assumption, so they agreed
+  with each other perfectly and every case passed. It took a real
+  single-density disk, which read as forty tracks of nothing. The
+  regression test now asserts the encodings' *difference* — that FM's
+  mark byte decodes to the field kind and MFM's does not — independently
+  of the writer, and a second one drives the whole rung in FM.
+
+  With it, a real Heath single-density recording reads whole: 400
+  records over 40 tracks, ten 256-byte sectors each, every id and data
+  CRC agreeing, composing the 100 KB extent the family declares. Every
+  number in the H-17-1 profile — FM, 250 kbit/s, 40 tracks, one surface,
+  ten records — is now confirmed against a disk rather than derived from
+  sector geometry.
+
 - **HxC Floppy Emulator MFM containers are read** (F77). `Format::HxcMfm
   { device }` loads one: the header, the track list, and every track's
   cells at the rate the file declares — reaching the records, the
