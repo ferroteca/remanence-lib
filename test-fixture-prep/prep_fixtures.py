@@ -5,10 +5,12 @@
 """Prepares test fixtures for remanence-lib unit tests.
 
 The HDOS 1.0 distribution zip downloads sha256-pinned straight into
-crates/remanence/tests/fixtures/ — a multi-image zip, test material
-in its own right. The one disk image the tests read extracts beside
-it, joined by a generated single-image zip fixture. (Downloads that
-are not fixtures at all would land in test-fixture-prep/downloads/.)
+integration-tests/fixtures/ — a multi-image zip, test material in its
+own right. The one disk image the tests read extracts beside it,
+joined by a generated single-image zip fixture. (Downloads that are
+not fixtures at all land one directory over, in
+integration-tests/downloads/ — an archive nothing reads directly,
+held only so a fixture can be repackaged out of it.)
 
 The FreeDOS rig artifact is built by driving reliquary through its
 Python API. The LiveCD downloads through the blueprint's own media
@@ -16,10 +18,12 @@ spec; the prep script pins reliquary's media cache to
 test-fixture-prep/test-rigs/cache/media, so the download survives
 `cargo clean` and machine rebuilds.
 
-Reliquary is pinned in the root pyproject.toml's `test-fixture-prep`
-dependency group; run the script through uv from the repo root:
+test-fixture-prep/ is a uv project of its own, and reliquary is pinned
+in its pyproject.toml. Run the script through uv against that
+directory — uv provisions the environment itself, so there is nothing
+to sync or activate first:
 
-    uv run --group test-fixture-prep test-fixture-prep/prep_fixtures.py
+    uv run --directory test-fixture-prep prep_fixtures.py
 """
 
 import hashlib
@@ -42,14 +46,14 @@ except ImportError:
 
 if reliquary is None:
     sys.exit(
-        "reliquary is not importable — run this script through uv "
-        "from the repo root:\n"
-        "  uv run --group test-fixture-prep test-fixture-prep/prep_fixtures.py"
+        "reliquary is not importable — run this script through uv, "
+        "pointed at the project that pins it:\n"
+        "  uv run --directory test-fixture-prep prep_fixtures.py"
     )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES_DIR = REPO_ROOT / "crates" / "remanence" / "tests" / "fixtures"
-DOWNLOADS_DIR = REPO_ROOT / "test-fixture-prep" / "downloads"
+FIXTURES_DIR = REPO_ROOT / "integration-tests" / "fixtures"
+DOWNLOADS_DIR = REPO_ROOT / "integration-tests" / "downloads"
 RIG_DIR = REPO_ROOT / "test-fixture-prep" / "test-rigs"
 
 # See also: https://archive.org/details/flux_capacity

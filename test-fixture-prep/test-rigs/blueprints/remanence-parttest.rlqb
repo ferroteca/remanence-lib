@@ -4,7 +4,7 @@
 // The remanence-lib partition-test rig: FreeDOS 1.4 installed onto a
 // disk deliberately cut into multiple primaries plus an extended chain
 // of logicals, so remanence's disk stack has a real, QEMU-authored
-// qcow2 to test against (U3/U4; testing-prep/test-rigs/README.md).
+// qcow2 to test against (U3/U4).
 //
 // Media pins mirror reliquary's codex freedos entry: same LiveCD, same
 // hashes — the version knobs turn there and are copied here. The zip

@@ -1,4 +1,0 @@
-# Downloaded archives that are not fixtures (yet): fetched sha256-pinned
-# by test-fixture-prep/prep_fixtures.py, never tracked.
-*
-!.gitignore

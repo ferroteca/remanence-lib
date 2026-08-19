@@ -1,0 +1,7 @@
+# Downloaded archives that are not fixtures (yet): fetched sha256-pinned
+# by test-fixture-prep/prep_fixtures.py, never tracked. Separate from
+# ../fixtures/ because nothing reads these directly — they are the
+# sources a fixture is repackaged out of, and the KryoFlux archive here
+# differs from the fixture it yields by a suffix alone.
+*
+!.gitignore

@@ -545,8 +545,10 @@ ABI, or Python module.
   `uv build`/`uv publish` is still what stops `dist/` accumulating stale
   artifacts across builds, unrelated to this.
   `test-fixture-prep/` is a separate uv project with its own
-  `pyproject.toml` and lock file, carrying only the
-  fixture-preparation dependency group.
+  `pyproject.toml` and lock file, depending on reliquary and nothing
+  else. Being its own project is what makes `uv run --directory
+  test-fixture-prep` the only invocation there is: no root
+  `pyproject.toml` exists for a `--group` to be resolved against.
 - [CHANGELOG.md](CHANGELOG.md) records release-facing changes; the rules
   it follows are in "Versioning and releases" below.
 - `planning/README.md` is the map of the maintainer-facing planning
@@ -800,15 +802,26 @@ compiled into the wheel.
   when the untracked artifacts were absent, so a suite that had stopped
   checking still reported green. The flux tests now assert what the
   formats and the model fix.
-- `crates/remanence/tests/fixtures/` holds the test fixtures.
+- **`integration-tests/` holds every byte the test suites acquire**, and
+  it sits at the repository root rather than under any crate because
+  three surfaces read the same files: the Rust suites in
+  `crates/remanence/tests/`, the C/C++ CTest suite in
+  `crates/remanence-ffi/c/tests/`, and the prep script that writes them.
+  Filing them under one crate claimed an ownership none of the three
+  could honour, and `crates/*/tests` holds Rust tests and nothing else.
+  Two directories, split by whether a test reads the file:
+  `integration-tests/fixtures/` is what the suites open, and
+  `integration-tests/downloads/` is the sources a fixture is repackaged
+  out of, which nothing reads directly.
   `test-fixture-prep/prep_fixtures.py` (run with `uv run --directory
-  test-fixture-prep`; testing-prep/test-rigs/README.md) prepares them: it downloads the
+  test-fixture-prep`; `test-fixture-prep/test-rigs/README.md`)
+  prepares them: it downloads the
   sha256-pinned HDOS 1.0 distribution zip straight into
-  `tests/fixtures/` (a multi-image zip, test material in its own
-  right), extracts only the one disk image the tests read beside it
+  `integration-tests/fixtures/` (a multi-image zip, test material in its
+  own right), extracts only the one disk image the tests read beside it
   plus a generated single-image zip; downloads the sha256-pinned
   Pinball Construction Set KryoFlux source archive into
-  `test-fixture-prep/downloads/` and packages disk one's whole capture —
+  `integration-tests/downloads/` and packages disk one's whole capture —
   all 84 step positions from both heads — into one local 7z fixture,
   which is the artifact a real capture produces when a single-sided
   disk is read in a two-head drive. Members keep the `.0.raw` /
@@ -818,14 +831,16 @@ compiled into the wheel.
   real capture has. Head 0 carries the disk and head 1 is the
   unrecorded back, which reads as noise — telling them apart is the
   library's job, not the fixture's. And it builds the FreeDOS qcow2
-  rig artifact there. The FreeDOS LiveCD downloads through
-  reliquary's own media mechanism into
-  `test-fixture-prep/test-rigs/cache/media`; downloads that are not
-  fixtures at all belong in `test-fixture-prep/downloads/`. Downloaded,
-  extracted, and generated fixture files are never tracked: the
-  fixtures directory's own `.gitignore` names each one, and
-  `package.exclude` keeps them out of published artifacts.
-  Checked-in fixtures may sit alongside them. Unit tests expect
+  rig artifact there. The FreeDOS LiveCD is the one exception to the
+  rule above: it downloads through reliquary's own media mechanism into
+  `test-fixture-prep/test-rigs/cache/media`, because that cache is
+  reliquary's to lay out and keying it to the rig is what lets a rebuild
+  reuse it. Downloaded, extracted, and generated fixture files are never
+  tracked: `integration-tests/fixtures/.gitignore` names each one and
+  `integration-tests/downloads/.gitignore` covers its whole directory.
+  Nothing under `integration-tests/` is inside a crate, so no
+  `package.exclude` is needed to keep any of it out of a published
+  artifact. Checked-in fixtures may sit alongside them. Unit tests expect
   required fixtures to be present and fail with diagnostic
   instructions to run the prep script when missing.
 

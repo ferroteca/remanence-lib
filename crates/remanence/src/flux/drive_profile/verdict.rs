@@ -580,15 +580,7 @@ mod fixture_tests {
     fn probed() -> &'static Probed {
         static PROBED: std::sync::OnceLock<Probed> = std::sync::OnceLock::new();
         PROBED.get_or_init(|| {
-            let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-            let capture_path =
-                fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
-            if !capture_path.exists() {
-                panic!(
-                    "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
-                     prep_fixtures.py`"
-                );
-            }
+            let capture_path = crate::flux::remanence::reconstruction::capture_fixture_path();
             let capture = crate::flux::remanence::reconstruction::fixture_capture(&capture_path);
             let error = recognition(&capture, Some("apple2"))
                 .expect_err("a profile this build does not enroll is refused by name");

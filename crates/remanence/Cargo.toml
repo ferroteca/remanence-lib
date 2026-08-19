@@ -15,9 +15,10 @@ readme = "README.md"
 # A released artifact carries what a consumer runs and nothing else.
 # maturin builds the Python sdist from cargo's package listing, so
 # without this the whole integration suite ships — it did, in the
-# published 0.0.1a1 and 0.0.1a2. Excluding the tree also covers
-# tests/fixtures/, where the large downloaded HDOS, FreeDOS and
-# KryoFlux fixtures land; they are gitignored there as well.
+# published 0.0.1a1 and 0.0.1a2. The large downloaded HDOS, FreeDOS and
+# KryoFlux fixtures no longer need excluding here: they live at
+# `integration-tests/fixtures/`, outside this crate's directory
+# entirely, so cargo never sees them at all.
 exclude = ["tests/**"]
 
 [features]

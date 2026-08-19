@@ -11,4 +11,6 @@ Cargo.lock
 # untracked-and-visible is what makes the mistake show up.
 crates/remanence-py/dist/
 # Downloaded and generated test fixtures are named by
-# crates/remanence/tests/fixtures/.gitignore, beside the files.
+# integration-tests/fixtures/.gitignore, beside the files; the archive
+# one of them is repackaged out of is covered wholesale by
+# integration-tests/downloads/.gitignore.

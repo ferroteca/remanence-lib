@@ -247,7 +247,7 @@ endif()
 # missing its gate. All three now share the `rigs` label and fixture,
 # closing that gap.
 set(REMANENCE_FIXTURE_FREEDOS
-    "${REMANENCE_WORKSPACE}/crates/remanence/tests/fixtures/freedos-parttest.qcow2")
+    "${REMANENCE_WORKSPACE}/integration-tests/fixtures/freedos-parttest.qcow2")
 add_test(NAME fixture_freedos_qcow2
     COMMAND ${CMAKE_COMMAND} "-DFIXTURE=${REMANENCE_FIXTURE_FREEDOS}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/check_fixture.cmake")
@@ -255,7 +255,7 @@ set_tests_properties(fixture_freedos_qcow2 PROPERTIES
     FIXTURES_SETUP "freedos_qcow2" LABELS "rigs")
 
 set(REMANENCE_FIXTURE_PINBALL
-    "${REMANENCE_WORKSPACE}/crates/remanence/tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z")
+    "${REMANENCE_WORKSPACE}/integration-tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z")
 add_test(NAME fixture_pinball_capture
     COMMAND ${CMAKE_COMMAND} "-DFIXTURE=${REMANENCE_FIXTURE_PINBALL}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/check_fixture.cmake")
@@ -292,7 +292,7 @@ endforeach()
 
 add_test(NAME abi_boundary_discovery
     COMMAND abi_boundary discovery
-        crates/remanence/tests/fixtures/freedos-parttest.qcow2
+        integration-tests/fixtures/freedos-parttest.qcow2
     WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
 set_tests_properties(abi_boundary_discovery PROPERTIES
     LABELS "rigs" FIXTURES_REQUIRED "freedos_qcow2")
@@ -310,14 +310,14 @@ set_tests_properties(wrapper_flux PROPERTIES FIXTURES_REQUIRED "scratch_flux")
 
 add_test(NAME wrapper_report
     COMMAND wrapper report
-        crates/remanence/tests/fixtures/freedos-parttest.qcow2
+        integration-tests/fixtures/freedos-parttest.qcow2
     WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
 set_tests_properties(wrapper_report PROPERTIES
     LABELS "rigs" FIXTURES_REQUIRED "freedos_qcow2")
 
 add_test(NAME wrapper_flux_capture
     COMMAND wrapper flux_capture
-        "crates/remanence/tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z"
+        "integration-tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z"
     WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
 set_tests_properties(wrapper_flux_capture PROPERTIES
     LABELS "fixtures" FIXTURES_REQUIRED "pinball_capture")
@@ -329,7 +329,7 @@ set_tests_properties(wrapper_flux_capture PROPERTIES
 if(REMANENCE_PROBE_LIB)
     add_test(NAME abi_leaks
         COMMAND abi_leaks
-            crates/remanence/tests/fixtures/freedos-parttest.qcow2
+            integration-tests/fixtures/freedos-parttest.qcow2
         WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
     set_tests_properties(abi_leaks PROPERTIES
         LABELS "rigs" FIXTURES_REQUIRED "freedos_qcow2")

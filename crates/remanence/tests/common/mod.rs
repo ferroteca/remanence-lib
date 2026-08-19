@@ -36,11 +36,17 @@ pub fn repo_root() -> PathBuf {
         .unwrap_or_else(|| manifest_dir())
 }
 
+/// The fixtures live outside every crate, at the repository root: they
+/// are read by the Rust suites, by the C/C++ CTest suite and by the prep
+/// script that writes them, so belonging to any one crate would be a
+/// claim none of those three can honour. `crates/*/tests` holds Rust
+/// tests and nothing else.
 pub fn fixtures_dir() -> PathBuf {
-    manifest_dir().join("tests/fixtures")
+    repo_root().join("integration-tests/fixtures")
 }
 
-/// Returns the path to a requested test fixture from `tests/fixtures/`.
+/// Returns the path to a requested test fixture from
+/// `integration-tests/fixtures/`.
 /// If the fixture is missing, panics with diagnostic instructions to run
 /// the prep script.
 ///

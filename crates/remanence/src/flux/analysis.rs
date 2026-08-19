@@ -9,8 +9,7 @@
 //! recovered from a finished orbit.
 //!
 //! Ported from the owner's flux-capture research implementation, where
-//! every constant below was measured against real captures; the design
-//! record is [`planning/pledged/design/remanence-flux-layer.md`]. The
+//! every constant below was measured against real captures. The
 //! boundary this module keeps is the lineage's own: **floats measure,
 //! integers state.** Analysis internals run in `f64`; everything
 //! declared or stored stays integer or exact rational.

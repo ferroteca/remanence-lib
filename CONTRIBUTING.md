@@ -65,15 +65,16 @@ repeated flags). Distributable Python artifacts are built with
 in an isolated environment. See [README.md](README.md).
 
 Some `remanence` unit tests need fixtures that are not checked in;
-`test-fixture-prep/prep_fixtures.py` prepares them (Python 3.12+, via uv):
+`test-fixture-prep/prep_fixtures.py` prepares them. `test-fixture-prep/`
+is a uv project of its own (Python 3.12+), so uv provisions the
+environment from that directory's own lock file — there is nothing to
+sync or activate first:
 
 ```bash
-uv sync --group test-fixture-prep
-.venv\Scripts\Activate.ps1
-python test-fixture-prep/prep_fixtures.py
+uv run --directory test-fixture-prep prep_fixtures.py
 ```
 
-See [testing-prep/test-rigs/README.md](test-fixture-prep/test-rigs/README.md)
+See [test-fixture-prep/test-rigs/README.md](test-fixture-prep/test-rigs/README.md)
 for what it builds, prerequisites (QEMU), and how the FreeDOS rig works.
 
 - The core crate (`crates/remanence`) is **dependency-free at runtime**,

@@ -725,6 +725,31 @@ fn account_for_the_envelope(capture: &FluxCapture, loss: &mut LossAccount) {
 #[cfg(all(test, feature = "fixtures"))]
 pub(crate) static CAPTURE_FIXTURE_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Where the KryoFlux capture fixture sits, having checked it is there.
+///
+/// The path is the repository's rather than the crate's: the fixtures
+/// live outside every crate, since the Rust suites, the C/C++ CTest
+/// suite and the prep script that writes them all read the same
+/// directory. Three tests in this crate open this one archive, so the
+/// check and the message saying how to obtain it are written once.
+#[cfg(all(test, feature = "fixtures"))]
+pub(crate) fn capture_fixture_path() -> std::path::PathBuf {
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the crate sits two directories below the repository root");
+    let capture_path = repo_root
+        .join("integration-tests/fixtures")
+        .join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
+    if !capture_path.exists() {
+        panic!(
+            "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
+             prep_fixtures.py`"
+        );
+    }
+    capture_path
+}
+
 /// Assembles the capture fixture the way a declared collection load
 /// does: the archive's namespace gathered whole, each member's bytes
 /// produced once.
@@ -779,15 +804,7 @@ pub(crate) fn reconstructed_capture() -> &'static crate::flux::remanence::image:
         let _gate = CAPTURE_FIXTURE_GATE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let capture_path =
-            fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
-        if !capture_path.exists() {
-            panic!(
-                "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
-                 prep_fixtures.py`"
-            );
-        }
+        let capture_path = capture_fixture_path();
         let capture = fixture_capture(&capture_path);
         let plan = plan(
             &capture,
@@ -874,15 +891,7 @@ mod tests {
     #[test]
     #[cfg(feature = "fixtures")]
     fn the_pinball_capture_reduces_to_a_whole_side() {
-        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let capture_path =
-            fixtures.join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
-        if !capture_path.exists() {
-            panic!(
-                "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
-                 prep_fixtures.py`"
-            );
-        }
+        let capture_path = capture_fixture_path();
         let _gate = CAPTURE_FIXTURE_GATE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

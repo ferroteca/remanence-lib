@@ -28,28 +28,32 @@ path = [
     "crates/remanence-ffi/cbindgen.toml",
     "crates/remanence-py/Cargo.toml",
     "crates/remanence-py/pyproject.toml",
+    "xtask/Cargo.toml",
     # PEP 561 requires this marker to be empty; a comment header would
     # not make it invalid, but the file's whole content is its absence.
-    "crates/remanence-py/python/remanence/py.typed",
+    "crates/remanence-py/python/src/remanence/py.typed",
     # The fixture prep project. `prep_fixtures.py` and the rig blueprint
     # carry their own headers; these are the files where one would be
     # rewritten by the tool that owns them, or is not the project's to
     # put there.
     "test-fixture-prep/pyproject.toml",
     "test-fixture-prep/uv.lock",
-    "test-fixture-prep/downloads/.gitignore",
     "test-fixture-prep/test-rigs/.gitignore",
     "test-fixture-prep/test-rigs/README.md",
-    # The ignore list itself, not the fixtures it names — see below.
-    "crates/remanence/tests/fixtures/.gitignore",
+    # The ignore lists themselves, not the material they name — see
+    # below. Both directories are written by the prep script and hold
+    # nothing tracked but these two files.
+    "integration-tests/fixtures/.gitignore",
+    "integration-tests/downloads/.gitignore",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Paul Galbraith"
 SPDX-License-Identifier = "GPL-3.0-only"
 
-# crates/remanence/tests/fixtures/ is deliberately NOT annotated: the HDOS
-# disk images there are vintage third-party distribution media the project
-# claims no copyright in. Their status is an open question in
-# planning/DECISIONS.md, to be resolved before any package publish. The
+# integration-tests/ is deliberately NOT annotated: the HDOS disk images
+# under fixtures/, and the archive under downloads/ a fixture is
+# repackaged out of, are vintage third-party distribution media the
+# project claims no copyright in. Their status is an open question in
+# planning/DECISIONS.md, to be resolved before any package publish. Each
 # directory's own `.gitignore` is listed above as an exact path, never as
 # a glob over the directory, so that omission stays deliberate.

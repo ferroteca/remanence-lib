@@ -14,19 +14,13 @@ artifact** (the fixtures directory is never tracked — see D1 in
 
 ## Running prep_fixtures.py
 
-Through uv, from the repo root (reliquary is pinned in the root
-`pyproject.toml`'s `test-fixture-prep` dependency group):
+`test-fixture-prep/` is a uv project of its own, and reliquary is
+pinned in its `pyproject.toml`. Point uv at that directory and it
+provisions the environment from the lock file beside it, so there is
+nothing to sync or activate first:
 
 ```bash
-uv run --group test-fixture-prep test-fixture-prep/prep_fixtures.py
-```
-
-Or activate the uv-managed `.venv` once and run directly, as before:
-
-```bash
-uv sync --group test-fixture-prep
-.venv\Scripts\Activate.ps1
-python test-fixture-prep/prep_fixtures.py
+uv run --directory test-fixture-prep prep_fixtures.py
 ```
 
 The prep script drives reliquary through its **Python API**. The
@@ -36,16 +30,16 @@ LiveCD zip downloads through the blueprint's own media spec
 ~0.5 GB download survives `cargo clean` and machine rebuilds, and
 git-ignored there. The install script runs, and the machine's `hdd0`
 image is harvested into
-`crates/remanence/tests/fixtures/freedos-parttest.qcow2`. Subsequent
+`integration-tests/fixtures/freedos-parttest.qcow2`. Subsequent
 runs reuse the existing artifact; **delete the file to force a
 rebuild**. Unit tests run with `cargo test -p remanence` and expect
-this fixture to be present in `tests/fixtures/`.
+this fixture to be present in `integration-tests/fixtures/`.
 
 (The same script also prepares the HDOS fixtures: the distribution
-zip downloads sha256-pinned straight into `tests/fixtures/`, and only
-the one disk image the tests read extracts beside it. It also downloads
-the Pinball Construction Set KryoFlux source archive into
-`../downloads/`, then packages only disk one — all 84 step
+zip downloads sha256-pinned straight into `integration-tests/fixtures/`,
+and only the one disk image the tests read extracts beside it. It also
+downloads the Pinball Construction Set KryoFlux source archive into
+`integration-tests/downloads/`, then packages only disk one — all 84 step
 positions from both heads — into a single 7z fixture. `.0.raw` and
 `.1.raw` are the KryoFlux head designator, not two passes over one
 surface, and members keep those suffixes because a stream records its
@@ -94,16 +88,17 @@ Environment knobs:
 
 To build with unpublished reliquary changes, override the pin with a
 local editable checkout for the run:
-`uv run --with-editable D:\Projects\reliquary --group testing-prep testing-prep/prep_fixtures.py`.
+`uv run --directory test-fixture-prep --with-editable D:\Projects\reliquary prep_fixtures.py`.
 
 First build notes: the LiveCD zip (~0.5 GB) downloads into
 `../test-rigs/cache/media/`, and the install run can take
 tens of minutes.
 After a failed build the machine is still there to inspect;
-`uv run rlq destroy-machine --machine remanence-parttest-<n>
---home-dir testing-prep/test-rigs` (`uv run rlq list-machines
---home-dir …` names them) resets it, and
-`uv run rlq clean-media --home-dir …` gives back the LiveCD. A machine
+`uv run --directory test-fixture-prep rlq destroy-machine --machine
+remanence-parttest-<n> --home-dir test-rigs` (`rlq list-machines
+--home-dir …` names them) resets it, and `rlq clean-media --home-dir …`
+gives back the LiveCD. The home is relative to `test-fixture-prep/`
+because `--directory` is where uv put the working directory. A machine
 whose guest powered itself off still reads as `running` until
 `rlq stop-machine` reconciles it.
 

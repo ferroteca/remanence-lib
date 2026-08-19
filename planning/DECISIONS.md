@@ -4397,8 +4397,8 @@ document a newcomer reads.
 
 **Folded into:** root [USE-CASES.md](../USE-CASES.md) (U3's title and
 opening; U4's opening); [AGENTS.md](../AGENTS.md); D2's
-weighed alternative; `crates/remanence/src/disk.rs` and
-`crates/remanence/src/fat.rs` doc comments.
+weighed alternative; `crates/remanence/src/model/disk/mod.rs` and
+`crates/remanence/src/filesystem/fat.rs` doc comments.
 
 ### D6 — Device identity is assigned, not requested
 
@@ -4524,8 +4524,8 @@ entirely — the write path refuses images carrying internal snapshots,
 keeping the all-refcounts-are-one invariant checkable.
 
 **Folded into:** root [ARCHITECTURE.md](../ARCHITECTURE.md) P2's
-in-force text; `crates/remanence/src/device.rs` (the overlay) and
-`disk.rs` (commit/rollback).
+in-force text; `crates/remanence/src/io/cache.rs` (the overlay) and
+`crates/remanence/src/model/disk/commit.rs` (commit/rollback).
 
 ### D1 — The HDOS fixture images leave git and every published artifact
 
@@ -4536,7 +4536,8 @@ every line it ships, and the vintage HDOS distribution images are
 not the project's to distribute — or at least that is not certain,
 which is the same bar.
 
-The fixture images under `crates/remanence/tests/fixtures/` are
+The fixture images (then under `crates/remanence/tests/fixtures/`,
+relocated by the 2026-08-19 amendment below) are
 excluded from **everything the project distributes or records**:
 Python sdists and wheels, cargo packages, and the git repository
 itself — history was rewritten to expunge them before any remote
@@ -4547,7 +4548,7 @@ and the history rewrite.
 
 **Amended** Paul Galbraith, 2026-07-31. The exclusion was a whole
 directory, which cost the project a fixtures directory it could use
-at all. It is now **per file**: `crates/remanence/tests/fixtures/`
+at all. It is now **per file**: the fixtures directory
 holds checked-in fixtures the project owns, and the third-party and
 generated material sits beside them, named file by file in that
 directory's own `.gitignore` — the ignore rule lives with the files
@@ -4567,17 +4568,39 @@ directory as a generated artifact. So a fresh checkout carries none
 of it and can obtain all of it, which closes the accepted cost this
 decision took on — the repair T5 tracked, struck with this change.
 
+**Amended** Paul Galbraith, 2026-08-19. The material moves out of the
+core crate to `../integration-tests/`, at the repository root:
+`fixtures/` for what a test opens, `downloads/` for the sources a
+fixture is repackaged out of (previously
+`../test-fixture-prep/downloads/`). Three surfaces read the same
+files — the Rust suites, the C/C++ CTest suite, and the prep script
+that writes them — so filing them under one crate asserted an
+ownership none of the three could honour, and D69 had just settled
+that `crates/*/tests` holds Rust tests and nothing else. **What this
+strengthens is the exclusion itself**: `package.exclude` was the only
+thing keeping the fixtures out of a cargo package and a maturin sdist,
+a rule that had to stay correct as fixtures were added. They now sit
+outside every crate directory, so cargo cannot see them to package
+them — structure rather than a rule, the same substitution D69 made
+for the pytest suite. Nothing D1 refuses to distribute changes; only
+where it lives and what enforces it. The reliquary media cache stays
+at `../test-fixture-prep/test-rigs/cache/media`: that layout is
+reliquary's own, and keying it to the rig is what lets a rebuild reuse
+the ~0.5 GB download.
+
 **Weighed and declined:** publishing the wheel without an sdist
 (with no public repository, GPL object code would ship with no
 corresponding source at all); annotating the fixtures in REUSE and
 shipping them (the project cannot convey rights it does not hold);
 keeping them in git as local-only history (any future push would
-distribute the blobs).
+distribute the blobs); folding `downloads/` into `fixtures/` outright
+(the KryoFlux source archive differs from the fixture it yields by a
+` (1of2)` suffix alone, and nothing reads it).
 
-**Folded into:** `crates/remanence/Cargo.toml` (`package.exclude`),
-`crates/remanence/tests/fixtures/.gitignore`, root `.gitignore`,
-`../test-fixture-prep/prep_fixtures.py`, AGENTS.md "Prior art and provenance
-notes".
+**Folded into:** `../integration-tests/fixtures/.gitignore`,
+`../integration-tests/downloads/.gitignore`, root `.gitignore`,
+`crates/remanence/Cargo.toml`, `../test-fixture-prep/prep_fixtures.py`,
+`../REUSE.toml`, AGENTS.md "Prior art and provenance notes".
 
 ## Retired decisions
 
