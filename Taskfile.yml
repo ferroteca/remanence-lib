@@ -1,15 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Paul Galbraith
 # SPDX-License-Identifier: GPL-3.0-only
 #
-# Drives the C/C++ and Python checks `cargo test` no longer does (D65) —
-# neither is triggered by `cargo build`/`cargo test` in any form; both are
-# reached only by running the tasks below.
+# Drives the C/C++ and Python checks — neither is triggered by
+# `cargo build`/`cargo test` in any form; both are reached only by
+# running the tasks below.
 #
 # Task, not just: Task embeds its own shell interpreter (mvdan.cc/sh), so
 # a task runs identically wherever it's invoked from with no external
-# shell dependency at all — no bash, no git-bash, no MSYS2 (D66's "drop
-# MSYS2 everywhere" extends to the tooling that drives these checks, not
-# only the toolchain that builds against them). Task's own bundled
+# shell dependency at all — no bash, no git-bash, no MSYS2. This project
+# does not support building or testing from an MSYS2 shell at all, and
+# that extends to the tooling that drives these checks, not only the
+# toolchain that builds against them. Task's own bundled
 # utilities on Windows are a small file-operations set (cp, mv, mkdir),
 # not sed/grep/xargs or shell arrays — so every step that needs to
 # reassemble a list of arguments safely (which CMake flags to pass, which
@@ -38,13 +39,13 @@ tasks:
 
   test-py:
     desc: >-
-      Builds, stages and tests the Python bindings (S3). The build routes
+      Builds, stages and tests the Python bindings. The build routes
       through uv so pyo3 resolves the same interpreter uv will later use
-      to run pytest (D63) — uv itself never offers an MSYS2 interpreter as
-      a candidate, so this task never reaches the case build.rs refuses
-      (D66); that refusal guards the other paths instead — a bare
-      `cargo build -p remanence-py`, or `uv build`/`uv publish`'s own
-      internal build.
+      to run pytest — uv itself never offers an MSYS2 interpreter as a
+      candidate, so this task never triggers remanence-py/build.rs's
+      MinGW/MSYS2 refusal; that refusal guards the other paths instead —
+      a bare `cargo build -p remanence-py`, or `uv build`/`uv publish`'s
+      own internal build.
     cmds:
       - cmd: |
           set -euo pipefail
@@ -59,11 +60,11 @@ tasks:
               --no-error-summary --cache-dir ../../target/mypy-cache/accepts \
               python/tests/mypy_fixtures/accepts.py
 
-          # rejects.py is misuse and must fail to type-check. This only
-          # checks that mypy refuses it, not that each line is refused
-          # for the exact code its `# expect:` marker names — that finer
-          # cross-check lived in the deleted stub_typechecks.rs and is
-          # not reproduced here.
+          # rejects.py contains intentionally invalid code and must fail
+          # to type-check. This only checks that mypy refuses the file
+          # as a whole; rejects.py marks each invalid line with the mypy
+          # error code it expects, but nothing here checks those codes
+          # against mypy's actual output.
           if uv run --with mypy --no-project mypy --strict --python-version 3.10 \
               --no-error-summary --cache-dir ../../target/mypy-cache/rejects \
               python/tests/mypy_fixtures/rejects.py; then

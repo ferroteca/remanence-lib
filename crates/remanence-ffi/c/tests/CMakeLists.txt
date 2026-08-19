@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Paul Galbraith
 # SPDX-License-Identifier: GPL-3.0-only
 
-# The C surface's tests, in C and in C++ (S2, D44, D45, D46, D53).
+# The C surface's tests, in C and in C++.
 #
 # CMake is here for one reason: MSVC. `cl.exe` needs the environment
 # `vcvars64.bat` sets, and locating and sourcing that from a test harness
@@ -11,12 +11,12 @@
 # compiler, and the C/C++ split.
 #
 # The compiler is the library's, not this file's — MSVC-built, which is
-# the only Windows toolchain this project supports (D66); `xtask` refuses
+# the only Windows toolchain this project supports; `xtask` refuses
 # a MinGW/`windows-gnu` build before this file ever configures. What
 # arrives here is a compiler CMake found unaided, or a native/Linux
 # `.so`/`.dylib` build, which is a separate, unaffected case.
 #
-# `just test-ffi` drives this (D65): building the shipped and leak-probe
+# `task test-ffi` drives this: building the shipped and leak-probe
 # cdylibs, configuring, building, and running `ctest`. It is not meant to
 # be configured by hand, though nothing stops it — it needs REMANENCE_LIB
 # pointing at the built import library or shared object, and
@@ -40,13 +40,10 @@ if(NOT DEFINED REMANENCE_LIB)
         "on Linux/macOS. `cargo build` produces it; `cargo test` does not.")
 endif()
 
-if(NOT DEFINED REMANENCE_INCLUDE)
-    message(FATAL_ERROR "REMANENCE_INCLUDE is not set.")
-endif()
-
-if(NOT DEFINED REMANENCE_EXAMPLES)
-    message(FATAL_ERROR "REMANENCE_EXAMPLES is not set.")
-endif()
+# Fixed sibling directories of this file, not build output — no external
+# input needed to find them, unlike REMANENCE_LIB above.
+set(REMANENCE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+set(REMANENCE_EXAMPLES "${CMAKE_CURRENT_SOURCE_DIR}/../examples")
 
 # One predictable output directory whichever generator is in use.
 # Multi-config generators (Visual Studio) otherwise bury binaries under
@@ -77,8 +74,8 @@ add_library(header_selfcontained OBJECT "${selfcontained_c}")
 
 # --- the header is valid C++ -------------------------------------------
 #
-# `cpp_compat = true` in cbindgen.toml claims this. Nothing tested it
-# before D44.
+# `cpp_compat = true` in cbindgen.toml claims this. Nothing had tested
+# that claim before this check was added.
 set(selfcontained_cpp "${CMAKE_BINARY_DIR}/generated/selfcontained.cpp")
 file(WRITE "${selfcontained_cpp}"
      "#include <remanence.h>\n\nint main()\n{\n    return 0;\n}\n")
@@ -86,7 +83,7 @@ add_library(header_cpp OBJECT "${selfcontained_cpp}")
 
 # --- the C++ header stands alone too -----------------------------------
 #
-# `remanence.hpp` is the derived C++ presentation of the same ABI (D53).
+# `remanence.hpp` is the derived C++ presentation of the same ABI.
 # It is hand-maintained rather than generated, so unlike the C header it
 # *can* fall behind the Rust — which is what makes compiling it a check
 # rather than a formality. Written here for the same reason as the two
@@ -100,7 +97,7 @@ add_library(header_hpp OBJECT "${selfcontained_hpp}")
 #
 # The header deletes every borrowed-record accessor on an rvalue, so
 # `medium.identify().layers()` — views of a handle that dies at the
-# semicolon — is a compile error rather than a dangling read (D53). A
+# semicolon — is a compile error rather than a dangling read. A
 # claim that something is *refused* is only worth as much as a check
 # that it still is, so this compiles it and fails when it succeeds.
 #
@@ -180,13 +177,13 @@ target_link_libraries(wrapper PRIVATE "${REMANENCE_LIB}")
 #
 # This one links a **different build** of the library: the probe is a
 # global allocator and an exported symbol, so it never reaches the
-# shipped cdylib, and the Rust harness builds it into its own target
-# directory (D50). Its own output directory too — both builds carry the
+# shipped cdylib, and `xtask ffi` builds it into its own target
+# directory. Its own output directory too — both builds carry the
 # same file name, and Windows loads the copy beside the executable.
 #
 # `wrapper_leaks` is the same measurement for the C++ presentation, and
 # the one that matters most there: a caller who never writes a `_free`
-# cannot see a missing one either (D53).
+# cannot see a missing one either.
 if(REMANENCE_PROBE_LIB)
     add_executable(abi_leaks abi_leaks.c)
     target_link_libraries(abi_leaks PRIVATE "${REMANENCE_PROBE_LIB}")
@@ -198,7 +195,7 @@ if(REMANENCE_PROBE_LIB)
     endforeach()
 endif()
 
-# === CTest registration (D65) ==============================================
+# === CTest registration =====================================================
 #
 # `ctest` runs every group below directly. Naming a target (`abi_boundary`,
 # `wrapper`, ...) as a test's `COMMAND` resolves to that target's actual
@@ -246,9 +243,9 @@ endif()
 # `freedos-parttest.qcow2` exactly as `abi_boundary discovery` does, but
 # only the latter was gated (behind Cargo's `rigs` feature). A bare
 # `cargo test -p remanence-ffi` on a fresh clone therefore used to fail on
-# two undeclared fixture dependencies, the same class of bug D58's history
-# (`media_sources`, `sevenzip_catalog`) is about. All three now share the
-# `rigs` label and fixture, closing that gap.
+# two undeclared fixture dependencies — a fixture a test needs, silently
+# missing its gate. All three now share the `rigs` label and fixture,
+# closing that gap.
 set(REMANENCE_FIXTURE_FREEDOS
     "${REMANENCE_WORKSPACE}/crates/remanence/tests/fixtures/freedos-parttest.qcow2")
 add_test(NAME fixture_freedos_qcow2
@@ -287,7 +284,7 @@ add_test(NAME scratch_leak_cleanup
     COMMAND ${CMAKE_COMMAND} -E remove_directory "${REMANENCE_SCRATCH_LEAK}")
 set_tests_properties(scratch_leak_cleanup PROPERTIES FIXTURES_CLEANUP "scratch_leak")
 
-# --- abi_boundary: the C ABI, crossed from C (D45, D46) --------------------
+# --- abi_boundary: the C ABI, crossed from C --------------------------------
 foreach(group catalogs version refusal nulls devices)
     add_test(NAME abi_boundary_${group} COMMAND abi_boundary ${group}
         WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
@@ -300,7 +297,7 @@ add_test(NAME abi_boundary_discovery
 set_tests_properties(abi_boundary_discovery PROPERTIES
     LABELS "rigs" FIXTURES_REQUIRED "freedos_qcow2")
 
-# --- wrapper: the C++ presentation, crossed from C++ (D53) -----------------
+# --- wrapper: the C++ presentation, crossed from C++ ------------------------
 foreach(group catalogs refusals authorship devices views lifetimes absences flux_refusals)
     add_test(NAME wrapper_${group} COMMAND wrapper ${group}
         WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
@@ -325,7 +322,7 @@ add_test(NAME wrapper_flux_capture
 set_tests_properties(wrapper_flux_capture PROPERTIES
     LABELS "fixtures" FIXTURES_REQUIRED "pinball_capture")
 
-# --- the leak probe (D47, D50) ---------------------------------------------
+# --- the leak probe ----------------------------------------------------------
 #
 # Only registered when a probe build was actually linked — REMANENCE_PROBE_LIB
 # is optional, unlike REMANENCE_LIB.

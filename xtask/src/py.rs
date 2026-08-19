@@ -4,13 +4,13 @@
 //! `xtask py-stage`: stages the compiled `remanence-py` module (built
 //! separately — see `Taskfile.yml`'s `test-py` task — by
 //! `uv run -- cargo build -p remanence-py`, so pyo3 resolves the same
-//! interpreter `uv` will later use to run pytest, D63) into a `remanence/`
+//! interpreter `uv` will later use to run pytest) into a `remanence/`
 //! package layout pytest can import, printing only the stage root — for
 //! `Taskfile.yml` to set as `PYTHONPATH`.
 //!
-//! Mirrors the deleted `python_suite.rs`'s own `stage()` exactly (D65
-//! moved test-running out of Rust; this keeps only the file-copying,
-//! which needs no test framework, just argv-safe paths).
+//! Just the file-copying, deliberately: no test framework runs here, and
+//! nothing in this file executes Python at all — `Taskfile.yml` runs
+//! pytest itself, against the `PYTHONPATH` this prints.
 
 use std::path::PathBuf;
 

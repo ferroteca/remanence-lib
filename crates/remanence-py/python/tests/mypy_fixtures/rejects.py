@@ -1,18 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Paul Galbraith
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Misuse the stub must refuse (S3, D43).
+"""Code the stub must refuse to type-check.
 
 The companion to `accepts.py`, and the half that matters more: a stub
 that has quietly degraded to `Any` — a lost `py.typed`, a parameter
 widened to `object`, a class the checker stopped resolving — still lets
 `accepts.py` pass. It stops refusing what is wrong.
 
-Every line below is expected to fail, and says with which mypy error
-code in an `# expect:` comment. The test asserts each one produces
-exactly that code, and that no line produces an error nobody expected —
-so this file cannot silently start passing, and cannot start failing for
-a reason other than the one it was written for.
+Every line below is invalid for a different reason, each marked with an
+`# expect:` comment naming the mypy error code it should produce. Only
+the file's overall pass/fail is actually checked (`mypy` is expected to
+exit nonzero); the `# expect:` comments are not verified against mypy's
+actual output — they document, for a human editing this file, which
+mistake each line is meant to demonstrate.
 """
 
 from __future__ import annotations

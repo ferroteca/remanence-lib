@@ -13,7 +13,7 @@ readme = "README.md"
 # As in the core crate: a released artifact carries what a consumer runs
 # and nothing else. `c/{include,examples,tests}` groups everything the
 # C/C++-facing surface owns, apart from this crate's own Rust scaffolding
-# (D69) — but only `c/tests/` is excluded here. What lives under it tests
+# — but only `c/tests/` is excluded here. What lives under it tests
 # *this repository* — that the header stands alone, that the C++
 # wrapper's claims hold — and it needs CMake, a C and C++ compiler, and a
 # cargo workspace two directories up to build the leak probe in. A
@@ -34,9 +34,9 @@ crate-type = ["staticlib", "cdylib"]
 [features]
 # Counts live Rust allocations inside the cdylib and exports the count,
 # so a C caller can assert that a handle's `_free` gives back everything
-# its creation took (D46). Test-only and off by default: a released
-# artifact carries neither the counter nor the symbol. Built by `xtask`
-# (D65), which `task test-ffi` drives.
+# its creation took. Test-only and off by default: a released artifact
+# carries neither the counter nor the symbol. Built by `xtask`, which
+# `task test-ffi` drives.
 leak-probe = []
 
 [dependencies]

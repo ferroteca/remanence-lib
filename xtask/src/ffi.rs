@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! `xtask ffi`: builds `remanence-ffi`'s shipped and leak-probe cdylibs,
-//! refuses a MinGW/MSYS2 one outright (D66), and configures+builds the
+//! refuses a MinGW/MSYS2 one outright, and configures+builds the
 //! CMake C/C++ test project against them — printing only the resulting
 //! build directory, for `Taskfile.yml`'s `test-ffi` task to hand straight
 //! to `ctest`.
@@ -175,10 +175,12 @@ fn build(what: &str, features: &[&str], target_dir: Option<&Path>) -> Built {
 
 /// Where the probe-enabled build of the library goes.
 ///
-/// **A separate target directory, which is the whole trick** (D50). The
-/// leak probe is a global allocator and an exported symbol, so it must
-/// never reach the shipped cdylib — an extra `remanence_*` symbol is an S2
-/// change.
+/// **A separate target directory, which is the whole trick.** The leak
+/// probe is a global allocator and an exported symbol, so it must never
+/// reach the shipped cdylib — building it into its own target directory,
+/// rather than as a Cargo feature layered onto the same build, guarantees
+/// the shipped artifact never picks up the probe's extra `remanence_*`
+/// symbol by accident.
 fn probe_target_dir() -> PathBuf {
     workspace_dir().join("target/leak-probe")
 }
@@ -240,14 +242,13 @@ pub fn run() {
     );
     let shipped = build("the shipped library", &[], None);
 
-    // A MinGW/MSYS2 build is refused, not accommodated. This project no
-    // longer treats a `windows-gnu` build as a legitimate alternative
-    // toolchain (reversing a58247c's stance for remanence-py, and the
-    // matching-not-preferring reasoning D46 built around this crate) —
-    // MSVC is the one supported Windows toolchain, so there is nothing to
-    // adapt CMake's generator or compiler to here. This is still read from
-    // what the build actually produced, never guessed from the host: the
-    // claim is specifically that *this* file is a MinGW import library.
+    // A MinGW/MSYS2 build is refused, not accommodated. This project does
+    // not treat a `windows-gnu` build as a legitimate alternative
+    // toolchain — MSVC is the one supported Windows toolchain, so there is
+    // nothing to adapt CMake's generator or compiler to here. This is
+    // still read from what the build actually produced, never guessed
+    // from the host: the claim is specifically that *this* file is a
+    // MinGW import library.
     if shipped.toolchain == Toolchain::MinGw {
         panic!(
             "the shipped library was built by a MinGW/MSYS2 toolchain \
@@ -282,14 +283,6 @@ pub fn run() {
         build_dir.display().to_string(),
         format!("-DREMANENCE_LIB={}", shipped.link.display()),
         format!("-DREMANENCE_PROBE_LIB={}", probe.link.display()),
-        format!(
-            "-DREMANENCE_INCLUDE={}",
-            crate_dir.join("c").join("include").display()
-        ),
-        format!(
-            "-DREMANENCE_EXAMPLES={}",
-            crate_dir.join("c").join("examples").display()
-        ),
     ];
     if let Some(runtime) = &shipped.runtime {
         configure_args.push(format!("-DREMANENCE_RUNTIME={}", runtime.display()));

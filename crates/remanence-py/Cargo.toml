@@ -20,7 +20,7 @@ publish = false
 # The sdist carries the Python suite — a stranger who unpacks it can
 # verify what they built, which is what an sdist is conventionally for.
 # What stays out is the part that tests *this repository* rather than the
-# package: `tests/*.rs` (the one Rust integration test left, D69) reads
+# package: `tests/*.rs` (the one Rust integration test left) reads
 # the crate's own sources and needs the cargo workspace, neither of which
 # an sdist has, and the mypy fixtures it never touches go with it anyway —
 # `python/tests/mypy_fixtures/**` is excluded on its own account, since
@@ -37,7 +37,7 @@ remanence.workspace = true
 
 # `build.rs` asks it which interpreter pyo3 resolved, so a MinGW/MSYS2
 # build is refused before anything compiles rather than at a consumer's
-# `import` (D66). It reads the config pyo3 already exported, so it runs
-# no interpreter of its own and adds nothing to what a build needs.
+# `import`. It reads the config pyo3 already exported, so it runs no
+# interpreter of its own and adds nothing to what a build needs.
 [build-dependencies]
 pyo3-build-config = "0.29"

@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Refuses a build against a MinGW/MSYS2 Python (D66).
+//! Refuses a build against a MinGW/MSYS2 Python.
 //!
-//! **The claim is native CPython** (S3), and this project no longer
-//! treats an MSYS2 build as a legitimate alternative — reversing
-//! a58247c's stance, for the same reason `xtask` refuses one for
-//! `remanence-ffi`'s C/C++ tests (D65): the two Windows toolchains
-//! disagree, and MSYS2's is not the one this project ships.
+//! **The claim is native CPython.** This project does not treat an MSYS2
+//! build as a legitimate alternative, for the same reason `xtask` refuses
+//! one when building `remanence-ffi`'s C/C++ tests: the two Windows
+//! toolchains disagree about the C runtime, and MSYS2's is not the one
+//! this project ships.
 //!
 //! **Read from what pyo3 resolved, not guessed from the host.** pyo3
 //! names a library's link name without a `lib` prefix by convention —

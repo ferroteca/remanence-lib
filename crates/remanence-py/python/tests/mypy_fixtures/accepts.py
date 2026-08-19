@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Paul Galbraith
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""A consumer that must type-check clean against the stub (S3, D43).
+"""A consumer that must type-check clean against the stub.
 
 This file is never executed — the paths in it do not exist and nothing
 imports it. It is read by `mypy --strict` alone, and what it asserts is

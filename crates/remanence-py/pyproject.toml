@@ -54,7 +54,7 @@ features = ["pyo3/extension-module"]
 # `py.typed`, which PEP 561 requires to live inside the package; naming
 # a python source root gives the stub and the marker a home, and
 # `python/src/remanence/__init__.py` is the generated shim written out.
-# `src`, not `python` alone, is deliberate (D69): only files inside
+# `src`, not `python` alone, is deliberate: only files inside
 # `python-source` are eligible for bundling into the wheel, so
 # `python/tests` sitting *outside* `python/src` is what keeps the pytest
 # suite structurally excluded from what ships — not a convention someone

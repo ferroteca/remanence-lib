@@ -5,20 +5,17 @@
 //! checks, run explicitly by `Taskfile.yml`'s `test-ffi`/`test-py` tasks —
 //! never by `cargo test`, and never automatically.
 //!
-//! **Everything that needs argv-safe subprocess arguments lives here,
-//! in Rust, rather than in the Taskfile's shell.** Task's own bundled
-//! utilities on Windows are a small file-operations set (`cp`, `mv`,
-//! `mkdir`, and similar) — not `sed`, `grep`, `xargs`, or arrays — so a
-//! recipe that needed to reassemble a list of `cmake` arguments from
-//! parsed text would silently depend on external coreutils being on
-//! `PATH` again, which is exactly the MSYS2/git-bash dependency this
-//! design drops (D66, and the runner switch away from `just` that
-//! followed it). `std::process::Command` passes an argument list
-//! correctly with no shell involved at all, so that work moved here
-//! instead: each subcommand does everything through to the point a
-//! human would want to watch (a `cmake --build`, a `ctest` run), and
-//! prints exactly one line of output — a path — for the Taskfile to
-//! hand to the next, genuinely simple, step.
+//! Anything that needs argv-safe subprocess arguments (a list of `cmake`
+//! flags, in particular) lives here in Rust rather than in the Taskfile's
+//! shell script. Task's own bundled utilities on Windows are a small
+//! file-operations set (`cp`, `mv`, `mkdir`) — not `sed`, `grep`, `xargs`,
+//! or arrays — so reassembling a command line from parsed text in the
+//! Taskfile would mean depending on external tools being on `PATH`,
+//! which this project avoids. `std::process::Command` passes an argument
+//! list correctly with no shell involved at all. Each subcommand here
+//! does everything through to the point a human would want to watch (a
+//! `cmake --build`, a `ctest` run), and prints exactly one line of
+//! output — a path — for the Taskfile to hand to the next, simple step.
 //!
 //! Two subcommands:
 //! - `xtask ffi` — see `ffi::run`.
