@@ -10,11 +10,11 @@
 # that — the toolchain search, the generator, the warning flags per
 # compiler, and the C/C++ split.
 #
-# The compiler is the library's, not this file's. Where the cdylib is
-# MSVC-built the search above is the native match; where a windows-gnu
-# rustc built it instead, the harness names gcc, because MSVC cannot
-# link a MinGW import library and the two disagree about the C runtime
-# besides. Either way what arrives here is a compiler already chosen.
+# The compiler is the library's, not this file's — MSVC-built, which is
+# the only Windows toolchain this project supports (D66); `xtask` refuses
+# a MinGW/`windows-gnu` build before this file ever configures. What
+# arrives here is a compiler CMake found unaided, or a native/Linux
+# `.so`/`.dylib` build, which is a separate, unaffected case.
 #
 # `just test-ffi` drives this (D65): building the shipped and leak-probe
 # cdylibs, configuring, building, and running `ctest`. It is not meant to
@@ -35,9 +35,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT DEFINED REMANENCE_LIB)
     message(FATAL_ERROR
         "REMANENCE_LIB is not set. It must point at the built library: "
-        "target/<profile>/remanence_ffi.dll.lib on MSVC, "
-        "libremanence_ffi.dll.a on a MinGW toolchain, or the .so/.dylib "
-        "elsewhere. `cargo build` produces it; `cargo test` does not.")
+        "target/<profile>/remanence_ffi.dll.lib on Windows (MSVC — the "
+        "only Windows toolchain this project supports), or the .so/.dylib "
+        "on Linux/macOS. `cargo build` produces it; `cargo test` does not.")
 endif()
 
 if(NOT DEFINED REMANENCE_INCLUDE)

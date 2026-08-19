@@ -11,16 +11,21 @@ homepage.workspace = true
 # C and C++ consumer, who is not the reader either other README has.
 readme = "README.md"
 # As in the core crate: a released artifact carries what a consumer runs
-# and nothing else. What lives under `tests/` here tests *this
-# repository* — that the header stands alone, that the C++ wrapper's
-# claims hold — and it needs CMake, a C and C++ compiler, and a cargo
-# workspace two directories up to build the leak probe in. A consumer
-# extracting the crate has none of those and is not changing what they
-# check, so `cargo test` on the published crate runs the unit tests and
-# succeeds. `examples/` deliberately stays: `identify.c` and
-# `identify.cpp` are the best documentation a C caller gets, and cargo
-# ships them as plain files rather than as targets it builds.
-exclude = ["tests/**"]
+# and nothing else. `c/{include,examples,tests}` groups everything the
+# C/C++-facing surface owns, apart from this crate's own Rust scaffolding
+# (D69) — but only `c/tests/` is excluded here. What lives under it tests
+# *this repository* — that the header stands alone, that the C++
+# wrapper's claims hold — and it needs CMake, a C and C++ compiler, and a
+# cargo workspace two directories up to build the leak probe in. A
+# consumer extracting the crate has none of those and is not changing
+# what they check, so `cargo test` on the published crate runs the unit
+# tests and succeeds. `c/include/` and `c/examples/` deliberately stay:
+# the header is what a consumer builds against, and `identify.c`/
+# `identify.cpp` are the best documentation a C caller gets — cargo ships
+# both as plain files rather than as targets it builds. `c/tests/` is
+# named `tests`, unlike this crate's own (Rust-only) `tests/`, because
+# `cargo test` never looks inside `c/` at all; `task test-ffi` does.
+exclude = ["c/tests/**"]
 
 [lib]
 name = "remanence_ffi"
@@ -31,7 +36,7 @@ crate-type = ["staticlib", "cdylib"]
 # so a C caller can assert that a handle's `_free` gives back everything
 # its creation took (D46). Test-only and off by default: a released
 # artifact carries neither the counter nor the symbol. Built by `xtask`
-# (D65), which `just test-ffi` drives.
+# (D65), which `task test-ffi` drives.
 leak-probe = []
 
 [dependencies]

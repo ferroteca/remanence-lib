@@ -6,26 +6,35 @@ members = [
     "crates/remanence-py",
     "xtask",
 ]
-# **Only the core is a default member.** A bare `cargo build` or
-# `cargo test` in a clone therefore needs nothing but rustc: no CMake and
-# C++ compiler for S2's callers, no Python interpreter for PyO3's build
-# script, no uv or mypy for S3's suite. Someone who wants the Rust
-# library alone — a distribution packager, or anyone reading the core —
-# should be able to build and test it without acquiring two other
-# toolchains first, and this is what gives them that.
+# **The core and the C ABI are default members now; the Python bindings
+# are not** (D68, amending D52). A bare `cargo build`/`cargo test` still
+# needs nothing but rustc: `remanence-ffi`'s own build (cbindgen
+# regenerating `include/remanence.h`) and its in-source unit tests are
+# pure Rust — cbindgen only writes the header's text, compiling nothing —
+# and CMake, a C/C++ compiler and the whole C/C++ test suite moved out of
+# `cargo test` entirely (D65), reached only by `task test-ffi`.
+# `remanence-py`'s lifecycle depends on an external Python in a way
+# `remanence-ffi`'s no longer depends on anything external at all: pyo3's
+# build script resolves against a real interpreter to build against, and
+# this migration never touched that.
 #
-# **This reverses D52 rather than restoring what came before it.** What
-# D52 objected to was an asymmetry: `remanence-ffi` was in this list and
-# `remanence-py` was not, so S2's checks ran by default and S3's ran for
-# nobody. It removed the asymmetry by adding the Python crate; this
-# removes it by naming neither. The surfaces are still treated alike.
+# **This reintroduces the shape D52 objected to, deliberately rather than
+# by accident.** D52's complaint was an *arbitrary* asymmetry —
+# `remanence-ffi` was default and `remanence-py` was not, for no reason
+# tied to what either crate actually cost to build. This one tracks a
+# real difference instead: each crate's default membership now matches
+# exactly what building and unit-testing it needs, and that need is no
+# longer the same for the two. `remanence-py`'s absence stays a real gap,
+# not a rule to route around — see it, and run `task test-py`. Neither
+# the C/C++ suite nor the Python one is reached by default membership
+# either way; both need their own `task` invocation regardless, which is
+# what keeps this asymmetry smaller than the one D52 fixed.
 #
-# **The risk D52 named is real and unchanged**: checks reached only by a
-# flag someone has to remember are checks that rot. So the answer is not
-# that the bindings are optional to check — `cargo build --workspace`
-# and `cargo test --workspace` are required checks, and AGENTS.md says
-# so. What is optional is being the person who runs them.
-default-members = ["crates/remanence"]
+# **`cargo build --workspace` and `cargo test --workspace` are still
+# required checks for everything** (AGENTS.md says so), same as D52
+# argued: what is optional is being the person who remembers to ask for
+# them, not whether they are asked at all.
+default-members = ["crates/remanence", "crates/remanence-ffi"]
 
 [workspace.package]
 version = "0.0.1-alpha.6"

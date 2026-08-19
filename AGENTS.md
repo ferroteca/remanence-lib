@@ -487,12 +487,12 @@ ABI, or Python module.
   updated when its module moves.
 - `crates/remanence-ffi/` — the C ABI (`remanence_*` symbols): opaque handles,
   accessor functions, borrowed strings owned by their handle. `build.rs`
-  regenerates `include/remanence.h` with cbindgen on every build; the
+  regenerates `c/include/remanence.h` with cbindgen on every build; the
   header is generated output, never edited by hand.
-  `examples/identify.c` is the example C consumer and doubles as the ABI
+  `c/examples/identify.c` is the example C consumer and doubles as the ABI
   smoke test (build instructions in its header comment).
 
-  `include/remanence.hpp` is the **idiomatic C++ presentation of that
+  `c/include/remanence.hpp` is the **idiomatic C++ presentation of that
   same ABI** (D53) — header-only, C++17, no compiled artifact of its own,
   and **written by hand**, which is the one thing that makes it
   different from the header beside it: nothing regenerates it, so it can
@@ -504,7 +504,7 @@ ABI, or Python module.
   owned `std::string` rather than a view into memory a temporary handle
   took with it. **It covers every `remanence_*` function** — the storage
   model and the flux ladder both — so one that is not wrapped is a
-  defect rather than a boundary (D54). `examples/identify.cpp` is its
+  defect rather than a boundary (D54). `c/examples/identify.cpp` is its
   example consumer, beside the C one.
 - `crates/remanence-py/` — the Python module (PyO3, abi3, Python ≥ 3.10),
   excluded from default workspace members so plain `cargo build`/
@@ -517,31 +517,33 @@ ABI, or Python module.
   **The Python package claims Windows only** (the tested host; the
   classifiers state it) — keep POSIX paths correct but never state or
   imply support the project has not tested.
-  **uv chooses the interpreter `just test-py` tests against, always**
+  **uv chooses the interpreter `task test-py` tests against, always**
   (D63, D65). The checks specify nothing — no interpreter, no version, no
   implementation — because the module is abi3 and any CPython ≥ 3.10
   can import it; the constraints the package does carry are declared
   once, in `pyproject.toml`. The command is
   `uv run --with <tool> --no-project <tool>`, for pytest and mypy alike,
-  and `just test-py` routes the build itself through uv too
+  and `task test-py` routes the build itself through uv too
   (`uv run -- cargo build -p remanence-py`), so the interpreter that
   built the module and the one that tests it always agree.
-  **A bare `cargo build -p remanence-py` from an MSYS2 shell is still
-  legitimate, and still cannot be tested by `just test-py`.** pyo3 names
-  a MinGW Python's import library `libpython3` rather than `python3`,
-  which puts it outside the subset `raw-dylib` linking covers, so such a
-  build links `libpython3.dll` — a DLL existing only inside MSYS2 — and
-  uv cannot supply that interpreter: it discovers Pythons through its own
-  registry and managed installs, and does not see MSYS2's even when that
-  one is first on `PATH`. `just test-py` sidesteps the whole failure by
-  never doing a bare build itself — it always runs
-  `uv run -- cargo build -p remanence-py`, which puts uv's own
-  interpreter first on `PATH` for pyo3 to find instead of MSYS2's.
-  **What must never ship is a MinGW module wearing a native tag**, which
-  is how 0.0.1a4 reached PyPI and failed at `import` for every consumer
-  of it. Nothing enforces that mechanically: `uv build` from an MSYS2
-  shell simply adds a second, MinGW-tagged wheel to `dist/`, and
-  `--clear` is what stops it accumulating there unnoticed.
+  **A build against an MSYS2 Python is refused outright now, not merely
+  untestable** (D66, reversing a58247c's "still legitimate" stance).
+  `build.rs` reads what pyo3 resolved (`pyo3_build_config::get().lib_name()`)
+  and panics if it is `lib`-prefixed — pyo3 names a native Python's import
+  library `python3` by convention, and MSYS2's own Python breaks that
+  convention, naming its import library `libpython3` because that is
+  literally the file MSYS2 ships. That refusal runs for *any* compile of
+  the crate, `cargo build -p remanence-py` included, not only
+  `task test-py`. Build with a native interpreter instead —
+  `uv run -- cargo build -p remanence-py` puts one first on `PATH` for
+  pyo3 to find.
+  **This is also what stops a MinGW module wearing a native tag from ever
+  reaching PyPI again**, which is how 0.0.1a4 got there and failed at
+  `import` for every consumer of it: `uv build` drives `cargo build`
+  internally through maturin, and that build now refuses just the same as
+  a direct one would, before a wheel is ever produced. `--clear` on
+  `uv build`/`uv publish` is still what stops `dist/` accumulating stale
+  artifacts across builds, unrelated to this.
   `test-fixture-prep/` is a separate uv project with its own
   `pyproject.toml` and lock file, carrying only the
   fixture-preparation dependency group.
@@ -596,25 +598,25 @@ public surface explicitly. The example consumers and tests move in the same
 change.
 
 **The C++ header is derived from S2 and moves with it** (D53).
-`crates/remanence-ffi/include/remanence.hpp` is hand-maintained, so a
+`crates/remanence-ffi/c/include/remanence.hpp` is hand-maintained, so a
 `remanence_*` function added, renamed or retired moves it in that same
 change — and a disagreement between the two is a defect in the wrapper,
 the ABI being the norm. It is not a surface of its own: it claims no
 capability the C ABI lacks, and the S-numbers are unchanged. What
-catches a lapse is `just test-ffi`, which compiles the header standalone,
-compiles `examples/identify.cpp` against it, and runs a C++ caller
+catches a lapse is `task test-ffi`, which compiles the header standalone,
+compiles `c/examples/identify.cpp` against it, and runs a C++ caller
 through it (below). **Coverage is total and is meant to stay that way**
 (D54): every `remanence_*` function is wrapped, so a new one that is not
 is a defect rather than a scoping choice, and the answer to "is this
 covered?" is a lookup rather than a judgement.
 
 **S3 has a pytest suite, and it is what the sdist ships** (D48).
-`just test-py` runs it (D65) — no wheel, no install, and no flag beyond
+`task test-py` runs it (D65) — no wheel, no install, and no flag beyond
 the recipe itself; `remanence-py` is not a default workspace member
 (this file's "Required checks" explains why), so nothing but running
 that recipe reaches it.
 
-The suite needs the compiled module. `just test-py` builds it
+The suite needs the compiled module. `task test-py` builds it
 (`uv run -- cargo build -p remanence-py`, D63) and stages a `remanence/`
 package from what that produced — the cdylib renamed as the extension,
 beside `__init__.py`, the stub and `py.typed` — pointing `PYTHONPATH` at
@@ -626,15 +628,15 @@ It opens **no disk image**, deliberately: every fixture this project
 tests against is third-party media it does not distribute and git does
 not track, so the shippable suite makes its own through
 `Session.new_media`. What needs a real artifact — filesystems, partition
-tables, the flux ladder — is `just test-ffi`'s job, labeled `rigs`/
+tables, the flux ladder — is `task test-ffi`'s job, labeled `rigs`/
 `fixtures`. The one Rust integration test remaining in
 `crates/remanence-py/tests/`, `stub_matches_module.rs`, tests the stub
 against *this repository's sources*, so it stays out of the sdist along
-with the mypy fixtures `just test-py` drives; `Cargo.toml`'s `exclude` is
+with the mypy fixtures `task test-py` drives; `Cargo.toml`'s `exclude` is
 what maturin reads for both.
 
 **The Python type stub is part of that surface, and nothing regenerates
-it.** `crates/remanence-py/python/remanence/__init__.pyi` is written by
+it.** `crates/remanence-py/python/src/remanence/__init__.pyi` is written by
 hand and states S3 in full — every class, property and verb the module
 registers, exactly once. A name added, renamed or removed in
 `crates/remanence-py/src/lib.rs` moves the stub in the same change; a
@@ -875,32 +877,36 @@ It names no consuming project, like every other library-side document
 ## Required checks
 
 ```bash
-cargo build                 # the core alone, and nothing but rustc is needed
+cargo build                 # the core and the C ABI; nothing but rustc is needed
 cargo test
-cargo build --workspace     # every surface; regenerates include/remanence.h
+cargo build --workspace     # every surface; regenerates c/include/remanence.h
 cargo test --workspace      # the Rust-level tests only — see below
-just test-ffi                # C/C++ (S2): needs CMake and a C/C++ compiler
-just test-py                 # Python (S3): needs uv
+task test-ffi                # C/C++ (S2): needs CMake and a C/C++ compiler
+task test-py                 # Python (S3): needs uv
 cargo fmt --all -- --check
 git diff --check
 ```
 
 **All eight are required, and no prefix of the list is a subset anyone
-may stop at.** Only `crates/remanence` is a default member, so the bare
-commands build and test the Rust core and nothing else — which is what
-lets a reader of the core, or a packager, work without acquiring two
-further toolchains. A contributor is not that reader: the `--workspace`
-pair is what regenerates `crates/remanence-ffi/include/remanence.h` (the
-build script that writes it runs only when its own crate is built) and
-checks S2's and S3's Rust code, but **neither `cargo build` nor
-`cargo test`, in any form, reaches the C/C++ or Python surfaces
-themselves any more** — that is what `just test-ffi`/`just test-py` are
-for. This reverses D44-D51's and D63's original design of embedding both
-inside the Rust test harness; why, and what changed as a result, is
-`planning/DECISIONS.md` D65. One thing D65 improves rather than merely
-relocates: `cargo test --workspace` now needs only a Python interpreter
-(for pyo3's build script) — no CMake, no C/C++ compiler, no `uv` — since
-nothing it runs touches the C/C++ surface at all any more.
+may stop at.** `crates/remanence` and `crates/remanence-ffi` are default
+members (D68); `crates/remanence-py` is not, because its lifecycle
+depends on an external Python — pyo3's build script resolves against a
+real interpreter — where the other two now need nothing beyond rustc.
+The bare commands therefore build and test the Rust core *and* the C ABI
+(including regenerating `crates/remanence-ffi/c/include/remanence.h`,
+since the build script that writes it now runs by default), which is
+what lets a reader of either, or a packager, work without acquiring a
+Python toolchain first. A contributor is not that reader: the
+`--workspace` pair is what additionally reaches `remanence-py`'s Rust
+code, but **neither `cargo build` nor `cargo test`, in any form, reaches
+the C/C++ or Python surfaces' own test suites any more** — that is what
+`task test-ffi`/`task test-py` are for. This reverses D44-D51's and
+D63's original design of embedding both inside the Rust test harness;
+why, and what changed as a result, is `planning/DECISIONS.md` D65. One
+thing D65 improves rather than merely relocates: `cargo test --workspace`
+now needs only a Python interpreter (for pyo3's build script) — no
+CMake, no C/C++ compiler, no `uv` — since nothing it runs touches the
+C/C++ surface at all any more.
 
 **The formatting check is here because nothing was asking.** It went
 unrun long enough for 21 files to drift, and the drift was invisible:
@@ -932,8 +938,8 @@ cargo test --features rigs                        # what reliquary built
 ```
 
 **The FFI crate's own fixture- and rig-gated tests moved with the rest of
-it** (D65): `just test-ffi -L fixtures` is the KryoFlux flux walk, and
-`just test-ffi -L rigs` is every test crossing the boundary with
+it** (D65): `task test-ffi -L fixtures` is the KryoFlux flux walk, and
+`task test-ffi -L rigs` is every test crossing the boundary with
 `freedos-parttest.qcow2` — three of them now, not one; what changed and
 why is below.
 
@@ -961,8 +967,8 @@ checked `freedos-parttest.qcow2` with its own `Path::exists`, so nothing
 made it declare `rigs`, and `cargo test --workspace` — a required check
 — wanted the generated rig on every machine. It passed on every host
 that had run the prep and failed on the first fresh checkout to try it,
-which was a release build. That test is now `just test-ffi`'s
-`abi_boundary_discovery`, labeled `rigs` in `tests/c/CMakeLists.txt`
+which was a release build. That test is now `task test-ffi`'s
+`abi_boundary_discovery`, labeled `rigs` in `c/tests/CMakeLists.txt`
 rather than gated by `required-features` — and this migration converged
 two more tests (`abi_leaks`, `wrapper_report`) that reached the same
 fixture undeclared onto that same label, closing a live instance of the
@@ -987,24 +993,24 @@ published crate, needing nothing but rustc — which is what the gating
 above is for. What used to be the integration tier — `tests/*.rs`,
 `exclude = ["tests/**"]` keeping it out of both published crates — is
 Rust only for the core crate now. For `remanence-ffi` it is entirely
-CMake/CTest (`tests/c/`, driven by `just test-ffi`), and for
-`remanence-py` it is mostly `just test-py` plus one Rust file that
+CMake/CTest (`c/tests/`, driven by `task test-ffi`), and for
+`remanence-py` it is mostly `task test-py` plus one Rust file that
 remains, `stub_matches_module.rs`. Anything reaching a downloaded or
 generated artifact is still gated — a Cargo feature in the core crate, a
 CTest label in `remanence-ffi`'s CMakeLists.txt. So a packager who
 extracts either crate and runs `cargo test` still gets a passing unit
 tier with no network, no fixture and no second toolchain — the run a
 distribution build actually performs, unchanged by any of this.
-`examples/` stays in the FFI crate deliberately: `identify.c` and
+`c/examples/` stays in the FFI crate deliberately: `identify.c` and
 `identify.cpp` are the best documentation a C caller gets, and cargo
 ships them as plain files rather than as targets.
 
 When the C ABI changed, rebuild and commit the regenerated header.
-`just test-ffi` **compiles** the C surface for you (D44, D53): that the
-C header stands alone, that `examples/identify.c` still compiles against
+`task test-ffi` **compiles** the C surface for you (D44, D53): that the
+C header stands alone, that `c/examples/identify.c` still compiles against
 it, that the header is valid C++, which `cpp_compat = true` claims and
-nothing tested before D44, and that `include/remanence.hpp` stands alone
-and `examples/identify.cpp` compiles against it. For the C header,
+nothing tested before D44, and that `c/include/remanence.hpp` stands alone
+and `c/examples/identify.cpp` compiles against it. For the C header,
 compiling rather than linking is enough: generated from the `extern "C"`
 signatures, it cannot declare a symbol the library lacks. **The C++
 header is the one that can**, being hand-written, which is why it is
@@ -1016,36 +1022,42 @@ and sourcing that from a script is more bespoke machinery than the
 compiler search it replaces. CMake does it and finds MSVC unaided, which
 is the native match — the cdylib is MSVC-built, so a C caller links the
 import library the same toolchain produced.
-`crates/remanence-ffi/tests/c/CMakeLists.txt` is the build **and the
-CTest registration** (D65); `just test-ffi` drives it and it is not
+`crates/remanence-ffi/c/tests/CMakeLists.txt` is the build **and the
+CTest registration** (D65); `task test-ffi` drives it and it is not
 meant to be configured by hand.
 
-**The rule underneath that is the match, not MSVC.** A C caller is built
-by whichever toolchain built the library it links, and on a `windows-gnu`
-rustc that is not MSVC: cargo writes `libremanence_ffi.dll.a`, which
-`cl.exe` cannot link and whose C runtime is not MSVC's, so `xtask`
-(`xtask/src/main.rs`, run by `just test-ffi` before CMake configures)
-names gcc and a generator that can drive it (Ninja, or `mingw32-make`)
-rather than letting CMake pick MSVC and fail at the link. Nothing is
-inferred from the host: `xtask` reads the file names out of cargo's own
-`--message-format=json` report of the build it just ran, which is also
-what stops an artifact left behind by a *previous* toolchain being
-linked — cargo does not delete a file it has stopped writing, and a
-search of `target/<profile>` for a plausible name would find it. This is
-the one piece of the old Rust test harness that stayed Rust rather than
-moving into CMake (D65): reading a claim about one file, not guessing
-from the host or from CMake's own compiler search, is exactly the
-distinction this design has always insisted on.
+**A MinGW-built library is refused outright, not accommodated** (D66,
+reversing the accommodation D46/D65 built). `cl.exe` cannot link a
+`windows-gnu` rustc's `libremanence_ffi.dll.a`, and the two disagree
+about the C runtime besides — but rather than naming gcc and a generator
+that can drive it, `xtask` (`xtask/src/main.rs`, run by `task test-ffi`
+before CMake configures) now panics with a clear message before CMake
+ever configures: MSVC is the only Windows toolchain this project
+supports, full stop. Linux and macOS builds (`.so`/`.dylib`) are a
+separate, unaffected case — nothing there needed the MSVC/MinGW
+distinction to begin with, and `task test-ffi` still builds and runs
+against them there. Nothing is inferred from the host either way: `xtask`
+reads the file names out of cargo's own `--message-format=json` report of
+the build it just ran, which is also what stops an artifact left behind
+by a *previous* toolchain being linked — cargo does not delete a file it
+has stopped writing, and a search of `target/<profile>` for a plausible
+name would find it. This is the one piece of the old Rust test harness
+that stayed Rust rather than moving into CMake (D65): reading a claim
+about one file, not guessing from the host or from CMake's own compiler
+search, is exactly the distinction this design has always insisted on —
+now used to refuse rather than to adapt.
 
-Overrides, all optional: `REMANENCE_CC` / `REMANENCE_CXX` set CMake's
-compilers and win over the choice above, and `REMANENCE_CMAKE_GENERATOR`
-sets the generator. **No CMake or no compiler is a test failure, not a
-skip** (D64), and there is no variable that excuses it: choosing not to
-test this crate is what not running `just test-ffi` is for, but a run
-that does reach it runs all of it.
+Overrides, all optional and no longer MinGW-related: `REMANENCE_CC` /
+`REMANENCE_CXX` set CMake's compilers, and `REMANENCE_CMAKE_GENERATOR`
+sets the generator — for a reason unrelated to toolchain-matching, such
+as forcing `-G Ninja` with `clang-cl` for a faster build. **No CMake or
+no compiler is a test failure, not a skip** (D64), and there is no
+variable that excuses it: choosing not to test this crate is what not
+running `task test-ffi` is for, but a run that does reach it runs all of
+it.
 
-`just test-ffi` also **runs** a C caller against the built library
-(D45): `tests/c/abi_boundary.c` is compiled against the header, linked,
+`task test-ffi` also **runs** a C caller against the built library
+(D45): `c/tests/abi_boundary.c` is compiled against the header, linked,
 and run by CTest, one test per group — the catalogs, the version, a
 refusal's out-parameters, null handling, the device set, and (labeled
 `rigs`) a real artifact discovered and released. This is the only thing
@@ -1053,8 +1065,8 @@ that crosses the boundary as a C caller meets it; the FFI crate's unit
 tests call the same functions from Rust, where no header, no C compiler
 and no C calling convention are involved.
 
-`just test-ffi` **runs a C++ caller through the wrapper** as well (D53):
-`tests/c/wrapper.cpp`, one test per group, checking what only the C++
+`task test-ffi` **runs a C++ caller through the wrapper** as well (D53):
+`c/tests/wrapper.cpp`, one test per group, checking what only the C++
 surface can be wrong about — a refusal arriving as `remanence::Error`
 with the delivered category, an owned handle freeing itself, a
 moved-from wrapper freeing nothing, an honest absence staying an empty
@@ -1064,16 +1076,16 @@ remanence format's own worked example on disk, so it needs no fixture;
 report and a namespace above it are answers only a recording has.
 
 **Fixture- and rig-gated tests carry CTest labels now, not Cargo
-features** (D65). `just test-ffi -L fixtures` is `wrapper_flux_capture`:
+features** (D65). `task test-ffi -L fixtures` is `wrapper_flux_capture`:
 a real KryoFlux capture walked up the whole flux ladder, because the
 sector layer needs a recording that frames records and the worked
 example is deliberately two points on one orbit; it takes about two and
-a quarter minutes. `just test-ffi -L rigs` is every test needing
+a quarter minutes. `task test-ffi -L rigs` is every test needing
 `freedos-parttest.qcow2` — `abi_boundary_discovery`, `wrapper_report`,
 and `abi_leaks`, the last two converged onto the label by this
 migration, having reached the same fixture undeclared before it (the
 same bug class described above). Excluding both —
-`just test-ffi -LE "fixtures|rigs"` — is what a fresh clone with nothing
+`task test-ffi -LE "fixtures|rigs"` — is what a fresh clone with nothing
 downloaded or generated runs clean; `ctest -LE` takes one regex, not a
 flag per label, so passing it twice keeps only the second.
 
@@ -1081,12 +1093,12 @@ flag per label, so passing it twice keeps only the second.
 every borrowed-record accessor on a temporary, so
 `medium.identify().layers()` must *not* compile while the same walk over
 a named handle must. CMake compiles both at *configure* time — before
-`just test-ffi` gets as far as building or running anything — and fails
+`task test-ffi` gets as far as building or running anything — and fails
 the whole configure if either answers wrongly. If you add an accessor
 that hands back a record borrowed from its handle, give it the `const&`
 / `const&& = delete` pair the others have.
 
-**`just test-ffi` builds the shipped library itself, via `xtask`, every
+**`task test-ffi` builds the shipped library itself, via `xtask`, every
 time.** Unlike the Rust harness it replaces, there is no "run
 `cargo build` first, or the tests build it themselves and say so" case to
 remember — `xtask` always builds fresh.
@@ -1106,7 +1118,7 @@ link *that*, leaving `target/<profile>` exactly as it was. Cold it adds
 about twenty seconds; warm, a fifth of a second.
 
 **The same probe answers for the C++ wrapper** (D53), and that is where
-it earns the most: `tests/c/wrapper_leaks.cpp` cycles a session, its
+it earns the most: `c/tests/wrapper_leaks.cpp` cycles a session, its
 records, a refusal's message and rule, and a handle released back to C —
 a caller who writes no `_free` cannot see a missing one either, there
 being no call site to inspect. It authors its own medium and needs no
@@ -1120,11 +1132,11 @@ Running the example against a real image is still by hand, below; that
 is the part neither compiling nor the boundary tests stands in for.
 
 When the Python surface changed, **move the type stub with it** (above);
-`just test-py` is what checks it now, needing no separate command for
+`task test-py` is what checks it now, needing no separate command for
 release artifacts either — `uv build crates/remanence-py` produces the
 sdist and abi3 wheel on its own.
 
-**Two of the stub's three checks moved to `just test-py`; one stayed in
+**Two of the stub's three checks moved to `task test-py`; one stayed in
 `cargo test`** (D42, D43, D65). Between them they still cover both
 halves of what the stub claims. Run them after any Python-surface change
 and believe them: the module is the norm, so what they report is a fix
@@ -1134,12 +1146,12 @@ to the stub.
   Python involved (pure source-text comparison), compares what
   `src/lib.rs` registers with pyo3 against what the stub declares, in
   both directions, and names the class and member on any disagreement.
-- **Types** — `just test-py` runs `mypy --strict` over
+- **Types** — `task test-py` runs `mypy --strict` over
   `tests/mypy_fixtures/accepts.py`, ordinary consumer code that must
   check clean, at Python 3.10 (the minimum `pyproject.toml` claims).
 - **Refusals** — the same recipe runs mypy over
   `tests/mypy_fixtures/rejects.py`, which must *fail*. **Unlike the two
-  Rust tests this replaces**, `just test-py` only checks that mypy
+  Rust tests this replaces**, `task test-py` only checks that mypy
   refuses it as a whole — not that each line is refused for the exact
   error code its `# expect:` marker names. That finer cross-check is a
   real loss of precision this migration accepted rather than reproducing
@@ -1148,7 +1160,7 @@ to the stub.
 mypy runs as `uv run --with mypy --no-project mypy`, needing no prior
 install — uv already being how the wheel is built — and asking for no
 particular interpreter, mypy importing nothing it checks (D63). An
-unreachable `uv` **fails** `just test-py` outright (the recipe runs under
+unreachable `uv` **fails** `task test-py` outright (the recipe runs under
 `set -euo pipefail`), because a check that quietly does not run reads
 exactly like one that passed, and no variable excuses it (D64) — the
 same policy as before, now enforced by the recipe's own shell rather than
@@ -1156,12 +1168,12 @@ a Rust assertion.
 
 ### Running the C example on this host
 
-`just test-ffi` already compiles the example (above). This links and
+`task test-ffi` already compiles the example (above). This links and
 runs it, which is the part a compile cannot stand in for: it exercises
 the ABI end to end against a real artifact.
 
 The C++ example is the same journey through `remanence.hpp`, and builds
-the same way with `g++ -std=c++17` over `examples/identify.cpp`. It
+the same way with `g++ -std=c++17` over `c/examples/identify.cpp`. It
 takes `<path> [device-type]`, `--author [kind]` and `--devices`, and is
 worth running beside the C one for the comparison the two make: the same
 work, with the frees and the out-parameters gone.
@@ -1175,8 +1187,8 @@ fails with no diagnostic at all. From PowerShell:
 
 ```powershell
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
-gcc crates/remanence-ffi/examples/identify.c target/debug/remanence_ffi.dll `
-    -I crates/remanence-ffi/include -o "$env:TEMP\identify.exe"
+gcc crates/remanence-ffi/c/examples/identify.c target/debug/remanence_ffi.dll `
+    -I crates/remanence-ffi/c/include -o "$env:TEMP\identify.exe"
 ```
 
 Then run it beside a copy of `target/debug/remanence_ffi.dll`, against

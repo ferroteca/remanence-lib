@@ -40,9 +40,9 @@ Changelog = "https://github.com/ferroteca/remanence-lib/blob/main/CHANGELOG.md"
 Issues = "https://github.com/ferroteca/remanence-lib/issues"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["python/tests"]
 # The suite runs against the *installed* module, never a source tree:
-# there is no importable package here to shadow it, `python/remanence`
+# there is no importable package here to shadow it, `python/src/remanence`
 # holding only the stub and the shim.
 addopts = "-q"
 
@@ -53,5 +53,10 @@ features = ["pyo3/extension-module"]
 # re-export shim for a pure-Rust project but has nowhere to put a
 # `py.typed`, which PEP 561 requires to live inside the package; naming
 # a python source root gives the stub and the marker a home, and
-# `python/remanence/__init__.py` is the generated shim written out.
-python-source = "python"
+# `python/src/remanence/__init__.py` is the generated shim written out.
+# `src`, not `python` alone, is deliberate (D69): only files inside
+# `python-source` are eligible for bundling into the wheel, so
+# `python/tests` sitting *outside* `python/src` is what keeps the pytest
+# suite structurally excluded from what ships — not a convention someone
+# has to remember, a directory boundary that makes it impossible.
+python-source = "python/src"

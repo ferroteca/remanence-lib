@@ -6,8 +6,8 @@
 /* Example C consumer of the remanence C ABI: mirrors the C++ CLI front-end.
  *
  * Build (MinGW, from the workspace root, after `cargo build -p remanence-ffi`):
- *   gcc crates/remanence-ffi/examples/identify.c target/debug/remanence_ffi.dll \
- *       -I crates/remanence-ffi/include -o identify.exe
+ *   gcc crates/remanence-ffi/c/examples/identify.c target/debug/remanence_ffi.dll \
+ *       -I crates/remanence-ffi/c/include -o identify.exe
  */
 
 #include <ctype.h>

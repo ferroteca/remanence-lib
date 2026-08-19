@@ -8,7 +8,7 @@ vintage and modern systems alike.
 This crate is something you build, not something you add to a Rust project.
 It produces a static library and a shared library, and generates the C
 header
-[`include/remanence.h`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/include/remanence.h)
+[`c/include/remanence.h`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/c/include/remanence.h)
 as part of the build. If you are writing Rust, use the
 [`remanence`](https://crates.io/crates/remanence) crate directly instead.
 
@@ -27,13 +27,13 @@ have to free is documented as yours to free; anything the session owns is
 handed to you as a view, and freeing it is not your job.
 
 There is a complete worked example at
-[`examples/identify.c`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/examples/identify.c),
+[`c/examples/identify.c`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/c/examples/identify.c),
 with build instructions in the comment at the top.
 
 ## From C++
 
 C++ callers get a friendlier header —
-[`include/remanence.hpp`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/include/remanence.hpp),
+[`c/include/remanence.hpp`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/c/include/remanence.hpp),
 header-only, C++17. It is built on top of the C interface rather than
 alongside it, and it covers every function the C interface exports. What it
 adds is convenience: objects clean up after themselves, and failures arrive
@@ -88,7 +88,7 @@ try {
 ```
 
 The matching example is
-[`examples/identify.cpp`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/examples/identify.cpp),
+[`c/examples/identify.cpp`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/c/examples/identify.cpp),
 next to the C one.
 
 ## Features

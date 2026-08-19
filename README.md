@@ -283,7 +283,7 @@ it from a package registry.
 ## Building
 
 ```bash
-cargo build            # core + C FFI (generates crates/remanence-ffi/include/remanence.h)
+cargo build            # core + C FFI (generates crates/remanence-ffi/c/include/remanence.h)
 cargo test             # the full test suite
 ```
 
@@ -301,28 +301,28 @@ beyond uv itself needs installing. Publishing is `uv publish` from that
 only, for now**, and its packaging classifiers say so; the POSIX code paths
 exist and should stay correct, but they are untested and unclaimed.
 
-Testing the Python bindings and the C/C++ surface is `just`, not
-`cargo test` — neither is reached by `cargo build`/`cargo test` in any
-form:
+Testing the Python bindings and the C/C++ surface is
+[Task](https://taskfile.dev), not `cargo test` — neither is reached by
+`cargo build`/`cargo test` in any form:
 
 ```bash
-just test-py    # builds, stages, and runs pytest and mypy against it
-just test-ffi   # builds via CMake and runs the C/C++ suite with CTest
+task test-py    # builds, stages, and runs pytest and mypy against it
+task test-ffi   # builds via CMake and runs the C/C++ suite with CTest
 ```
 
 An example C consumer is at
-[crates/remanence-ffi/examples/identify.c](crates/remanence-ffi/examples/identify.c),
+[crates/remanence-ffi/c/examples/identify.c](crates/remanence-ffi/c/examples/identify.c),
 with build instructions in its header comment.
 
 **C++ consumers have a friendlier header** —
-[crates/remanence-ffi/include/remanence.hpp](crates/remanence-ffi/include/remanence.hpp),
+[crates/remanence-ffi/c/include/remanence.hpp](crates/remanence-ffi/c/include/remanence.hpp),
 header-only and C++17 — built on top of the C ABI rather than alongside it.
 It gives you objects that clean up after themselves, views onto the things
 the session owns, and failures as a single exception type carrying the same
 stable category code. It covers every exported function, the flux ladder
 included. The C ABI remains the standard interface and is still fully
 available; this adds convenience, not reach. Its example is
-[examples/identify.cpp](crates/remanence-ffi/examples/identify.cpp), beside
+[c/examples/identify.cpp](crates/remanence-ffi/c/examples/identify.cpp), beside
 the C one.
 
 ## Using the library

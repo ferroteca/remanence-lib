@@ -36,24 +36,29 @@ remanence-lib is a Cargo workspace, pinned to one toolchain by
 Rust toolchain is all the core needs.
 
 ```bash
-cargo build                 # the Rust core alone, and nothing else is needed
+cargo build                 # the Rust core and the C ABI; nothing but rustc is needed
 cargo test
-cargo build --workspace     # every surface; regenerates include/remanence.h
+cargo build --workspace     # every surface; regenerates c/include/remanence.h
 cargo test --workspace      # the Rust-level tests only
-just test-ffi                 # the C/C++ surface: needs CMake and a C/C++ compiler
-just test-py                  # the Python surface: needs Python 3.10+ with uv
+task test-ffi                 # the C/C++ surface: needs CMake and a C/C++ compiler
+task test-py                  # the Python surface: needs Python 3.10+ with uv
 ```
 
-Only `crates/remanence` is a default member, so the bare commands ask
-nothing of you but rustc. **A contributor runs all four of the rest**:
-`cargo build --workspace` regenerates
-`crates/remanence-ffi/include/remanence.h` (the build script that writes
-it runs only when its own crate is built), `cargo test --workspace`
-checks the Rust-level tests of every surface, and `just test-ffi`/
-`just test-py` are what actually check the C ABI and the Python module
-respectively — neither is reached by `cargo test` in any form. Extra
-`ctest` arguments pass through `just test-ffi`, e.g.
-`just test-ffi -LE "rigs|fixtures"` to skip what needs a downloaded or
+`crates/remanence` and `crates/remanence-ffi` are default members; only
+`crates/remanence-py` is not, since its lifecycle depends on an external
+Python that the other two no longer need at all (D68). The bare commands
+therefore ask nothing of you but rustc, and already regenerate
+`crates/remanence-ffi/c/include/remanence.h` in the process. **A
+contributor runs all four of the rest**: `cargo build --workspace`
+additionally reaches `remanence-py`'s Rust code, `cargo test --workspace`
+checks the Rust-level tests of every surface, and `task test-ffi`/
+`task test-py` are what actually check the C ABI and the Python module
+respectively — neither is reached by `cargo test` in any form. `task`,
+not `just` — [Task](https://taskfile.dev) embeds its own shell
+interpreter, so a task runs the same wherever it's invoked from with no
+external shell dependency at all, unlike `just`'s recipes, which needed
+git-bash. Extra `ctest` arguments pass through `task test-ffi`, e.g.
+`task test-ffi -- -LE "rigs|fixtures"` to skip what needs a downloaded or
 generated fixture (one regex — `ctest -LE` does not compose across
 repeated flags). Distributable Python artifacts are built with
 `uv build crates/remanence-py`, which drives the maturin build backend
@@ -78,7 +83,7 @@ for what it builds, prerequisites (QEMU), and how the FreeDOS rig works.
 - Match the existing style, add or update tests for changed behavior, and
   keep the C header and Python surface in step with the core when the
   public API changes. The C header regenerates on build; the C++ wrapper
-  beside it (`crates/remanence-ffi/include/remanence.hpp`) is written by
+  beside it (`crates/remanence-ffi/c/include/remanence.hpp`) is written by
   hand and moves with the C ABI in the same change.
 - Add an entry to [CHANGELOG.md](CHANGELOG.md) under `Unreleased` when
   public behavior changes. Released sections are history and are never

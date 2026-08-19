@@ -3,7 +3,7 @@
 
 //! The type stub says the same thing the module does (S3, D40, D42).
 //!
-//! `python/remanence/__init__.pyi` is written by hand and nothing
+//! `python/src/remanence/__init__.pyi` is written by hand and nothing
 //! regenerates it, so it is the one artifact here that can disagree with
 //! the surface it describes and stay silent about it. This test is what
 //! makes the disagreement loud.
@@ -327,7 +327,7 @@ fn report(
 #[test]
 fn the_stub_states_exactly_what_the_module_registers() {
     let module = parse_module(&read("src/lib.rs"));
-    let stub = parse_stub(&read("python/remanence/__init__.pyi"));
+    let stub = parse_stub(&read("python/src/remanence/__init__.pyi"));
 
     assert!(
         module.registered.len() > 40,
@@ -394,7 +394,7 @@ fn the_stub_states_exactly_what_the_module_registers() {
         problems.is_empty(),
         "the type stub and the module disagree. The module is the norm, so \
          each line below is a fix to \
-         crates/remanence-py/python/remanence/__init__.pyi:\n  {}",
+         crates/remanence-py/python/src/remanence/__init__.pyi:\n  {}",
         problems.join("\n  ")
     );
 }

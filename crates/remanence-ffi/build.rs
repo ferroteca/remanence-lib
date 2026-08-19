@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Regenerates include/remanence.h from the crate's public C ABI.
+//! Regenerates c/include/remanence.h from the crate's public C ABI.
 
 fn main() {
     let crate_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
@@ -17,5 +17,5 @@ fn main() {
         .with_config(config)
         .generate()
         .expect("cbindgen generates the C header")
-        .write_to_file(format!("{crate_dir}/include/remanence.h"));
+        .write_to_file(format!("{crate_dir}/c/include/remanence.h"));
 }

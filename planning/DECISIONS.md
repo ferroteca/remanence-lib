@@ -58,6 +58,296 @@ removes it is the record either way.
 
 ## Decisions
 
+### D69 — `c/{include,examples,tests}` groups the whole C/C++-facing surface, apart from the crate's own Rust scaffolding
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-19. **Supports** S2, S3; amends D69's own predecessors on path
+alone — D46, D47, D50, D53, D54, D65, D66, and D48/D51's Python-side
+counterparts describe mechanisms that all stand unchanged, only relocated.
+`DECISIONS.md` was searched first and returned all of these, none of
+which this overrules in substance.
+
+**The forcing question was narrower than "reorganize by language."**
+`crates/*/tests` should hold Rust tests (a plain statement of what the
+name already promises everywhere else in this workspace) — and after
+D65, `crates/remanence-ffi/tests/c/` held zero Rust files, entirely C/C++
+content sitting under a name that no longer described it.
+`crates/remanence-py/tests/` was a genuine mix: `stub_matches_module.rs`
+(Rust, cargo-driven) beside five pytest files and `mypy_fixtures/`
+(neither). Only that mismatch needed fixing — nobody had raised a
+problem with `include/` or `examples/`, which were already correctly
+named for what they hold.
+
+**C and C++ do not split, on either crate.** `remanence.hpp` has a direct
+`#include <remanence.h>` — splitting `include/` into `c/include/` and
+`cpp/include/` would force every C++ compile site (the CMake project,
+and any real external C++ consumer) to carry two `-I` flags forever,
+where one suffices today, for no offsetting benefit: nothing about
+testing or examples needed C and C++ kept apart, only kept apart from
+Rust. `examples/` and `external-tests` (this entry's own transient name
+for what became `c/tests/`) *could* have split cleanly at the file
+level — no cross-file dependency forced them together — but doing so
+while `include/` stayed unsplit would have left the crate with C/C++
+mixed in one folder and separated in two others, a worse inconsistency
+than the one being fixed.
+
+**So `remanence-ffi` groups by audience, not language:**
+`crates/remanence-ffi/c/{include,examples,tests}` is everything a C/C++
+consumer or contributor to that surface touches, C and C++ still
+combined within each exactly as before, sitting apart from `src/`,
+`Cargo.toml`, `build.rs`, `cbindgen.toml` — this crate's own Rust
+machinery. `tests/` at the crate root no longer exists at all, having
+held nothing but this. `Cargo.toml`'s `exclude` narrows from
+`tests/**` to `c/tests/**` specifically, since `c/include/` and
+`c/examples/` still ship (the header a consumer builds against,
+`identify.c`/`identify.cpp` as documentation) — only the part that tests
+*this repository* stays out.
+
+**`remanence-py` groups by the same principle, expressed as Python's own
+convention.** `crates/remanence-py/python/src/remanence/` (was
+`python/remanence/`) and `crates/remanence-py/python/tests/` (was mostly
+`crates/remanence-py/tests/`, minus the one Rust file) are the standard
+Python src-layout — package source and its tests as siblings under one
+project root — chosen over inventing a workspace-specific shape.
+`pyproject.toml`'s `python-source` moves from `"python"` to `"python/src"`
+accordingly, which is not a cosmetic rename: maturin bundles into the
+wheel only what sits inside `python-source`, so `python/tests/` as a
+*sibling* to `python/src/` rather than a child of the old `python/` is
+what makes the pytest suite structurally impossible to ship in the
+wheel, rather than merely a convention nobody violates yet. Verified
+directly — built both the sdist and the wheel after the move: the sdist
+carries `python/tests/*.py` (D48 still holds) and correctly omits
+`python/tests/mypy_fixtures/**`; the wheel carries exactly
+`remanence/{__init__.py,__init__.pyi,py.typed,remanence.pyd}` and
+nothing else, no test file present. `crates/remanence-py/tests/` keeps
+only `stub_matches_module.rs`, the one thing there that was ever
+actually a Rust test.
+
+**Two real defects caught by insisting on a clean rebuild rather than
+trusting a moved file's stale mtime:** `workspace_dir()`'s
+`.canonicalize()` prefixes paths with `\\?\` on Windows, which broke
+MSVC's SARIF diagnostics parser the moment `xtask` needed to hand CMake
+a path built from it (`Invalid URI: The hostname could not be parsed`
+for a source file that plainly existed) — fixed by using `.parent()`
+instead, needing no `..` resolution since the manifest directory is
+already absolute. And `crates/remanence-ffi/c/tests/CMakeLists.txt`'s
+`REMANENCE_WORKSPACE` relative-path climb needed recounting for the new
+depth (`../../../..`, matching `tests/c/`'s original depth — `c/tests/`
+sits exactly as deep, just under a different parent) — caught because a
+stale CMake cache from the old source path failed loudly
+("does not match the source ... used to generate cache") rather than
+silently reusing the wrong tree.
+
+**Weighed and declined:** splitting `include/`/`examples/`/`tests` by
+language on both crates for uniformity with the `c/` grouping —
+declined because `include/`'s cross-file dependency makes that split
+strictly worse there, and applying it only where it's free (`examples/`,
+`tests`) while `include/` stays combined trades one inconsistency for
+another; and nesting `remanence-py`'s tests inside the pre-existing
+`python/` directory without introducing `src/` — declined because
+`python-source = "python"` would still cover the whole directory,
+leaving test-file wheel-exclusion a convention rather than a structural
+guarantee.
+
+**No changelog entry.** Where source and test files live is not
+release-facing.
+
+
+### D68 — `remanence-ffi` rejoins `default-members`; `remanence-py` stays out for what it alone still needs
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-19. **Supports** S2, S3; amends D52, narrowing rather than
+reversing it. `DECISIONS.md` was searched first and returned D52, whose
+"name neither" resolution this partly undoes — for a reason D52 itself
+did not have available to it.
+
+**D52 objected to an asymmetry with no cause a caller could see:**
+`remanence-ffi` was a default member and `remanence-py` was not, for no
+reason tied to what either crate actually cost to build — CMake and a
+C/C++ compiler were still needed for `remanence-ffi`'s own `cargo test`
+at the time, same as `remanence-py`'s Python toolchain. Naming neither as
+default was the fix available then, because the two crates' real costs
+were not actually different.
+
+**They are different now.** D65 moved every C/C++ check out of
+`cargo test` entirely, reached only by `task test-ffi`. Verified
+directly, from a clean state: `cargo build -p remanence-ffi` and
+`cargo test -p remanence-ffi` need nothing beyond rustc — cbindgen only
+writes the header's text, compiling nothing, and the in-source unit
+tests are plain Rust. `remanence-py` has no equivalent change available
+to it: pyo3's build script resolves against a real Python interpreter to
+build against at all, a dependency this migration never touched and
+could not remove by relocating checks, because it is not a check —
+it is what compiling the crate itself requires.
+
+**So default membership now tracks a real difference, not an arbitrary
+one.** `crates/remanence` and `crates/remanence-ffi` are default
+members; `crates/remanence-py` is not, because its lifecycle depends on
+an external Python in a way the other two no longer depend on anything
+external at all. This reintroduces the *shape* D52 objected to — one
+crate default, a sibling not — without reintroducing what D52 actually
+objected to, which was the absence of a reason.
+
+**The asymmetry stays smaller than the one D52 fixed, on purpose.**
+Default membership only ever governed the free (rustc-only) portion of
+each surface's checks — neither the C/C++ suite nor the Python one was
+ever reached by it, before or after this entry; both need their own
+`task` invocation regardless. What default membership decides now is
+narrower than what it decided when D52 was written, which is part of why
+reintroducing the asymmetry is safe to do.
+
+**`cargo build --workspace` and `cargo test --workspace` are still
+required checks for everything**, unchanged from D52: what is optional
+is being the person who remembers to ask for them beyond the default,
+not whether they are asked for at all.
+
+**No changelog entry.** Which crates a bare `cargo build` reaches is not
+release-facing.
+
+
+### D67 — `task` replaces `just`, dropping the last MSYS2/bash dependency
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-19. **Supports** S2, S3; amends D65 to name Task rather than
+`just` as the runner — the CMake/CTest registration and `xtask`'s role
+both stand, unchanged. `DECISIONS.md` was searched first and returned
+D65 and D66, the second of which this follows directly: having dropped
+MSYS2 as a supported build *toolchain*, `just`'s own recipes still had a
+hard, unavoidable dependency on a real shell to run them at all.
+
+**`just` has no shell of its own.** Every recipe in the `justfile` this
+replaces carried a `#!/usr/bin/env bash` shebang, because `just`
+delegates a recipe body to whatever the host provides — on Windows, that
+means git-bash/MSYS2, or nothing runs. Dropping MSYS2 as a toolchain
+while still requiring it to invoke the tasks that check the toolchain
+was the asymmetry this closes. Task embeds its own shell interpreter
+(`mvdan.cc/sh`), so a task runs identically wherever it is invoked from,
+with no external shell dependency at all.
+
+**Task's own bundled tools are minimal, and that reshaped `xtask` rather
+than just relocating text.** Task ships a small Go-native file-operations
+set on Windows (`cp`, `mv`, `mkdir`) — not `sed`, `grep`, `xargs`, or
+shell arrays. The `just`-era design had `xtask` print `SLUG=`/`CMAKE_ARG=`
+lines for the recipe's shell to parse and reassemble into an argument
+list; porting that parsing to Task would have silently depended on
+coreutils being on `PATH` again, the exact dependency this is meant to
+drop. So the parsing moved instead of the text: `xtask ffi` now runs
+`cmake` configure and build itself (`std::process::Command`, real argv,
+no shell involved) and prints one line — the build directory — for
+`task test-ffi` to hand straight to `ctest`. `xtask py-stage` is new for
+the same reason, taking over the compiled-module staging `python_suite.rs`
+used to do before D65 deleted it. This is a genuine simplification, not
+a workaround: it also removes every shell-quoting hazard the `just`
+version carried.
+
+**Three things broke while proving this, each fixed and worth recording
+so they are not rediscovered:**
+
+- `workspace_dir()`'s `.canonicalize()` prefixes its answer with `\\?\`
+  on Windows — a verbatim path CMake's own tools mostly tolerate but
+  MSVC's SARIF diagnostic output does not, failing a `try_compile` with
+  `Invalid URI: The hostname could not be parsed` for a source file that
+  plainly exists. Fixed by using `.parent()` instead: the manifest
+  directory is already absolute, so there is no `..` left to resolve and
+  no prefix to trip over.
+- `{{.CLI_ARGS}}` is *already* shell-quoted by Task for direct use
+  (confirmed directly: `-LE "rigs|fixtures"` becomes the literal text
+  `-LE 'rigs|fixtures'`) — the opposite of `just`, whose equivalent
+  needed defensive quoting because it is raw text substitution. Applying
+  the fix `just` needed here — capturing it into a variable and
+  re-quoting — double-quoted it instead, so the embedded shell saw
+  literal `'` characters as part of the value and the label filter
+  silently excluded nothing. Caught by testing the exclusion case
+  directly, not by inspection.
+- Task's `cmd:` scripts do not default to `errexit`. `set -euo pipefail`
+  (confirmed supported by `mvdan.cc/sh`) is stated explicitly at the top
+  of both tasks now; without it a failed step would not stop the ones
+  after it, which is the exact "quietly does not run" shape D64 exists to
+  refuse.
+
+**Also found, unrelated to Task itself: running the whole `test-py` task
+from `crates/remanence-py` made `uv run -- cargo build` treat that
+directory as a uv project and create a stray `uv.lock`.** Fixed by
+running that one step from the workspace root, as the original design
+did, and changing directory only for the later pytest/mypy steps that
+need `pyproject.toml`'s relative paths.
+
+**Weighed and declined:** keeping `just` for the C/C++ and Python tasks
+specifically since its own shell-script bodies already worked — declined
+because "drop MSYS2 everywhere" (D66) means the tooling too, not only the
+toolchain being tested, and `just` cannot reach that without a shell
+`Taskfile.yml` does not need.
+
+**No changelog entry.** How the suite is invoked is not release-facing.
+
+
+### D66 — Windows means MSVC only; a MinGW/MSYS2 build is refused, not accommodated
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-18. **Supports** S2, S3; overrules D46's toolchain-matching
+accommodation and the commit `a58247c`'s "a local MSYS2 build is
+legitimate" stance, in favor of MSVC as the one supported Windows
+toolchain. Genuine Linux/macOS support — `Toolchain::Native` in `xtask`,
+unrelated to MSYS2 at all — is untouched and stays wanted. `DECISIONS.md`
+was searched first and returned D46 and D65, whose accommodation this
+overrules, and named the commit the search also found.
+
+**D46 solved the wrong problem, in hindsight.** It read what toolchain
+built the library and matched CMake to it, on the premise that a
+developer working from an MSYS2 shell was someone the project should
+keep working smoothly for. Living through what that premise actually
+costs — D63's uv-interpreter routing, D64's fail-rather-than-skip policy,
+D65's whole CMake/CTest migration, and this session's own `libpython3.dll`
+diagnosis — is what overturns it: matching two Windows toolchains buys a
+developer nothing an MSVC-only shell does not already give them, and
+every one of those decisions exists to manage a mismatch that a second
+supported toolchain creates and a single one cannot.
+
+**So the two now refuse rather than adapt, symmetrically.** `xtask`
+(`xtask/src/main.rs`) still reads which toolchain a build actually
+produced — that read is right and stays, per D65's own reasoning — but
+where it once selected a matching CMake generator and compiler, it now
+panics with a clear message naming the fix (build with the native
+toolchain) before CMake configures at all.
+`crates/remanence-py/build.rs`, deleted by D65 for having become a bare
+diagnostic recorder, is reinstated with an actual job: it reads
+`pyo3_build_config::get().lib_name()` and panics if the name is
+`lib`-prefixed, which is exactly the claim an MSYS2-built Python's import
+library makes about itself (`libpython3` rather than the native
+convention's `python3`) — read from what pyo3 resolved, not guessed from
+the host, the same principle D46/D65 already established.
+
+**The Python-side refusal closes an incident at its actual source.**
+0.0.1a4 shipped a MinGW-tagged wheel to PyPI, and failed at `import` for
+every consumer of it, because nothing stood between `uv build`'s internal
+`cargo build` (via maturin) and a published artifact. `build.rs` runs for
+*any* compile of the crate — a bare `cargo build -p remanence-py`, `uv
+build`, `task test-py` — so that incident is no longer reachable at all,
+not merely caught later by a test.
+
+**No equivalent build.rs-level refusal for `remanence-ffi`, deliberately
+asymmetric.** `remanence-ffi` publishes only source to crates.io — no
+compiled cdylib ever ships — so there is no artifact-reaches-a-registry
+risk to guard against the way there was for `remanence-py`'s wheel. A
+consumer building it from source uses their own toolchain, unrelated to
+whatever built a maintainer's dev copy. The only real consequence of a
+MinGW dev-build here is an untestable `task test-ffi`, which `xtask`
+already refuses at exactly the point that matters.
+
+**Weighed and declined:** keeping the accommodation as a courtesy to
+whoever develops from an MSYS2 shell — declined because the courtesy
+assumed matching two toolchains was worth its cost to someone, and this
+project's own experience is the disproof: verifying it took a session's
+worth of diagnosis, three prior decisions, and machinery nobody asked
+for by name; and refusing only inside `task test-py`'s own build step
+rather than in `build.rs` itself, declined because that would leave
+`uv build`/maturin's internal build — the actual 0.0.1a4 path — unguarded.
+
+**No changelog entry.** Which toolchains a contributor's local build is
+checked against is not release-facing; the classifiers `pyproject.toml`
+already states (Windows, native) do not change.
+
+
 ### D65 — `just` runs the C/C++ and Python checks now; `cargo test` runs only Rust's own
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -68,6 +358,9 @@ untouched. Amends D63 to name `just test-py` rather than `cargo test` as
 what routes through uv. `DECISIONS.md` was searched first and returned
 all of these, each turning on the same premise this reverses: that a
 check reached from `cargo test` is a check that keeps running.
+[Superseded on the runner by D67 — `just` is replaced by `task`
+throughout this entry; the CMake/CTest registration and the choice to
+keep toolchain-matching in `xtask` both stand unchanged.]
 
 **The premise was true and the mechanism was the cost.** Nothing here
 disputes D48's or D64's reasoning — a check nobody remembers to run is a
@@ -86,6 +379,12 @@ D49/D54 gated behind Cargo features — and `just test-ffi` drives
 configure, build and `ctest` in one step. `just test-py` builds through
 uv, stages the module, and runs pytest and mypy directly; neither needs
 a Rust `#[test]` to exist at all.
+[Superseded on paths by D69 — `tests/c/` is `c/tests/` throughout this
+entry (and every other `tests/c/...` mention below), `include/`/
+`examples/` are `c/include/`/`c/examples/`, and `crates/remanence-py/
+python/remanence/` is `crates/remanence-py/python/src/remanence/`. The
+CTest registration and everything else this entry describes stand
+unchanged — only where it all lives moved.]
 
 **One piece stayed in Rust, deliberately: which toolchain built the
 library** (D46's "read from what a build produced rather than the
@@ -586,7 +885,12 @@ privileged over the other.
 longer regenerates `crates/remanence-ffi/include/remanence.h`, the
 build script that writes it running only when its own crate is built —
 so the workspace build is what carries that, and the required checks say
-so. And the risk D52 named is real and unchanged: a check reached only
+so.
+[Superseded by D68 and D69 — a bare `cargo build` regenerates it again,
+`remanence-ffi` having rejoined `default-members` once its checks needed
+nothing beyond rustc; and the path itself is now
+`crates/remanence-ffi/c/include/remanence.h`.]
+And the risk D52 named is real and unchanged: a check reached only
 by a flag is a check that stops being run. Nothing here disproves that;
 the answer is the obligation above, and if it turns out flags are not
 typed even when required, this entry is the wrong one rather than the
@@ -845,6 +1149,9 @@ installed from the same directory. `.hpp` rather than `.h` because both
 files sit in one directory and the extension is the only thing that
 tells a reader which is which. The example is
 `examples/identify.cpp` beside `examples/identify.c`.
+[Superseded on path by D69 — both directories moved to
+`crates/remanence-ffi/c/{include,examples}/`, still beside each other
+exactly as this entry describes.]
 
 **Weighed and declined:** wrapping every ABI function including the flux
 ladder (it doubles a hand-maintained surface for a layer whose own
@@ -1300,6 +1607,9 @@ header is genuinely more coverage than one. `REMANENCE_CC` /
 `REMANENCE_CXX` still override CMake's choice and
 `REMANENCE_CMAKE_GENERATOR` the generator, so gcc remains one variable
 away; it is no longer the default, and no longer discovered.
+[Superseded by D66 — gcc is no longer one variable away for a MinGW
+build specifically: that case is refused outright, not matched. The
+overrides stay, for an unrelated reason (e.g. `-G Ninja` with `clang-cl`).]
 
 **It is not shorter, and the entry says so.** The shared module is 209
 lines against 224. The gain is in what those lines *do* — configure and

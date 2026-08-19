@@ -13,9 +13,9 @@
  * once at the bottom, and what is left is the journey itself.
  *
  * Build (MinGW, from the workspace root, after `cargo build -p remanence-ffi`):
- *   g++ -std=c++17 crates/remanence-ffi/examples/identify.cpp \
+ *   g++ -std=c++17 crates/remanence-ffi/c/examples/identify.cpp \
  *       target/debug/remanence_ffi.dll \
- *       -I crates/remanence-ffi/include -o identify.exe
+ *       -I crates/remanence-ffi/c/include -o identify.exe
  *
  * Usage:
  *   identify <path> [device-type]   what an artifact is, and what is on it
