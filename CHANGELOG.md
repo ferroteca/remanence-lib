@@ -18,6 +18,8 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+## 0.0.1-alpha.6 - 2026-08-19
+
 ### Added
 
 - **A third Heath soft-sectored family is enrolled** — the H-17-1
