@@ -3,7 +3,7 @@ name = "test-fixture-prep"
 version = "0"
 requires-python = ">=3.12"
 dependencies = [
-    "reliquary==0.1.0a1",
+    "reliquary==0.1.0a2",
 ]
 
 [tool.uv]

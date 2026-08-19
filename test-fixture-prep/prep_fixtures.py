@@ -424,7 +424,7 @@ def rig_context():
     )
 
 
-def build_rig_machine(context) -> tuple[str, Path]:
+def build_rig_machine(session) -> tuple[str, Path]:
     """Drive the rig's install script; return its machine and directory.
 
     Returning from inside the `try` is what keeps the caller's names
@@ -436,13 +436,9 @@ def build_rig_machine(context) -> tuple[str, Path]:
         # exists, fetches the pinned LiveCD through the blueprint's
         # media spec, and drives the install script; failures raise by
         # error class.
-        reliquary.run_script("install", blueprint=RIG_BLUEPRINT, context=context)
-        machine_id = reliquary.resolve_machine(
-            blueprint=RIG_BLUEPRINT, context=context
-        )
-        machine_dir = reliquary.get_machine_dir(
-            machine=machine_id, context=context
-        )
+        session.run_script("install", blueprint=RIG_BLUEPRINT)
+        machine_id = session.resolve_machine(blueprint=RIG_BLUEPRINT)
+        machine_dir = session.get_machine_dir(machine=machine_id)
         return machine_id, Path(machine_dir)
     except reliquary.ReliquaryError as error:
         sys.exit(
@@ -453,7 +449,7 @@ def build_rig_machine(context) -> tuple[str, Path]:
         )
 
 
-def prepare_freedos_fixture(context) -> None:
+def prepare_freedos_fixture(session) -> None:
     print("==> Preparing FreeDOS qcow2 rig artifact...")
     target = FIXTURES_DIR / FREEDOS_QCOW2_NAME
     if target.exists():
@@ -461,7 +457,7 @@ def prepare_freedos_fixture(context) -> None:
         return
 
     print(f"Building {target.name} with reliquary...")
-    machine_id, machine_dir = build_rig_machine(context)
+    machine_id, machine_dir = build_rig_machine(session)
 
     # Harvest the machine's hdd0 image.
     media_dir = machine_dir / "media"
@@ -474,10 +470,10 @@ def prepare_freedos_fixture(context) -> None:
         )
     shutil.copy(image, target)
     print(f"Harvested {image.name} to {target}")
-    reclaim_machine(machine_id, context)
+    reclaim_machine(machine_id, session)
 
 
-def reclaim_machine(machine_id: str, context) -> None:
+def reclaim_machine(machine_id: str, session) -> None:
     """Retire one rig machine once its artifact is harvested.
 
     Destroy, then prune. Pruning is the *safe* reclaim: it drops only
@@ -497,19 +493,19 @@ def reclaim_machine(machine_id: str, context) -> None:
     """
     print(f"Retiring {machine_id} (its artifact is harvested)...")
     try:
-        reliquary.destroy_machine(machine_id, context)
+        session.destroy_machine(machine_id)
         print(f"  destroyed machine {machine_id}")
     except reliquary.ReliquaryError as error:
         print(f"  warning: could not destroy {machine_id}: {error}",
               file=sys.stderr)
     try:
-        for name in reliquary.prune_media(context=context):
+        for name in session.prune_media():
             print(f"  pruned media {name}")
     except reliquary.ReliquaryError as error:
         print(f"  warning: could not prune media: {error}", file=sys.stderr)
 
 
-def clean_rig_media(context) -> None:
+def clean_rig_media(session) -> None:
     """The blunt final reclaim, once every rig has had its turn.
 
     Prune keeps whatever the catalog could still attach, which is the
@@ -518,7 +514,7 @@ def clean_rig_media(context) -> None:
     all fetchable again from pinned locations.
     """
     try:
-        reclaimed = reliquary.clean_media(context=context)
+        reclaimed = session.clean_media()
     except reliquary.ReliquaryError as error:
         print(f"warning: could not clean media: {error}", file=sys.stderr)
         return
@@ -537,9 +533,9 @@ def main() -> None:
 
     # Every rig machine builds, harvests and retires in turn; the
     # media cache is emptied only once the last of them is done.
-    context = rig_context()
-    prepare_freedos_fixture(context)
-    clean_rig_media(context)
+    session = reliquary.Session(rig_context())
+    prepare_freedos_fixture(session)
+    clean_rig_media(session)
 
     print(f"==> Test fixtures ready in {FIXTURES_DIR}")
 
