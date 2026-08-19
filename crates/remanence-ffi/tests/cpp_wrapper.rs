@@ -26,16 +26,13 @@
 
 mod common;
 
-use common::{run_c, run_c_probe, skipping, workspace_dir};
+use common::{run_c, run_c_probe, workspace_dir};
 
 /// The artifact the report group walks. A real one, because a schema,
 /// composed volumes and a filesystem above them are what it is about.
 const FIXTURE: &str = "crates/remanence/tests/fixtures/freedos-parttest.qcow2";
 
 fn group(name: &str, args: &[&str]) {
-    if skipping() {
-        return;
-    }
     print!("{}", run_c("wrapper", &[&[name], args].concat()));
 }
 
@@ -78,9 +75,6 @@ fn an_honest_absence_is_an_empty_optional() {
 
 #[test]
 fn the_flux_ladder_answers_and_refuses_over_a_built_artifact() {
-    if skipping() {
-        return;
-    }
     // The remanence format's own worked example, written by the C++
     // caller itself: one hole, one orbit, two points. Two points frame
     // no record, which is why the group checks the refusals as closely
@@ -102,9 +96,6 @@ fn the_flux_doors_on_a_block_medium_refuse_by_name() {
 
 #[test]
 fn a_real_artifact_reports_and_reads() {
-    if skipping() {
-        return;
-    }
     let fixture = workspace_dir().join(FIXTURE);
     assert!(
         fixture.exists(),
@@ -123,9 +114,6 @@ fn a_real_artifact_reports_and_reads() {
 /// built by the harness with `--features leak-probe` and never ships.
 #[test]
 fn destructors_give_back_what_constructors_took() {
-    if skipping() {
-        return;
-    }
     // The flux cycle lays the worked-example artifact somewhere, and the
     // harness owns that somewhere rather than the C++ caller guessing.
     let scratch = std::env::temp_dir().join(format!("remanence-cpp-leak-{}", std::process::id()));

@@ -24,12 +24,9 @@
 
 mod common;
 
-use common::{build_dir, skipping};
+use common::build_dir;
 
 fn built() {
-    if skipping() {
-        return;
-    }
     build_dir();
 }
 

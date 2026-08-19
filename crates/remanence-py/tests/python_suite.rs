@@ -23,17 +23,16 @@
 
 mod common;
 
-use common::{SKIP_PYTEST, crate_dir, python, skipping, target_dir, workspace_dir};
+use common::{crate_dir, python, target_dir, workspace_dir};
 
 use std::path::PathBuf;
 use std::process::Command;
 
 /// The interpreter pyo3 built the staged module against, recorded by
-/// `build.rs`. The tool that runs the suite is found separately and need
-/// not be the same Python, so a failure names both: an extension links
-/// one interpreter's DLL and is imported by another's process, and when
-/// those disagree the error is a bare `DLL load failed` that says
-/// nothing about why.
+/// `build.rs`. Nothing selects on it — uv picks what runs the suite —
+/// so this is here for one failure only: an MSYS2 build links a DLL no
+/// interpreter uv can supply will find, and naming what it was built
+/// for is what makes that legible.
 const BUILT_AGAINST: Option<&str> = option_env!("REMANENCE_BUILD_INTERPRETER");
 
 /// The compiled module, under whichever name this platform builds.
@@ -85,10 +84,7 @@ fn stage() -> PathBuf {
 
 #[test]
 fn the_python_suite_passes_against_what_was_just_built() {
-    if skipping(SKIP_PYTEST) {
-        return;
-    }
-    let Some((label, argv)) = python::pytest(BUILT_AGAINST) else {
+    let Some((label, argv)) = python::pytest() else {
         return;
     };
     let staged = stage();
@@ -112,14 +108,17 @@ fn the_python_suite_passes_against_what_was_just_built() {
         output.status.success(),
         "the Python suite failed against the module staged from this build \
          in {}.\n\n  \
-         built against: {}\n  \
-         run by:        {label}\n\n\
-         Those two are found independently, so check they are the same \
-         Python before reading further: a `DLL load failed while importing \
-         remanence` below means they are not, and nothing in the suite \
-         itself is wrong.\n\n{text}",
+         built for: {}\n  \
+         run by:    {label}\n\n\
+         uv chooses the interpreter and those two need not agree: a \
+         stable-ABI module is importable by any CPython 3.10 or later \
+         (D63). But a `DLL load failed while importing remanence` below \
+         means this build is not one of those — a module built under \
+         MSYS2 links libpython3.dll and imports only under MSYS2's own \
+         Python, which uv cannot supply. Build against a native \
+         interpreter to test it.\n\n{text}",
         staged.display(),
-        BUILT_AGAINST.unwrap_or("<not recorded>")
+        BUILT_AGAINST.unwrap_or("<no interpreter was resolved>")
     );
     print!("{text}");
     let _ = workspace_dir();

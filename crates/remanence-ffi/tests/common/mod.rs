@@ -37,9 +37,6 @@ pub const GENERATOR: &str = "REMANENCE_CMAKE_GENERATOR";
 pub const CC_OVERRIDE: &str = "REMANENCE_CC";
 /// The same, for C++.
 pub const CXX_OVERRIDE: &str = "REMANENCE_CXX";
-/// Skips the C tests deliberately. An unrun check must be somebody's
-/// decision rather than a tool's absence.
-pub const SKIP: &str = "REMANENCE_SKIP_CC";
 /// The build configuration asked of multi-config generators.
 const CONFIG: &str = "Debug";
 
@@ -62,14 +59,6 @@ pub fn target_dir() -> PathBuf {
         .and_then(Path::parent)
         .expect("the test binary sits in target/<profile>/deps")
         .to_path_buf()
-}
-
-pub fn skipping() -> bool {
-    if std::env::var_os(SKIP).is_some() {
-        eprintln!("!! {SKIP} is set: the C surface was NOT built or run.");
-        return true;
-    }
-    false
 }
 
 /// Which C toolchain built the library.
@@ -241,7 +230,7 @@ fn shipped_build() -> &'static Built {
             &shipped_fallback_dir(),
             &format!(
                 "The C tests link the shipped cdylib, which `cargo test` \
-                 does not build. Set {SKIP}=1 to skip them deliberately."
+                 does not build."
             ),
         )
     })
@@ -353,8 +342,7 @@ fn probe_build() -> &'static Built {
             &probe_target_dir(),
             &format!(
                 "The leak check runs by default (D50) and needs a cdylib \
-                 built with `--features leak-probe`, which never ships. \
-                 Set {SKIP}=1 to skip the C tests deliberately."
+                 built with `--features leak-probe`, which never ships."
             ),
         )
     })
@@ -388,7 +376,7 @@ fn mingw_generator() -> &'static str {
          to be built by one too — and neither `ninja` nor `mingw32-make` \
          is on PATH to drive it. Install one, name a generator that works \
          here with {GENERATOR} (with {CC_OVERRIDE} / {CXX_OVERRIDE} for \
-         its compilers), or set {SKIP}=1 to skip the C tests deliberately."
+         its compilers)."
     );
 }
 
@@ -423,8 +411,7 @@ fn run(what: &str, command: &mut Command) -> String {
     let output = command.output().unwrap_or_else(|error| {
         panic!(
             "cannot run {what}: {error}\n\n\
-             CMake drives the C tests since D46. Install it, or set \
-             {SKIP}=1 to skip them deliberately."
+             CMake drives the C tests since D46. Install it."
         )
     });
     let text = format!(

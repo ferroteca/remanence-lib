@@ -58,6 +58,91 @@ removes it is the record either way.
 
 ## Decisions
 
+### D64 — A test run that reaches a surface runs all of it; there is no variable that excuses a check
+
+**Decided** Paul Galbraith, 2026-08-18. **Supports** S2, S3; overrules
+the escape-hatch clauses of D45 and D48. `DECISIONS.md` was searched
+first and returned both, each of which paired "an absent tool fails
+rather than skips" with a variable that skips anyway.
+
+**The pairing was self-cancelling.** `REMANENCE_SKIP_CC`,
+`REMANENCE_SKIP_MYPY` and `REMANENCE_SKIP_PYTEST` each existed so that
+not running a check would be "a decision somebody made and can be
+found" — but a variable set once in a shell profile or a CI job is not
+found by anyone afterwards, and the check it silences reads exactly like
+the passing check the surrounding rule was written to prevent.
+
+**Choosing not to test a surface is already expressible, and that is
+where the choice belongs.** `remanence-ffi` and `remanence-py` are
+selected by `-p` and by `default-members`; a reader who does not want
+the C or Python toolchains simply does not build those crates. What the
+variables added was a second, weaker way to opt out — one that opts out
+of a *check* while still claiming to have tested the crate.
+
+**So the rule is the whole of it: a run that reaches a surface runs
+every check that surface has.** The only tests that stay optional are
+those needing an external fixture download, which is a dependency no
+local toolchain can satisfy.
+
+**Weighed and declined:** keeping the variables for CI convenience,
+which is the case that most wants them and is exactly where a silenced
+check does the most damage; and converting them to `#[ignore]`, which
+would still let `cargo test` report success with checks unrun, differing
+only in that the omission is printed.
+
+**No changelog entry.** How the suite is invoked is not release-facing.
+
+
+### D63 — uv chooses the interpreter that runs the Python suite, always
+
+**Decided** Paul Galbraith, 2026-08-18. **Supports** S3; amends D51.
+`DECISIONS.md` was searched first and returned D51, whose "pytest is
+found the way mypy is" clause this overturns.
+
+**D51's search was mitigating a variable that does not exist.** It tried
+`python -m pytest`, then `pytest`, then `uv run --with pytest`, pinning
+the last to the interpreter `build.rs` recorded so uv could not drift
+onto another. But the module is `abi3-py310`: it links `python3.dll`,
+the stable-ABI forwarder every CPython 3.10 and later ships, so any of
+them can import it. There was no mismatch to prevent — and the failure
+message closed by asking the reader to check whether the two Pythons
+matched, which is a harness admitting it did not know what it had run.
+
+**So nothing here selects an interpreter.** One command,
+`uv run --with <tool> --no-project <tool>`, for pytest and mypy alike,
+with no `--python`, no version request and no implementation request.
+What uv picks is not this crate's business, and the constraints the
+artifact does carry are stated once, in `pyproject.toml`.
+
+**The MSYS2 build is the case this gives up, knowingly.** A module built
+from an MSYS2 shell links `libpython3.dll`, which exists only inside
+MSYS2, and uv cannot supply that interpreter: it discovers Pythons
+through its own registry and managed installs, and does not see MSYS2's
+even when that one is first on `PATH` (checked against uv 0.11.25). So
+the Python suite fails for such a build. `build.rs` still records which
+interpreter the module was built for, and the failure names it, because
+the bare error is `DLL load failed` and explains nothing.
+
+**D51's claim that the two finders became one helper is true as of
+here.** `stub_typechecks.rs` still carried its own copy of the search;
+it now uses the shared helper, which needs no argument — mypy reads the
+stub and never imports the module, so no build fact bears on it.
+
+**Weighed and declined:** classifying the build in `build.rs` and
+running an MSYS2 build under its own interpreter, which keeps that case
+working at the cost of a second command, a flavor enum, and an
+implementation guess — the guess being the weak point, since "not
+MinGW" is not the same claim as "CPython", and a PyPy or GraalPy build
+would fall through it; and asking uv for `>=3.10` or `cpython>=3.10`,
+declined as specification restating what `requires-python` and the
+classifiers already declare.
+
+**Reopened by** uv gaining MSYS2 support, which would make the given-up
+case work with no change here.
+
+**No changelog entry.** How the suite is invoked is not release-facing.
+
+
 ### D62 — A flux recording's sectors compose an addressed extent, and a hole refuses only the reads that touch it
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -795,6 +880,10 @@ first and says so — the same contract the C tests have.
 then `uv run --with pytest` — and its absence fails rather than skips.
 The two finders are now one generic helper in `tests/common/mod.rs`
 rather than two implementations of the same policy.
+[Superseded on the finding method by D63 — there is no search now,
+the build having already settled what can import it. The
+fail-rather-than-skip policy stands, and the one-helper claim became
+true only at D63.]
 
 **Verified by breaking a Python assertion**, which failed the cargo test
 with pytest's own output naming the line — so the two are genuinely
@@ -1285,6 +1374,7 @@ why `remanence-py` is out of `default-members` and this is not.
 > sparing the build a Python requirement also withheld S3's checks from
 > every default run.
 `REMANENCE_SKIP_CC=1` skips deliberately.
+[The escape hatch is removed by D64; the failure stands.]
 
 **Verified by injecting drift.** The example was made to call a name
 D39 had renamed away; only the example's test failed, with the header
@@ -1353,6 +1443,8 @@ as `python -m mypy`, then `mypy` on `PATH`, then
 `uv run --with mypy`, which needs no prior install and uses the tool the
 project already builds its wheel with. `REMANENCE_SKIP_MYPY=1` skips
 deliberately, which is a decision somebody made and can be found.
+[The escape hatch is removed by D64; the failure stands. How mypy
+is found is superseded by D63.]
 
 **Weighed and declined:** `typing.assert_type` in the accepting fixture
 (it arrived in 3.11, and checking at 3.10 is worth more than the nicer

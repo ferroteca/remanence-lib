@@ -29,56 +29,25 @@
 //! claims, so the stub is verified against the oldest version the
 //! distribution promises to serve rather than whichever one is at hand.
 
+mod common;
+
+use common::{crate_dir, python};
+
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-
-/// Set this to skip the check deliberately. It is deliberately awkward
-/// and deliberately named: an unrun check must be somebody's decision,
-/// never the quiet result of a tool being absent.
-const SKIP: &str = "REMANENCE_SKIP_MYPY";
-
-fn crate_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// The ways mypy might be reachable, cheapest first. The last needs no
-/// prior install, which is why it is there at all.
-fn candidates() -> Vec<(&'static str, Vec<&'static str>)> {
-    vec![
-        ("python -m mypy", vec!["python", "-m", "mypy"]),
-        ("mypy", vec!["mypy"]),
-        (
-            "uv run --with mypy",
-            vec!["uv", "run", "--with", "mypy", "--no-project", "mypy"],
-        ),
-    ]
-}
-
-fn mypy_command() -> Option<(&'static str, Vec<&'static str>)> {
-    for (label, argv) in candidates() {
-        let mut probe = Command::new(argv[0]);
-        probe.args(&argv[1..]).arg("--version");
-        if let Ok(output) = probe.output() {
-            if output.status.success() {
-                return Some((label, argv));
-            }
-        }
-    }
-    None
-}
 
 struct Run {
     status_ok: bool,
     output: String,
 }
 
-fn run_mypy(argv: &[&str], fixture: &Path) -> Run {
+fn run_mypy(argv: &[String], fixture: &Path) -> Run {
     let target = crate_dir()
         .join("../../target/mypy-cache")
         .join(fixture.file_stem().expect("fixture has a name"));
 
-    let output = Command::new(argv[0])
+    let output = Command::new(&argv[0])
         .args(&argv[1..])
         .arg("--strict")
         .arg("--python-version")
@@ -141,29 +110,9 @@ fn expectations(source: &str) -> BTreeMap<usize, String> {
         .collect()
 }
 
-fn require_mypy() -> Option<(&'static str, Vec<&'static str>)> {
-    if std::env::var_os(SKIP).is_some() {
-        eprintln!("!! {SKIP} is set: the stub's types were NOT checked.");
-        return None;
-    }
-    let found = mypy_command();
-    assert!(
-        found.is_some(),
-        "mypy is not reachable, so the stub's types went unchecked. This \
-         fails rather than skips, because a check that quietly does not \
-         run reads exactly like a check that passed.\n\n\
-         Any one of these fixes it:\n  \
-         - install uv (the project already uses it to build the wheel), \
-         and this test fetches mypy itself\n  \
-         - pip install mypy into the interpreter on PATH\n\n\
-         To skip deliberately, set {SKIP}=1."
-    );
-    found
-}
-
 #[test]
 fn a_consumer_type_checks_against_the_stub() {
-    let Some((label, argv)) = require_mypy() else {
+    let Some((label, argv)) = python::mypy() else {
         return;
     };
     let fixture = crate_dir().join("tests/mypy_fixtures/accepts.py");
@@ -180,7 +129,7 @@ fn a_consumer_type_checks_against_the_stub() {
 
 #[test]
 fn the_stub_still_refuses_misuse() {
-    let Some((label, argv)) = require_mypy() else {
+    let Some((label, argv)) = python::mypy() else {
         return;
     };
     let path = crate_dir().join("tests/mypy_fixtures/rejects.py");

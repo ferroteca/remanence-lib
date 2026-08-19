@@ -25,7 +25,7 @@
 
 mod common;
 
-use common::{run_c, skipping, workspace_dir};
+use common::{run_c, workspace_dir};
 
 /// The capture `test-fixture-prep/prep_fixtures.py` packages: one disk,
 /// every step position of both heads, as a single 7z.
@@ -34,9 +34,6 @@ const FIXTURE: &str = "crates/remanence/tests/fixtures/\
 
 #[test]
 fn a_real_capture_climbs_the_whole_ladder() {
-    if skipping() {
-        return;
-    }
     let fixture = workspace_dir().join(FIXTURE);
     assert!(
         fixture.exists(),

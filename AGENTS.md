@@ -509,34 +509,39 @@ ABI, or Python module.
 - `crates/remanence-py/` — the Python module (PyO3, abi3, Python ≥ 3.10),
   excluded from default workspace members so plain `cargo build`/
   `cargo test` never needs a Python toolchain. Distribution artifacts
-  are built with **uv** (`uv build crates/remanence-py` → sdist + abi3
-  wheel in its `dist/`), which drives the maturin build backend in an
-  isolated environment; publishing is `uv publish` and is owner-gated.
+  are built with **uv** (`uv build --clear crates/remanence-py` → sdist
+  and abi3 wheel in its `dist/`), which drives the maturin build backend
+  in an isolated environment; publishing is `uv publish` and is
+  owner-gated. `--clear` is not optional hygiene: `uv publish` uploads
+  whatever `dist/` holds, and `dist/` accumulates across builds.
   **The Python package claims Windows only** (the tested host; the
   classifiers state it) — keep POSIX paths correct but never state or
-  imply support the project has not tested. **And it claims the native
-  CPython, not MSYS2's**, which `build.rs` enforces by refusing a MinGW
-  interpreter before anything compiles. pyo3 names a MinGW Python's
-  import library `libpython3` rather than `python3`, which puts it
-  outside the subset `raw-dylib` linking covers, so the module links
-  `libpython3.dll` — a DLL that exists only inside MSYS2. Nothing
-  downstream noticed: 0.0.1a4 built, published, and failed at `import`
-  for every consumer of it. `uv build` supplies its own native
-  interpreter and never reaches the refusal; a `cargo build` from an
-  MSYS2 shell does, and the message names the remedy —
-  `export PYO3_PYTHON=$(uv python find)`. The Python suite
-  (`tests/python_suite.rs`) shares the same concern from the other
-  side: if `pytest` is not installed for the interpreter on `PATH`, it
-  falls back to `uv run --with pytest`, which by default picks an
-  interpreter of `uv`'s own choosing — possibly not the one the module
-  was built against, which is the same class of mismatch showing up as
-  a bare `DLL load failed` on import. `common::python::pytest` pins
-  that fallback to `REMANENCE_BUILD_INTERPRETER` (the interpreter
-  `build.rs` recorded) so it can't drift. `uv build
-  crates/remanence-py` produces the sdist and abi3 wheel in its
-  `dist/`; publishing is `uv publish`.  `test-fixture-prep/` is a
-  separate uv project with its own `pyproject.toml` and lock file,
-  carrying only the fixture-preparation dependency group.
+  imply support the project has not tested.
+  **uv chooses the interpreter that runs the Python checks, always**
+  (D63). The suites specify nothing — no interpreter, no version, no
+  implementation — because the module is abi3 and any CPython ≥ 3.10
+  can import it; the constraints the package does carry are declared
+  once, in `pyproject.toml`. The command is
+  `uv run --with <tool> --no-project <tool>`, for pytest and mypy alike.
+  **A build made from an MSYS2 shell cannot be tested this way, and
+  that is accepted.** pyo3 names a MinGW Python's import library
+  `libpython3` rather than `python3`, which puts it outside the subset
+  `raw-dylib` linking covers, so such a build links `libpython3.dll` —
+  a DLL existing only inside MSYS2 — and uv cannot supply that
+  interpreter: it discovers Pythons through its own registry and managed
+  installs, and does not see MSYS2's even when that one is first on
+  `PATH`. So `cargo test -p remanence-py` fails there, and `build.rs`
+  records the interpreter the module *was* built for so the failure can
+  say why. Building against a native interpreter is the remedy
+  (`PYO3_PYTHON=$(uv python find)`).
+  **What must never ship is a MinGW module wearing a native tag**, which
+  is how 0.0.1a4 reached PyPI and failed at `import` for every consumer
+  of it. Nothing enforces that mechanically: `uv build` from an MSYS2
+  shell simply adds a second, MinGW-tagged wheel to `dist/`, and
+  `--clear` is what stops it accumulating there unnoticed.
+  `test-fixture-prep/` is a separate uv project with its own
+  `pyproject.toml` and lock file, carrying only the
+  fixture-preparation dependency group.
 - [CHANGELOG.md](CHANGELOG.md) records release-facing changes; the rules
   it follows are in "Versioning and releases" below.
 - `planning/README.md` is the map of the maintainer-facing planning
@@ -1005,9 +1010,10 @@ search of `target/<profile>` for a plausible name would find it.
 Overrides, all optional: `REMANENCE_CC` / `REMANENCE_CXX` set CMake's
 compilers and win over the choice above, so another compiler is still
 one variable away), and `REMANENCE_CMAKE_GENERATOR` sets the generator.
-**No CMake or no compiler is a test failure, not a skip** —
-`REMANENCE_SKIP_CC=1` skips deliberately, and plain `cargo test` needs
-both because of it.
+**No CMake or no compiler is a test failure, not a skip** (D64), and
+there is no variable that excuses it: choosing not to test this crate is
+what `-p` and `default-members` are for, but a run that does reach it
+runs all of it.
 
 `cargo test` also **runs** a C caller against the built library
 (D45): `tests/c/abi_boundary.c` is compiled against the header, linked,
@@ -1103,11 +1109,12 @@ they report is a fix to the stub.
   the one that catches a stub degraded to `Any`: a widened parameter or
   a lost `py.typed` still lets `accepts.py` pass.
 
-mypy is found through `python -m mypy`, `mypy` on `PATH`, or
-`uv run --with mypy` — the last needs no prior install, uv already being
-how the wheel is built. If none is reachable the tests **fail** rather
-than skip, because a check that quietly does not run reads exactly like
-one that passed; `REMANENCE_SKIP_MYPY=1` skips them deliberately.
+mypy runs as `uv run --with mypy --no-project mypy`, which needs no
+prior install — uv already being how the wheel is built — and which asks
+for no particular interpreter, mypy importing nothing it checks (D63). An
+unreachable uv **fails** the tests rather than skipping them, because a
+check that quietly does not run reads exactly like one that passed, and
+no variable excuses it (D64).
 
 ### Running the C example on this host
 

@@ -25,15 +25,12 @@
 
 mod common;
 
-use common::{run_c_probe, skipping, workspace_dir};
+use common::{run_c_probe, workspace_dir};
 
 const FIXTURE: &str = "crates/remanence/tests/fixtures/freedos-parttest.qcow2";
 
 #[test]
 fn handles_and_messages_give_back_what_they_took() {
-    if skipping() {
-        return;
-    }
     let fixture = workspace_dir().join(FIXTURE);
     assert!(
         fixture.exists(),

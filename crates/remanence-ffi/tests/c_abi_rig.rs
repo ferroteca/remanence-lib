@@ -30,7 +30,7 @@
 
 mod common;
 
-use common::{run_c, skipping, workspace_dir};
+use common::{run_c, workspace_dir};
 
 /// The disk the discovery group claims. A real one, because the point
 /// is to cross the boundary with something that has answers.
@@ -38,9 +38,6 @@ const FIXTURE: &str = "crates/remanence/tests/fixtures/freedos-parttest.qcow2";
 
 #[test]
 fn a_real_artifact_discovers_and_releases() {
-    if skipping() {
-        return;
-    }
     let fixture = workspace_dir().join(FIXTURE);
     assert!(
         fixture.exists(),

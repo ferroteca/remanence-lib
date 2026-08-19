@@ -25,12 +25,9 @@
 
 mod common;
 
-use common::{run_c, skipping};
+use common::run_c;
 
 fn group(name: &str, args: &[&str]) {
-    if skipping() {
-        return;
-    }
     print!("{}", run_c("abi_boundary", &[&[name], args].concat()));
 }
 
