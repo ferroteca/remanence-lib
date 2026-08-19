@@ -544,11 +544,13 @@ ABI, or Python module.
   a direct one would, before a wheel is ever produced. `--clear` on
   `uv build`/`uv publish` is still what stops `dist/` accumulating stale
   artifacts across builds, unrelated to this.
-  `test-fixture-prep/` is a separate uv project with its own
-  `pyproject.toml` and lock file, depending on reliquary and nothing
-  else. Being its own project is what makes `uv run --directory
-  test-fixture-prep` the only invocation there is: no root
-  `pyproject.toml` exists for a `--group` to be resolved against.
+  `integration-tests/prep_fixtures.py` pins reliquary itself, as
+  inline script metadata (PEP 723) rather than through a
+  `pyproject.toml` and lock file of its own. `uv run
+  integration-tests/prep_fixtures.py` is the only invocation there
+  is: no root `pyproject.toml` exists for a `--group` to be resolved
+  against, and the script needs no project directory to carry a pin
+  when it can carry its own.
 - [CHANGELOG.md](CHANGELOG.md) records release-facing changes; the rules
   it follows are in "Versioning and releases" below.
 - `planning/README.md` is the map of the maintainer-facing planning
@@ -671,11 +673,13 @@ The reason is not tidiness. A downstream name here implies a relationship
 a reusable library should not have, and it goes stale silently inside a
 published artifact — a consumer's rename leaves the falsehood shipped.
 
-One thing is not a violation of it. The fixture-preparation tooling under
-`test-fixture-prep/` *depends on* a named tool the way any dependency is named —
-the permitted direction — which reaches that tooling, the metadata pinning
-it, and the prose documenting them, and nothing else. Being nameable there
-licenses nothing elsewhere, `planning/DECISIONS.md` included.
+One thing is not a violation of it. The fixture-preparation tooling —
+`integration-tests/prep_fixtures.py` and the rig blueprint/scripts under
+`test-fixture-prep/test-rigs/` — *depends on* a named tool the way any
+dependency is named — the permitted direction — which reaches that
+tooling, the metadata pinning it, and the prose documenting them, and
+nothing else. Being nameable there licenses nothing elsewhere,
+`planning/DECISIONS.md` included.
 
 ## Licensing
 
@@ -813,8 +817,8 @@ compiled into the wheel.
   `integration-tests/fixtures/` is what the suites open, and
   `integration-tests/downloads/` is the sources a fixture is repackaged
   out of, which nothing reads directly.
-  `test-fixture-prep/prep_fixtures.py` (run with `uv run --directory
-  test-fixture-prep`; `test-fixture-prep/test-rigs/README.md`)
+  `integration-tests/prep_fixtures.py` (run with `uv run
+  integration-tests/prep_fixtures.py`; `test-fixture-prep/test-rigs/README.md`)
   prepares them: it downloads the
   sha256-pinned HDOS 1.0 distribution zip straight into
   `integration-tests/fixtures/` (a multi-image zip, test material in its

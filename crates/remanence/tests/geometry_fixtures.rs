@@ -8,7 +8,7 @@
 //! a format that declares a geometry for every image it claims, and
 //! the other is that format nested in an archive. Both need the real
 //! artifact, so both are behind the `fixtures` feature and need
-//! `python test-fixture-prep/prep_fixtures.py` to have run.
+//! `uv run integration-tests/prep_fixtures.py` to have run.
 
 use remanence::{
     ErrorCategory, Format, GeometrySource, GeometryState, MediaId, RecordingGeometry, Session,

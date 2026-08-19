@@ -14,13 +14,14 @@ artifact** (the fixtures directory is never tracked — see D1 in
 
 ## Running prep_fixtures.py
 
-`test-fixture-prep/` is a uv project of its own, and reliquary is
-pinned in its `pyproject.toml`. Point uv at that directory and it
-provisions the environment from the lock file beside it, so there is
-nothing to sync or activate first:
+The script lives at `../../integration-tests/prep_fixtures.py` and
+pins reliquary itself, as inline script metadata (PEP 723) rather
+than through a `pyproject.toml` of its own. `uv run` provisions the
+environment straight from that block, so there is nothing to sync or
+activate first, and nothing to point `--directory` at:
 
 ```bash
-uv run --directory test-fixture-prep prep_fixtures.py
+uv run integration-tests/prep_fixtures.py
 ```
 
 The prep script drives reliquary through its **Python API**. The
@@ -47,8 +48,8 @@ position nowhere but its name.)
 
 ## Prerequisites — the tests fail naming the gap, they do not skip
 
-- **Python ≥ 3.12** (reliquary's floor); the root `pyproject.toml`
-  pins `requires-python` accordingly for the `test-fixture-prep` group.
+- **Python ≥ 3.12** (reliquary's floor); `prep_fixtures.py` pins
+  `requires-python` accordingly in its own inline script metadata.
 - **QEMU** installed where reliquary can discover it, per reliquary's
   docs: a standard install location is sufficient, and PATH also
   works.
@@ -88,19 +89,21 @@ Environment knobs:
 
 To build with unpublished reliquary changes, override the pin with a
 local editable checkout for the run:
-`uv run --directory test-fixture-prep --with-editable D:\Projects\reliquary prep_fixtures.py`.
+`uv run --with-editable D:\Projects\reliquary integration-tests/prep_fixtures.py`.
 
 First build notes: the LiveCD zip (~0.5 GB) downloads into
 `../test-rigs/cache/media/`, and the install run can take
 tens of minutes.
-After a failed build the machine is still there to inspect;
-`uv run --directory test-fixture-prep rlq destroy-machine --machine
-remanence-parttest-<n> --home-dir test-rigs` (`rlq list-machines
---home-dir …` names them) resets it, and `rlq clean-media --home-dir …`
-gives back the LiveCD. The home is relative to `test-fixture-prep/`
-because `--directory` is where uv put the working directory. A machine
-whose guest powered itself off still reads as `running` until
-`rlq stop-machine` reconciles it.
+After a failed build the machine is still there to inspect. With no
+project environment to resolve `rlq` through any more, the recovery
+commands name reliquary explicitly and take the home directory's real
+path from the repository root:
+`uv run --with reliquary==0.1.0a2 rlq destroy-machine --machine
+remanence-parttest-<n> --home-dir test-fixture-prep/test-rigs` (`rlq
+list-machines --home-dir …` names them) resets it, and `rlq
+clean-media --home-dir …` gives back the LiveCD. A machine whose guest
+powered itself off still reads as `running` until `rlq stop-machine`
+reconciles it.
 
 ## What the script depends on, and how it breaks
 

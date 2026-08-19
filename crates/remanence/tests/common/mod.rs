@@ -68,7 +68,7 @@ pub fn ensure_fixture(name: &str) -> PathBuf {
 
     panic!(
         "Missing required test fixture '{name}'.\n\
-         Please run 'python test-fixture-prep/prep_fixtures.py' (from the testing venv; see test-fixture-prep/test-rigs/README.md)\n\
+         Please run 'uv run integration-tests/prep_fixtures.py' (see test-fixture-prep/test-rigs/README.md)\n\
          to download or generate required test fixtures before running unit tests."
     );
 }

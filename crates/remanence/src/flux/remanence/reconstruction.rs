@@ -743,8 +743,8 @@ pub(crate) fn capture_fixture_path() -> std::path::PathBuf {
         .join("Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z");
     if !capture_path.exists() {
         panic!(
-            "missing fixture {capture_path:?}: run `uv run --directory test-fixture-prep \
-             prep_fixtures.py`"
+            "missing fixture {capture_path:?}: run `uv run \
+             integration-tests/prep_fixtures.py`"
         );
     }
     capture_path

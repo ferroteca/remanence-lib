@@ -32,12 +32,10 @@ path = [
     # PEP 561 requires this marker to be empty; a comment header would
     # not make it invalid, but the file's whole content is its absence.
     "crates/remanence-py/python/src/remanence/py.typed",
-    # The fixture prep project. `prep_fixtures.py` and the rig blueprint
-    # carry their own headers; these are the files where one would be
-    # rewritten by the tool that owns them, or is not the project's to
-    # put there.
-    "test-fixture-prep/pyproject.toml",
-    "test-fixture-prep/uv.lock",
+    # The rig assets. `prep_fixtures.py` (now under integration-tests/)
+    # and the rig blueprint carry their own headers; these are the files
+    # where one would be rewritten by the tool that owns them, or is not
+    # the project's to put there.
     "test-fixture-prep/test-rigs/.gitignore",
     "test-fixture-prep/test-rigs/README.md",
     # The ignore lists themselves, not the material they name — see

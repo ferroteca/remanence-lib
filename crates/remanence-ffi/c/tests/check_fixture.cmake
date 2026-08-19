@@ -13,5 +13,5 @@ endif()
 if(NOT EXISTS "${FIXTURE}")
     message(FATAL_ERROR
         "the fixture ${FIXTURE} is missing. Run:\n\n"
-        "  uv run --directory test-fixture-prep prep_fixtures.py\n")
+        "  uv run integration-tests/prep_fixtures.py\n")
 endif()

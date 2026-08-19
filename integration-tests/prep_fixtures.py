@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["reliquary==0.1.0a2"]
+# ///
 # SPDX-FileCopyrightText: 2026 Paul Galbraith
 # SPDX-License-Identifier: GPL-3.0-only
 
@@ -18,12 +22,13 @@ spec; the prep script pins reliquary's media cache to
 test-fixture-prep/test-rigs/cache/media, so the download survives
 `cargo clean` and machine rebuilds.
 
-test-fixture-prep/ is a uv project of its own, and reliquary is pinned
-in its pyproject.toml. Run the script through uv against that
-directory — uv provisions the environment itself, so there is nothing
-to sync or activate first:
+This file carries reliquary's pin as inline script metadata (PEP
+723) rather than sitting in a uv project of its own, so `uv run`
+provisions the environment straight from the block above — nothing
+to sync or activate first, and no pyproject.toml or lock file beside
+it:
 
-    uv run --directory test-fixture-prep prep_fixtures.py
+    uv run integration-tests/prep_fixtures.py
 """
 
 import hashlib
@@ -47,13 +52,14 @@ except ImportError:
 if reliquary is None:
     sys.exit(
         "reliquary is not importable — run this script through uv, "
-        "pointed at the project that pins it:\n"
-        "  uv run --directory test-fixture-prep prep_fixtures.py"
+        "which reads its inline script metadata for the pin:\n"
+        "  uv run integration-tests/prep_fixtures.py"
     )
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES_DIR = REPO_ROOT / "integration-tests" / "fixtures"
-DOWNLOADS_DIR = REPO_ROOT / "integration-tests" / "downloads"
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+FIXTURES_DIR = SCRIPT_DIR / "fixtures"
+DOWNLOADS_DIR = SCRIPT_DIR / "downloads"
 RIG_DIR = REPO_ROOT / "test-fixture-prep" / "test-rigs"
 
 # See also: https://archive.org/details/flux_capacity

@@ -58,6 +58,75 @@ removes it is the record either way.
 
 ## Decisions
 
+### D70 — The fixture-prep script drops its uv project for inline metadata, and moves to integration-tests/
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-19. **Supports** (none) — a packaging and invocation choice
+for tooling outside every application surface. `DECISIONS.md` was
+searched first and returned D1, whose same-day amendment moved
+`fixtures/` and `downloads/` to `integration-tests/` but left the
+script that writes them, and the `test-fixture-prep/` project around
+it, untouched.
+
+**The uv project was solving a problem PEP 723 already solves.**
+`test-fixture-prep/pyproject.toml` and its lock file existed for one
+reason: to pin `reliquary` somewhere `uv run --directory
+test-fixture-prep` could find it. A single dependency, on a single
+script, does not need a project of its own — `uv run` reads a
+`# /// script` block straight out of the file it is running and
+provisions an ephemeral environment from it, no `pyproject.toml`, no
+lock file, no `.venv` beside it. `prep_fixtures.py` now carries that
+block itself, pinning `reliquary==0.1.0a2` and
+`requires-python = ">=3.12"` exactly as the dropped `pyproject.toml`
+did.
+
+**The script moves to where its output lives.** `integration-tests/`
+already holds `fixtures/` and `downloads/`; `prep_fixtures.py` writes
+both and reads neither anywhere else, so `test-fixture-prep/` was the
+only thing left keeping the writer apart from what it writes. It runs
+now as one command from the repository root, provisioning itself:
+`uv run integration-tests/prep_fixtures.py`.
+
+**`test-fixture-prep/` stays, smaller.** `test-rigs/` — the
+checked-in blueprint and install script, and the reliquary home the
+rig cache derives from — is not fixture material to relocate; it is
+authored rig infrastructure that happened to sit beside the fixtures
+it shared a directory with. Moving it would have reopened the
+cache-location clause D1's amendment settled the same day. So
+`test-fixture-prep/` now names that directory alone.
+
+**The recovery commands lose their free ride.** `rlq
+destroy-machine`/`clean-media`, run by hand against a stuck build,
+previously resolved through the project's own environment via
+`--directory test-fixture-prep`. With no project there, they now name
+reliquary explicitly and take the rig home's real path from the
+repository root — `uv run --with reliquary==0.1.0a2 rlq ... --home-dir
+test-fixture-prep/test-rigs` — which puts the version pin in two
+places instead of one. Accepted: these are break-glass commands read
+straight from the README while they are typed, not the pin the script
+resolves against on every run.
+
+**Weighed and declined:** moving `test-rigs/` into
+`integration-tests/` as well, so `test-fixture-prep/` disappeared
+outright (declined above, on the same grounds); keeping the uv
+project and only relocating the script into `integration-tests/` with
+a `--directory` pointed back at `test-fixture-prep/` (kept the extra
+project and its lock file for no reason once the script itself can
+carry the pin).
+
+**Folded into:** `integration-tests/prep_fixtures.py` (moved from
+`test-fixture-prep/prep_fixtures.py`, `test-fixture-prep/pyproject.toml`
+and `test-fixture-prep/uv.lock` removed); `test-fixture-prep/test-rigs/README.md`;
+`REUSE.toml`; AGENTS.md; CONTRIBUTING.md; `crates/remanence/Cargo.toml`;
+`crates/remanence/tests/freedos_qcow2.rs`;
+`crates/remanence/tests/geometry_fixtures.rs`;
+`crates/remanence/tests/common/mod.rs`;
+`crates/remanence/src/flux/remanence/reconstruction.rs`;
+`crates/remanence-ffi/c/tests/check_fixture.cmake`.
+
+**No changelog entry.** How the fixture-prep script is packaged and
+invoked is not release-facing.
+
 ### D69 — `c/{include,examples,tests}` groups the whole C/C++-facing surface, apart from the crate's own Rust scaffolding
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

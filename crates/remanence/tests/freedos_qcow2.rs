@@ -7,7 +7,7 @@
 //!
 //! **Unit tests require pre-built fixtures**:
 //! If `integration-tests/fixtures/freedos-parttest.qcow2` is missing, run
-//! `python test-fixture-prep/prep_fixtures.py` from the testing venv
+//! `uv run integration-tests/prep_fixtures.py`
 //! (test-fixture-prep/test-rigs/README.md).
 
 use std::path::PathBuf;

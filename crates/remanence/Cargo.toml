@@ -23,7 +23,7 @@ exclude = ["tests/**"]
 
 [features]
 # Test-only, and they gate test targets rather than any code. Both name
-# artifacts `test-fixture-prep/prep_fixtures.py` provides, which git does
+# artifacts `integration-tests/prep_fixtures.py` provides, which git does
 # not track and a fresh clone does not have. Without them `cargo test`
 # runs everything that builds its own images — which is most of the
 # suite — and a clone is testable immediately.

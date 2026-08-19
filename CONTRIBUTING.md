@@ -65,13 +65,13 @@ repeated flags). Distributable Python artifacts are built with
 in an isolated environment. See [README.md](README.md).
 
 Some `remanence` unit tests need fixtures that are not checked in;
-`test-fixture-prep/prep_fixtures.py` prepares them. `test-fixture-prep/`
-is a uv project of its own (Python 3.12+), so uv provisions the
-environment from that directory's own lock file — there is nothing to
-sync or activate first:
+`integration-tests/prep_fixtures.py` prepares them. It pins reliquary
+(Python 3.12+) as inline script metadata rather than through a
+project of its own, so uv provisions the environment straight from
+the file — there is nothing to sync or activate first:
 
 ```bash
-uv run --directory test-fixture-prep prep_fixtures.py
+uv run integration-tests/prep_fixtures.py
 ```
 
 See [test-fixture-prep/test-rigs/README.md](test-fixture-prep/test-rigs/README.md)
