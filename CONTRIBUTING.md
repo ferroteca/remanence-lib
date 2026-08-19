@@ -39,16 +39,23 @@ Rust toolchain is all the core needs.
 cargo build                 # the Rust core alone, and nothing else is needed
 cargo test
 cargo build --workspace     # every surface; regenerates include/remanence.h
-cargo test --workspace      # what a contributor runs
+cargo test --workspace      # the Rust-level tests only
+just test-ffi                 # the C/C++ surface: needs CMake and a C/C++ compiler
+just test-py                  # the Python surface: needs Python 3.10+ with uv
 ```
 
 Only `crates/remanence` is a default member, so the bare commands ask
-nothing of you but rustc. **A contributor runs the `--workspace` pair**:
-it is what checks the C ABI and the Python module, and what regenerates
-`crates/remanence-ffi/include/remanence.h`, the build script that writes
-it running only when its own crate is built. That needs CMake and a C
-and C++ compiler for the C surface, and Python 3.10+ with uv for the
-Python one. Distributable Python artifacts are built with
+nothing of you but rustc. **A contributor runs all four of the rest**:
+`cargo build --workspace` regenerates
+`crates/remanence-ffi/include/remanence.h` (the build script that writes
+it runs only when its own crate is built), `cargo test --workspace`
+checks the Rust-level tests of every surface, and `just test-ffi`/
+`just test-py` are what actually check the C ABI and the Python module
+respectively — neither is reached by `cargo test` in any form. Extra
+`ctest` arguments pass through `just test-ffi`, e.g.
+`just test-ffi -LE "rigs|fixtures"` to skip what needs a downloaded or
+generated fixture (one regex — `ctest -LE` does not compose across
+repeated flags). Distributable Python artifacts are built with
 `uv build crates/remanence-py`, which drives the maturin build backend
 in an isolated environment. See [README.md](README.md).
 

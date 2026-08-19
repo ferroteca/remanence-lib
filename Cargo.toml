@@ -4,6 +4,7 @@ members = [
     "crates/remanence",
     "crates/remanence-ffi",
     "crates/remanence-py",
+    "xtask",
 ]
 # **Only the core is a default member.** A bare `cargo build` or
 # `cargo test` in a clone therefore needs nothing but rustc: no CMake and

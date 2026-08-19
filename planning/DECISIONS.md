@@ -58,6 +58,88 @@ removes it is the record either way.
 
 ## Decisions
 
+### D65 — `just` runs the C/C++ and Python checks now; `cargo test` runs only Rust's own
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-18. **Supports** S2, S3; overrules D46's and D48's "the Rust
+tests drive this" clauses, and D49's/D54's Cargo-feature gating for the
+FFI crate specifically — the core crate's `fixtures`/`rigs` features are
+untouched. Amends D63 to name `just test-py` rather than `cargo test` as
+what routes through uv. `DECISIONS.md` was searched first and returned
+all of these, each turning on the same premise this reverses: that a
+check reached from `cargo test` is a check that keeps running.
+
+**The premise was true and the mechanism was the cost.** Nothing here
+disputes D48's or D64's reasoning — a check nobody remembers to run is a
+check that has already failed, silently — only where the discipline
+should sit. Driving CMake and `uv` from inside `#[test]` functions meant
+`cargo test` itself carried the toolchain-matching logic (D46: which
+import library a C caller can link), the leak-probe build, the pytest
+staging, and the mypy invocation — none of it about testing Rust, and
+increasingly the reason `cargo test -p remanence-ffi`/`-p remanence-py`
+needed explaining rather than running.
+
+**So the two move to where they already belong.**
+`crates/remanence-ffi/tests/c/CMakeLists.txt` now registers its own
+CTest tests — `enable_testing()`, `add_test()`, CTest `LABELS` for what
+D49/D54 gated behind Cargo features — and `just test-ffi` drives
+configure, build and `ctest` in one step. `just test-py` builds through
+uv, stages the module, and runs pytest and mypy directly; neither needs
+a Rust `#[test]` to exist at all.
+
+**One piece stayed in Rust, deliberately: which toolchain built the
+library** (D46's "read from what a build produced rather than the
+host's default"). A new crate, `xtask` — unpublished, and a workspace
+member but never a default one — is the only place that logic lives
+now, extracted rather than reimplemented: reading a claim about one file
+instead of guessing from the host or from CMake's own compiler search is
+the exact distinction D46 already insisted on, and putting the same
+logic in CMake instead would have reintroduced the gap that guarding was
+written to close.
+
+**The same fail-rather-than-skip policy holds, moved.** D64 declined
+`REMANENCE_SKIP_*` variables because a silenced check reads exactly like
+a passing one. `just test-ffi`/`just test-py` carry no equivalent: a
+missing CMake, compiler or `uv` still fails the recipe outright (the
+justfile runs under `set -euo pipefail`, and CMake's own
+`message(FATAL_ERROR ...)` covers a missing tool at configure time), and
+choosing not to run a recipe leaves its own trace — an unrun
+`just test-ffi` is a `just` invocation nobody made, findable the same way
+an unrun `cargo test -p remanence-ffi` used to be. What no longer holds
+automatically is *reach*: `cargo test --workspace` used to be the one
+command that touched every surface, and after this it touches only the
+Rust ones. Two new commands are required checks now instead of being
+folded into that one; `AGENTS.md`'s "Required checks" says so, and lists
+both.
+
+**Converged the `rigs` gate onto two more tests, closing a live instance
+of D49's bug.** `abi_leaks` and `wrapper report` (`cpp_wrapper.rs`) each
+needed `freedos-parttest.qcow2` without declaring it — the same shape
+`c_abi_rig.rs` was split out to fix, reached past that guard on two
+tests nobody had audited since. All three now share one CTest label
+(`rigs`) and one `FIXTURES_SETUP` existence check, in
+`tests/c/CMakeLists.txt`.
+
+**A real loss, named rather than hidden:** `stub_typechecks.rs`'s
+line-and-code cross-check of `rejects.py` against its `# expect:`
+markers is not reproduced in `just test-py`. The recipe checks that
+mypy refuses the fixture as a whole; it no longer checks that each line
+is refused for the *specific* code its marker names. Reproducing that in
+shell was judged not worth the script it would take — stated here so a
+future reader does not assume a parity that is not there.
+
+**Weighed and declined:** reimplementing the toolchain classification in
+CMake (`CMAKE_C_COMPILER_ID`, or a host-triple guess) — declined for the
+reason above, being exactly the artifact-vs-environment gap D46 already
+refused; and putting `xtask`'s logic in `crates/remanence-ffi/src/bin/`,
+declined because that crate publishes to crates.io and states its own
+principle that a released artifact carries what a consumer runs and
+nothing else — a `[[bin]]` there would ship in the tarball and force a
+dev-only dependency into a real one.
+
+**No changelog entry.** How the suite is invoked is not release-facing.
+
+
 ### D64 — A test run that reaches a surface runs all of it; there is no variable that excuses a check
 
 **Decided** Paul Galbraith, 2026-08-18. **Supports** S2, S3; overrules
@@ -845,6 +927,8 @@ wheel, install it, run pytest. That is the shape of a check that stops
 being run — the objection D42 and D43 answered for the stub and D50 for
 the leak probe, arriving a fourth time. `cargo test -p remanence-py` now
 runs it.
+[Superseded by D65 — `cargo test -p remanence-py` no longer runs it at
+all; `just test-py` does, and needs no Rust `#[test]` to exist.]
 
 **A wheel was never the requirement; the layout was.** A wheel is a
 `remanence/` package holding the compiled module beside `__init__.py`,

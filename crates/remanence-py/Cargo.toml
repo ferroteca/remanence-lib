@@ -32,10 +32,3 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.29.0", features = ["extension-module", "abi3-py310", "py-clone"] }
 remanence.workspace = true
-
-# `build.rs` asks it which interpreter pyo3 resolved, so that a Python
-# outside the claim is refused before anything compiles rather than at a
-# consumer's `import`. It reads the config pyo3 already exported, so it
-# runs no interpreter of its own and adds nothing to what a build needs.
-[build-dependencies]
-pyo3-build-config = "0.29"

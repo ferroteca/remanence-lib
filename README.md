@@ -301,6 +301,15 @@ beyond uv itself needs installing. Publishing is `uv publish` from that
 only, for now**, and its packaging classifiers say so; the POSIX code paths
 exist and should stay correct, but they are untested and unclaimed.
 
+Testing the Python bindings and the C/C++ surface is `just`, not
+`cargo test` — neither is reached by `cargo build`/`cargo test` in any
+form:
+
+```bash
+just test-py    # builds, stages, and runs pytest and mypy against it
+just test-ffi   # builds via CMake and runs the C/C++ suite with CTest
+```
+
 An example C consumer is at
 [crates/remanence-ffi/examples/identify.c](crates/remanence-ffi/examples/identify.c),
 with build instructions in its header comment.

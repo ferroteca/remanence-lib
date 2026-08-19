@@ -16,9 +16,13 @@
 # link a MinGW import library and the two disagree about the C runtime
 # besides. Either way what arrives here is a compiler already chosen.
 #
-# The Rust tests in `crates/remanence-ffi/tests/` drive this. It is not
-# meant to be configured by hand, though nothing stops it: it needs
-# REMANENCE_LIB pointing at the built import library or shared object.
+# `just test-ffi` drives this (D65): building the shipped and leak-probe
+# cdylibs, configuring, building, and running `ctest`. It is not meant to
+# be configured by hand, though nothing stops it — it needs REMANENCE_LIB
+# pointing at the built import library or shared object, and
+# REMANENCE_PROBE_LIB/REMANENCE_RUNTIME/REMANENCE_PROBE_RUNTIME are
+# optional beyond that (see the CTest registration below for what each
+# test needs).
 
 cmake_minimum_required(VERSION 3.20)
 project(remanence_c_tests C CXX)
@@ -193,3 +197,157 @@ if(REMANENCE_PROBE_LIB)
             RUNTIME_OUTPUT_DIRECTORY${suffix} "${CMAKE_BINARY_DIR}/bin/leak")
     endforeach()
 endif()
+
+# === CTest registration (D65) ==============================================
+#
+# `ctest` runs every group below directly. Naming a target (`abi_boundary`,
+# `wrapper`, ...) as a test's `COMMAND` resolves to that target's actual
+# built executable automatically — the per-config directory, the `.exe`
+# suffix — which is what replaced the Rust harness's own path-joining and
+# existence assertion.
+
+enable_testing()
+
+get_filename_component(REMANENCE_WORKSPACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+
+# --- runtime DLL staging ---------------------------------------------------
+#
+# Windows resolves an import from beside the executable before anything on
+# PATH. Folded into the build itself, rather than a shell step after, so a
+# bare `cmake --build` alone produces runnable executables.
+if(WIN32 AND REMANENCE_RUNTIME)
+    foreach(target abi_boundary wrapper)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${REMANENCE_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")
+    endforeach()
+endif()
+if(WIN32 AND REMANENCE_PROBE_LIB AND REMANENCE_PROBE_RUNTIME)
+    foreach(target abi_leaks wrapper_leaks)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${REMANENCE_PROBE_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")
+    endforeach()
+endif()
+
+# --- fixture existence checks (FIXTURES_SETUP) -----------------------------
+#
+# A missing fixture otherwise fails a bare `fopen` inside the C/C++ caller
+# with no hint at all; this reports the fix instead, and runs once as a
+# setup step so every consumer gets it for free. **The setup test carries
+# the same LABELS as its consumers** — otherwise excluding a label
+# (`ctest -LE rigs`) filters the consumers but not this standalone check,
+# which then fails on its own on a machine that deliberately has no
+# fixtures.
+#
+# **Converged onto one label each, which `abi_leaks` and `wrapper report`
+# did not carry before this file existed** — both need
+# `freedos-parttest.qcow2` exactly as `abi_boundary discovery` does, but
+# only the latter was gated (behind Cargo's `rigs` feature). A bare
+# `cargo test -p remanence-ffi` on a fresh clone therefore used to fail on
+# two undeclared fixture dependencies, the same class of bug D58's history
+# (`media_sources`, `sevenzip_catalog`) is about. All three now share the
+# `rigs` label and fixture, closing that gap.
+set(REMANENCE_FIXTURE_FREEDOS
+    "${REMANENCE_WORKSPACE}/crates/remanence/tests/fixtures/freedos-parttest.qcow2")
+add_test(NAME fixture_freedos_qcow2
+    COMMAND ${CMAKE_COMMAND} "-DFIXTURE=${REMANENCE_FIXTURE_FREEDOS}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/check_fixture.cmake")
+set_tests_properties(fixture_freedos_qcow2 PROPERTIES
+    FIXTURES_SETUP "freedos_qcow2" LABELS "rigs")
+
+set(REMANENCE_FIXTURE_PINBALL
+    "${REMANENCE_WORKSPACE}/crates/remanence/tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z")
+add_test(NAME fixture_pinball_capture
+    COMMAND ${CMAKE_COMMAND} "-DFIXTURE=${REMANENCE_FIXTURE_PINBALL}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/check_fixture.cmake")
+set_tests_properties(fixture_pinball_capture PROPERTIES
+    FIXTURES_SETUP "pinball_capture" LABELS "fixtures")
+
+# --- scratch directories (FIXTURES_SETUP / FIXTURES_CLEANUP) --------------
+#
+# `wrapper flux` and `wrapper_leaks` each lay a worked example somewhere of
+# their own; CTest creates it before and removes it after regardless of
+# which test selection (`-R`/`-L`) was asked for, since a required fixture
+# is pulled in even when its name was not.
+set(REMANENCE_SCRATCH_FLUX "${CMAKE_BINARY_DIR}/scratch/flux")
+add_test(NAME scratch_flux_setup
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${REMANENCE_SCRATCH_FLUX}")
+set_tests_properties(scratch_flux_setup PROPERTIES FIXTURES_SETUP "scratch_flux")
+add_test(NAME scratch_flux_cleanup
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "${REMANENCE_SCRATCH_FLUX}")
+set_tests_properties(scratch_flux_cleanup PROPERTIES FIXTURES_CLEANUP "scratch_flux")
+
+set(REMANENCE_SCRATCH_LEAK "${CMAKE_BINARY_DIR}/scratch/leak")
+add_test(NAME scratch_leak_setup
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${REMANENCE_SCRATCH_LEAK}")
+set_tests_properties(scratch_leak_setup PROPERTIES FIXTURES_SETUP "scratch_leak")
+add_test(NAME scratch_leak_cleanup
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "${REMANENCE_SCRATCH_LEAK}")
+set_tests_properties(scratch_leak_cleanup PROPERTIES FIXTURES_CLEANUP "scratch_leak")
+
+# --- abi_boundary: the C ABI, crossed from C (D45, D46) --------------------
+foreach(group catalogs version refusal nulls devices)
+    add_test(NAME abi_boundary_${group} COMMAND abi_boundary ${group}
+        WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+endforeach()
+
+add_test(NAME abi_boundary_discovery
+    COMMAND abi_boundary discovery
+        crates/remanence/tests/fixtures/freedos-parttest.qcow2
+    WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+set_tests_properties(abi_boundary_discovery PROPERTIES
+    LABELS "rigs" FIXTURES_REQUIRED "freedos_qcow2")
+
+# --- wrapper: the C++ presentation, crossed from C++ (D53) -----------------
+foreach(group catalogs refusals authorship devices views lifetimes absences flux_refusals)
+    add_test(NAME wrapper_${group} COMMAND wrapper ${group}
+        WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+endforeach()
+
+add_test(NAME wrapper_flux
+    COMMAND wrapper flux "${REMANENCE_SCRATCH_FLUX}"
+    WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+set_tests_properties(wrapper_flux PROPERTIES FIXTURES_REQUIRED "scratch_flux")
+
+add_test(NAME wrapper_report
+    COMMAND wrapper report
+        crates/remanence/tests/fixtures/freedos-parttest.qcow2
+    WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+set_tests_properties(wrapper_report PROPERTIES
+    LABELS "rigs" FIXTURES_REQUIRED "freedos_qcow2")
+
+add_test(NAME wrapper_flux_capture
+    COMMAND wrapper flux_capture
+        "crates/remanence/tests/fixtures/Bill Budge Pinball Construction Set [Commodore 64] (1of2).7z"
+    WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+set_tests_properties(wrapper_flux_capture PROPERTIES
+    LABELS "fixtures" FIXTURES_REQUIRED "pinball_capture")
+
+# --- the leak probe (D47, D50) ---------------------------------------------
+#
+# Only registered when a probe build was actually linked — REMANENCE_PROBE_LIB
+# is optional, unlike REMANENCE_LIB.
+if(REMANENCE_PROBE_LIB)
+    add_test(NAME abi_leaks
+        COMMAND abi_leaks
+            crates/remanence/tests/fixtures/freedos-parttest.qcow2
+        WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+    set_tests_properties(abi_leaks PROPERTIES
+        LABELS "rigs" FIXTURES_REQUIRED "freedos_qcow2")
+
+    add_test(NAME wrapper_leaks
+        COMMAND wrapper_leaks "${REMANENCE_SCRATCH_LEAK}"
+        WORKING_DIRECTORY "${REMANENCE_WORKSPACE}")
+    set_tests_properties(wrapper_leaks PROPERTIES FIXTURES_REQUIRED "scratch_leak")
+endif()
+
+# --- what needs no add_test at all -----------------------------------------
+#
+# The five `header_*`/`example_*` OBJECT libraries above compile only,
+# nothing to run; and the `dangling`/`bound` try_compile checks already ran
+# at configure time, above, failing this whole configure via
+# `message(FATAL_ERROR ...)` on the wrong outcome. `cmake --build` failing
+# outright already surfaces every one of these — there is nothing left for
+# `ctest` to wrap.

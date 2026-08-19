@@ -30,53 +30,12 @@ crate-type = ["staticlib", "cdylib"]
 # Counts live Rust allocations inside the cdylib and exports the count,
 # so a C caller can assert that a handle's `_free` gives back everything
 # its creation took (D46). Test-only and off by default: a released
-# artifact carries neither the counter nor the symbol.
+# artifact carries neither the counter nor the symbol. Built by `xtask`
+# (D65), which `just test-ffi` drives.
 leak-probe = []
-
-# Test-only, and it gates a test target rather than any code, exactly as
-# the core crate's feature of the same name does (D49): `cpp_flux.rs`
-# walks the flux ladder over a real KryoFlux capture, which
-# `test-fixture-prep/prep_fixtures.py` downloads and git does not track.
-# Everything else the C++ surface is checked by builds its own artifact.
-fixtures = []
-
-# The other half of the core crate's split, for the same reason it draws
-# one (D49): `rigs` is what the project *generates* rather than
-# downloads. `c_abi_rig.rs` crosses the boundary with
-# `freedos-parttest.qcow2`, which reliquary builds by installing FreeDOS
-# onto a disk — a second toolchain, an emulator, and as long as the
-# install takes. Someone holding the downloads should not need any of
-# that to run what the downloads reach.
-rigs = []
 
 [dependencies]
 remanence.workspace = true
 
 [build-dependencies]
 cbindgen = "0.29"
-
-# Test-only, and only to read cargo's own `--message-format=json` report
-# of what it just built: the C tests link a file whose name and directory
-# are the toolchain's to choose, and asking is exact where searching a
-# directory for a plausible name is right only on the host it was written
-# on. Nothing shipped depends on it, and cbindgen already builds it.
-[dev-dependencies]
-serde_json = "1"
-
-# The one C++ suite that opens a downloaded artifact. Cargo does not
-# build a target whose required features are off, so the default run
-# reports nothing misleading about it; `cargo test --features fixtures`
-# runs it, and it says which script to run when the capture is absent.
-[[test]]
-name = "cpp_flux"
-required-features = ["fixtures"]
-
-# The one C suite that opens a generated one, and the reason it is its
-# own target: `required-features` gates a whole target, and the other
-# five groups in `c_abi_boundary.rs` need no artifact at all. Its test
-# lived there and declared nothing, so `cargo test --workspace` wanted
-# the rig on every machine — passing wherever the prep had run, failing
-# on a fresh clone.
-[[test]]
-name = "c_abi_rig"
-required-features = ["rigs"]
