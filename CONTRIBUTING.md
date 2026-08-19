@@ -39,36 +39,49 @@ Rust toolchain is all the core needs.
 cargo build                 # the Rust core and the C ABI; nothing but rustc is needed
 cargo test
 cargo build --workspace     # every surface; regenerates c/include/remanence.h
-cargo test --workspace      # the Rust-level tests only
+cargo test --workspace      # the Rust-level tests only, minus the fixture/rig-gated suite
+task test-rust                 # the fixture/rig-gated Rust suite: runs the prep script itself
 task test-ffi                 # the C/C++ surface: needs CMake and a C/C++ compiler
 task test-py                  # the Python surface: needs Python 3.10+ with uv
 ```
 
 `crates/remanence` and `crates/remanence-ffi` are default members; only
-`crates/remanence-py` is not, since its lifecycle depends on an external
-Python that the other two no longer need at all (D68). The bare commands
-therefore ask nothing of you but rustc, and already regenerate
+`crates/remanence-py` and `integration-tests/rust` are not — the Python
+crate for its external interpreter, the integration crate because every
+target in it needs a fixture a fresh clone does not have (D71). The bare
+commands therefore ask nothing of you but rustc, and already regenerate
 `crates/remanence-ffi/c/include/remanence.h` in the process. **A
-contributor runs all four of the rest**: `cargo build --workspace`
+contributor runs all five of the rest**: `cargo build --workspace`
 additionally reaches `remanence-py`'s Rust code, `cargo test --workspace`
-checks the Rust-level tests of every surface, and `task test-ffi`/
-`task test-py` are what actually check the C ABI and the Python module
-respectively — neither is reached by `cargo test` in any form. `task`,
-not `just` — [Task](https://taskfile.dev) embeds its own shell
-interpreter, so a task runs the same wherever it's invoked from with no
-external shell dependency at all, unlike `just`'s recipes, which needed
-git-bash. Extra `ctest` arguments pass through `task test-ffi`, e.g.
+checks the Rust-level tests of every surface that doesn't need a
+downloaded or generated artifact, and `task test-rust`/
+`task test-ffi`/`task test-py` are what actually check the fixture-gated
+Rust suite, the C ABI and the Python module respectively — none of the
+three is reached by `cargo test` in any form. `task`, not `just` —
+[Task](https://taskfile.dev) embeds its own shell interpreter, so a task
+runs the same wherever it's invoked from with no external shell
+dependency at all, unlike `just`'s recipes, which needed git-bash.
+`task test-rust` runs `uv run integration-tests/prep_fixtures.py` itself
+before testing (idempotent — a second run costs only the existence
+checks), so it needs nothing prepared beforehand; bare, it then runs
+both feature tiers, and extra arguments replace that default, e.g.
+`task test-rust -- --features fixtures` for the half that needs no
+`reliquary` install. Extra `ctest` arguments pass through `task test-ffi`
+the same way, e.g.
 `task test-ffi -- -LE "rigs|fixtures"` to skip what needs a downloaded or
 generated fixture (one regex — `ctest -LE` does not compose across
 repeated flags). Distributable Python artifacts are built with
 `uv build crates/remanence-py`, which drives the maturin build backend
 in an isolated environment. See [README.md](README.md).
 
-Some `remanence` unit tests need fixtures that are not checked in;
-`integration-tests/prep_fixtures.py` prepares them. It pins reliquary
-(Python 3.12+) as inline script metadata rather than through a
-project of its own, so uv provisions the environment straight from
-the file — there is nothing to sync or activate first:
+Some `remanence` unit tests and the whole `integration-tests/rust` suite
+need fixtures that are not checked in;
+`integration-tests/prep_fixtures.py` prepares them (`task test-rust`
+above runs it for you; the core crate's own in-source `fixtures` tests
+still need it run by hand first). It pins reliquary (Python 3.12+) as
+inline script metadata rather than through a project of its own, so uv
+provisions the environment straight from the file — there is nothing to
+sync or activate first:
 
 ```bash
 uv run integration-tests/prep_fixtures.py

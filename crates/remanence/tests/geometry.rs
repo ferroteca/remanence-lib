@@ -6,7 +6,8 @@
 //!
 //! The two readings that need an artifact of their own — a format that
 //! declares a geometry, and one nested in an archive — are in
-//! `geometry_fixtures.rs`, behind the `fixtures` feature.
+//! `integration-tests/rust/tests/geometry_fixtures.rs`, behind the
+//! `fixtures` feature.
 //!
 //! Every geometry here is *read*: nothing in these tests declares one
 //! onto a medium, because nothing can. What the tests vary is what the

@@ -806,14 +806,25 @@ compiled into the wheel.
   when the untracked artifacts were absent, so a suite that had stopped
   checking still reported green. The flux tests now assert what the
   formats and the model fix.
-- **`integration-tests/` holds every byte the test suites acquire**, and
-  it sits at the repository root rather than under any crate because
-  three surfaces read the same files: the Rust suites in
-  `crates/remanence/tests/`, the C/C++ CTest suite in
-  `crates/remanence-ffi/c/tests/`, and the prep script that writes them.
-  Filing them under one crate claimed an ownership none of the three
-  could honour, and `crates/*/tests` holds Rust tests and nothing else.
-  Two directories, split by whether a test reads the file:
+- **`integration-tests/` holds every byte the test suites acquire, and the
+  Rust suite that opens them.** `integration-tests/rust/` is the
+  fixture/rig-gated Rust integration crate (`remanence-integration-tests`,
+  a workspace member but never a default one, same footing as `xtask`) —
+  the nine suites that need a downloaded or generated artifact, moved out
+  of `crates/remanence/tests/` because that directory publishes with the
+  crate and these never should (D71). Python's counterpart, should one
+  ever join it, is `integration-tests/python/` on the same footing —
+  distinct from the shippable, fixture-free suite in
+  `crates/remanence-py/python/tests/` (D48), the way `integration-tests/
+  rust/` is distinct from `crates/remanence/tests/` — driven by its own
+  `task test-python`, distinct from `task test-py` the same way. `fixtures/`
+  and `downloads/` sit
+  beside it rather than inside it, because three things read the same
+  files: this crate, the C/C++ CTest suite in
+  `crates/remanence-ffi/c/tests/`, and the prep script that writes them —
+  filing the fixtures under any one of those three claimed an ownership
+  none of them could honour. Two directories, split by whether a test
+  reads the file:
   `integration-tests/fixtures/` is what the suites open, and
   `integration-tests/downloads/` is the sources a fixture is repackaged
   out of, which nothing reads directly.
@@ -842,11 +853,12 @@ compiled into the wheel.
   reuse it. Downloaded, extracted, and generated fixture files are never
   tracked: `integration-tests/fixtures/.gitignore` names each one and
   `integration-tests/downloads/.gitignore` covers its whole directory.
-  Nothing under `integration-tests/` is inside a crate, so no
-  `package.exclude` is needed to keep any of it out of a published
-  artifact. Checked-in fixtures may sit alongside them. Unit tests expect
-  required fixtures to be present and fail with diagnostic
-  instructions to run the prep script when missing.
+  `fixtures/` and `downloads/` are not inside `integration-tests/rust/`
+  itself, so no `package.exclude` is needed there either — and
+  `remanence-integration-tests` carries `publish = false`, never being a
+  registry artifact in the first place. Checked-in fixtures may sit
+  alongside them. The suites expect required fixtures to be present and
+  fail with diagnostic instructions to run the prep script when missing.
 
 ## Versioning and releases
 
@@ -900,32 +912,41 @@ cargo build                 # the core and the C ABI; nothing but rustc is neede
 cargo test
 cargo build --workspace     # every surface; regenerates c/include/remanence.h
 cargo test --workspace      # the Rust-level tests only — see below
+task test-rust                # Rust (S1): the fixture/rig-gated suite; runs the prep script itself
 task test-ffi                # C/C++ (S2): needs CMake and a C/C++ compiler
 task test-py                 # Python (S3): needs uv
 cargo fmt --all -- --check
 git diff --check
 ```
 
-**All eight are required, and no prefix of the list is a subset anyone
+**All nine are required, and no prefix of the list is a subset anyone
 may stop at.** `crates/remanence` and `crates/remanence-ffi` are default
-members (D68); `crates/remanence-py` is not, because its lifecycle
-depends on an external Python — pyo3's build script resolves against a
-real interpreter — where the other two now need nothing beyond rustc.
-The bare commands therefore build and test the Rust core *and* the C ABI
-(including regenerating `crates/remanence-ffi/c/include/remanence.h`,
-since the build script that writes it now runs by default), which is
-what lets a reader of either, or a packager, work without acquiring a
-Python toolchain first. A contributor is not that reader: the
+members (D68); `crates/remanence-py` and `integration-tests/rust` are
+not — the Python crate because its lifecycle depends on an external
+Python (pyo3's build script resolves against a real interpreter), and
+the integration crate because every target in it requires a fixture a
+fresh clone does not have (D71) — where the other two now need nothing
+beyond rustc. The bare commands therefore build and test the Rust core
+*and* the C ABI (including regenerating
+`crates/remanence-ffi/c/include/remanence.h`, since the build script
+that writes it now runs by default), which is what lets a reader of
+either, or a packager, work without acquiring a Python toolchain or a
+network connection first. A contributor is not that reader: the
 `--workspace` pair is what additionally reaches `remanence-py`'s Rust
-code, but **neither `cargo build` nor `cargo test`, in any form, reaches
-the C/C++ or Python surfaces' own test suites any more** — that is what
-`task test-ffi`/`task test-py` are for. This reverses D44-D51's and
-D63's original design of embedding both inside the Rust test harness;
-why, and what changed as a result, is `planning/DECISIONS.md` D65. One
-thing D65 improves rather than merely relocates: `cargo test --workspace`
-now needs only a Python interpreter (for pyo3's build script) — no
-CMake, no C/C++ compiler, no `uv` — since nothing it runs touches the
-C/C++ surface at all any more.
+code and resolves `remanence-integration-tests` (contributing no tests
+of its own to the run, its targets all requiring a feature the
+workspace flag does not turn on), but **neither `cargo build` nor
+`cargo test`, in any form, reaches the fixture/rig-gated Rust suite, or
+the C/C++ or Python surfaces' own test suites, any more** — that is
+what `task test-rust`/`task test-ffi`/`task test-py` are for. This
+reverses D44-D51's and D63's original design of embedding all three
+inside the Rust test harness; why, and what changed as a result, is
+`planning/DECISIONS.md` D65 for the C/C++ and Python surfaces and D71
+for the Rust fixture/rig tier. `cargo test --workspace` needs only a
+Python interpreter (for pyo3's build script) — no CMake, no C/C++
+compiler, no `uv`, no downloaded or generated fixture — since nothing it
+runs touches the C/C++ surface, or opens an artifact `prep_fixtures.py`
+provides, at all any more.
 
 **The formatting check is here because nothing was asking.** It went
 unrun long enough for 21 files to drift, and the drift was invisible:
@@ -946,35 +967,64 @@ renditions over the pinball disk, and the `fixture_tests` module in
 `flux/drive_profile/verdict.rs`, whose claims sit in the source because
 F59 folded the verb they exercised into the declared load and they reach
 `pub(crate)` helpers to do their work. They carry
-`#[cfg(feature = "fixtures")]` for the same reason the suites below
-carry `required-features` — the feature is what marks the tier, not the
-directory — and they cost the default run nothing, having been most of
-its wall clock. Seven suites open such an artifact in the core crate:
+`#[cfg(feature = "fixtures")]`, the one feature `crates/remanence` still
+declares now that every target that needed `rigs` has moved (below), and
+they cost the default run nothing, having been most of its wall clock:
 
 ```bash
-cargo test --features fixtures                    # what was downloaded
-cargo test --features rigs                        # what reliquary built
+cargo test --features fixtures                    # the core crate's own in-source unit tests
 ```
 
-**The FFI crate's own fixture- and rig-gated tests moved with the rest of
-it** (D65): `task test-ffi -L fixtures` is the KryoFlux flux walk, and
-`task test-ffi -L rigs` is every test crossing the boundary with
-`freedos-parttest.qcow2` — three of them now, not one; what changed and
-why is below.
+**Everything that used to be `crates/remanence/tests/*.rs` behind
+`required-features` moved to `integration-tests/rust/`** (D71), on the
+FFI crate's own precedent (D65): nine suites, gated the same way, over
+the same two features, just declared on `remanence-integration-tests`
+now instead of on the core crate. `task test-rust` is the single entry
+point — it runs `prep_fixtures.py` itself first (idempotent, so a
+machine that already has everything pays only the check), then the whole
+tier by default; extra arguments pass through to `cargo test` the same
+way `task test-ffi`'s pass through to `ctest`:
 
-**Two features, because what it costs to obtain them differs in kind.**
-`fixtures` names what the project acquires from elsewhere, downloaded
-against pinned SHA-256s; `rigs` names the one artifact it generates,
-`freedos-parttest.qcow2`, which reliquary produces by booting a machine
-and installing FreeDOS onto a disk — needing that toolchain, an
-emulator, and as long as the install takes. Someone holding the
-downloads should not have to own the rig toolchain to run everything the
-downloads reach, and the gap widens with the operating system being
-installed.
+```bash
+task test-rust                                          # both tiers, downloading first
+task test-rust -- --features fixtures                   # what was downloaded
+task test-rust -- --features rigs                       # what reliquary built
+```
+
+The prep step itself takes no feature selection — it always prepares
+both the downloads and the rig, `prep_fixtures.py`'s own `main()` having
+no flag for less than everything — so `--features fixtures` only narrows
+what `cargo test` then builds and runs, not what gets fetched first. Run
+directly rather than through Task, that last pair (fixtures already
+prepared) is `cargo test -p remanence-integration-tests --features
+fixtures` and `--features rigs`; `task test-rust` exists for the same
+reason `task test-ffi`/`task test-py` do, a recipe nobody has to
+remember the invocation, or the prerequisite, for.
+
+**The FFI crate's own fixture- and rig-gated tests moved the same way,
+earlier** (D65): `task test-ffi -L fixtures` is the KryoFlux flux walk,
+and `task test-ffi -L rigs` is every test crossing the boundary with
+`freedos-parttest.qcow2` — three of them, CTest labels rather than Cargo
+features since nothing about a CMake target is gated by one.
+
+**Two features on both suites, because what it costs to obtain them
+differs in kind.** `fixtures` names what the project acquires from
+elsewhere, downloaded against pinned SHA-256s; `rigs` names the one
+artifact it generates, `freedos-parttest.qcow2`, which reliquary
+produces by booting a machine and installing FreeDOS onto a disk —
+needing that toolchain, an emulator, and as long as the install takes.
+Someone holding the downloads should not have to own the rig toolchain
+to run everything the downloads reach, and the gap widens with the
+operating system being installed. `crates/remanence` itself declares
+`fixtures` alone now: nothing left in its own `src/` or `tests/` opens
+`freedos-parttest.qcow2`, `rigs` having moved whole to
+`remanence-integration-tests`.
 
 **`ensure_fixture` is gated on those features too**, which is what stops
-the declaration drifting from the fact. `media_sources` and
-`sevenzip_catalog` reached for the HDOS zip and the KryoFlux capture
+the declaration drifting from the fact — in `integration-tests/rust/
+tests/common/mod.rs` now, the same guard it was in
+`crates/remanence/tests/common/mod.rs`. `media_sources` and
+`sevenzip_catalog` once reached for the HDOS zip and the KryoFlux capture
 while declaring neither, so they passed on machines that had run the
 prep and would have panicked on a clone — invisible precisely where it
 mattered. A target that calls the helper without declaring a feature now
@@ -992,37 +1042,50 @@ rather than gated by `required-features` — and this migration converged
 two more tests (`abi_leaks`, `wrapper_report`) that reached the same
 fixture undeclared onto that same label, closing a live instance of the
 identical bug (D65). When a test reaches an artifact without declaring
-it — a Cargo feature in the core crate, a CTest label in the FFI crate's
-CMakeLists.txt — the declaration is the only thing standing, so write it
-first.
+it — a Cargo feature (on the core crate for its in-source tests, on
+`remanence-integration-tests` for the rest), a CTest label in the FFI
+crate's CMakeLists.txt — the declaration is the only thing standing, so
+write it first.
 
 Cargo does not build a target whose required features are off, so the
-default run reports nothing misleading about them. What stays there are
-the readings whose *authenticity* is the point — a KryoFlux capture, an
-authentic HDOS filesystem, a qcow2 an operating system wrote, and a
-format that declares its own geometry. Anything whose shape is wholly
-specified belongs in the default run instead: `tests/rig_disk/mod.rs`
-builds MBR tables, EBR chains and FAT12/FAT16 volumes, and
-`tests/rig_layout.rs` is what asserts a built disk is the shape it
-claims before other tests trust it.
+default run reports nothing misleading about them. What sits behind a
+feature is the readings whose *authenticity* is the point — a KryoFlux
+capture, an authentic HDOS filesystem, a qcow2 an operating system
+wrote, and a format that declares its own geometry. Anything whose shape
+is wholly specified belongs in the default run instead:
+`crates/remanence/tests/rig_disk/mod.rs` builds MBR tables, EBR chains
+and FAT12/FAT16 volumes, and `crates/remanence/tests/rig_layout.rs` is
+what asserts a built disk is the shape it claims before other tests
+trust it — both stayed in the core crate's own `tests/` because neither
+opens a fixture at all.
 
-**Two tiers now, not three, for the FFI and Python crates.** In-source
-`#[cfg(test)]` tests are still the unit tier and travel inside the
-published crate, needing nothing but rustc — which is what the gating
-above is for. What used to be the integration tier — `tests/*.rs`,
-`exclude = ["tests/**"]` keeping it out of both published crates — is
-Rust only for the core crate now. For `remanence-ffi` it is entirely
-CMake/CTest (`c/tests/`, driven by `task test-ffi`), and for
-`remanence-py` it is mostly `task test-py` plus one Rust file that
-remains, `stub_matches_module.rs`. Anything reaching a downloaded or
-generated artifact is still gated — a Cargo feature in the core crate, a
-CTest label in `remanence-ffi`'s CMakeLists.txt. So a packager who
-extracts either crate and runs `cargo test` still gets a passing unit
-tier with no network, no fixture and no second toolchain — the run a
-distribution build actually performs, unchanged by any of this.
-`c/examples/` stays in the FFI crate deliberately: `identify.c` and
-`identify.cpp` are the best documentation a C caller gets, and cargo
-ships them as plain files rather than as targets.
+**Two tiers now, not three — for the FFI and Python crates by moving
+their tests out of `cargo test` entirely (D65), and for the core crate's
+own fixture/rig tier by moving *it* out too, into its own crate
+(D71).** In-source `#[cfg(test)]` tests are still the unit tier and
+travel inside the published crate, needing nothing but rustc — which is
+what the `fixtures` gating above is for on the core crate, and what lets
+`remanence-ffi`'s and `remanence-py`'s own in-source tests run under a
+bare `cargo test --workspace` unaffected by any of this. What used to be
+one integration tier holding both the wholly-specified suites and the
+fixture-dependent ones is two now, split by exactly that line, on every
+surface: `crates/remanence/tests/` keeps the wholly-specified Rust
+suites (`exclude = ["tests/**"]` still keeps them out of the published
+crate) and nothing else; `crates/remanence-ffi/c/tests/` is entirely
+CMake/CTest, driven by `task test-ffi`; `crates/remanence-py/python/
+tests/` is `task test-py` plus one Rust file that remains,
+`stub_matches_module.rs`; and `integration-tests/rust/tests/` is the
+fixture/rig-gated Rust suite, driven by `task test-rust`, `publish =
+false` standing in for an `exclude` it does not need. Anything reaching
+a downloaded or generated artifact is still gated — a Cargo feature on
+the crate whose tests reach for it, a CTest label in `remanence-ffi`'s
+CMakeLists.txt. So a packager who extracts any of the three published
+crates and runs `cargo test` still gets a passing unit tier with no
+network, no fixture and no second toolchain — the run a distribution
+build actually performs, unchanged by any of this. `c/examples/` stays
+in the FFI crate deliberately: `identify.c` and `identify.cpp` are the
+best documentation a C caller gets, and cargo ships them as plain files
+rather than as targets.
 
 When the C ABI changed, rebuild and commit the regenerated header.
 `task test-ffi` **compiles** the C surface for you (D44, D53): that the

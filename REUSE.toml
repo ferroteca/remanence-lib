@@ -28,6 +28,7 @@ path = [
     "crates/remanence-ffi/cbindgen.toml",
     "crates/remanence-py/Cargo.toml",
     "crates/remanence-py/pyproject.toml",
+    "integration-tests/rust/Cargo.toml",
     "xtask/Cargo.toml",
     # PEP 561 requires this marker to be empty; a comment header would
     # not make it invalid, but the file's whole content is its absence.
@@ -48,10 +49,14 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Paul Galbraith"
 SPDX-License-Identifier = "GPL-3.0-only"
 
-# integration-tests/ is deliberately NOT annotated: the HDOS disk images
-# under fixtures/, and the archive under downloads/ a fixture is
-# repackaged out of, are vintage third-party distribution media the
-# project claims no copyright in. Their status is an open question in
-# planning/DECISIONS.md, to be resolved before any package publish. Each
-# directory's own `.gitignore` is listed above as an exact path, never as
-# a glob over the directory, so that omission stays deliberate.
+# integration-tests/fixtures/ and integration-tests/downloads/ are
+# deliberately NOT annotated: the HDOS disk images under fixtures/, and
+# the archive under downloads/ a fixture is repackaged out of, are
+# vintage third-party distribution media the project claims no copyright
+# in. Their status is an open question in planning/DECISIONS.md, to be
+# resolved before any package publish. Each directory's own `.gitignore`
+# is listed above as an exact path, never as a glob over the directory,
+# so that omission stays deliberate. integration-tests/rust/ is a
+# project-authored crate, not fixture material, and its files carry
+# ordinary headers (or the Cargo.toml annotation above) like any other
+# source in the workspace.

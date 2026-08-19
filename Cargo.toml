@@ -4,6 +4,7 @@ members = [
     "crates/remanence",
     "crates/remanence-ffi",
     "crates/remanence-py",
+    "integration-tests/rust",
     "xtask",
 ]
 # **The core and the C ABI are default members now; the Python bindings

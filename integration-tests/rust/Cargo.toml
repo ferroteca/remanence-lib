@@ -1,0 +1,56 @@
+[package]
+name = "remanence-integration-tests"
+description = "Rust integration tests over downloaded/generated fixtures"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+# Test-only, and they gate every target in `tests/` rather than any code
+# — the mirror of `crates/remanence/Cargo.toml`'s own `fixtures`/`rigs`
+# features, moved here with the suites they gate. See that file's comment
+# for what each costs to obtain and why the split is in two.
+[features]
+fixtures = []
+rigs = []
+
+[dev-dependencies]
+remanence.workspace = true
+
+# Every target here needs a fixture that is not checked in — `cargo test`
+# on this crate alone builds nothing without `--features fixtures` and/or
+# `--features rigs` (see `tests/common/mod.rs`'s `ensure_fixture`).
+[[test]]
+name = "freedos_qcow2"
+required-features = ["rigs"]
+
+[[test]]
+name = "geometry_fixtures"
+required-features = ["fixtures"]
+
+[[test]]
+name = "flux_media"
+required-features = ["fixtures"]
+
+[[test]]
+name = "hdos_files"
+required-features = ["fixtures"]
+
+[[test]]
+name = "cpm_files"
+required-features = ["fixtures"]
+
+[[test]]
+name = "pcdos_files"
+required-features = ["fixtures"]
+
+[[test]]
+name = "identify_hdos_image"
+required-features = ["fixtures"]
+
+[[test]]
+name = "media_sources"
+required-features = ["fixtures"]
+
+[[test]]
+name = "sevenzip_catalog"
+required-features = ["fixtures"]

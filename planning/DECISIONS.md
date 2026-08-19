@@ -58,6 +58,113 @@ removes it is the record either way.
 
 ## Decisions
 
+### D71 — The core crate's fixture/rig-gated integration tests move to their own crate under integration-tests/
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-19. **Supports** S1; amends D65's "the core crate's
+`fixtures`/`rigs` features are untouched" clause, narrowing rather than
+reversing it — the features themselves, and the in-source unit tests
+they still gate, are untouched; only the nine `tests/*.rs` targets they
+also gated are not. `DECISIONS.md` was searched first and returned D49
+(the split's origin), D65 (the FFI/Python precedent this extends, and
+the clause it amends) and D69 (the `crates/*/tests` grouping principle
+this stays inside rather than overrules).
+
+**D65 left the core crate alone for a real reason, not an oversight.**
+Its complaint was that `cargo test` had come to drive CMake, `uv`,
+pytest and mypy from inside `#[test]` functions — non-Rust toolchain
+work wearing a Rust test's shape. Nothing in `crates/remanence/tests/`
+ever did that: `flux_media.rs`, `freedos_qcow2.rs` and the rest are
+plain `#[test]` functions that open a real file, the same shape as every
+synthetic-image suite beside them. That distinction stands, and this
+entry does not relitigate it.
+
+**The reason to move them anyway is co-location, not the toolchain
+complaint.** `integration-tests/` is already the one place a contributor
+looks for everything `prep_fixtures.py` provides and everything that
+reads what it provides — the fixtures themselves, the C/C++ CTest suite
+that opens them, the prep script that writes them. The nine Rust suites
+were the one reader left outside it, findable only by knowing to grep
+`crates/remanence/tests/` for `required-features`. `git mv`-ing them to
+`integration-tests/rust/tests/` puts every reader of a downloaded or
+generated fixture under one directory, and — a second-order benefit
+`crates/remanence/Cargo.toml`'s own `exclude = ["tests/**"]` comment
+already named as the goal — a fresh clone's `cargo package` output is
+never in a position to ship them, `integration-tests/` never being
+inside a crate cargo packages from at all.
+
+**Mechanically, a new workspace member, not a relocated `path`.**
+`integration-tests/rust/` is `remanence-integration-tests` — a workspace
+member and never a default one, on the same footing as `xtask` and
+`remanence-py` — carrying its own `fixtures`/`rigs` features and the
+same nine `[[test]]`/`required-features` declarations
+`crates/remanence/Cargo.toml` used to. `tests/common/mod.rs` (`open_read`,
+`open_write`, `manifest_dir`, `repo_root`, `fixtures_dir`,
+`ensure_fixture`) moved whole rather than being re-derived — its
+`repo_root()` climbs two parents from `CARGO_MANIFEST_DIR` either way,
+`integration-tests/rust` sitting exactly as deep as `crates/remanence`
+did. `crates/remanence/tests/common/mod.rs` keeps a copy trimmed to
+`open_read`/`open_write` alone, for the fourteen suites that stayed and
+never called `ensure_fixture` or `fixtures_dir`. A new task,
+`task test-rust`, is the entry point — it runs
+`uv run integration-tests/prep_fixtures.py` itself first (idempotent, so
+a machine that already has everything pays only the existence checks),
+then builds both feature tiers by default; extra arguments replace that
+default rather than appending to it
+(`{{.CLI_ARGS | default "--features fixtures,rigs"}}`, confirmed against
+Task's actual substitution rather than assumed), so
+`task test-rust -- --features fixtures` genuinely runs the smaller tier
+rather than silently unioning both — though the prep step itself still
+prepares everything either way, `prep_fixtures.py`'s `main()` taking no
+flag for less.
+
+**`rigs` leaves `crates/remanence` entirely; `fixtures` stays, narrower.**
+`freedos_qcow2.rs` was the only place in the core crate that named
+`rigs` at all, in either `src/` or `tests/`, so nothing is left there for
+the feature to gate — declaring it would be exactly the drift D49's own
+"a target that calls the helper without declaring a feature now fails to
+compile" guard exists to catch, aimed at a feature instead of a call
+site. `fixtures` stays, because `flux/c1541/renditions.rs`,
+`flux/drive_profile/verdict.rs` and `flux/remanence/reconstruction.rs`
+are in-source `#[cfg(test)]` modules that reach `pub(crate)` internals no
+external crate can — the same reason D65 never moved the FFI crate's own
+in-source tests out from behind its mirrored `fixtures` feature (D54).
+
+**This stays inside D69's principle rather than overruling it.** D69
+settled that `crates/*/tests` holds Rust tests and nothing else, arguing
+from what was found in `crates/remanence-ffi/tests/c/` and
+`crates/remanence-py/tests/` — non-Rust content sitting under a
+Rust-suggesting name. `crates/remanence/tests/` never had that problem
+and still doesn't: every file left in it is a Rust test, same as
+`integration-tests/rust/tests/` is now. What moved is *which* directory
+a Rust suite lives under, on the same "group by what shares an audience"
+logic D69 used for `crates/remanence-ffi/c/` — the audience for a
+fixture-gated Rust suite is `integration-tests/`, not `crates/remanence`.
+
+**Weighed and declined:** relocating only the nine files' `path`s inside
+`crates/remanence/Cargo.toml`'s existing `[[test]]` blocks, leaving
+`cargo test --features fixtures`/`--features rigs` at the workspace root
+as the invocation — kept the smallest possible diff and cargo genuinely
+permits a `path` outside the package root (confirmed: `cargo package`
+warns and excludes such a target rather than erroring), but left the
+core crate answering to two different reachability rules for its own
+`[[test]]` declarations depending on which crate the file physically
+sat in, a distinction with no reader-visible reason once the file was
+already gone from `crates/remanence/tests/`. Declared explicitly as the
+question this entry answers, rather than assumed.
+
+**Folded into:** `integration-tests/rust/Cargo.toml`;
+`integration-tests/rust/tests/{cpm_files,flux_media,freedos_qcow2,
+geometry_fixtures,hdos_files,identify_hdos_image,media_sources,
+pcdos_files,sevenzip_catalog}.rs`; `integration-tests/rust/tests/common/
+mod.rs`; `crates/remanence/Cargo.toml`; `crates/remanence/tests/common/
+mod.rs`; `crates/remanence/tests/geometry.rs`; `Cargo.toml` (workspace
+members); `Taskfile.yml`; `AGENTS.md`; `CONTRIBUTING.md`; `README.md`;
+`REUSE.toml`; `planning/SEQUENCES.md`.
+
+**No changelog entry.** Where source and test files live is not
+release-facing.
+
 ### D70 — The fixture-prep script drops its uv project for inline metadata, and moves to integration-tests/
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -430,6 +537,13 @@ check reached from `cargo test` is a check that keeps running.
 [Superseded on the runner by D67 — `just` is replaced by `task`
 throughout this entry; the CMake/CTest registration and the choice to
 keep toolchain-matching in `xtask` both stand unchanged.]
+[Narrowed by D71 — "the core crate's `fixtures`/`rigs` features are
+untouched" no longer holds for the `tests/*.rs` targets those features
+gated: those nine moved to `integration-tests/rust/`, reached by the
+same `task test-*` pattern this entry set for the FFI and Python
+surfaces, for a different reason than this entry's own (D71 says which).
+The features themselves, and the in-source unit tests still behind
+`fixtures`, are exactly as this entry left them.]
 
 **The premise was true and the mechanism was the cost.** Nothing here
 disputes D48's or D64's reasoning — a check nobody remembers to run is a
@@ -1413,6 +1527,13 @@ library that is not the one shipped).
 2026-08-13. **Supports** S1; D48. `DECISIONS.md` was searched first and
 returned D48, whose fixture-free reasoning this extends from the Python
 suite to the Rust one.
+[Superseded on path by D71 — `freedos_qcow2`, `flux_media`, `hdos_files`,
+`identify_hdos_image`, `geometry_fixtures` and the rest of the
+`required-features` suites named below moved from `crates/remanence/
+tests/` to `integration-tests/rust/tests/`. The `fixtures`/`rigs` split
+and the reasoning for it stand exactly as this entry states them —
+`rigs` now lives on the crate the moved suite carries it to instead of
+on `crates/remanence`, `fixtures` on both.]
 
 D48 found that the shippable Python suite could open no artifact, and
 that `new_media` and hand-built structures were the way past it. The same

@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Paul Galbraith
 # SPDX-License-Identifier: GPL-3.0-only
 #
-# Drives the C/C++ and Python checks — neither is triggered by
-# `cargo build`/`cargo test` in any form; both are reached only by
-# running the tasks below.
+# Drives the fixture/rig-gated Rust suite, the C/C++ checks and the
+# Python checks — none of the three is triggered by `cargo build`/
+# `cargo test` in any form; all three are reached only by running the
+# tasks below.
 #
 # Task, not just: Task embeds its own shell interpreter (mvdan.cc/sh), so
 # a task runs identically wherever it's invoked from with no external
@@ -71,6 +72,39 @@ tasks:
               echo "rejects.py type-checked clean; it is meant to be refused" >&2
               exit 1
           fi
+
+  test-python:
+    desc: >-
+      Prepares the fixtures (idempotent, same as `task test-rust`) and
+      runs the fixture-gated Python integration suite
+      (`integration-tests/python/`) against a freshly built and staged
+      module — the Python analog of `task test-rust`, distinct from
+      `task test-py`'s shippable, fixture-free suite. Extra arguments
+      pass through to `pytest`.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          uv run integration-tests/prep_fixtures.py
+          uv run -- cargo build -p remanence-py
+          STAGE_ROOT=$(cargo run -q -p xtask -- py-stage)
+          PYTHONPATH="$STAGE_ROOT" uv run --with pytest --no-project pytest -q integration-tests/python {{.CLI_ARGS}}
+
+  test-rust:
+    desc: >-
+      Prepares the fixtures (idempotent — `prep_fixtures.py` skips
+      whatever is already on disk) and runs the Rust integration suite
+      that needs one (`integration-tests/rust/`, D71) — the tier
+      `cargo test`/`cargo test --workspace` do not reach, same as the
+      C/C++ and Python surfaces below. Bare, it runs both feature tiers;
+      extra arguments replace that default and pass through to
+      `cargo test` instead — e.g. `task test-rust -- --features fixtures`
+      for the half that needs no `reliquary` install (the prep step
+      still prepares both; it takes no feature selection of its own).
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          uv run integration-tests/prep_fixtures.py
+          cargo test -p remanence-integration-tests {{.CLI_ARGS | default "--features fixtures,rigs"}}
 
   test-ffi:
     desc: >-
