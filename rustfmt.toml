@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Paul Galbraith
+# SPDX-License-Identifier: GPL-3.0-only
+
+# Module declaration order is load-bearing in `remanence-ffi` and rustfmt
+# must not sort it (D72). cbindgen emits `c/include/remanence.h` in
+# module-declaration order under `[fn] sort_by = "None"`, so the order
+# `src/lib.rs` declares its groups in is the order a C consumer reads the
+# header in. Those groups are declared in the order a caller meets them —
+# the error outs, then a session and what it opens, then the content
+# above a medium — which alphabetical order would scramble.
+#
+# Nothing else in the workspace declares modules in a deliberate order, so
+# this setting changes no other crate's formatting; it was verified to
+# leave `cargo fmt --all` a no-op everywhere else when it was introduced.
+reorder_modules = false

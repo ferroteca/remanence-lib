@@ -33,23 +33,27 @@
 //!
 //! What a move *does* reach is the order of `c/include/remanence.h`, which
 //! cbindgen emits in module-declaration order under `[fn] sort_by = "None"`.
-//! rustfmt keeps these declarations alphabetical, so the header groups by
-//! module and orders those groups by name; moving a function to another
-//! module reorders the header without changing a line of it. Regenerate and
-//! commit the header in the same change.
+//! **The order the groups are declared in below is therefore load-bearing**,
+//! and is the order a caller meets them rather than alphabetical: the error
+//! outs first, then a session and what it opens, then the content above a
+//! medium, then the flux ladder beside it. Root `rustfmt.toml` sets
+//! `reorder_modules = false` to stop rustfmt sorting them (D72). Moving a
+//! function to another group, or a group past its neighbour, reorders the
+//! header without changing a line of it — regenerate and commit it in the
+//! same change.
 
 pub mod abi;
-pub mod assurance;
-pub mod catalog;
 pub mod device;
 pub mod discovery;
-pub mod flux;
-pub mod geometry;
-pub mod identify;
 pub mod medium;
-pub mod report;
+pub mod identify;
 pub mod session;
+pub mod catalog;
+pub mod assurance;
+pub mod geometry;
 pub mod storage;
+pub mod flux;
+pub mod report;
 
 use std::ffi::{CString, c_char};
 

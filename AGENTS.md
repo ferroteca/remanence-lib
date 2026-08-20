@@ -511,6 +511,15 @@ ABI, or Python module.
   `build.rs` watches all of `src/`, not just `src/lib.rs`, so a change in
   any group regenerates the header.
 
+  **The `pub mod` order in `src/lib.rs` is load-bearing for that reason**,
+  and is the order a C caller meets the groups in rather than alphabetical.
+  Root `rustfmt.toml` exists solely to hold `reorder_modules = false` and
+  stop rustfmt sorting them (D72); it is the workspace's only formatter
+  setting, and it changes no other crate's formatting because no other
+  crate orders its modules deliberately. Do not remove it, and do not
+  alphabetize those declarations to "tidy" them — either reorders the
+  published header.
+
   `c/include/remanence.hpp` is the **idiomatic C++ presentation of that
   same ABI** (D53) — header-only, C++17, no compiled artifact of its own,
   and **written by hand**, which is the one thing that makes it

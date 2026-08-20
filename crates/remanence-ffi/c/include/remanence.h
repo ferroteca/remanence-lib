@@ -14,45 +14,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// Whose open a medium's P7 claim is.
-//
-// In-force P7 makes denying writes to every other process mandatory
-// **where the library opens**, and leaves the claim to the caller where
-// the caller opened. A third answer exists because a third fact class
-// does: nobody opened an authored medium.
-typedef enum {
-  // The library opened the artifact and holds P7's denial itself —
-  // the discovery path, and every artifact reached by name.
-  REMANENCE_CLAIM_LIBRARY_OPENED = 0,
-  // The caller opened the artifact and handed the handle over. What
-  // that handle affords is the whole of what the session has.
-  REMANENCE_CLAIM_CALLER_OPENED = 1,
-  // Nobody opened anything: the medium was created whole by the
-  // author (`remanence_session_new_media`), and there is no artifact
-  // for a claim to be over.
-  REMANENCE_CLAIM_AUTHORED = 2,
-} RemanenceClaim;
-
-// What an open established about the evidence beneath it (P28).
-typedef enum {
-  // Every fact and bound the interpretation needs is evidenced.
-  REMANENCE_ASSURANCE_OUTCOME_VERIFIED = 0,
-  // A material shortfall is known and a bounded read-only reading
-  // remains.
-  REMANENCE_ASSURANCE_OUTCOME_DEGRADED = 1,
-  // No bounded interpretation exists. This outcome arrives as a
-  // refusal, carrying the same condition as its rule identity, so no
-  // open handle ever reports it.
-  REMANENCE_ASSURANCE_OUTCOME_REFUSED = 2,
-} RemanenceAssuranceOutcome;
-
-// A medium's effective access mode: the declared intent's echo
-// (P7) where the evidence supports it, read-only where it does not (P28).
-typedef enum {
-  REMANENCE_ACCESS_MODE_READ_WRITE,
-  REMANENCE_ACCESS_MODE_READ_ONLY,
-} RemanenceAccessMode;
-
 // Stable, machine-readable classification of a library refusal. A fallible
 // call writes one beside its error message; the output is untouched on success.
 typedef enum {
@@ -85,17 +46,12 @@ typedef enum {
   REMANENCE_DISK_FORMAT_IMD,
 } RemanenceDiskFormat;
 
-// What the evidence established about a medium's geometry.
+// A medium's effective access mode: the declared intent's echo
+// (P7) where the evidence supports it, read-only where it does not (P28).
 typedef enum {
-  // No source beneath the medium states a whole geometry — an
-  // archive's answer, and a block image whose sources stayed silent.
-  REMANENCE_GEOMETRY_STATE_UNSTATED = 0,
-  // Every part is established and the readings agree.
-  REMANENCE_GEOMETRY_STATE_DETERMINED = 1,
-  // Two sources state different values for the same part. Both
-  // readings stand and neither settles it.
-  REMANENCE_GEOMETRY_STATE_UNDETERMINED = 2,
-} RemanenceGeometryState;
+  REMANENCE_ACCESS_MODE_READ_WRITE,
+  REMANENCE_ACCESS_MODE_READ_ONLY,
+} RemanenceAccessMode;
 
 // What a recognized layer of an artifact's nesting is.
 //
@@ -125,6 +81,63 @@ typedef enum {
   REMANENCE_SECTOR_LAYOUT_KIND_VARIABLE,
 } RemanenceSectorLayoutKind;
 
+// Whose open a medium's P7 claim is.
+//
+// In-force P7 makes denying writes to every other process mandatory
+// **where the library opens**, and leaves the claim to the caller where
+// the caller opened. A third answer exists because a third fact class
+// does: nobody opened an authored medium.
+typedef enum {
+  // The library opened the artifact and holds P7's denial itself —
+  // the discovery path, and every artifact reached by name.
+  REMANENCE_CLAIM_LIBRARY_OPENED = 0,
+  // The caller opened the artifact and handed the handle over. What
+  // that handle affords is the whole of what the session has.
+  REMANENCE_CLAIM_CALLER_OPENED = 1,
+  // Nobody opened anything: the medium was created whole by the
+  // author (`remanence_session_new_media`), and there is no artifact
+  // for a claim to be over.
+  REMANENCE_CLAIM_AUTHORED = 2,
+} RemanenceClaim;
+
+// What an open established about the evidence beneath it (P28).
+typedef enum {
+  // Every fact and bound the interpretation needs is evidenced.
+  REMANENCE_ASSURANCE_OUTCOME_VERIFIED = 0,
+  // A material shortfall is known and a bounded read-only reading
+  // remains.
+  REMANENCE_ASSURANCE_OUTCOME_DEGRADED = 1,
+  // No bounded interpretation exists. This outcome arrives as a
+  // refusal, carrying the same condition as its rule identity, so no
+  // open handle ever reports it.
+  REMANENCE_ASSURANCE_OUTCOME_REFUSED = 2,
+} RemanenceAssuranceOutcome;
+
+// What the evidence established about a medium's geometry.
+typedef enum {
+  // No source beneath the medium states a whole geometry — an
+  // archive's answer, and a block image whose sources stayed silent.
+  REMANENCE_GEOMETRY_STATE_UNSTATED = 0,
+  // Every part is established and the readings agree.
+  REMANENCE_GEOMETRY_STATE_DETERMINED = 1,
+  // Two sources state different values for the same part. Both
+  // readings stand and neither settles it.
+  REMANENCE_GEOMETRY_STATE_UNDETERMINED = 2,
+} RemanenceGeometryState;
+
+// How a schema declares a region: data, which composition may consume, or
+// structure, which it may not.
+typedef enum {
+  REMANENCE_REGION_ROLE_DATA,
+  REMANENCE_REGION_ROLE_STRUCTURE,
+} RemanenceRegionRole;
+
+// What a FAT directory entry is.
+typedef enum {
+  REMANENCE_ENTRY_KIND_FILE,
+  REMANENCE_ENTRY_KIND_DIRECTORY,
+} RemanenceEntryKind;
+
 // What the device's leading structure turned out to be. The report states
 // this rather than leaving a caller to reconstruct it from empty lists.
 typedef enum {
@@ -138,24 +151,11 @@ typedef enum {
   REMANENCE_DISK_CONTENT_UNKNOWN_NONBLANK,
 } RemanenceDiskContent;
 
-// How a schema declares a region: data, which composition may consume, or
-// structure, which it may not.
-typedef enum {
-  REMANENCE_REGION_ROLE_DATA,
-  REMANENCE_REGION_ROLE_STRUCTURE,
-} RemanenceRegionRole;
-
 // Where a volume's storage came from.
 typedef enum {
   REMANENCE_VOLUME_ORIGIN_WHOLE_DEVICE,
   REMANENCE_VOLUME_ORIGIN_REGIONS,
 } RemanenceVolumeOrigin;
-
-// What a FAT directory entry is.
-typedef enum {
-  REMANENCE_ENTRY_KIND_FILE,
-  REMANENCE_ENTRY_KIND_DIRECTORY,
-} RemanenceEntryKind;
 
 // One open's assurance state (P28). Free with
 // `remanence_assurance_free`; the strings it returns are owned by it.
@@ -287,6 +287,78 @@ typedef struct RemanenceSession RemanenceSession;
 // One space of a medium's content, composed over the partition that
 // bears it. Free with `remanence_space_free`.
 typedef struct RemanenceSpace RemanenceSpace;
+
+// One half-track a P64 holds, in the container's addressing and the
+// family's both.
+typedef struct {
+  // The container's own index byte, side bit included.
+  uint8_t index;
+  uint64_t side;
+  uint64_t half_track_numerator;
+  uint64_t half_track_denominator;
+  uint64_t pulses;
+  // Pulses that always trigger, that sometimes do, and that never do.
+  uint64_t strong_pulses;
+  uint64_t weak_pulses;
+  uint64_t absent_pulses;
+} RemanenceP64HalfTrack;
+
+// One CBM DOS block, by the address the recording states for it.
+typedef struct {
+  uint8_t track;
+  uint8_t sector;
+} RemanenceD64Block;
+
+// One half-track slot a g64 carries.
+typedef struct {
+  // The g64's own slot: 0 is track 1, and the odd indices are the
+  // half-tracks between the whole ones.
+  uint64_t index;
+  // How many channel bits the slot carries.
+  uint64_t bits;
+  // Which of the 1541's four rates it was packed at.
+  uint8_t speed_zone;
+  // Whether the orbit was clocked at its zone's nominal cell because
+  // its own measured figure was not a recording's.
+  bool clocked_at_nominal;
+} RemanenceG64HalfTrack;
+
+// One location the bitstream holds, and what the channel resolved
+// there.
+typedef struct {
+  uint64_t half_track_numerator;
+  uint64_t half_track_denominator;
+  bool has_surface;
+  uint64_t surface;
+  uint32_t zone;
+  // The cell, in reference-clock cycles, exactly.
+  uint64_t cell_cycles_numerator;
+  uint64_t cell_cycles_denominator;
+  uint64_t cells;
+  uint64_t one_bits;
+  // Bits the medium recorded, and bits a declared rule resolved.
+  uint64_t recorded_bits;
+  uint64_t resolved_bits;
+  uint64_t short_cells;
+  uint64_t longest_zero_run;
+  // What is left of the circle after the last whole cell, over
+  // `cell_cycles_denominator`.
+  uint64_t wrap_slack_numerator;
+} RemanenceBitstreamLocation;
+
+// One location the bytestream holds.
+typedef struct {
+  uint64_t half_track_numerator;
+  uint64_t half_track_denominator;
+  bool has_surface;
+  uint64_t surface;
+  uint64_t bytes;
+  uint64_t resolved_bytes;
+  uint64_t unassigned_groups;
+  uint64_t alignments;
+  uint64_t longest_landmark_bits;
+  uint64_t unframed_bits;
+} RemanenceBytestreamLocation;
 
 // One location the sector layer read, and what it found there.
 typedef struct {
@@ -421,78 +493,6 @@ typedef struct {
   uint64_t unaligned_spans;
 } RemanenceFluxOrbit;
 
-// One half-track a P64 holds, in the container's addressing and the
-// family's both.
-typedef struct {
-  // The container's own index byte, side bit included.
-  uint8_t index;
-  uint64_t side;
-  uint64_t half_track_numerator;
-  uint64_t half_track_denominator;
-  uint64_t pulses;
-  // Pulses that always trigger, that sometimes do, and that never do.
-  uint64_t strong_pulses;
-  uint64_t weak_pulses;
-  uint64_t absent_pulses;
-} RemanenceP64HalfTrack;
-
-// One CBM DOS block, by the address the recording states for it.
-typedef struct {
-  uint8_t track;
-  uint8_t sector;
-} RemanenceD64Block;
-
-// One half-track slot a g64 carries.
-typedef struct {
-  // The g64's own slot: 0 is track 1, and the odd indices are the
-  // half-tracks between the whole ones.
-  uint64_t index;
-  // How many channel bits the slot carries.
-  uint64_t bits;
-  // Which of the 1541's four rates it was packed at.
-  uint8_t speed_zone;
-  // Whether the orbit was clocked at its zone's nominal cell because
-  // its own measured figure was not a recording's.
-  bool clocked_at_nominal;
-} RemanenceG64HalfTrack;
-
-// One location the bitstream holds, and what the channel resolved
-// there.
-typedef struct {
-  uint64_t half_track_numerator;
-  uint64_t half_track_denominator;
-  bool has_surface;
-  uint64_t surface;
-  uint32_t zone;
-  // The cell, in reference-clock cycles, exactly.
-  uint64_t cell_cycles_numerator;
-  uint64_t cell_cycles_denominator;
-  uint64_t cells;
-  uint64_t one_bits;
-  // Bits the medium recorded, and bits a declared rule resolved.
-  uint64_t recorded_bits;
-  uint64_t resolved_bits;
-  uint64_t short_cells;
-  uint64_t longest_zero_run;
-  // What is left of the circle after the last whole cell, over
-  // `cell_cycles_denominator`.
-  uint64_t wrap_slack_numerator;
-} RemanenceBitstreamLocation;
-
-// One location the bytestream holds.
-typedef struct {
-  uint64_t half_track_numerator;
-  uint64_t half_track_denominator;
-  bool has_surface;
-  uint64_t surface;
-  uint64_t bytes;
-  uint64_t resolved_bytes;
-  uint64_t unassigned_groups;
-  uint64_t alignments;
-  uint64_t longest_landmark_bits;
-  uint64_t unframed_bits;
-} RemanenceBytestreamLocation;
-
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -519,155 +519,6 @@ uint64_t remanence_default_cache_bytes(void);
 // `separator`, `excluded-character`, `reserved-device-name`,
 // `surrounding-space`.
 void remanence_string_free(char *string);
-
-// Whose open this medium's claim is.
-RemanenceClaim remanence_assurance_claim(const RemanenceAssurance *assurance);
-
-// The assurance of one open medium: what the open established, why, the
-// exact extents that read, and the access the evidence permits.
-//
-// It is available before anything is read, so a caller meets a deficiency
-// by being told rather than by an operation failing halfway. Null only
-// once the medium itself has been released.
-RemanenceAssurance *remanence_medium_assurance(const RemanenceMedium *medium);
-
-// Frees an assurance record and everything borrowed from it.
-void remanence_assurance_free(RemanenceAssurance *assurance);
-
-// What the open established.
-RemanenceAssuranceOutcome remanence_assurance_outcome(const RemanenceAssurance *assurance);
-
-// The stable condition that narrowed this session — `source-truncated`
-// or `evidence-conflict` — or null where nothing did. It is the same
-// identity a withheld operation's refusal carries as its rule.
-const char *remanence_assurance_condition(const RemanenceAssurance *assurance);
-
-// How many evidence lines the assurance carries, in the order they were
-// observed.
-size_t remanence_assurance_evidence_count(const RemanenceAssurance *assurance);
-
-// One evidence line, or null when the index is out of range.
-const char *remanence_assurance_evidence(const RemanenceAssurance *assurance, size_t index);
-
-// How many readable extents the medium has.
-size_t remanence_assurance_readable_count(const RemanenceAssurance *assurance);
-
-// One readable extent as a half-open byte range. False when the index is
-// out of range, leaving the outputs untouched.
-bool remanence_assurance_readable(const RemanenceAssurance *assurance,
-                                  size_t index,
-                                  uint64_t *start_out,
-                                  uint64_t *end_out);
-
-// The access this session actually has.
-RemanenceAccessMode remanence_assurance_access_mode(const RemanenceAssurance *assurance);
-
-// The size the interpretation declares. False where it declares none.
-bool remanence_assurance_declared_bytes(const RemanenceAssurance *assurance, uint64_t *out);
-
-// The size the source actually holds. False where it is unknown.
-bool remanence_assurance_observed_bytes(const RemanenceAssurance *assurance, uint64_t *out);
-
-// The first byte the source does not hold. False where the session is not
-// bounded short of its declaration.
-bool remanence_assurance_first_unavailable_byte(const RemanenceAssurance *assurance, uint64_t *out);
-
-// How many concrete formats a load may declare.
-size_t remanence_format_count(void);
-
-// One declarable format's stable spelling (`qcow2`, `7z`), by index, or
-// null out of range. Owned by the library; do not free.
-const char *remanence_format_id(size_t index);
-
-// That format's name, fit to show a user, or null out of range.
-const char *remanence_format_name(size_t index);
-
-// How many device types format `index` records: one where the format
-// carries it bare, several where the load declares which, and zero for
-// an archive grammar, which records no device at all.
-size_t remanence_format_device_count(size_t index);
-
-// The stable spelling of the `device`th device type format `index`
-// records — a value `remanence_session_load_media` accepts for it.
-// Null when either index is out of range.
-const char *remanence_format_device(size_t index, size_t device);
-
-// Whether a declaration of format `index` carries the block size —
-// true for the raw reading alone, which records no addressable unit of
-// its own.
-bool remanence_format_takes_block_bytes(size_t index);
-
-// Whether format `index` reads a collection of sources rather than one
-// artifact — true for the KryoFlux capture set alone, which is one
-// disk spread over a stream per head per drive-step position. A
-// collection format loads through
-// `remanence_session_load_media_collection` or
-// `remanence_session_load_media_sources`; every other format loads one
-// source.
-bool remanence_format_takes_collection(size_t index);
-
-// How many kinds of blank medium this release authors.
-size_t remanence_new_media_count(void);
-
-// One authored kind's stable spelling (`chs-disk`, `flexible-5.25-soft`),
-// by index, or null out of range. Owned by the library; do not free.
-const char *remanence_new_media_id(size_t index);
-
-// That kind's name, fit to show a user, or null out of range.
-const char *remanence_new_media_name(size_t index);
-
-// The article a medium of kind `index` is, by the article catalog's own
-// stable spelling — the manufactured substrate for a blank article kind,
-// and `authored` where no manufactured one stands behind it. Null out of
-// range.
-const char *remanence_new_media_article(size_t index);
-
-// Whether a declaration of kind `index` carries the recording's
-// coordinates — true for the CHS disk alone, which is the kind whose
-// facts *are* coordinates. Every other kind is a blank article and takes
-// zeros.
-bool remanence_new_media_takes_geometry(size_t index);
-
-// How many assurance conditions this release claims.
-size_t remanence_assurance_condition_count(void);
-
-// One claimed condition's stable identity, or null when the index is out
-// of range. The set is enumerated (P3), so a caller can hold every
-// identity it may meet without waiting to meet one.
-const char *remanence_assurance_condition_name(size_t index);
-
-// How many geometry sources this release reads.
-size_t remanence_geometry_source_count(void);
-
-// One claimed source's stable identity, or null when the index is out
-// of range. The set is enumerated (P3), so a caller can hold every
-// identity it may meet without waiting to meet one.
-const char *remanence_geometry_source_name(size_t index);
-
-// How many partition schemes this release reads (P16).
-size_t remanence_partition_scheme_count(void);
-
-// One read scheme's stable spelling (`mbr`), by index, or null out of
-// range. The set is enumerated, so a caller can hold every spelling it
-// may meet without waiting to meet one. Owned by the library; do not
-// free.
-const char *remanence_partition_scheme_id(size_t index);
-
-// That scheme's name, fit to show a user, or null out of range.
-const char *remanence_partition_scheme_name(size_t index);
-
-// How many readings of a partition's type value a declaration may name
-// (P3).
-size_t remanence_partition_type_count(void);
-
-// One declarable reading's stable spelling (`dos-primary`), by index —
-// the value passed to `remanence_partition_check_type` — or null out of
-// range. Owned by the library; do not free.
-const char *remanence_partition_type_id(size_t index);
-
-// What that reading names, in a sentence fit to show a user beside the
-// value a partition records, or null out of range.
-const char *remanence_partition_type_name(size_t index);
 
 // This device's attachment identity — `hdd0` and the like. Owned by the
 // view; do not free.
@@ -940,370 +791,1214 @@ RemanenceAssurance *remanence_discovery_assurance(const RemanenceDiscovery *disc
 // loaded. Free with `remanence_identification_free`.
 RemanenceIdentification *remanence_discovery_identify(const RemanenceDiscovery *discovery);
 
-// Recognizes the recording's own sectors out of a bytestream, under
-// the family's declared record grammar — no policy, because the
-// profile carries one; `cache_bytes` is the P27 working-set bound. The
-// bytestream is untouched, and either backing serves: a materialized
-// stream's handle or a pooled medium's view. Returns null on failure
-// and stores a message in `error_out` (free with
-// `remanence_string_free`).
-RemanenceC1541Sectors *remanence_bytestream_recognize_sectors(const RemanenceBytestream *bytestream,
-                                                              uint64_t cache_bytes,
-                                                              RemanenceErrorCategory *error_category_out,
-                                                              char **error_out,
-                                                              char **error_rule_out);
+// This medium's identity in its session's pool.
+uint64_t remanence_medium_id(const RemanenceMedium *medium);
 
-// Frees a sector-layer handle, discarding its private session storage.
-void remanence_c1541_sectors_free(RemanenceC1541Sectors *sectors);
+// Whether a device currently links this medium. An unlinked medium is
+// ordinary rather than idle: it is loaded, claimed, and answering.
+bool remanence_medium_is_linked(const RemanenceMedium *medium);
 
-// Reads one sector by the address the recording states for it, into
-// `buffer_out`, which must be `remanence_c1541_sectors_payload_bytes`
-// long.
+// The article this medium is (P14), by the catalog's stable spelling —
+// the physical substrate. Owned by the library; do not free.
+const char *remanence_medium_article(const RemanenceMedium *medium);
+
+// The device this medium's content was recorded by, by the device
+// catalog's stable spelling — or null where no device recorded it,
+// which is an archive's honest answer rather than a gap.
+const char *remanence_medium_device_type(const RemanenceMedium *medium);
+
+// The artifact the medium was loaded from (the archive itself for an
+// image loaded out of one).
 //
-// It answers only where the recording is unambiguous: one readable
-// claim, or several holding the same bytes. Every other outcome is a
-// refusal naming its rule — an address no record states, an address no
-// claim of which reads, or one several readable claims disagree about.
-// Nothing is repaired and no block is filled in. Returns false on
-// failure and stores a message in `error_out`.
-bool remanence_c1541_sectors_read(const RemanenceC1541Sectors *sectors,
-                                  uint8_t track,
-                                  uint8_t sector,
+// **Null where the caller's handle has no recoverable name** — a name
+// serves location alone, and a nameless handle is served everywhere that
+// does not need a neighbourhood.
+const char *remanence_medium_path(const RemanenceMedium *medium);
+
+// The resolved image path (the entry name for archive inputs), or null
+// as above.
+const char *remanence_medium_image_path(const RemanenceMedium *medium);
+
+// The resolved image's size in bytes.
+uint64_t remanence_medium_image_size_bytes(const RemanenceMedium *medium);
+
+// Reads `length` bytes of the resolved image at `offset` into
+// `buffer_out` — the bounded access form: the image streams from its
+// backing and is never resident whole. Returns false on failure and
+// stores a message in `error_out` (free with `remanence_string_free`).
+bool remanence_medium_read_at(const RemanenceMedium *medium,
+                              uint64_t offset,
+                              uint8_t *buffer_out,
+                              size_t length,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out,
+                              char **error_rule_out);
+
+// The medium's **effective** access mode: the declared intent's
+// echo where the evidence supports it, and read-only where it does not
+// (P28). `remanence_assurance_access_mode` reports the same value beside
+// the reason for it.
+RemanenceAccessMode remanence_medium_mode(const RemanenceMedium *medium);
+
+// The image container format.
+bool remanence_medium_format(const RemanenceMedium *medium, RemanenceDiskFormat *format_out);
+
+// The qcow2 version, or 0 for an image of any other format.
+uint32_t remanence_medium_qcow2_version(const RemanenceMedium *medium);
+
+// The VDI version's major part, or 0 for an image of any other format.
+uint32_t remanence_medium_vdi_version_major(const RemanenceMedium *medium);
+
+// The VDI version's minor part, or 0 for an image of any other format.
+// Read it beside the major part: on its own, 0 is both "minor zero" and
+// "not a VDI".
+uint32_t remanence_medium_vdi_version_minor(const RemanenceMedium *medium);
+
+// The virtual disk size in bytes.
+uint64_t remanence_medium_size(const RemanenceMedium *medium);
+
+// Whether uncommitted changes exist.
+bool remanence_medium_is_modified(const RemanenceMedium *medium);
+
+// Reads one whole sector in the recording's own coordinates into
+// `buffer_out`, which is exactly one sector of this recording.
+//
+// Cylinders and heads number from zero and sectors from one. It answers
+// on a sector-addressed recording whose geometry the evidence
+// established and refuses by name otherwise, the rule identity in
+// `error_rule_out` naming which: `not-sector-addressed`,
+// `geometry-unstated`, `geometry-undetermined`, `outside-geometry` or
+// `partial-sector`.
+bool remanence_medium_read_sector(RemanenceMedium *medium,
+                                  uint32_t cylinder,
+                                  uint32_t head,
+                                  uint32_t sector,
                                   uint8_t *buffer_out,
                                   size_t length,
                                   RemanenceErrorCategory *error_category_out,
                                   char **error_out,
                                   char **error_rule_out);
 
-// The **direct partition** over this recording — the library's own
-// composition of the whole content, which is what a namespace above is
-// reached through (P19). Null only for a null sector layer.
-//
-// A recording records no partition scheme, so there is one member and it
-// is synthetic: its account is provenance and never evidence, and it
-// composes no addressed extent, because a recording's blocks are
-// addressed by the recording rather than by position. The addressable
-// vantage is therefore absent and the namespace vantage is *declared* —
-// `remanence_partition_filesystem_as` with `"cbmdos"` — because nothing
-// here determines a reading and this layer will not pick one.
-//
-// **The sector layer carries no file verbs of its own**: it may be asked
-// what it composes — this — and may not be told to act as a namespace it
-// is not. The declaration's refusal is the seam that ran out of answers
-// stating it, and everything beneath stays readable either way: a disk
-// with no filesystem is still a recording, still a sector layer, and
-// still every claim this layer made about it.
-//
-// The partition **borrows** the sector layer, and so does every space
-// composed through it: keep the sectors alive for as long as any of
-// them, and free them last — the partition with
-// `remanence_partition_free` and the space with `remanence_space_free`.
-RemanencePartition *remanence_c1541_sectors_partition(const RemanenceC1541Sectors *sectors);
+// Writes one whole sector in the recording's own coordinates,
+// **buffered until `remanence_medium_commit`** like every other write
+// (P2), under the same rules `remanence_medium_read_sector` answers by.
+bool remanence_medium_write_sector(RemanenceMedium *medium,
+                                   uint32_t cylinder,
+                                   uint32_t head,
+                                   uint32_t sector,
+                                   const uint8_t *data,
+                                   size_t length,
+                                   RemanenceErrorCategory *error_category_out,
+                                   char **error_out,
+                                   char **error_rule_out);
 
-// How many bytes of payload one sector carries.
-uint32_t remanence_c1541_sectors_payload_bytes(const RemanenceC1541Sectors *sectors);
+// The commit point (P2): everything buffered reaches the image, then a
+// flush. Until this call, nothing has touched the file. The commit is
+// durable (P9): a private recovery journal is armed before the first
+// byte of the file changes, so an interruption at any point leaves
+// state the next open reconciles to wholly the old image or wholly
+// the committed new one.
+bool remanence_medium_commit(RemanenceMedium *medium,
+                             RemanenceErrorCategory *error_category_out,
+                             char **error_out,
+                             char **error_rule_out);
 
-const char *remanence_c1541_sectors_profile_id(const RemanenceC1541Sectors *sectors);
+// Discards everything buffered; the image is untouched.
+void remanence_medium_rollback(RemanenceMedium *medium);
 
-// The record grammar every rule the recognition applied came from.
-const char *remanence_c1541_sectors_grammar_id(const RemanenceC1541Sectors *sectors);
+// Identifies the artifact's nesting layers and probable filesystem. Free the
+// result with `remanence_identification_free`.
+RemanenceIdentification *remanence_medium_identify(const RemanenceMedium *medium);
 
-const char *remanence_c1541_sectors_grammar_name(const RemanenceC1541Sectors *sectors);
+// Frees an identification handle.
+void remanence_identification_free(RemanenceIdentification *identification);
 
-uint64_t remanence_c1541_sectors_backing_bytes(const RemanenceC1541Sectors *sectors);
+// Whether the medium reported unsaved modifications at identify time.
+bool remanence_identification_modified(const RemanenceIdentification *identification);
 
-uint64_t remanence_c1541_sectors_resident_bytes(const RemanenceC1541Sectors *sectors);
+// Number of recognized nesting layers.
+size_t remanence_identification_layer_count(const RemanenceIdentification *identification);
 
-size_t remanence_c1541_sectors_location_count(const RemanenceC1541Sectors *sectors);
+// Number of evidence lines.
+size_t remanence_identification_evidence_count(const RemanenceIdentification *identification);
 
-// Copies one location's counts into `out`. Returns false when `index`
-// is past the end.
-bool remanence_c1541_sectors_location(const RemanenceC1541Sectors *sectors,
-                                      size_t index,
-                                      RemanenceSectorLocation *out);
+// One evidence line, or null when out of range.
+const char *remanence_identification_evidence(const RemanenceIdentification *identification,
+                                              size_t index);
 
-size_t remanence_c1541_sectors_claim_count(const RemanenceC1541Sectors *sectors);
+// The layer's kind, or `RemanenceLayerKind::Unknown` when out of range.
+RemanenceLayerKind remanence_layer_kind(const RemanenceIdentification *identification,
+                                        size_t index);
 
-// Copies one claim into `out`. Returns false when `index` is past the
-// end.
-bool remanence_c1541_sectors_claim(const RemanenceC1541Sectors *sectors,
+// The layer's id (e.g. "h8d", "zip", "hdos").
+const char *remanence_layer_id(const RemanenceIdentification *identification, size_t index);
+
+// The layer's human-readable name.
+const char *remanence_layer_name(const RemanenceIdentification *identification, size_t index);
+
+// Detection confidence, 0-100.
+uint8_t remanence_layer_confidence(const RemanenceIdentification *identification, size_t index);
+
+// Whether the layer matched a known format.
+bool remanence_layer_known(const RemanenceIdentification *identification, size_t index);
+
+// Current size in bytes; returns false when unknown.
+bool remanence_layer_current_bytes(const RemanenceIdentification *identification,
                                    size_t index,
-                                   RemanenceSectorClaim *out);
+                                   uint64_t *out);
 
-// Which rule of the sector-layer set stands in the way of this claim,
-// or an empty string for one that reads.
-const char *remanence_c1541_sectors_claim_rule(const RemanenceC1541Sectors *sectors, size_t index);
+// Expected size in bytes; returns false when unknown.
+bool remanence_layer_expected_bytes(const RemanenceIdentification *identification,
+                                    size_t index,
+                                    uint64_t *out);
 
-// Why this claim does not read, in the layer's own terms, or an empty
-// string for one that does.
-const char *remanence_c1541_sectors_claim_refusal(const RemanenceC1541Sectors *sectors,
-                                                  size_t index);
+// Which layout details this layer carries.
+RemanenceLayoutKind remanence_layer_layout_kind(const RemanenceIdentification *identification,
+                                                size_t index);
 
-size_t remanence_c1541_sectors_contested_count(const RemanenceC1541Sectors *sectors);
+// Archive layout: the archive file path; null for other layouts.
+const char *remanence_layer_archive_path(const RemanenceIdentification *identification,
+                                         size_t index);
 
-// Copies one contested address into `out`. Returns false when `index`
-// is past the end.
-bool remanence_c1541_sectors_contested(const RemanenceC1541Sectors *sectors,
-                                       size_t index,
-                                       RemanenceContestedAddress *out);
+// Archive layout: the entry name inside the archive; null for other layouts.
+const char *remanence_layer_archive_entry_name(const RemanenceIdentification *identification,
+                                               size_t index);
 
-size_t remanence_c1541_sectors_declared_loss_count(const RemanenceC1541Sectors *sectors);
+// Archive layout: compressed entry size; returns false when unknown.
+bool remanence_layer_archive_compressed_size(const RemanenceIdentification *identification,
+                                             size_t index,
+                                             uint64_t *out);
 
-const char *remanence_c1541_sectors_declared_loss_code(const RemanenceC1541Sectors *sectors,
-                                                       size_t index);
+// Archive layout: uncompressed entry size; returns false when unknown.
+bool remanence_layer_archive_uncompressed_size(const RemanenceIdentification *identification,
+                                               size_t index,
+                                               uint64_t *out);
 
-const char *remanence_c1541_sectors_declared_loss_detail(const RemanenceC1541Sectors *sectors,
-                                                         size_t index);
+// Image layout: payload offset in bytes; returns false when unknown.
+bool remanence_layer_image_payload_offset(const RemanenceIdentification *identification,
+                                          size_t index,
+                                          uint64_t *out);
 
-uint64_t remanence_c1541_sectors_declared_loss_amount(const RemanenceC1541Sectors *sectors,
-                                                      size_t index);
+// Image layout: payload length in bytes; returns false when unknown.
+bool remanence_layer_image_payload_length(const RemanenceIdentification *identification,
+                                          size_t index,
+                                          uint64_t *out);
 
-// The grammar and policy that produced it, and everything the
-// bytestream said beneath it, in that order.
-size_t remanence_c1541_sectors_evidence_count(const RemanenceC1541Sectors *sectors);
+// Physical media layout: whether disk geometry is known.
+bool remanence_layer_has_disk_layout(const RemanenceIdentification *identification, size_t index);
 
-const char *remanence_c1541_sectors_evidence(const RemanenceC1541Sectors *sectors, size_t index);
+// Disk layout: the article the image format names for its medium
+// (e.g. "logical-block-512"); null when the layer has no disk
+// layout.
+const char *remanence_layer_disk_article(const RemanenceIdentification *identification,
+                                         size_t index);
 
-// Recognizes the recording's own sectors out of a bytestream, under the
-// FM or MFM record grammar the profile enrols.
+// Disk layout: sector size in bytes; returns false when unknown.
+bool remanence_layer_disk_sector_size(const RemanenceIdentification *identification,
+                                      size_t index,
+                                      uint64_t *out);
+
+// Disk layout: cylinder count; returns false when unknown.
+bool remanence_layer_disk_cylinders(const RemanenceIdentification *identification,
+                                    size_t index,
+                                    uint32_t *out);
+
+// Disk layout: side count; returns false when unknown.
+bool remanence_layer_disk_sides(const RemanenceIdentification *identification,
+                                size_t index,
+                                uint32_t *out);
+
+// Disk layout: how sectors are arranged.
+RemanenceSectorLayoutKind remanence_layer_disk_sector_layout_kind(const RemanenceIdentification *identification,
+                                                                  size_t index);
+
+// Disk layout: sectors per track for fixed layouts; 0 otherwise.
+uint32_t remanence_layer_disk_sectors_per_track(const RemanenceIdentification *identification,
+                                                size_t index);
+
+// Disk layout: per-track entry count for variable layouts; 0 otherwise.
+size_t remanence_layer_disk_track_count(const RemanenceIdentification *identification,
+                                        size_t index);
+
+// Disk layout: one per-track entry for variable layouts. Returns false when
+// out of range. `has_sector_size` and `sector_size` report the optional
+// per-track sector size.
+bool remanence_layer_disk_track(const RemanenceIdentification *identification,
+                                size_t index,
+                                size_t track_index,
+                                uint32_t *cylinder,
+                                uint32_t *side,
+                                uint32_t *sectors,
+                                bool *has_sector_size,
+                                uint64_t *sector_size);
+
+// Disk layout: total sector count; returns false when unknown.
+bool remanence_layer_disk_total_sectors(const RemanenceIdentification *identification,
+                                        size_t index,
+                                        uint64_t *out);
+
+// Filesystem layout: offset in bytes; returns false when unknown.
+bool remanence_layer_fs_offset_bytes(const RemanenceIdentification *identification,
+                                     size_t index,
+                                     uint64_t *out);
+
+// Filesystem layout: length in bytes; returns false when unknown.
+bool remanence_layer_fs_length_bytes(const RemanenceIdentification *identification,
+                                     size_t index,
+                                     uint64_t *out);
+
+// Creates blank media whole — **authorship, the third fact class** — and
+// answers with the medium, linked to nothing. The session owns the view;
+// never free it. Null on failure.
 //
-// The rung beneath is one and the reading is the family's. A bytestream
-// whose records are not FM or MFM sectors is refused here by name
-// rather than read as though they were — use
-// `remanence_bytestream_recognize_sectors` for a CBM DOS recording.
+// Nothing is discovered and nothing is opened, because there is no
+// artifact: the author declares one enumerated `kind` (a stable spelling
+// from `remanence_new_media_id`), and the facts that declaration states
+// become the medium's original facts — carried from creation as its
+// assurance provenance and, where the kind states coordinates, as its
+// `remanence_medium_geometry`, whose one reading is `authorship`.
 //
-// Returns null and states the refusal on failure. Free the result with
-// `remanence_ibm_sectors_free`.
-RemanenceIbmSectors *remanence_bytestream_recognize_ibm_sectors(const RemanenceBytestream *bytestream,
+// `cylinders`, `heads`, `sectors_per_track` and `sector_bytes` are the
+// author's own coordinates, for the kind whose claim takes them
+// (`remanence_new_media_takes_geometry`); every other kind takes zeros
+// and refuses anything else by name. Coordinates that address nothing —
+// a zero in any part, or a product no medium could hold — are refused
+// here, when they are stated, which is the one moment authorship offers.
+//
+// **An authored blank assumes no device**: `remanence_medium_device_type`
+// answers null, so no drive takes one and `remanence_device_insert`
+// refuses by name. It is session-backed until an explicit encode gives it
+// an artifact, and `remanence_medium_commit` is the ordinary commit point
+// over it.
+RemanenceMedium *remanence_session_new_media(RemanenceSession *session,
+                                             const char *kind,
+                                             uint32_t cylinders,
+                                             uint32_t heads,
+                                             uint32_t sectors_per_track,
+                                             uint64_t sector_bytes,
+                                             RemanenceErrorCategory *error_category_out,
+                                             char **error_out,
+                                             char **error_rule_out);
+
+// Loads the caller's own opened artifact as the format they **declare**
+// it to be, and answers with the medium — linked to nothing. The session
+// owns the view; never free it. Null on failure.
+//
+// `source` is the caller's own OS file handle — a Windows `HANDLE`, a
+// POSIX file descriptor — and **the library takes ownership of it**:
+// closing it is the library's, at release or at session free.
+//
+// **Whoever opens owns the lock** (P7 as amended). That open is the
+// claim: the library checks it for exactly one thing — may it write
+// through it? — honours the answer exactly, and never supplements it
+// with a lock of its own. A name is recovered from the handle for
+// location alone, under an identity check; a handle this host cannot
+// name serves everything but the commit journal and a backing chain's
+// parent, and refuses those two by name.
+//
+// The declaration is checked by that one format's own adapter and
+// refused by name where the evidence cannot bear it. `format` is a
+// stable spelling from `remanence_format_id`.
+//
+// **The declaration carries the device the content was recorded by.**
+// `device_type` is a stable spelling from `remanence_format_device`,
+// and may be null where the format records exactly one type and so
+// carries it bare. `block_bytes` is the raw reading's declared
+// addressable unit and is ignored — passed as zero — by every format
+// that records its own.
+RemanenceMedium *remanence_session_load_media(RemanenceSession *session,
+                                              ptrdiff_t source,
+                                              const char *format,
+                                              const char *device_type,
+                                              uint64_t block_bytes,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
+
+// Loads a collection of the caller's own opened artifacts as the format
+// they **declare** it to be — the collection shape of the load, which
+// only a format whose claim takes one reads
+// (`remanence_format_takes_collection`): a KryoFlux capture set is one
+// disk spread over a stream per head per drive-step position. Answers
+// with the medium — linked to nothing. The session owns the view; never
+// free it. Null on failure.
+//
+// `sources` points at `source_count` OS file handles, each exactly what
+// `remanence_session_load_media` takes for one. Every member is checked
+// before any is adopted — a 0 or -1 among them refuses the whole load
+// and leaves every handle the caller's to close, mirroring the single
+// form's check — and once all are checked **the library takes ownership
+// of every one, whatever the outcome**: a refused load closes them, a
+// successful one closes them at release or at session free.
+//
+// `format`, `device_type` and `block_bytes` are as
+// `remanence_session_load_media` takes them.
+RemanenceMedium *remanence_session_load_media_collection(RemanenceSession *session,
+                                                         const ptrdiff_t *sources,
+                                                         size_t source_count,
+                                                         const char *format,
+                                                         const char *device_type,
+                                                         uint64_t block_bytes,
+                                                         RemanenceErrorCategory *error_category_out,
+                                                         char **error_out,
+                                                         char **error_rule_out);
+
+// Loads one file from another medium's namespace as the format the
+// caller declares — the namespace-source shape of the load, taking what
+// `remanence_file_source` produced.
+//
+// **The source is consumed and freed whatever the outcome**, exactly as
+// a discovery is: the pointer must never be used or freed again after
+// this call, whatever it returns. The source is free-standing — it
+// rides the claim of the medium it came from, so the walk that named it
+// ended before this load begins and nothing is opened twice. `format`,
+// `device_type` and `block_bytes` are as `remanence_session_load_media`
+// takes them. The session owns the returned view; never free it. Null
+// on failure.
+RemanenceMedium *remanence_session_load_media_source(RemanenceSession *session,
+                                                     RemanenceFileSource *source,
+                                                     const char *format,
+                                                     const char *device_type,
+                                                     uint64_t block_bytes,
+                                                     RemanenceErrorCategory *error_category_out,
+                                                     char **error_out,
+                                                     char **error_rule_out);
+
+// Loads a collection of files gathered from another medium's namespace
+// as the format the caller declares — the collection beside
+// `remanence_session_load_media_source`, taking what
+// `remanence_space_files` gathered, for a format whose claim takes a
+// collection (`remanence_format_takes_collection`).
+//
+// **The gathering is consumed and freed whatever the outcome**: the
+// pointer must never be used or freed again after this call, whatever
+// it returns. The session owns the returned view; never free it. Null
+// on failure.
+RemanenceMedium *remanence_session_load_media_sources(RemanenceSession *session,
+                                                      RemanenceFileSourceList *sources,
+                                                      const char *format,
+                                                      const char *device_type,
+                                                      uint64_t block_bytes,
+                                                      RemanenceErrorCategory *error_category_out,
+                                                      char **error_out,
+                                                      char **error_rule_out);
+
+// Loads the medium a discovery already opened into the session's pool,
+// **consuming and freeing the discovery**.
+//
+// This is the load that runs nothing twice: the discovery holds the
+// claim taken when the artifact was identified and the work that
+// identification did, and the medium is built over that claim, so no
+// window exists between the question and the load in which the artifact
+// could change (P7). The intent and the assurance are the ones the
+// discovery established; the **cache bound is declared here**, because
+// this is where the medium comes into existence — discovery built
+// nothing, so it had nothing to bound (P27). This door takes the stated
+// default; `remanence_session_load_discovery_with_cache` takes the
+// caller's own.
+//
+// **The discovery is freed either way** — a refused load releases its
+// claim with it — so the pointer must never be used or freed again
+// after this call, whatever it returns. Null on failure.
+//
+// **This is the plain door, and it opens where the recognizing format
+// records exactly one device type.** Where it records several, nothing
+// in the artifact says which wrote it, and the refusal names them and
+// points at `remanence_session_load_discovery_as`.
+RemanenceMedium *remanence_session_load_discovery(RemanenceSession *session,
+                                                  RemanenceDiscovery *discovery,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
+
+// `remanence_session_load_discovery` under a caller-declared session
+// cache bound (P27), which the medium this load creates keeps.
+RemanenceMedium *remanence_session_load_discovery_with_cache(RemanenceSession *session,
+                                                             RemanenceDiscovery *discovery,
+                                                             uint64_t cache_bytes,
+                                                             RemanenceErrorCategory *error_category_out,
+                                                             char **error_out,
+                                                             char **error_rule_out);
+
+// Loads the medium a discovery already opened under the caller's own
+// declaration of the device that recorded it — the `_as` door, for a
+// format that records several device types and so asserts none.
+//
+// `device_type` is a stable spelling from
+// `remanence_discovery_recorded_device`, and one the recognizing
+// format's adapter records; anything else is refused by name. The
+// discovery is consumed and freed exactly as the plain door consumes
+// it, whatever this returns. Null on failure.
+RemanenceMedium *remanence_session_load_discovery_as(RemanenceSession *session,
+                                                     RemanenceDiscovery *discovery,
+                                                     const char *device_type,
+                                                     RemanenceErrorCategory *error_category_out,
+                                                     char **error_out,
+                                                     char **error_rule_out);
+
+// `remanence_session_load_discovery_as` under a caller-declared session
+// cache bound (P27).
+RemanenceMedium *remanence_session_load_discovery_as_with_cache(RemanenceSession *session,
+                                                                RemanenceDiscovery *discovery,
+                                                                const char *device_type,
                                                                 uint64_t cache_bytes,
                                                                 RemanenceErrorCategory *error_category_out,
                                                                 char **error_out,
                                                                 char **error_rule_out);
 
-// Frees an FM or MFM sector layer, discarding its private session
-// storage.
-void remanence_ibm_sectors_free(RemanenceIbmSectors *sectors);
+// How many media this session holds.
+size_t remanence_session_media_count(const RemanenceSession *session);
 
-// Copies one record's payload into `buffer_out`, by the address the
-// recording states for it.
+// The identity of the medium at `index`, in the order they were loaded,
+// or 0 out of range.
+uint64_t remanence_session_media_id(const RemanenceSession *session, size_t index);
+
+// The medium `media_id` names, or **null where the pool holds none** —
+// absence is an answer, and the error outs are untouched. The session
+// owns the view; never free it.
+RemanenceMedium *remanence_session_medium(RemanenceSession *session, uint64_t media_id);
+
+// **The one state-destroying verb.** It severs the medium's link if a
+// device holds it, ends the P7 claim — closing the handle the caller
+// handed over — and discards everything uncommitted.
 //
-// Only a record whose checks both agree is served. One whose checksum
-// disagrees holds what it holds and is reported with both numbers by
-// `remanence_ibm_sectors_claim`; serving it as though it read cleanly
-// would answer a question the evidence does not.
+// Releasing is not a commit and never becomes one. Every borrowed view
+// of that medium, and every space and file resolved through it, stops
+// answering. Returns false when the pool holds no such medium.
+bool remanence_session_release_media(RemanenceSession *session,
+                                     uint64_t media_id,
+                                     RemanenceErrorCategory *error_category_out,
+                                     char **error_out,
+                                     char **error_rule_out);
+
+// Opens an empty session — the claim and cache scope, holding nothing
+// at all. Devices and media are added over its life; neither set is
+// fixed at open. Free with `remanence_session_free`.
+RemanenceSession *remanence_session_new(void);
+
+// Frees a session, dropping every device and releasing every P7 claim.
+// Every borrowed device view obtained from it becomes invalid.
+void remanence_session_free(RemanenceSession *session);
+
+// How many concrete formats a load may declare.
+size_t remanence_format_count(void);
+
+// One declarable format's stable spelling (`qcow2`, `7z`), by index, or
+// null out of range. Owned by the library; do not free.
+const char *remanence_format_id(size_t index);
+
+// That format's name, fit to show a user, or null out of range.
+const char *remanence_format_name(size_t index);
+
+// How many device types format `index` records: one where the format
+// carries it bare, several where the load declares which, and zero for
+// an archive grammar, which records no device at all.
+size_t remanence_format_device_count(size_t index);
+
+// The stable spelling of the `device`th device type format `index`
+// records — a value `remanence_session_load_media` accepts for it.
+// Null when either index is out of range.
+const char *remanence_format_device(size_t index, size_t device);
+
+// Whether a declaration of format `index` carries the block size —
+// true for the raw reading alone, which records no addressable unit of
+// its own.
+bool remanence_format_takes_block_bytes(size_t index);
+
+// Whether format `index` reads a collection of sources rather than one
+// artifact — true for the KryoFlux capture set alone, which is one
+// disk spread over a stream per head per drive-step position. A
+// collection format loads through
+// `remanence_session_load_media_collection` or
+// `remanence_session_load_media_sources`; every other format loads one
+// source.
+bool remanence_format_takes_collection(size_t index);
+
+// How many kinds of blank medium this release authors.
+size_t remanence_new_media_count(void);
+
+// One authored kind's stable spelling (`chs-disk`, `flexible-5.25-soft`),
+// by index, or null out of range. Owned by the library; do not free.
+const char *remanence_new_media_id(size_t index);
+
+// That kind's name, fit to show a user, or null out of range.
+const char *remanence_new_media_name(size_t index);
+
+// The article a medium of kind `index` is, by the article catalog's own
+// stable spelling — the manufactured substrate for a blank article kind,
+// and `authored` where no manufactured one stands behind it. Null out of
+// range.
+const char *remanence_new_media_article(size_t index);
+
+// Whether a declaration of kind `index` carries the recording's
+// coordinates — true for the CHS disk alone, which is the kind whose
+// facts *are* coordinates. Every other kind is a blank article and takes
+// zeros.
+bool remanence_new_media_takes_geometry(size_t index);
+
+// How many assurance conditions this release claims.
+size_t remanence_assurance_condition_count(void);
+
+// One claimed condition's stable identity, or null when the index is out
+// of range. The set is enumerated (P3), so a caller can hold every
+// identity it may meet without waiting to meet one.
+const char *remanence_assurance_condition_name(size_t index);
+
+// How many geometry sources this release reads.
+size_t remanence_geometry_source_count(void);
+
+// One claimed source's stable identity, or null when the index is out
+// of range. The set is enumerated (P3), so a caller can hold every
+// identity it may meet without waiting to meet one.
+const char *remanence_geometry_source_name(size_t index);
+
+// How many partition schemes this release reads (P16).
+size_t remanence_partition_scheme_count(void);
+
+// One read scheme's stable spelling (`mbr`), by index, or null out of
+// range. The set is enumerated, so a caller can hold every spelling it
+// may meet without waiting to meet one. Owned by the library; do not
+// free.
+const char *remanence_partition_scheme_id(size_t index);
+
+// That scheme's name, fit to show a user, or null out of range.
+const char *remanence_partition_scheme_name(size_t index);
+
+// How many readings of a partition's type value a declaration may name
+// (P3).
+size_t remanence_partition_type_count(void);
+
+// One declarable reading's stable spelling (`dos-primary`), by index —
+// the value passed to `remanence_partition_check_type` — or null out of
+// range. Owned by the library; do not free.
+const char *remanence_partition_type_id(size_t index);
+
+// What that reading names, in a sentence fit to show a user beside the
+// value a partition records, or null out of range.
+const char *remanence_partition_type_name(size_t index);
+
+// Whose open this medium's claim is.
+RemanenceClaim remanence_assurance_claim(const RemanenceAssurance *assurance);
+
+// The assurance of one open medium: what the open established, why, the
+// exact extents that read, and the access the evidence permits.
 //
-// `length` must be exactly what the record carries, which is what its
-// claim's size code states. Returns false and states the refusal
-// otherwise.
-bool remanence_ibm_sectors_read(const RemanenceIbmSectors *sectors,
-                                uint8_t cylinder,
-                                uint8_t head,
-                                uint8_t sector,
-                                uint8_t *buffer_out,
-                                size_t length,
-                                RemanenceErrorCategory *error_category_out,
-                                char **error_out,
-                                char **error_rule_out);
+// It is available before anything is read, so a caller meets a deficiency
+// by being told rather than by an operation failing halfway. Null only
+// once the medium itself has been released.
+RemanenceAssurance *remanence_medium_assurance(const RemanenceMedium *medium);
 
-// The drive profile that read the recording these records came off.
-const char *remanence_ibm_sectors_profile_id(const RemanenceIbmSectors *sectors);
+// Frees an assurance record and everything borrowed from it.
+void remanence_assurance_free(RemanenceAssurance *assurance);
 
-// Which encoding framed these records — the FM or MFM codec the
-// profile enrols, by its own identifier.
-const char *remanence_ibm_sectors_encoding_id(const RemanenceIbmSectors *sectors);
+// What the open established.
+RemanenceAssuranceOutcome remanence_assurance_outcome(const RemanenceAssurance *assurance);
 
-// How many records the recognition claims.
-size_t remanence_ibm_sectors_claim_count(const RemanenceIbmSectors *sectors);
+// The stable condition that narrowed this session — `source-truncated`
+// or `evidence-conflict` — or null where nothing did. It is the same
+// identity a withheld operation's refusal carries as its rule.
+const char *remanence_assurance_condition(const RemanenceAssurance *assurance);
 
-// Copies one claim into `out`. Returns false when `index` is past the
-// end.
-bool remanence_ibm_sectors_claim(const RemanenceIbmSectors *sectors,
-                                 size_t index,
-                                 RemanenceIbmSectorClaim *out);
+// How many evidence lines the assurance carries, in the order they were
+// observed.
+size_t remanence_assurance_evidence_count(const RemanenceAssurance *assurance);
 
-bool remanence_ibm_sectors_geometry(const RemanenceIbmSectors *sectors,
-                                    RemanenceIbmGeometry *out,
+// One evidence line, or null when the index is out of range.
+const char *remanence_assurance_evidence(const RemanenceAssurance *assurance, size_t index);
+
+// How many readable extents the medium has.
+size_t remanence_assurance_readable_count(const RemanenceAssurance *assurance);
+
+// One readable extent as a half-open byte range. False when the index is
+// out of range, leaving the outputs untouched.
+bool remanence_assurance_readable(const RemanenceAssurance *assurance,
+                                  size_t index,
+                                  uint64_t *start_out,
+                                  uint64_t *end_out);
+
+// The access this session actually has.
+RemanenceAccessMode remanence_assurance_access_mode(const RemanenceAssurance *assurance);
+
+// The size the interpretation declares. False where it declares none.
+bool remanence_assurance_declared_bytes(const RemanenceAssurance *assurance, uint64_t *out);
+
+// The size the source actually holds. False where it is unknown.
+bool remanence_assurance_observed_bytes(const RemanenceAssurance *assurance, uint64_t *out);
+
+// The first byte the source does not hold. False where the session is not
+// bounded short of its declaration.
+bool remanence_assurance_first_unavailable_byte(const RemanenceAssurance *assurance, uint64_t *out);
+
+// The geometry the sources beneath this medium stated: what was
+// settled, what they contradict each other about, and every reading
+// taken.
+//
+// It was established when the medium was loaded and is evidence from
+// then on — nothing re-reads a boot record behind a caller. Null only
+// once the medium itself has been released.
+RemanenceGeometry *remanence_medium_geometry(const RemanenceMedium *medium);
+
+// Frees a geometry record and everything borrowed from it.
+void remanence_geometry_free(RemanenceGeometry *geometry);
+
+// What the evidence established.
+RemanenceGeometryState remanence_geometry_state(const RemanenceGeometry *geometry);
+
+// The coordinates, where the evidence settled them: cylinders, heads,
+// sectors per track and bytes per sector, written to whichever outputs
+// are non-null. False where nothing settled them, leaving every output
+// untouched — the state says which of the two absences it is.
+//
+// Cylinders and heads number from zero and sectors from one, which is
+// the recording's own convention.
+bool remanence_geometry_coordinates(const RemanenceGeometry *geometry,
+                                    uint32_t *cylinders_out,
+                                    uint32_t *heads_out,
+                                    uint32_t *sectors_per_track_out,
+                                    uint64_t *sector_bytes_out);
+
+// How many parts of the coordinates the sources contradict each other
+// about.
+size_t remanence_geometry_conflict_count(const RemanenceGeometry *geometry);
+
+// One conflict, naming both readings, or null when the index is out of
+// range.
+const char *remanence_geometry_conflict(const RemanenceGeometry *geometry, size_t index);
+
+// How many parts of the coordinates no source settled. Zero for a
+// determined geometry.
+size_t remanence_geometry_unsettled_count(const RemanenceGeometry *geometry);
+
+// One unsettled part, named the way the refusals name it, or null when
+// the index is out of range.
+const char *remanence_geometry_unsettled(const RemanenceGeometry *geometry, size_t index);
+
+// How many readings were taken, in the order the sources were read.
+size_t remanence_geometry_reading_count(const RemanenceGeometry *geometry);
+
+// Reading `index`'s source, by its stable spelling —
+// `format-declaration`, `boot-record`, `partition-table` or
+// `extent-arithmetic`.
+const char *remanence_geometry_reading_source(const RemanenceGeometry *geometry, size_t index);
+
+// Where in the artifact reading `index` was taken.
+const char *remanence_geometry_reading_at(const RemanenceGeometry *geometry, size_t index);
+
+// What reading `index`'s source states, in its own terms.
+const char *remanence_geometry_reading_detail(const RemanenceGeometry *geometry, size_t index);
+
+// The cylinder count reading `index` states. False where that source
+// states none, which is ordinary: a boot record states no cylinder
+// count at all.
+bool remanence_geometry_reading_cylinders(const RemanenceGeometry *geometry,
+                                          size_t index,
+                                          uint32_t *out);
+
+// The head count reading `index` states. False where it states none.
+bool remanence_geometry_reading_heads(const RemanenceGeometry *geometry,
+                                      size_t index,
+                                      uint32_t *out);
+
+// The sectors-per-track reading `index` states. False where it states
+// none.
+bool remanence_geometry_reading_sectors_per_track(const RemanenceGeometry *geometry,
+                                                  size_t index,
+                                                  uint32_t *out);
+
+// The sector size reading `index` states. False where it states none.
+bool remanence_geometry_reading_sector_bytes(const RemanenceGeometry *geometry,
+                                             size_t index,
+                                             uint64_t *out);
+
+// Frees a space handle. The partition and its medium are untouched.
+void remanence_space_free(RemanenceSpace *space);
+
+// Whether this space has the addressable vantage — an extent to read and
+// write by position. False where the partition composes none: an
+// archive's direct partition, a recording's, or a region a scheme
+// declares as structure.
+bool remanence_volume_is_addressable(const RemanenceSpace *space);
+
+// This space's opaque volume identity, as the inspection report issued
+// it, or 0 where the report composed no volume for the partition — which
+// an addressable space may still be, a blank disk's direct partition
+// being the delivered case. `remanence_volume_is_addressable` is the
+// vantage question; this is the identity.
+uint64_t remanence_volume_id(const RemanenceSpace *space);
+
+// Where this space starts in the presented disk, or 0 where it has no
+// addressable vantage.
+uint64_t remanence_volume_start_bytes(const RemanenceSpace *space);
+
+// How far this space runs, or 0 where it has no addressable vantage.
+uint64_t remanence_volume_length_bytes(const RemanenceSpace *space);
+
+// Reads `len` bytes at `offset` **within this space**, not within the
+// medium: the vantage that reaches a boot record, allocation metadata,
+// the extents a filesystem calls free, or the bytes behind a listed
+// file. A read past the space's own end is refused by name.
+bool remanence_volume_read_at(RemanenceSpace *space,
+                              uint64_t offset,
+                              uint8_t *buffer,
+                              size_t len,
+                              RemanenceErrorCategory *error_category_out,
+                              char **error_out,
+                              char **error_rule_out);
+
+// Writes `len` bytes at `offset` within this space, buffered until
+// `remanence_device_commit` like every other write.
+bool remanence_volume_write_at(RemanenceSpace *space,
+                               uint64_t offset,
+                               const uint8_t *data,
+                               size_t len,
+                               RemanenceErrorCategory *error_category_out,
+                               char **error_out,
+                               char **error_rule_out);
+
+// Whether this space has the namespace vantage — files to name. False
+// for a volume bearing no filesystem, which is an ordinary volume.
+bool remanence_filesystem_has_namespace(const RemanenceSpace *space);
+
+// The filesystem kind in its stable spelling, `"FAT12"` or `"hdos"`, or
+// null where this space bears no namespace.
+const char *remanence_filesystem_kind(const RemanenceSpace *space);
+
+// The label the recognizing filesystem read, or null where this space
+// bears none — a namespace whose format has no such field, or one that
+// bears no namespace at all. Free with `remanence_string_free`.
+//
+// Sets the error on a failure to read the namespace, which a caller
+// tells from an honest absence by whether `error_out` was written.
+char *remanence_filesystem_label(const RemanenceSpace *filesystem,
+                                 RemanenceErrorCategory *error_category_out,
+                                 char **error_out,
+                                 char **error_rule_out);
+
+// How many readings the label answer holds, and each one's source and
+// stored value: the sources the recognizing filesystem consulted, in
+// the order its own policy consults them (P4).
+size_t remanence_filesystem_label_reading_count(const RemanenceSpace *filesystem);
+
+// Writes reading `index`'s source and stored value, each freed with
+// `remanence_string_free`. Returns false past the end.
+bool remanence_filesystem_label_reading(const RemanenceSpace *filesystem,
+                                        size_t index,
+                                        char **source_out,
+                                        char **stored_out);
+
+// How many observations recognized this namespace (P4).
+size_t remanence_filesystem_evidence_count(const RemanenceSpace *filesystem);
+
+// One of them, freed with `remanence_string_free`, or null past the end.
+char *remanence_filesystem_evidence(const RemanenceSpace *filesystem, size_t index);
+
+// Every file under `path` (`""` or null is the whole namespace),
+// gathered as a load's sources in one pass — what
+// `remanence_session_load_media_sources` consumes.
+//
+// The sources are **free-standing** as the single form's is, and a
+// solid archive's coded stream decodes once for the whole gathering
+// (P27). This release gathers from an archive's namespace alone — a
+// volume-backed filesystem's files are read through the filesystem
+// that names them, and refuse here by name. Returns null on failure
+// and stores a message in `error_out` (free with
+// `remanence_string_free`).
+RemanenceFileSourceList *remanence_space_files(RemanenceSpace *space,
+                                               const char *path,
+                                               RemanenceErrorCategory *error_category_out,
+                                               char **error_out,
+                                               char **error_rule_out);
+
+// The stable spelling of the scheme this medium's content is laid out
+// under, or **null where it records none** — the direct partition stands
+// there, and that is an answer rather than a refusal. Owned by the
+// library; do not free.
+const char *remanence_medium_partition_scheme(const RemanenceMedium *medium);
+
+// How many partitions this medium's pool holds. A medium recording no
+// scheme answers 1 — the direct partition, which is what its content is
+// reached through.
+size_t remanence_medium_partition_count(const RemanenceMedium *medium);
+
+// The scheme's own ordinal of the partition at `index` in the pool's own
+// order. False past the end.
+//
+// The two numbers differ on purpose: a partition carrying an issue keeps
+// its ordinal, so the partitions behind it never renumber (U4), and the
+// ordinal — never the index — is what `remanence_medium_partition`
+// takes.
+bool remanence_medium_partition_ordinal(const RemanenceMedium *medium,
+                                        size_t index,
+                                        uint32_t *value_out);
+
+// The partition the scheme's own ordinal names — MBR entry 1 is `1`, and
+// the direct partition is `0` — or **null where the pool holds none**.
+//
+// It takes no error outs because absence is an answer here, exactly as
+// it is for `remanence_session_medium`: the pool was established when
+// the medium was loaded, so a number it does not hold is a fact about
+// the medium rather than a failure to look. Free with
+// `remanence_partition_free`.
+RemanencePartition *remanence_medium_partition(RemanenceMedium *medium, uint32_t ordinal);
+
+// Frees a partition handle. The medium and its pool are untouched, and
+// so is every space already composed through it.
+void remanence_partition_free(RemanencePartition *partition);
+
+// The scheme's own ordinal for this partition, or 0 for a null handle —
+// which is also the direct partition's own number, so
+// `remanence_partition_is_direct` is the question to ask about it.
+uint32_t remanence_partition_ordinal(const RemanencePartition *partition);
+
+// Whether this is the direct partition — the library's own composition
+// of the whole content, which stands where the medium records no scheme.
+bool remanence_partition_is_direct(const RemanencePartition *partition);
+
+// Whether the scheme flags this partition active, as it records it. The
+// direct partition is flagged by nothing and answers false.
+bool remanence_partition_active(const RemanencePartition *partition);
+
+// The type value exactly as the scheme records it. False for the direct
+// partition, which records none.
+bool remanence_partition_type_byte(const RemanencePartition *partition, uint8_t *out);
+
+// What that value *declares*, in a sentence fit to quote in a refusal a
+// user reads, or null for the direct partition.
+//
+// It is present whether or not this release reads the type, because the
+// partition a caller most needs explained is the one the library
+// declines to read — and it describes the declaration, never the
+// content: an unread `0x07` partition is not thereby asserted to hold
+// NTFS.
+const char *remanence_partition_type_reading(const RemanencePartition *partition);
+
+// Whether this release reads the declared type.
+bool remanence_partition_is_claimed(const RemanencePartition *partition);
+
+// How the scheme places this partition, in the scheme's own vocabulary:
+// for MBR, `"primary"` for one of the four slots and `"logical"` for an
+// entry on the extended chain. The direct partition answers `"direct"`.
+//
+// This is a different axis from `remanence_partition_role` and neither
+// implies the other.
+const char *remanence_partition_placement(const RemanencePartition *partition);
+
+// Whether the scheme declares this partition as data or as structure.
+RemanenceRegionRole remanence_partition_role(const RemanencePartition *partition);
+
+// Where this partition starts in the presented content. False where it
+// has no addressed extent at all — the direct partition over a medium
+// whose native vantage is a namespace.
+bool remanence_partition_start_bytes(const RemanencePartition *partition, uint64_t *out);
+
+// How far this partition runs, under the same rule.
+bool remanence_partition_length_bytes(const RemanencePartition *partition, uint64_t *out);
+
+// Whether the addressable vantage opens — whether
+// `remanence_partition_volume` answers with a space rather than null.
+bool remanence_partition_is_addressable(const RemanencePartition *partition);
+
+// Whether the namespace vantage opens — whether
+// `remanence_partition_filesystem` answers with a space rather than
+// null. Where it does not, the namespace is declared with
+// `remanence_partition_filesystem_as`.
+bool remanence_partition_bears_namespace(const RemanencePartition *partition);
+
+// The identity the inspection report issued for the volume composed over
+// this partition. False where it composed none, which an addressable
+// partition may still be.
+bool remanence_partition_volume_id(const RemanencePartition *partition, uint64_t *out);
+
+// The category of the refusal that keeps this partition in the pool when
+// its type is outside the claim or its chain could not be followed.
+// False where the partition reads cleanly.
+bool remanence_partition_issue_category(const RemanencePartition *partition,
+                                        RemanenceErrorCategory *category_out);
+
+// That refusal, or null where the partition reads cleanly. A partition
+// carrying one is still a partition and still keeps its place.
+const char *remanence_partition_issue(const RemanencePartition *partition);
+
+// How many observations the scheme's adapter read to declare this
+// partition (P4). The direct partition read nothing and answers 0.
+size_t remanence_partition_evidence_count(const RemanencePartition *partition);
+
+// One of them, or null past the end. Borrowed from the handle.
+const char *remanence_partition_evidence(const RemanencePartition *partition, size_t index);
+
+// The direct partition's account of itself: what the library composed
+// and why. Present for the direct partition and null for every partition
+// a scheme declared, which is the whole of the distinction — a
+// composition act is provenance, never evidence.
+const char *remanence_partition_provenance(const RemanencePartition *partition);
+
+// The caller's own reading of the type, checked against the value the
+// scheme recorded (P3).
+//
+// The declaration is the caller's and the check is the library's: a
+// reading the recorded byte does not bear is refused naming both sides,
+// and the direct partition — which records no type — refuses by name
+// rather than accepting a reading of nothing. `type_id` is one of the
+// spellings `remanence_partition_type_id` enumerates; any other is
+// refused naming what this release declares.
+bool remanence_partition_check_type(const RemanencePartition *partition,
+                                    const char *type_id,
                                     RemanenceErrorCategory *error_category_out,
                                     char **error_out,
                                     char **error_rule_out);
 
-// The **direct partition** over this recording — the library's own
-// composition of the whole content, which is what a namespace above is
-// reached through (P19).
+// The addressable vantage: the space this partition composes, read and
+// written **by position within the partition's own extent** — the
+// vantage that reaches a boot record, allocation metadata, or the
+// extents a filesystem calls free.
 //
-// **Unlike a CBM DOS recording's, this partition is addressable**
-// (D62). Its records state a cylinder, a head and a sector number, and
-// those compose exactly the geometry ordering FAT, HDOS and CP/M were
-// all written against — so a volume here opens through the same seam a
-// hard-disk image opens through, with no flux vocabulary reaching the
-// filesystem adapter and none of the filesystem's reaching the
-// recording.
+// **Null means two different things and the caller can tell them
+// apart.** Null with the error outs untouched is the vantage being
+// absent — a structural region, a type this release will not read, or a
+// partition over content whose native vantage is a namespace — which
+// `remanence_partition_is_addressable` states in advance. Null with the
+// outs set is a composition that was attempted and refused. Free with
+// `remanence_space_free`.
+RemanenceSpace *remanence_partition_volume(const RemanencePartition *partition,
+                                           RemanenceErrorCategory *error_category_out,
+                                           char **error_out,
+                                           char **error_rule_out);
+
+// The namespace vantage: the same node, reached by the names it holds,
+// and where every `remanence_filesystem_*` verb lives.
 //
-// The namespace vantage is *declared*: nothing about an FM or MFM
-// recording determines which of those it holds, and this layer will not
-// pick one. `remanence_partition_filesystem_as` with `"fat"`, `"hdos"`,
-// `"cpm"` or a `"cpm-*"` layout is the door; `"cbmdos"` is refused
-// here, because those blocks are addressed by the recording rather than
-// by position.
+// Null with the error outs untouched is nothing determining a namespace
+// over this partition — the honest absence, which
+// `remanence_partition_bears_namespace` states in advance and
+// `remanence_partition_filesystem_as` is where a caller who knows says
+// so. Null with the outs set is a refusal. Free with
+// `remanence_space_free`.
+RemanenceSpace *remanence_partition_filesystem(const RemanencePartition *partition,
+                                               RemanenceErrorCategory *error_category_out,
+                                               char **error_out,
+                                               char **error_rule_out);
+
+// The declared reading, where no partition type determines one: `"fat"`,
+// `"hdos"`, `"cpm"`, a `"cpm-*"` layout, or `"cbmdos"`.
 //
-// The extent's length is the geometry's rather than the sum of what
-// reads: a record the recording never stated, or one whose CRC
-// disagrees, is a hole that still occupies its place. Reads that touch
-// it are refused naming the address and every other read answers —
-// nothing is zeroed.
+// **The reading is the caller's and the check is the library's.** The
+// adapter the declaration names is the one that reads it, and it reads
+// the evidence to verify the declaration rather than to pick one — a
+// declaration the content cannot bear is refused by that adapter, by
+// name, and a spelling this release does not read is refused naming what
+// it does (P3). Recognizing a format and reading it are separate claims,
+// so `"cpm"` still refuses at the open.
 //
-// Null where the records compose no uniform image, with the refusal
-// stated. The partition **borrows** the sector layer, and so does every
-// space composed through it: keep the sectors alive for as long as any
-// of them, and free them last.
-RemanencePartition *remanence_ibm_sectors_partition(const RemanenceIbmSectors *sectors,
-                                                    RemanenceErrorCategory *error_category_out,
-                                                    char **error_out,
-                                                    char **error_rule_out);
+// This door always attempted a composition, so null here always carries
+// the refusal. Free with `remanence_space_free`.
+RemanenceSpace *remanence_partition_filesystem_as(const RemanencePartition *partition,
+                                                  const char *id,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
 
-// What this layer could not resolve, in its own terms, and how much of
-// it there was.
-size_t remanence_ibm_sectors_declared_loss_count(const RemanenceIbmSectors *sectors);
+// Lists a directory ("" = root, "A/B" descends). Free with
+// `remanence_entry_list_free`.
+RemanenceEntryList *remanence_filesystem_entries(const RemanenceSpace *filesystem,
+                                                 const char *path,
+                                                 RemanenceErrorCategory *error_category_out,
+                                                 char **error_out,
+                                                 char **error_rule_out);
 
-const char *remanence_ibm_sectors_declared_loss_code(const RemanenceIbmSectors *sectors,
-                                                     size_t index);
+// Frees a directory listing.
+void remanence_entry_list_free(RemanenceEntryList *list);
 
-const char *remanence_ibm_sectors_declared_loss_detail(const RemanenceIbmSectors *sectors,
-                                                       size_t index);
+// Number of entries in the listing.
+size_t remanence_entry_count(const RemanenceEntryList *list);
 
-uint64_t remanence_ibm_sectors_declared_loss_amount(const RemanenceIbmSectors *sectors,
-                                                    size_t index);
+// An entry's name, as the filesystem stores it.
+const char *remanence_entry_name(const RemanenceEntryList *list, size_t index);
 
-// The grammar that produced these records, and what it found, in that
-// order.
-size_t remanence_ibm_sectors_evidence_count(const RemanenceIbmSectors *sectors);
+// Whether an entry is a file or a directory.
+RemanenceEntryKind remanence_entry_kind(const RemanenceEntryList *list, size_t index);
 
-const char *remanence_ibm_sectors_evidence(const RemanenceIbmSectors *sectors, size_t index);
+// An entry's size in bytes (0 for directories).
+uint64_t remanence_entry_size_bytes(const RemanenceEntryList *list, size_t index);
 
-// Opens the `.remanence` artifact at `path` (UTF-8), claiming the file
-// and decoding the whole image once into private session storage. The
-// magic, the binary sentinel and the layout version are checked before
-// anything else is believed, and a version past this release's claim is
-// refused by name. Returns null on failure and stores a message in
-// `error_out` (free with `remanence_string_free`).
-RemanenceFluxImage *remanence_flux_image_open(const char *path,
+// How many facts the recognizing filesystem declares about this entry
+// beyond name, kind and size.
+size_t remanence_entry_declared_count(const RemanenceEntryList *list, size_t index);
+
+// One declared fact's key, as the recognizing filesystem spells it.
+const char *remanence_entry_declared_key(const RemanenceEntryList *list, size_t index, size_t fact);
+
+// One declared fact's value, as that filesystem reads it. Nothing is
+// normalized on the way through.
+const char *remanence_entry_declared_value(const RemanenceEntryList *list,
+                                           size_t index,
+                                           size_t fact);
+
+// Answers one path (U3): a one-entry listing when something is there, an
+// empty listing when nothing is — a missing leaf, a missing parent, or a
+// parent that is a file alike. Absence is an answer, distinguished from
+// failure, which returns null with the error set. Free with
+// `remanence_entry_list_free`.
+RemanenceEntryList *remanence_filesystem_stat(const RemanenceSpace *filesystem,
+                                              const char *path,
                                               RemanenceErrorCategory *error_category_out,
                                               char **error_out,
                                               char **error_rule_out);
 
-// Opens a remanence image as `remanence_flux_image_open` does, under a
-// declared cache bound: at most `cache_bytes` of the decoded image
-// stays resident. The bound narrows the working set; it never refuses
-// service.
-RemanenceFluxImage *remanence_flux_image_open_with_cache(const char *path,
-                                                         uint64_t cache_bytes,
-                                                         RemanenceErrorCategory *error_category_out,
-                                                         char **error_out,
-                                                         char **error_rule_out);
+// The file at `path`, or null with the refusal set.
+//
+// This is where absence stops being an answer: `remanence_filesystem_stat`
+// asks whether something is there, and this asks for the file, so nothing
+// and a directory are both refused by name. Free with
+// `remanence_file_free`.
+RemanenceFile *remanence_filesystem_get_file(const RemanenceSpace *filesystem,
+                                             const char *path,
+                                             RemanenceErrorCategory *error_category_out,
+                                             char **error_out,
+                                             char **error_rule_out);
 
-// Frees an image handle, releasing its claim on the artifact and
-// discarding the private session storage its points decoded into.
-void remanence_flux_image_free(RemanenceFluxImage *image);
+// Opens the file at `path` as an artifact of its own, answering with
+// the discovery a device loads it from.
+//
+// **Recursion is the same journey again.** An entry recognized as an
+// image is not read through the namespace that names it: it is loaded
+// into a device of its own — in a machine of its own where one is being
+// reconstructed, the host's archive never having been part of the
+// machine whose disk it holds. The claim is the one the archive already
+// holds, so nothing is re-opened.
+//
+// This release mints a discovery from an **archive entry**; a file on a
+// volume-backed filesystem is refused by name. Free the result with
+// `remanence_discovery_free`, or consume it with
+// `remanence_session_load_discovery`. Returns null on failure.
+RemanenceDiscovery *remanence_filesystem_discover(const RemanenceSpace *filesystem,
+                                                  const char *path,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
 
-// The artifact the image was opened from.
-const char *remanence_flux_image_path(const RemanenceFluxImage *image);
+// Copies a file's bytes out — the whole-value convenience beside
+// `remanence_file_read_at`. Free with `remanence_file_data_free`.
+RemanenceFileData *remanence_filesystem_read_file(const RemanenceSpace *filesystem,
+                                                  const char *path,
+                                                  RemanenceErrorCategory *error_category_out,
+                                                  char **error_out,
+                                                  char **error_rule_out);
 
-// The artifact format's stable identifier: `"remanence"`.
-const char *remanence_flux_image_format_id(const RemanenceFluxImage *image);
+// Sets a file's size, creating it when absent: kept bytes preserved in
+// place, a grown region reads as zeros. Buffered until commit.
+bool remanence_filesystem_resize_file(const RemanenceSpace *filesystem,
+                                      const char *path,
+                                      uint64_t size,
+                                      RemanenceErrorCategory *error_category_out,
+                                      char **error_out,
+                                      char **error_rule_out);
 
-// That format's human-readable name.
-const char *remanence_flux_image_format_name(const RemanenceFluxImage *image);
+// Writes a file. An existing file is overwritten — shorter or longer,
+// its old clusters released and reclaimed — while an existing directory
+// is refused. Buffered until `remanence_device_commit`.
+bool remanence_filesystem_write_file(const RemanenceSpace *filesystem,
+                                     const char *path,
+                                     const uint8_t *bytes,
+                                     size_t length,
+                                     RemanenceErrorCategory *error_category_out,
+                                     char **error_out,
+                                     char **error_rule_out);
 
-// Which P7 mode the open obtained on the artifact.
-RemanenceAccessMode remanence_flux_image_access_mode(const RemanenceFluxImage *image);
+// Ensures a directory exists: missing parents are created, and a path
+// that already leads to one succeeds unchanged. Buffered until commit.
+bool remanence_filesystem_make_directory(const RemanenceSpace *filesystem,
+                                         const char *path,
+                                         RemanenceErrorCategory *error_category_out,
+                                         char **error_out,
+                                         char **error_rule_out);
 
-// The medium's shape in the model's own spelling: `"8-inch"`,
-// `"5.25-inch"` or `"3.5-inch"`.
-const char *remanence_flux_image_form_factor(const RemanenceFluxImage *image);
+// Frees a file handle. Nothing it was a view of is disturbed.
+void remanence_file_free(RemanenceFile *file);
 
-// The angular unit every angle in the image is stated over — a unit
-// rather than a measurement, so equality is exact.
-uint64_t remanence_flux_image_angular_divisions(const RemanenceFluxImage *image);
+// The path this file was reached by.
+const char *remanence_file_path(const RemanenceFile *file);
 
-// How many bytes of private session storage the decoded points occupy.
-uint64_t remanence_flux_image_backing_bytes(const RemanenceFluxImage *image);
+// The name as the filesystem stores it, which is not always the
+// spelling the caller asked by.
+const char *remanence_file_name(const RemanenceFile *file);
 
-// How much of that backing is currently resident. The points are never
-// held whole.
-uint64_t remanence_flux_image_resident_bytes(const RemanenceFluxImage *image);
+// What the filesystem claims this file's size is.
+uint64_t remanence_file_size_bytes(const RemanenceFile *file);
 
-// How many index holes the image holds.
-size_t remanence_flux_image_hole_count(const RemanenceFluxImage *image);
+// What this entry is. Always a file — `remanence_filesystem_get_file`
+// refuses a directory by name.
+RemanenceEntryKind remanence_file_kind(const RemanenceFile *file);
 
-// One of them, written into `out`. Returns false when out of range.
-bool remanence_flux_image_hole(const RemanenceFluxImage *image,
-                               size_t index,
-                               RemanenceFluxHole *out);
+// The whole file, copied out. Free with `remanence_file_data_free`.
+RemanenceFileData *remanence_file_bytes(const RemanenceFile *file,
+                                        RemanenceErrorCategory *error_category_out,
+                                        char **error_out,
+                                        char **error_rule_out);
 
-// How many surfaces carry orbits.
-size_t remanence_flux_image_surface_count(const RemanenceFluxImage *image);
+// Reads exactly `length` bytes at `offset` into `buffer_out` — the
+// bounded streamed form beside `remanence_file_bytes`. The span must lie
+// within the file.
+bool remanence_file_read_at(const RemanenceFile *file,
+                            uint64_t offset,
+                            uint8_t *buffer_out,
+                            size_t length,
+                            RemanenceErrorCategory *error_category_out,
+                            char **error_out,
+                            char **error_rule_out);
 
-// One surface's index, written into `out`, ascending. Returns false
-// when out of range.
-bool remanence_flux_image_surface(const RemanenceFluxImage *image, size_t index, uint64_t *out);
+// Writes `length` bytes at `offset` in place — the streamed form beside
+// `remanence_filesystem_write_file`. The span must lie within the file's
+// current size; `remanence_filesystem_resize_file` is what changes it.
+// Buffered until commit.
+bool remanence_file_write_at(const RemanenceFile *file,
+                             uint64_t offset,
+                             const uint8_t *bytes,
+                             size_t length,
+                             RemanenceErrorCategory *error_category_out,
+                             char **error_out,
+                             char **error_rule_out);
 
-// How many orbits the image holds, across every surface.
-size_t remanence_flux_image_orbit_count(const RemanenceFluxImage *image);
+// The bytes of a read-out file; valid until the handle is freed.
+const uint8_t *remanence_file_data_bytes(const RemanenceFileData *data, size_t *length_out);
 
-// One of them, written into `out`, ordered by surface then radius.
-// Returns false when out of range.
-bool remanence_flux_image_orbit(const RemanenceFluxImage *image,
-                                size_t index,
-                                RemanenceFluxOrbit *out);
+// Frees read-out file bytes.
+void remanence_file_data_free(RemanenceFileData *data);
 
-// How the image came to be known, in human-readable terms.
-size_t remanence_flux_image_provenance_count(const RemanenceFluxImage *image);
+// This file taken as a load's source — what
+// `remanence_session_load_media_source` consumes.
+//
+// The source is **free-standing**: it rides the claim of the medium it
+// came from, so the namespace walk that named the file ends here and
+// the load opens nothing twice. This release takes a load's source
+// from an archive's namespace alone — a file on a volume-backed
+// filesystem is read through the filesystem that names it, and refuses
+// here by name. Returns null on failure and stores a message in
+// `error_out` (free with `remanence_string_free`).
+RemanenceFileSource *remanence_file_source(RemanenceFile *file,
+                                           RemanenceErrorCategory *error_category_out,
+                                           char **error_out,
+                                           char **error_rule_out);
 
-const char *remanence_flux_image_provenance(const RemanenceFluxImage *image, size_t index);
+// The name the namespace holds this source's file under. Owned by the
+// handle; do not free.
+const char *remanence_file_source_name(const RemanenceFileSource *source);
 
-// Writes the image into a new `.remanence` artifact at `path` (UTF-8)
-// and reports what the artifact carried. An existing destination is a
-// named refusal rather than an overwrite, and an interruption leaves
-// the destination absent rather than half an artifact. Returns null on
-// failure; free the report with `remanence_flux_write_report_free`.
-RemanenceFluxWriteReport *remanence_flux_image_write(const RemanenceFluxImage *image,
-                                                     const char *path,
-                                                     RemanenceErrorCategory *error_category_out,
-                                                     char **error_out,
-                                                     char **error_rule_out);
+// The file's size in bytes, as the namespace claims it.
+uint64_t remanence_file_source_size_bytes(const RemanenceFileSource *source);
 
-// Frees a write report.
-void remanence_flux_write_report_free(RemanenceFluxWriteReport *report);
+// Frees a source no load consumed, ending its ride on its medium's
+// claim.
+void remanence_file_source_free(RemanenceFileSource *source);
 
-// Where the artifact was written.
-const char *remanence_flux_write_report_path(const RemanenceFluxWriteReport *report);
+// How many sources the gathering holds.
+size_t remanence_file_source_list_count(const RemanenceFileSourceList *list);
 
-// The artifact's size on storage.
-uint64_t remanence_flux_write_report_artifact_bytes(const RemanenceFluxWriteReport *report);
+// The name the namespace holds the `index`th source's file under, or
+// null out of range. Owned by the handle; do not free.
+const char *remanence_file_source_list_name(const RemanenceFileSourceList *list, size_t index);
 
-// How many orbits it carried.
-uint64_t remanence_flux_write_report_orbits(const RemanenceFluxWriteReport *report);
-
-// Every point across every orbit it carried.
-uint64_t remanence_flux_write_report_points(const RemanenceFluxWriteReport *report);
-
-// How many kinds of loss the crossing did not carry. Zero for this
-// format, always: the remanence artifact is the model's own, so it
-// carries every fact the image holds. An empty account is the claim,
-// not a missing one.
-size_t remanence_flux_write_report_declared_loss_count(const RemanenceFluxWriteReport *report);
-
-// One loss entry's stable code, or null when out of range.
-const char *remanence_flux_write_report_declared_loss_code(const RemanenceFluxWriteReport *report,
-                                                           size_t index);
-
-// What was lost, in the source's own terms. A count is not an account.
-const char *remanence_flux_write_report_declared_loss_detail(const RemanenceFluxWriteReport *report,
-                                                             size_t index);
-
-// How much of it there was, in whatever the detail counts.
-uint64_t remanence_flux_write_report_declared_loss_amount(const RemanenceFluxWriteReport *report,
-                                                          size_t index);
+// Frees a gathering no load consumed.
+void remanence_file_source_list_free(RemanenceFileSourceList *list);
 
 // Frees a report handle.
 void remanence_p64_report_free(RemanenceP64Report *report);
@@ -1682,342 +2377,370 @@ bool remanence_bytestream_location_read_at(const RemanenceBytestream *bytestream
                                            char **error_out,
                                            char **error_rule_out);
 
-// The geometry the sources beneath this medium stated: what was
-// settled, what they contradict each other about, and every reading
-// taken.
+// Recognizes the recording's own sectors out of a bytestream, under
+// the family's declared record grammar — no policy, because the
+// profile carries one; `cache_bytes` is the P27 working-set bound. The
+// bytestream is untouched, and either backing serves: a materialized
+// stream's handle or a pooled medium's view. Returns null on failure
+// and stores a message in `error_out` (free with
+// `remanence_string_free`).
+RemanenceC1541Sectors *remanence_bytestream_recognize_sectors(const RemanenceBytestream *bytestream,
+                                                              uint64_t cache_bytes,
+                                                              RemanenceErrorCategory *error_category_out,
+                                                              char **error_out,
+                                                              char **error_rule_out);
+
+// Frees a sector-layer handle, discarding its private session storage.
+void remanence_c1541_sectors_free(RemanenceC1541Sectors *sectors);
+
+// Reads one sector by the address the recording states for it, into
+// `buffer_out`, which must be `remanence_c1541_sectors_payload_bytes`
+// long.
 //
-// It was established when the medium was loaded and is evidence from
-// then on — nothing re-reads a boot record behind a caller. Null only
-// once the medium itself has been released.
-RemanenceGeometry *remanence_medium_geometry(const RemanenceMedium *medium);
-
-// Frees a geometry record and everything borrowed from it.
-void remanence_geometry_free(RemanenceGeometry *geometry);
-
-// What the evidence established.
-RemanenceGeometryState remanence_geometry_state(const RemanenceGeometry *geometry);
-
-// The coordinates, where the evidence settled them: cylinders, heads,
-// sectors per track and bytes per sector, written to whichever outputs
-// are non-null. False where nothing settled them, leaving every output
-// untouched — the state says which of the two absences it is.
-//
-// Cylinders and heads number from zero and sectors from one, which is
-// the recording's own convention.
-bool remanence_geometry_coordinates(const RemanenceGeometry *geometry,
-                                    uint32_t *cylinders_out,
-                                    uint32_t *heads_out,
-                                    uint32_t *sectors_per_track_out,
-                                    uint64_t *sector_bytes_out);
-
-// How many parts of the coordinates the sources contradict each other
-// about.
-size_t remanence_geometry_conflict_count(const RemanenceGeometry *geometry);
-
-// One conflict, naming both readings, or null when the index is out of
-// range.
-const char *remanence_geometry_conflict(const RemanenceGeometry *geometry, size_t index);
-
-// How many parts of the coordinates no source settled. Zero for a
-// determined geometry.
-size_t remanence_geometry_unsettled_count(const RemanenceGeometry *geometry);
-
-// One unsettled part, named the way the refusals name it, or null when
-// the index is out of range.
-const char *remanence_geometry_unsettled(const RemanenceGeometry *geometry, size_t index);
-
-// How many readings were taken, in the order the sources were read.
-size_t remanence_geometry_reading_count(const RemanenceGeometry *geometry);
-
-// Reading `index`'s source, by its stable spelling —
-// `format-declaration`, `boot-record`, `partition-table` or
-// `extent-arithmetic`.
-const char *remanence_geometry_reading_source(const RemanenceGeometry *geometry, size_t index);
-
-// Where in the artifact reading `index` was taken.
-const char *remanence_geometry_reading_at(const RemanenceGeometry *geometry, size_t index);
-
-// What reading `index`'s source states, in its own terms.
-const char *remanence_geometry_reading_detail(const RemanenceGeometry *geometry, size_t index);
-
-// The cylinder count reading `index` states. False where that source
-// states none, which is ordinary: a boot record states no cylinder
-// count at all.
-bool remanence_geometry_reading_cylinders(const RemanenceGeometry *geometry,
-                                          size_t index,
-                                          uint32_t *out);
-
-// The head count reading `index` states. False where it states none.
-bool remanence_geometry_reading_heads(const RemanenceGeometry *geometry,
-                                      size_t index,
-                                      uint32_t *out);
-
-// The sectors-per-track reading `index` states. False where it states
-// none.
-bool remanence_geometry_reading_sectors_per_track(const RemanenceGeometry *geometry,
-                                                  size_t index,
-                                                  uint32_t *out);
-
-// The sector size reading `index` states. False where it states none.
-bool remanence_geometry_reading_sector_bytes(const RemanenceGeometry *geometry,
-                                             size_t index,
-                                             uint64_t *out);
-
-// Identifies the artifact's nesting layers and probable filesystem. Free the
-// result with `remanence_identification_free`.
-RemanenceIdentification *remanence_medium_identify(const RemanenceMedium *medium);
-
-// Frees an identification handle.
-void remanence_identification_free(RemanenceIdentification *identification);
-
-// Whether the medium reported unsaved modifications at identify time.
-bool remanence_identification_modified(const RemanenceIdentification *identification);
-
-// Number of recognized nesting layers.
-size_t remanence_identification_layer_count(const RemanenceIdentification *identification);
-
-// Number of evidence lines.
-size_t remanence_identification_evidence_count(const RemanenceIdentification *identification);
-
-// One evidence line, or null when out of range.
-const char *remanence_identification_evidence(const RemanenceIdentification *identification,
-                                              size_t index);
-
-// The layer's kind, or `RemanenceLayerKind::Unknown` when out of range.
-RemanenceLayerKind remanence_layer_kind(const RemanenceIdentification *identification,
-                                        size_t index);
-
-// The layer's id (e.g. "h8d", "zip", "hdos").
-const char *remanence_layer_id(const RemanenceIdentification *identification, size_t index);
-
-// The layer's human-readable name.
-const char *remanence_layer_name(const RemanenceIdentification *identification, size_t index);
-
-// Detection confidence, 0-100.
-uint8_t remanence_layer_confidence(const RemanenceIdentification *identification, size_t index);
-
-// Whether the layer matched a known format.
-bool remanence_layer_known(const RemanenceIdentification *identification, size_t index);
-
-// Current size in bytes; returns false when unknown.
-bool remanence_layer_current_bytes(const RemanenceIdentification *identification,
-                                   size_t index,
-                                   uint64_t *out);
-
-// Expected size in bytes; returns false when unknown.
-bool remanence_layer_expected_bytes(const RemanenceIdentification *identification,
-                                    size_t index,
-                                    uint64_t *out);
-
-// Which layout details this layer carries.
-RemanenceLayoutKind remanence_layer_layout_kind(const RemanenceIdentification *identification,
-                                                size_t index);
-
-// Archive layout: the archive file path; null for other layouts.
-const char *remanence_layer_archive_path(const RemanenceIdentification *identification,
-                                         size_t index);
-
-// Archive layout: the entry name inside the archive; null for other layouts.
-const char *remanence_layer_archive_entry_name(const RemanenceIdentification *identification,
-                                               size_t index);
-
-// Archive layout: compressed entry size; returns false when unknown.
-bool remanence_layer_archive_compressed_size(const RemanenceIdentification *identification,
-                                             size_t index,
-                                             uint64_t *out);
-
-// Archive layout: uncompressed entry size; returns false when unknown.
-bool remanence_layer_archive_uncompressed_size(const RemanenceIdentification *identification,
-                                               size_t index,
-                                               uint64_t *out);
-
-// Image layout: payload offset in bytes; returns false when unknown.
-bool remanence_layer_image_payload_offset(const RemanenceIdentification *identification,
-                                          size_t index,
-                                          uint64_t *out);
-
-// Image layout: payload length in bytes; returns false when unknown.
-bool remanence_layer_image_payload_length(const RemanenceIdentification *identification,
-                                          size_t index,
-                                          uint64_t *out);
-
-// Physical media layout: whether disk geometry is known.
-bool remanence_layer_has_disk_layout(const RemanenceIdentification *identification, size_t index);
-
-// Disk layout: the article the image format names for its medium
-// (e.g. "logical-block-512"); null when the layer has no disk
-// layout.
-const char *remanence_layer_disk_article(const RemanenceIdentification *identification,
-                                         size_t index);
-
-// Disk layout: sector size in bytes; returns false when unknown.
-bool remanence_layer_disk_sector_size(const RemanenceIdentification *identification,
-                                      size_t index,
-                                      uint64_t *out);
-
-// Disk layout: cylinder count; returns false when unknown.
-bool remanence_layer_disk_cylinders(const RemanenceIdentification *identification,
-                                    size_t index,
-                                    uint32_t *out);
-
-// Disk layout: side count; returns false when unknown.
-bool remanence_layer_disk_sides(const RemanenceIdentification *identification,
-                                size_t index,
-                                uint32_t *out);
-
-// Disk layout: how sectors are arranged.
-RemanenceSectorLayoutKind remanence_layer_disk_sector_layout_kind(const RemanenceIdentification *identification,
-                                                                  size_t index);
-
-// Disk layout: sectors per track for fixed layouts; 0 otherwise.
-uint32_t remanence_layer_disk_sectors_per_track(const RemanenceIdentification *identification,
-                                                size_t index);
-
-// Disk layout: per-track entry count for variable layouts; 0 otherwise.
-size_t remanence_layer_disk_track_count(const RemanenceIdentification *identification,
-                                        size_t index);
-
-// Disk layout: one per-track entry for variable layouts. Returns false when
-// out of range. `has_sector_size` and `sector_size` report the optional
-// per-track sector size.
-bool remanence_layer_disk_track(const RemanenceIdentification *identification,
-                                size_t index,
-                                size_t track_index,
-                                uint32_t *cylinder,
-                                uint32_t *side,
-                                uint32_t *sectors,
-                                bool *has_sector_size,
-                                uint64_t *sector_size);
-
-// Disk layout: total sector count; returns false when unknown.
-bool remanence_layer_disk_total_sectors(const RemanenceIdentification *identification,
-                                        size_t index,
-                                        uint64_t *out);
-
-// Filesystem layout: offset in bytes; returns false when unknown.
-bool remanence_layer_fs_offset_bytes(const RemanenceIdentification *identification,
-                                     size_t index,
-                                     uint64_t *out);
-
-// Filesystem layout: length in bytes; returns false when unknown.
-bool remanence_layer_fs_length_bytes(const RemanenceIdentification *identification,
-                                     size_t index,
-                                     uint64_t *out);
-
-// This medium's identity in its session's pool.
-uint64_t remanence_medium_id(const RemanenceMedium *medium);
-
-// Whether a device currently links this medium. An unlinked medium is
-// ordinary rather than idle: it is loaded, claimed, and answering.
-bool remanence_medium_is_linked(const RemanenceMedium *medium);
-
-// The article this medium is (P14), by the catalog's stable spelling —
-// the physical substrate. Owned by the library; do not free.
-const char *remanence_medium_article(const RemanenceMedium *medium);
-
-// The device this medium's content was recorded by, by the device
-// catalog's stable spelling — or null where no device recorded it,
-// which is an archive's honest answer rather than a gap.
-const char *remanence_medium_device_type(const RemanenceMedium *medium);
-
-// The artifact the medium was loaded from (the archive itself for an
-// image loaded out of one).
-//
-// **Null where the caller's handle has no recoverable name** — a name
-// serves location alone, and a nameless handle is served everywhere that
-// does not need a neighbourhood.
-const char *remanence_medium_path(const RemanenceMedium *medium);
-
-// The resolved image path (the entry name for archive inputs), or null
-// as above.
-const char *remanence_medium_image_path(const RemanenceMedium *medium);
-
-// The resolved image's size in bytes.
-uint64_t remanence_medium_image_size_bytes(const RemanenceMedium *medium);
-
-// Reads `length` bytes of the resolved image at `offset` into
-// `buffer_out` — the bounded access form: the image streams from its
-// backing and is never resident whole. Returns false on failure and
-// stores a message in `error_out` (free with `remanence_string_free`).
-bool remanence_medium_read_at(const RemanenceMedium *medium,
-                              uint64_t offset,
-                              uint8_t *buffer_out,
-                              size_t length,
-                              RemanenceErrorCategory *error_category_out,
-                              char **error_out,
-                              char **error_rule_out);
-
-// The medium's **effective** access mode: the declared intent's
-// echo where the evidence supports it, and read-only where it does not
-// (P28). `remanence_assurance_access_mode` reports the same value beside
-// the reason for it.
-RemanenceAccessMode remanence_medium_mode(const RemanenceMedium *medium);
-
-// The image container format.
-bool remanence_medium_format(const RemanenceMedium *medium, RemanenceDiskFormat *format_out);
-
-// The qcow2 version, or 0 for an image of any other format.
-uint32_t remanence_medium_qcow2_version(const RemanenceMedium *medium);
-
-// The VDI version's major part, or 0 for an image of any other format.
-uint32_t remanence_medium_vdi_version_major(const RemanenceMedium *medium);
-
-// The VDI version's minor part, or 0 for an image of any other format.
-// Read it beside the major part: on its own, 0 is both "minor zero" and
-// "not a VDI".
-uint32_t remanence_medium_vdi_version_minor(const RemanenceMedium *medium);
-
-// The virtual disk size in bytes.
-uint64_t remanence_medium_size(const RemanenceMedium *medium);
-
-// Whether uncommitted changes exist.
-bool remanence_medium_is_modified(const RemanenceMedium *medium);
-
-// Reads one whole sector in the recording's own coordinates into
-// `buffer_out`, which is exactly one sector of this recording.
-//
-// Cylinders and heads number from zero and sectors from one. It answers
-// on a sector-addressed recording whose geometry the evidence
-// established and refuses by name otherwise, the rule identity in
-// `error_rule_out` naming which: `not-sector-addressed`,
-// `geometry-unstated`, `geometry-undetermined`, `outside-geometry` or
-// `partial-sector`.
-bool remanence_medium_read_sector(RemanenceMedium *medium,
-                                  uint32_t cylinder,
-                                  uint32_t head,
-                                  uint32_t sector,
+// It answers only where the recording is unambiguous: one readable
+// claim, or several holding the same bytes. Every other outcome is a
+// refusal naming its rule — an address no record states, an address no
+// claim of which reads, or one several readable claims disagree about.
+// Nothing is repaired and no block is filled in. Returns false on
+// failure and stores a message in `error_out`.
+bool remanence_c1541_sectors_read(const RemanenceC1541Sectors *sectors,
+                                  uint8_t track,
+                                  uint8_t sector,
                                   uint8_t *buffer_out,
                                   size_t length,
                                   RemanenceErrorCategory *error_category_out,
                                   char **error_out,
                                   char **error_rule_out);
 
-// Writes one whole sector in the recording's own coordinates,
-// **buffered until `remanence_medium_commit`** like every other write
-// (P2), under the same rules `remanence_medium_read_sector` answers by.
-bool remanence_medium_write_sector(RemanenceMedium *medium,
-                                   uint32_t cylinder,
-                                   uint32_t head,
-                                   uint32_t sector,
-                                   const uint8_t *data,
-                                   size_t length,
-                                   RemanenceErrorCategory *error_category_out,
-                                   char **error_out,
-                                   char **error_rule_out);
+// The **direct partition** over this recording — the library's own
+// composition of the whole content, which is what a namespace above is
+// reached through (P19). Null only for a null sector layer.
+//
+// A recording records no partition scheme, so there is one member and it
+// is synthetic: its account is provenance and never evidence, and it
+// composes no addressed extent, because a recording's blocks are
+// addressed by the recording rather than by position. The addressable
+// vantage is therefore absent and the namespace vantage is *declared* —
+// `remanence_partition_filesystem_as` with `"cbmdos"` — because nothing
+// here determines a reading and this layer will not pick one.
+//
+// **The sector layer carries no file verbs of its own**: it may be asked
+// what it composes — this — and may not be told to act as a namespace it
+// is not. The declaration's refusal is the seam that ran out of answers
+// stating it, and everything beneath stays readable either way: a disk
+// with no filesystem is still a recording, still a sector layer, and
+// still every claim this layer made about it.
+//
+// The partition **borrows** the sector layer, and so does every space
+// composed through it: keep the sectors alive for as long as any of
+// them, and free them last — the partition with
+// `remanence_partition_free` and the space with `remanence_space_free`.
+RemanencePartition *remanence_c1541_sectors_partition(const RemanenceC1541Sectors *sectors);
 
-// The commit point (P2): everything buffered reaches the image, then a
-// flush. Until this call, nothing has touched the file. The commit is
-// durable (P9): a private recovery journal is armed before the first
-// byte of the file changes, so an interruption at any point leaves
-// state the next open reconciles to wholly the old image or wholly
-// the committed new one.
-bool remanence_medium_commit(RemanenceMedium *medium,
-                             RemanenceErrorCategory *error_category_out,
-                             char **error_out,
-                             char **error_rule_out);
+// How many bytes of payload one sector carries.
+uint32_t remanence_c1541_sectors_payload_bytes(const RemanenceC1541Sectors *sectors);
 
-// Discards everything buffered; the image is untouched.
-void remanence_medium_rollback(RemanenceMedium *medium);
+const char *remanence_c1541_sectors_profile_id(const RemanenceC1541Sectors *sectors);
+
+// The record grammar every rule the recognition applied came from.
+const char *remanence_c1541_sectors_grammar_id(const RemanenceC1541Sectors *sectors);
+
+const char *remanence_c1541_sectors_grammar_name(const RemanenceC1541Sectors *sectors);
+
+uint64_t remanence_c1541_sectors_backing_bytes(const RemanenceC1541Sectors *sectors);
+
+uint64_t remanence_c1541_sectors_resident_bytes(const RemanenceC1541Sectors *sectors);
+
+size_t remanence_c1541_sectors_location_count(const RemanenceC1541Sectors *sectors);
+
+// Copies one location's counts into `out`. Returns false when `index`
+// is past the end.
+bool remanence_c1541_sectors_location(const RemanenceC1541Sectors *sectors,
+                                      size_t index,
+                                      RemanenceSectorLocation *out);
+
+size_t remanence_c1541_sectors_claim_count(const RemanenceC1541Sectors *sectors);
+
+// Copies one claim into `out`. Returns false when `index` is past the
+// end.
+bool remanence_c1541_sectors_claim(const RemanenceC1541Sectors *sectors,
+                                   size_t index,
+                                   RemanenceSectorClaim *out);
+
+// Which rule of the sector-layer set stands in the way of this claim,
+// or an empty string for one that reads.
+const char *remanence_c1541_sectors_claim_rule(const RemanenceC1541Sectors *sectors, size_t index);
+
+// Why this claim does not read, in the layer's own terms, or an empty
+// string for one that does.
+const char *remanence_c1541_sectors_claim_refusal(const RemanenceC1541Sectors *sectors,
+                                                  size_t index);
+
+size_t remanence_c1541_sectors_contested_count(const RemanenceC1541Sectors *sectors);
+
+// Copies one contested address into `out`. Returns false when `index`
+// is past the end.
+bool remanence_c1541_sectors_contested(const RemanenceC1541Sectors *sectors,
+                                       size_t index,
+                                       RemanenceContestedAddress *out);
+
+size_t remanence_c1541_sectors_declared_loss_count(const RemanenceC1541Sectors *sectors);
+
+const char *remanence_c1541_sectors_declared_loss_code(const RemanenceC1541Sectors *sectors,
+                                                       size_t index);
+
+const char *remanence_c1541_sectors_declared_loss_detail(const RemanenceC1541Sectors *sectors,
+                                                         size_t index);
+
+uint64_t remanence_c1541_sectors_declared_loss_amount(const RemanenceC1541Sectors *sectors,
+                                                      size_t index);
+
+// The grammar and policy that produced it, and everything the
+// bytestream said beneath it, in that order.
+size_t remanence_c1541_sectors_evidence_count(const RemanenceC1541Sectors *sectors);
+
+const char *remanence_c1541_sectors_evidence(const RemanenceC1541Sectors *sectors, size_t index);
+
+// Recognizes the recording's own sectors out of a bytestream, under the
+// FM or MFM record grammar the profile enrols.
+//
+// The rung beneath is one and the reading is the family's. A bytestream
+// whose records are not FM or MFM sectors is refused here by name
+// rather than read as though they were — use
+// `remanence_bytestream_recognize_sectors` for a CBM DOS recording.
+//
+// Returns null and states the refusal on failure. Free the result with
+// `remanence_ibm_sectors_free`.
+RemanenceIbmSectors *remanence_bytestream_recognize_ibm_sectors(const RemanenceBytestream *bytestream,
+                                                                uint64_t cache_bytes,
+                                                                RemanenceErrorCategory *error_category_out,
+                                                                char **error_out,
+                                                                char **error_rule_out);
+
+// Frees an FM or MFM sector layer, discarding its private session
+// storage.
+void remanence_ibm_sectors_free(RemanenceIbmSectors *sectors);
+
+// Copies one record's payload into `buffer_out`, by the address the
+// recording states for it.
+//
+// Only a record whose checks both agree is served. One whose checksum
+// disagrees holds what it holds and is reported with both numbers by
+// `remanence_ibm_sectors_claim`; serving it as though it read cleanly
+// would answer a question the evidence does not.
+//
+// `length` must be exactly what the record carries, which is what its
+// claim's size code states. Returns false and states the refusal
+// otherwise.
+bool remanence_ibm_sectors_read(const RemanenceIbmSectors *sectors,
+                                uint8_t cylinder,
+                                uint8_t head,
+                                uint8_t sector,
+                                uint8_t *buffer_out,
+                                size_t length,
+                                RemanenceErrorCategory *error_category_out,
+                                char **error_out,
+                                char **error_rule_out);
+
+// The drive profile that read the recording these records came off.
+const char *remanence_ibm_sectors_profile_id(const RemanenceIbmSectors *sectors);
+
+// Which encoding framed these records — the FM or MFM codec the
+// profile enrols, by its own identifier.
+const char *remanence_ibm_sectors_encoding_id(const RemanenceIbmSectors *sectors);
+
+// How many records the recognition claims.
+size_t remanence_ibm_sectors_claim_count(const RemanenceIbmSectors *sectors);
+
+// Copies one claim into `out`. Returns false when `index` is past the
+// end.
+bool remanence_ibm_sectors_claim(const RemanenceIbmSectors *sectors,
+                                 size_t index,
+                                 RemanenceIbmSectorClaim *out);
+
+bool remanence_ibm_sectors_geometry(const RemanenceIbmSectors *sectors,
+                                    RemanenceIbmGeometry *out,
+                                    RemanenceErrorCategory *error_category_out,
+                                    char **error_out,
+                                    char **error_rule_out);
+
+// The **direct partition** over this recording — the library's own
+// composition of the whole content, which is what a namespace above is
+// reached through (P19).
+//
+// **Unlike a CBM DOS recording's, this partition is addressable**
+// (D62). Its records state a cylinder, a head and a sector number, and
+// those compose exactly the geometry ordering FAT, HDOS and CP/M were
+// all written against — so a volume here opens through the same seam a
+// hard-disk image opens through, with no flux vocabulary reaching the
+// filesystem adapter and none of the filesystem's reaching the
+// recording.
+//
+// The namespace vantage is *declared*: nothing about an FM or MFM
+// recording determines which of those it holds, and this layer will not
+// pick one. `remanence_partition_filesystem_as` with `"fat"`, `"hdos"`,
+// `"cpm"` or a `"cpm-*"` layout is the door; `"cbmdos"` is refused
+// here, because those blocks are addressed by the recording rather than
+// by position.
+//
+// The extent's length is the geometry's rather than the sum of what
+// reads: a record the recording never stated, or one whose CRC
+// disagrees, is a hole that still occupies its place. Reads that touch
+// it are refused naming the address and every other read answers —
+// nothing is zeroed.
+//
+// Null where the records compose no uniform image, with the refusal
+// stated. The partition **borrows** the sector layer, and so does every
+// space composed through it: keep the sectors alive for as long as any
+// of them, and free them last.
+RemanencePartition *remanence_ibm_sectors_partition(const RemanenceIbmSectors *sectors,
+                                                    RemanenceErrorCategory *error_category_out,
+                                                    char **error_out,
+                                                    char **error_rule_out);
+
+// What this layer could not resolve, in its own terms, and how much of
+// it there was.
+size_t remanence_ibm_sectors_declared_loss_count(const RemanenceIbmSectors *sectors);
+
+const char *remanence_ibm_sectors_declared_loss_code(const RemanenceIbmSectors *sectors,
+                                                     size_t index);
+
+const char *remanence_ibm_sectors_declared_loss_detail(const RemanenceIbmSectors *sectors,
+                                                       size_t index);
+
+uint64_t remanence_ibm_sectors_declared_loss_amount(const RemanenceIbmSectors *sectors,
+                                                    size_t index);
+
+// The grammar that produced these records, and what it found, in that
+// order.
+size_t remanence_ibm_sectors_evidence_count(const RemanenceIbmSectors *sectors);
+
+const char *remanence_ibm_sectors_evidence(const RemanenceIbmSectors *sectors, size_t index);
+
+// Opens the `.remanence` artifact at `path` (UTF-8), claiming the file
+// and decoding the whole image once into private session storage. The
+// magic, the binary sentinel and the layout version are checked before
+// anything else is believed, and a version past this release's claim is
+// refused by name. Returns null on failure and stores a message in
+// `error_out` (free with `remanence_string_free`).
+RemanenceFluxImage *remanence_flux_image_open(const char *path,
+                                              RemanenceErrorCategory *error_category_out,
+                                              char **error_out,
+                                              char **error_rule_out);
+
+// Opens a remanence image as `remanence_flux_image_open` does, under a
+// declared cache bound: at most `cache_bytes` of the decoded image
+// stays resident. The bound narrows the working set; it never refuses
+// service.
+RemanenceFluxImage *remanence_flux_image_open_with_cache(const char *path,
+                                                         uint64_t cache_bytes,
+                                                         RemanenceErrorCategory *error_category_out,
+                                                         char **error_out,
+                                                         char **error_rule_out);
+
+// Frees an image handle, releasing its claim on the artifact and
+// discarding the private session storage its points decoded into.
+void remanence_flux_image_free(RemanenceFluxImage *image);
+
+// The artifact the image was opened from.
+const char *remanence_flux_image_path(const RemanenceFluxImage *image);
+
+// The artifact format's stable identifier: `"remanence"`.
+const char *remanence_flux_image_format_id(const RemanenceFluxImage *image);
+
+// That format's human-readable name.
+const char *remanence_flux_image_format_name(const RemanenceFluxImage *image);
+
+// Which P7 mode the open obtained on the artifact.
+RemanenceAccessMode remanence_flux_image_access_mode(const RemanenceFluxImage *image);
+
+// The medium's shape in the model's own spelling: `"8-inch"`,
+// `"5.25-inch"` or `"3.5-inch"`.
+const char *remanence_flux_image_form_factor(const RemanenceFluxImage *image);
+
+// The angular unit every angle in the image is stated over — a unit
+// rather than a measurement, so equality is exact.
+uint64_t remanence_flux_image_angular_divisions(const RemanenceFluxImage *image);
+
+// How many bytes of private session storage the decoded points occupy.
+uint64_t remanence_flux_image_backing_bytes(const RemanenceFluxImage *image);
+
+// How much of that backing is currently resident. The points are never
+// held whole.
+uint64_t remanence_flux_image_resident_bytes(const RemanenceFluxImage *image);
+
+// How many index holes the image holds.
+size_t remanence_flux_image_hole_count(const RemanenceFluxImage *image);
+
+// One of them, written into `out`. Returns false when out of range.
+bool remanence_flux_image_hole(const RemanenceFluxImage *image,
+                               size_t index,
+                               RemanenceFluxHole *out);
+
+// How many surfaces carry orbits.
+size_t remanence_flux_image_surface_count(const RemanenceFluxImage *image);
+
+// One surface's index, written into `out`, ascending. Returns false
+// when out of range.
+bool remanence_flux_image_surface(const RemanenceFluxImage *image, size_t index, uint64_t *out);
+
+// How many orbits the image holds, across every surface.
+size_t remanence_flux_image_orbit_count(const RemanenceFluxImage *image);
+
+// One of them, written into `out`, ordered by surface then radius.
+// Returns false when out of range.
+bool remanence_flux_image_orbit(const RemanenceFluxImage *image,
+                                size_t index,
+                                RemanenceFluxOrbit *out);
+
+// How the image came to be known, in human-readable terms.
+size_t remanence_flux_image_provenance_count(const RemanenceFluxImage *image);
+
+const char *remanence_flux_image_provenance(const RemanenceFluxImage *image, size_t index);
+
+// Writes the image into a new `.remanence` artifact at `path` (UTF-8)
+// and reports what the artifact carried. An existing destination is a
+// named refusal rather than an overwrite, and an interruption leaves
+// the destination absent rather than half an artifact. Returns null on
+// failure; free the report with `remanence_flux_write_report_free`.
+RemanenceFluxWriteReport *remanence_flux_image_write(const RemanenceFluxImage *image,
+                                                     const char *path,
+                                                     RemanenceErrorCategory *error_category_out,
+                                                     char **error_out,
+                                                     char **error_rule_out);
+
+// Frees a write report.
+void remanence_flux_write_report_free(RemanenceFluxWriteReport *report);
+
+// Where the artifact was written.
+const char *remanence_flux_write_report_path(const RemanenceFluxWriteReport *report);
+
+// The artifact's size on storage.
+uint64_t remanence_flux_write_report_artifact_bytes(const RemanenceFluxWriteReport *report);
+
+// How many orbits it carried.
+uint64_t remanence_flux_write_report_orbits(const RemanenceFluxWriteReport *report);
+
+// Every point across every orbit it carried.
+uint64_t remanence_flux_write_report_points(const RemanenceFluxWriteReport *report);
+
+// How many kinds of loss the crossing did not carry. Zero for this
+// format, always: the remanence artifact is the model's own, so it
+// carries every fact the image holds. An empty account is the claim,
+// not a missing one.
+size_t remanence_flux_write_report_declared_loss_count(const RemanenceFluxWriteReport *report);
+
+// One loss entry's stable code, or null when out of range.
+const char *remanence_flux_write_report_declared_loss_code(const RemanenceFluxWriteReport *report,
+                                                           size_t index);
+
+// What was lost, in the source's own terms. A count is not an account.
+const char *remanence_flux_write_report_declared_loss_detail(const RemanenceFluxWriteReport *report,
+                                                             size_t index);
+
+// How much of it there was, in whatever the detail counts.
+uint64_t remanence_flux_write_report_declared_loss_amount(const RemanenceFluxWriteReport *report,
+                                                          size_t index);
 
 // Inspects the medium and returns its layered report, derived from the
 // pool the load established. Null on failure, with the category and
@@ -2253,729 +2976,6 @@ bool remanence_report_filesystem_issue_category(const RemanenceDiskReport *repor
 const char *remanence_report_filesystem_issue(const RemanenceDiskReport *report,
                                               size_t index,
                                               size_t issue_index);
-
-// Creates blank media whole — **authorship, the third fact class** — and
-// answers with the medium, linked to nothing. The session owns the view;
-// never free it. Null on failure.
-//
-// Nothing is discovered and nothing is opened, because there is no
-// artifact: the author declares one enumerated `kind` (a stable spelling
-// from `remanence_new_media_id`), and the facts that declaration states
-// become the medium's original facts — carried from creation as its
-// assurance provenance and, where the kind states coordinates, as its
-// `remanence_medium_geometry`, whose one reading is `authorship`.
-//
-// `cylinders`, `heads`, `sectors_per_track` and `sector_bytes` are the
-// author's own coordinates, for the kind whose claim takes them
-// (`remanence_new_media_takes_geometry`); every other kind takes zeros
-// and refuses anything else by name. Coordinates that address nothing —
-// a zero in any part, or a product no medium could hold — are refused
-// here, when they are stated, which is the one moment authorship offers.
-//
-// **An authored blank assumes no device**: `remanence_medium_device_type`
-// answers null, so no drive takes one and `remanence_device_insert`
-// refuses by name. It is session-backed until an explicit encode gives it
-// an artifact, and `remanence_medium_commit` is the ordinary commit point
-// over it.
-RemanenceMedium *remanence_session_new_media(RemanenceSession *session,
-                                             const char *kind,
-                                             uint32_t cylinders,
-                                             uint32_t heads,
-                                             uint32_t sectors_per_track,
-                                             uint64_t sector_bytes,
-                                             RemanenceErrorCategory *error_category_out,
-                                             char **error_out,
-                                             char **error_rule_out);
-
-// Loads the caller's own opened artifact as the format they **declare**
-// it to be, and answers with the medium — linked to nothing. The session
-// owns the view; never free it. Null on failure.
-//
-// `source` is the caller's own OS file handle — a Windows `HANDLE`, a
-// POSIX file descriptor — and **the library takes ownership of it**:
-// closing it is the library's, at release or at session free.
-//
-// **Whoever opens owns the lock** (P7 as amended). That open is the
-// claim: the library checks it for exactly one thing — may it write
-// through it? — honours the answer exactly, and never supplements it
-// with a lock of its own. A name is recovered from the handle for
-// location alone, under an identity check; a handle this host cannot
-// name serves everything but the commit journal and a backing chain's
-// parent, and refuses those two by name.
-//
-// The declaration is checked by that one format's own adapter and
-// refused by name where the evidence cannot bear it. `format` is a
-// stable spelling from `remanence_format_id`.
-//
-// **The declaration carries the device the content was recorded by.**
-// `device_type` is a stable spelling from `remanence_format_device`,
-// and may be null where the format records exactly one type and so
-// carries it bare. `block_bytes` is the raw reading's declared
-// addressable unit and is ignored — passed as zero — by every format
-// that records its own.
-RemanenceMedium *remanence_session_load_media(RemanenceSession *session,
-                                              ptrdiff_t source,
-                                              const char *format,
-                                              const char *device_type,
-                                              uint64_t block_bytes,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out,
-                                              char **error_rule_out);
-
-// Loads a collection of the caller's own opened artifacts as the format
-// they **declare** it to be — the collection shape of the load, which
-// only a format whose claim takes one reads
-// (`remanence_format_takes_collection`): a KryoFlux capture set is one
-// disk spread over a stream per head per drive-step position. Answers
-// with the medium — linked to nothing. The session owns the view; never
-// free it. Null on failure.
-//
-// `sources` points at `source_count` OS file handles, each exactly what
-// `remanence_session_load_media` takes for one. Every member is checked
-// before any is adopted — a 0 or -1 among them refuses the whole load
-// and leaves every handle the caller's to close, mirroring the single
-// form's check — and once all are checked **the library takes ownership
-// of every one, whatever the outcome**: a refused load closes them, a
-// successful one closes them at release or at session free.
-//
-// `format`, `device_type` and `block_bytes` are as
-// `remanence_session_load_media` takes them.
-RemanenceMedium *remanence_session_load_media_collection(RemanenceSession *session,
-                                                         const ptrdiff_t *sources,
-                                                         size_t source_count,
-                                                         const char *format,
-                                                         const char *device_type,
-                                                         uint64_t block_bytes,
-                                                         RemanenceErrorCategory *error_category_out,
-                                                         char **error_out,
-                                                         char **error_rule_out);
-
-// Loads one file from another medium's namespace as the format the
-// caller declares — the namespace-source shape of the load, taking what
-// `remanence_file_source` produced.
-//
-// **The source is consumed and freed whatever the outcome**, exactly as
-// a discovery is: the pointer must never be used or freed again after
-// this call, whatever it returns. The source is free-standing — it
-// rides the claim of the medium it came from, so the walk that named it
-// ended before this load begins and nothing is opened twice. `format`,
-// `device_type` and `block_bytes` are as `remanence_session_load_media`
-// takes them. The session owns the returned view; never free it. Null
-// on failure.
-RemanenceMedium *remanence_session_load_media_source(RemanenceSession *session,
-                                                     RemanenceFileSource *source,
-                                                     const char *format,
-                                                     const char *device_type,
-                                                     uint64_t block_bytes,
-                                                     RemanenceErrorCategory *error_category_out,
-                                                     char **error_out,
-                                                     char **error_rule_out);
-
-// Loads a collection of files gathered from another medium's namespace
-// as the format the caller declares — the collection beside
-// `remanence_session_load_media_source`, taking what
-// `remanence_space_files` gathered, for a format whose claim takes a
-// collection (`remanence_format_takes_collection`).
-//
-// **The gathering is consumed and freed whatever the outcome**: the
-// pointer must never be used or freed again after this call, whatever
-// it returns. The session owns the returned view; never free it. Null
-// on failure.
-RemanenceMedium *remanence_session_load_media_sources(RemanenceSession *session,
-                                                      RemanenceFileSourceList *sources,
-                                                      const char *format,
-                                                      const char *device_type,
-                                                      uint64_t block_bytes,
-                                                      RemanenceErrorCategory *error_category_out,
-                                                      char **error_out,
-                                                      char **error_rule_out);
-
-// Loads the medium a discovery already opened into the session's pool,
-// **consuming and freeing the discovery**.
-//
-// This is the load that runs nothing twice: the discovery holds the
-// claim taken when the artifact was identified and the work that
-// identification did, and the medium is built over that claim, so no
-// window exists between the question and the load in which the artifact
-// could change (P7). The intent and the assurance are the ones the
-// discovery established; the **cache bound is declared here**, because
-// this is where the medium comes into existence — discovery built
-// nothing, so it had nothing to bound (P27). This door takes the stated
-// default; `remanence_session_load_discovery_with_cache` takes the
-// caller's own.
-//
-// **The discovery is freed either way** — a refused load releases its
-// claim with it — so the pointer must never be used or freed again
-// after this call, whatever it returns. Null on failure.
-//
-// **This is the plain door, and it opens where the recognizing format
-// records exactly one device type.** Where it records several, nothing
-// in the artifact says which wrote it, and the refusal names them and
-// points at `remanence_session_load_discovery_as`.
-RemanenceMedium *remanence_session_load_discovery(RemanenceSession *session,
-                                                  RemanenceDiscovery *discovery,
-                                                  RemanenceErrorCategory *error_category_out,
-                                                  char **error_out,
-                                                  char **error_rule_out);
-
-// `remanence_session_load_discovery` under a caller-declared session
-// cache bound (P27), which the medium this load creates keeps.
-RemanenceMedium *remanence_session_load_discovery_with_cache(RemanenceSession *session,
-                                                             RemanenceDiscovery *discovery,
-                                                             uint64_t cache_bytes,
-                                                             RemanenceErrorCategory *error_category_out,
-                                                             char **error_out,
-                                                             char **error_rule_out);
-
-// Loads the medium a discovery already opened under the caller's own
-// declaration of the device that recorded it — the `_as` door, for a
-// format that records several device types and so asserts none.
-//
-// `device_type` is a stable spelling from
-// `remanence_discovery_recorded_device`, and one the recognizing
-// format's adapter records; anything else is refused by name. The
-// discovery is consumed and freed exactly as the plain door consumes
-// it, whatever this returns. Null on failure.
-RemanenceMedium *remanence_session_load_discovery_as(RemanenceSession *session,
-                                                     RemanenceDiscovery *discovery,
-                                                     const char *device_type,
-                                                     RemanenceErrorCategory *error_category_out,
-                                                     char **error_out,
-                                                     char **error_rule_out);
-
-// `remanence_session_load_discovery_as` under a caller-declared session
-// cache bound (P27).
-RemanenceMedium *remanence_session_load_discovery_as_with_cache(RemanenceSession *session,
-                                                                RemanenceDiscovery *discovery,
-                                                                const char *device_type,
-                                                                uint64_t cache_bytes,
-                                                                RemanenceErrorCategory *error_category_out,
-                                                                char **error_out,
-                                                                char **error_rule_out);
-
-// How many media this session holds.
-size_t remanence_session_media_count(const RemanenceSession *session);
-
-// The identity of the medium at `index`, in the order they were loaded,
-// or 0 out of range.
-uint64_t remanence_session_media_id(const RemanenceSession *session, size_t index);
-
-// The medium `media_id` names, or **null where the pool holds none** —
-// absence is an answer, and the error outs are untouched. The session
-// owns the view; never free it.
-RemanenceMedium *remanence_session_medium(RemanenceSession *session, uint64_t media_id);
-
-// **The one state-destroying verb.** It severs the medium's link if a
-// device holds it, ends the P7 claim — closing the handle the caller
-// handed over — and discards everything uncommitted.
-//
-// Releasing is not a commit and never becomes one. Every borrowed view
-// of that medium, and every space and file resolved through it, stops
-// answering. Returns false when the pool holds no such medium.
-bool remanence_session_release_media(RemanenceSession *session,
-                                     uint64_t media_id,
-                                     RemanenceErrorCategory *error_category_out,
-                                     char **error_out,
-                                     char **error_rule_out);
-
-// Opens an empty session — the claim and cache scope, holding nothing
-// at all. Devices and media are added over its life; neither set is
-// fixed at open. Free with `remanence_session_free`.
-RemanenceSession *remanence_session_new(void);
-
-// Frees a session, dropping every device and releasing every P7 claim.
-// Every borrowed device view obtained from it becomes invalid.
-void remanence_session_free(RemanenceSession *session);
-
-// Lists a directory ("" = root, "A/B" descends). Free with
-// `remanence_entry_list_free`.
-RemanenceEntryList *remanence_filesystem_entries(const RemanenceSpace *filesystem,
-                                                 const char *path,
-                                                 RemanenceErrorCategory *error_category_out,
-                                                 char **error_out,
-                                                 char **error_rule_out);
-
-// Frees a directory listing.
-void remanence_entry_list_free(RemanenceEntryList *list);
-
-// Number of entries in the listing.
-size_t remanence_entry_count(const RemanenceEntryList *list);
-
-// An entry's name, as the filesystem stores it.
-const char *remanence_entry_name(const RemanenceEntryList *list, size_t index);
-
-// Whether an entry is a file or a directory.
-RemanenceEntryKind remanence_entry_kind(const RemanenceEntryList *list, size_t index);
-
-// An entry's size in bytes (0 for directories).
-uint64_t remanence_entry_size_bytes(const RemanenceEntryList *list, size_t index);
-
-// How many facts the recognizing filesystem declares about this entry
-// beyond name, kind and size.
-size_t remanence_entry_declared_count(const RemanenceEntryList *list, size_t index);
-
-// One declared fact's key, as the recognizing filesystem spells it.
-const char *remanence_entry_declared_key(const RemanenceEntryList *list, size_t index, size_t fact);
-
-// One declared fact's value, as that filesystem reads it. Nothing is
-// normalized on the way through.
-const char *remanence_entry_declared_value(const RemanenceEntryList *list,
-                                           size_t index,
-                                           size_t fact);
-
-// Answers one path (U3): a one-entry listing when something is there, an
-// empty listing when nothing is — a missing leaf, a missing parent, or a
-// parent that is a file alike. Absence is an answer, distinguished from
-// failure, which returns null with the error set. Free with
-// `remanence_entry_list_free`.
-RemanenceEntryList *remanence_filesystem_stat(const RemanenceSpace *filesystem,
-                                              const char *path,
-                                              RemanenceErrorCategory *error_category_out,
-                                              char **error_out,
-                                              char **error_rule_out);
-
-// The file at `path`, or null with the refusal set.
-//
-// This is where absence stops being an answer: `remanence_filesystem_stat`
-// asks whether something is there, and this asks for the file, so nothing
-// and a directory are both refused by name. Free with
-// `remanence_file_free`.
-RemanenceFile *remanence_filesystem_get_file(const RemanenceSpace *filesystem,
-                                             const char *path,
-                                             RemanenceErrorCategory *error_category_out,
-                                             char **error_out,
-                                             char **error_rule_out);
-
-// Opens the file at `path` as an artifact of its own, answering with
-// the discovery a device loads it from.
-//
-// **Recursion is the same journey again.** An entry recognized as an
-// image is not read through the namespace that names it: it is loaded
-// into a device of its own — in a machine of its own where one is being
-// reconstructed, the host's archive never having been part of the
-// machine whose disk it holds. The claim is the one the archive already
-// holds, so nothing is re-opened.
-//
-// This release mints a discovery from an **archive entry**; a file on a
-// volume-backed filesystem is refused by name. Free the result with
-// `remanence_discovery_free`, or consume it with
-// `remanence_session_load_discovery`. Returns null on failure.
-RemanenceDiscovery *remanence_filesystem_discover(const RemanenceSpace *filesystem,
-                                                  const char *path,
-                                                  RemanenceErrorCategory *error_category_out,
-                                                  char **error_out,
-                                                  char **error_rule_out);
-
-// Copies a file's bytes out — the whole-value convenience beside
-// `remanence_file_read_at`. Free with `remanence_file_data_free`.
-RemanenceFileData *remanence_filesystem_read_file(const RemanenceSpace *filesystem,
-                                                  const char *path,
-                                                  RemanenceErrorCategory *error_category_out,
-                                                  char **error_out,
-                                                  char **error_rule_out);
-
-// Sets a file's size, creating it when absent: kept bytes preserved in
-// place, a grown region reads as zeros. Buffered until commit.
-bool remanence_filesystem_resize_file(const RemanenceSpace *filesystem,
-                                      const char *path,
-                                      uint64_t size,
-                                      RemanenceErrorCategory *error_category_out,
-                                      char **error_out,
-                                      char **error_rule_out);
-
-// Writes a file. An existing file is overwritten — shorter or longer,
-// its old clusters released and reclaimed — while an existing directory
-// is refused. Buffered until `remanence_device_commit`.
-bool remanence_filesystem_write_file(const RemanenceSpace *filesystem,
-                                     const char *path,
-                                     const uint8_t *bytes,
-                                     size_t length,
-                                     RemanenceErrorCategory *error_category_out,
-                                     char **error_out,
-                                     char **error_rule_out);
-
-// Ensures a directory exists: missing parents are created, and a path
-// that already leads to one succeeds unchanged. Buffered until commit.
-bool remanence_filesystem_make_directory(const RemanenceSpace *filesystem,
-                                         const char *path,
-                                         RemanenceErrorCategory *error_category_out,
-                                         char **error_out,
-                                         char **error_rule_out);
-
-// Frees a file handle. Nothing it was a view of is disturbed.
-void remanence_file_free(RemanenceFile *file);
-
-// The path this file was reached by.
-const char *remanence_file_path(const RemanenceFile *file);
-
-// The name as the filesystem stores it, which is not always the
-// spelling the caller asked by.
-const char *remanence_file_name(const RemanenceFile *file);
-
-// What the filesystem claims this file's size is.
-uint64_t remanence_file_size_bytes(const RemanenceFile *file);
-
-// What this entry is. Always a file — `remanence_filesystem_get_file`
-// refuses a directory by name.
-RemanenceEntryKind remanence_file_kind(const RemanenceFile *file);
-
-// The whole file, copied out. Free with `remanence_file_data_free`.
-RemanenceFileData *remanence_file_bytes(const RemanenceFile *file,
-                                        RemanenceErrorCategory *error_category_out,
-                                        char **error_out,
-                                        char **error_rule_out);
-
-// Reads exactly `length` bytes at `offset` into `buffer_out` — the
-// bounded streamed form beside `remanence_file_bytes`. The span must lie
-// within the file.
-bool remanence_file_read_at(const RemanenceFile *file,
-                            uint64_t offset,
-                            uint8_t *buffer_out,
-                            size_t length,
-                            RemanenceErrorCategory *error_category_out,
-                            char **error_out,
-                            char **error_rule_out);
-
-// Writes `length` bytes at `offset` in place — the streamed form beside
-// `remanence_filesystem_write_file`. The span must lie within the file's
-// current size; `remanence_filesystem_resize_file` is what changes it.
-// Buffered until commit.
-bool remanence_file_write_at(const RemanenceFile *file,
-                             uint64_t offset,
-                             const uint8_t *bytes,
-                             size_t length,
-                             RemanenceErrorCategory *error_category_out,
-                             char **error_out,
-                             char **error_rule_out);
-
-// The bytes of a read-out file; valid until the handle is freed.
-const uint8_t *remanence_file_data_bytes(const RemanenceFileData *data, size_t *length_out);
-
-// Frees read-out file bytes.
-void remanence_file_data_free(RemanenceFileData *data);
-
-// This file taken as a load's source — what
-// `remanence_session_load_media_source` consumes.
-//
-// The source is **free-standing**: it rides the claim of the medium it
-// came from, so the namespace walk that named the file ends here and
-// the load opens nothing twice. This release takes a load's source
-// from an archive's namespace alone — a file on a volume-backed
-// filesystem is read through the filesystem that names it, and refuses
-// here by name. Returns null on failure and stores a message in
-// `error_out` (free with `remanence_string_free`).
-RemanenceFileSource *remanence_file_source(RemanenceFile *file,
-                                           RemanenceErrorCategory *error_category_out,
-                                           char **error_out,
-                                           char **error_rule_out);
-
-// The name the namespace holds this source's file under. Owned by the
-// handle; do not free.
-const char *remanence_file_source_name(const RemanenceFileSource *source);
-
-// The file's size in bytes, as the namespace claims it.
-uint64_t remanence_file_source_size_bytes(const RemanenceFileSource *source);
-
-// Frees a source no load consumed, ending its ride on its medium's
-// claim.
-void remanence_file_source_free(RemanenceFileSource *source);
-
-// How many sources the gathering holds.
-size_t remanence_file_source_list_count(const RemanenceFileSourceList *list);
-
-// The name the namespace holds the `index`th source's file under, or
-// null out of range. Owned by the handle; do not free.
-const char *remanence_file_source_list_name(const RemanenceFileSourceList *list, size_t index);
-
-// Frees a gathering no load consumed.
-void remanence_file_source_list_free(RemanenceFileSourceList *list);
-
-// The stable spelling of the scheme this medium's content is laid out
-// under, or **null where it records none** — the direct partition stands
-// there, and that is an answer rather than a refusal. Owned by the
-// library; do not free.
-const char *remanence_medium_partition_scheme(const RemanenceMedium *medium);
-
-// How many partitions this medium's pool holds. A medium recording no
-// scheme answers 1 — the direct partition, which is what its content is
-// reached through.
-size_t remanence_medium_partition_count(const RemanenceMedium *medium);
-
-// The scheme's own ordinal of the partition at `index` in the pool's own
-// order. False past the end.
-//
-// The two numbers differ on purpose: a partition carrying an issue keeps
-// its ordinal, so the partitions behind it never renumber (U4), and the
-// ordinal — never the index — is what `remanence_medium_partition`
-// takes.
-bool remanence_medium_partition_ordinal(const RemanenceMedium *medium,
-                                        size_t index,
-                                        uint32_t *value_out);
-
-// The partition the scheme's own ordinal names — MBR entry 1 is `1`, and
-// the direct partition is `0` — or **null where the pool holds none**.
-//
-// It takes no error outs because absence is an answer here, exactly as
-// it is for `remanence_session_medium`: the pool was established when
-// the medium was loaded, so a number it does not hold is a fact about
-// the medium rather than a failure to look. Free with
-// `remanence_partition_free`.
-RemanencePartition *remanence_medium_partition(RemanenceMedium *medium, uint32_t ordinal);
-
-// Frees a partition handle. The medium and its pool are untouched, and
-// so is every space already composed through it.
-void remanence_partition_free(RemanencePartition *partition);
-
-// The scheme's own ordinal for this partition, or 0 for a null handle —
-// which is also the direct partition's own number, so
-// `remanence_partition_is_direct` is the question to ask about it.
-uint32_t remanence_partition_ordinal(const RemanencePartition *partition);
-
-// Whether this is the direct partition — the library's own composition
-// of the whole content, which stands where the medium records no scheme.
-bool remanence_partition_is_direct(const RemanencePartition *partition);
-
-// Whether the scheme flags this partition active, as it records it. The
-// direct partition is flagged by nothing and answers false.
-bool remanence_partition_active(const RemanencePartition *partition);
-
-// The type value exactly as the scheme records it. False for the direct
-// partition, which records none.
-bool remanence_partition_type_byte(const RemanencePartition *partition, uint8_t *out);
-
-// What that value *declares*, in a sentence fit to quote in a refusal a
-// user reads, or null for the direct partition.
-//
-// It is present whether or not this release reads the type, because the
-// partition a caller most needs explained is the one the library
-// declines to read — and it describes the declaration, never the
-// content: an unread `0x07` partition is not thereby asserted to hold
-// NTFS.
-const char *remanence_partition_type_reading(const RemanencePartition *partition);
-
-// Whether this release reads the declared type.
-bool remanence_partition_is_claimed(const RemanencePartition *partition);
-
-// How the scheme places this partition, in the scheme's own vocabulary:
-// for MBR, `"primary"` for one of the four slots and `"logical"` for an
-// entry on the extended chain. The direct partition answers `"direct"`.
-//
-// This is a different axis from `remanence_partition_role` and neither
-// implies the other.
-const char *remanence_partition_placement(const RemanencePartition *partition);
-
-// Whether the scheme declares this partition as data or as structure.
-RemanenceRegionRole remanence_partition_role(const RemanencePartition *partition);
-
-// Where this partition starts in the presented content. False where it
-// has no addressed extent at all — the direct partition over a medium
-// whose native vantage is a namespace.
-bool remanence_partition_start_bytes(const RemanencePartition *partition, uint64_t *out);
-
-// How far this partition runs, under the same rule.
-bool remanence_partition_length_bytes(const RemanencePartition *partition, uint64_t *out);
-
-// Whether the addressable vantage opens — whether
-// `remanence_partition_volume` answers with a space rather than null.
-bool remanence_partition_is_addressable(const RemanencePartition *partition);
-
-// Whether the namespace vantage opens — whether
-// `remanence_partition_filesystem` answers with a space rather than
-// null. Where it does not, the namespace is declared with
-// `remanence_partition_filesystem_as`.
-bool remanence_partition_bears_namespace(const RemanencePartition *partition);
-
-// The identity the inspection report issued for the volume composed over
-// this partition. False where it composed none, which an addressable
-// partition may still be.
-bool remanence_partition_volume_id(const RemanencePartition *partition, uint64_t *out);
-
-// The category of the refusal that keeps this partition in the pool when
-// its type is outside the claim or its chain could not be followed.
-// False where the partition reads cleanly.
-bool remanence_partition_issue_category(const RemanencePartition *partition,
-                                        RemanenceErrorCategory *category_out);
-
-// That refusal, or null where the partition reads cleanly. A partition
-// carrying one is still a partition and still keeps its place.
-const char *remanence_partition_issue(const RemanencePartition *partition);
-
-// How many observations the scheme's adapter read to declare this
-// partition (P4). The direct partition read nothing and answers 0.
-size_t remanence_partition_evidence_count(const RemanencePartition *partition);
-
-// One of them, or null past the end. Borrowed from the handle.
-const char *remanence_partition_evidence(const RemanencePartition *partition, size_t index);
-
-// The direct partition's account of itself: what the library composed
-// and why. Present for the direct partition and null for every partition
-// a scheme declared, which is the whole of the distinction — a
-// composition act is provenance, never evidence.
-const char *remanence_partition_provenance(const RemanencePartition *partition);
-
-// The caller's own reading of the type, checked against the value the
-// scheme recorded (P3).
-//
-// The declaration is the caller's and the check is the library's: a
-// reading the recorded byte does not bear is refused naming both sides,
-// and the direct partition — which records no type — refuses by name
-// rather than accepting a reading of nothing. `type_id` is one of the
-// spellings `remanence_partition_type_id` enumerates; any other is
-// refused naming what this release declares.
-bool remanence_partition_check_type(const RemanencePartition *partition,
-                                    const char *type_id,
-                                    RemanenceErrorCategory *error_category_out,
-                                    char **error_out,
-                                    char **error_rule_out);
-
-// The addressable vantage: the space this partition composes, read and
-// written **by position within the partition's own extent** — the
-// vantage that reaches a boot record, allocation metadata, or the
-// extents a filesystem calls free.
-//
-// **Null means two different things and the caller can tell them
-// apart.** Null with the error outs untouched is the vantage being
-// absent — a structural region, a type this release will not read, or a
-// partition over content whose native vantage is a namespace — which
-// `remanence_partition_is_addressable` states in advance. Null with the
-// outs set is a composition that was attempted and refused. Free with
-// `remanence_space_free`.
-RemanenceSpace *remanence_partition_volume(const RemanencePartition *partition,
-                                           RemanenceErrorCategory *error_category_out,
-                                           char **error_out,
-                                           char **error_rule_out);
-
-// The namespace vantage: the same node, reached by the names it holds,
-// and where every `remanence_filesystem_*` verb lives.
-//
-// Null with the error outs untouched is nothing determining a namespace
-// over this partition — the honest absence, which
-// `remanence_partition_bears_namespace` states in advance and
-// `remanence_partition_filesystem_as` is where a caller who knows says
-// so. Null with the outs set is a refusal. Free with
-// `remanence_space_free`.
-RemanenceSpace *remanence_partition_filesystem(const RemanencePartition *partition,
-                                               RemanenceErrorCategory *error_category_out,
-                                               char **error_out,
-                                               char **error_rule_out);
-
-// The declared reading, where no partition type determines one: `"fat"`,
-// `"hdos"`, `"cpm"`, a `"cpm-*"` layout, or `"cbmdos"`.
-//
-// **The reading is the caller's and the check is the library's.** The
-// adapter the declaration names is the one that reads it, and it reads
-// the evidence to verify the declaration rather than to pick one — a
-// declaration the content cannot bear is refused by that adapter, by
-// name, and a spelling this release does not read is refused naming what
-// it does (P3). Recognizing a format and reading it are separate claims,
-// so `"cpm"` still refuses at the open.
-//
-// This door always attempted a composition, so null here always carries
-// the refusal. Free with `remanence_space_free`.
-RemanenceSpace *remanence_partition_filesystem_as(const RemanencePartition *partition,
-                                                  const char *id,
-                                                  RemanenceErrorCategory *error_category_out,
-                                                  char **error_out,
-                                                  char **error_rule_out);
-
-// Frees a space handle. The partition and its medium are untouched.
-void remanence_space_free(RemanenceSpace *space);
-
-// Whether this space has the addressable vantage — an extent to read and
-// write by position. False where the partition composes none: an
-// archive's direct partition, a recording's, or a region a scheme
-// declares as structure.
-bool remanence_volume_is_addressable(const RemanenceSpace *space);
-
-// This space's opaque volume identity, as the inspection report issued
-// it, or 0 where the report composed no volume for the partition — which
-// an addressable space may still be, a blank disk's direct partition
-// being the delivered case. `remanence_volume_is_addressable` is the
-// vantage question; this is the identity.
-uint64_t remanence_volume_id(const RemanenceSpace *space);
-
-// Where this space starts in the presented disk, or 0 where it has no
-// addressable vantage.
-uint64_t remanence_volume_start_bytes(const RemanenceSpace *space);
-
-// How far this space runs, or 0 where it has no addressable vantage.
-uint64_t remanence_volume_length_bytes(const RemanenceSpace *space);
-
-// Reads `len` bytes at `offset` **within this space**, not within the
-// medium: the vantage that reaches a boot record, allocation metadata,
-// the extents a filesystem calls free, or the bytes behind a listed
-// file. A read past the space's own end is refused by name.
-bool remanence_volume_read_at(RemanenceSpace *space,
-                              uint64_t offset,
-                              uint8_t *buffer,
-                              size_t len,
-                              RemanenceErrorCategory *error_category_out,
-                              char **error_out,
-                              char **error_rule_out);
-
-// Writes `len` bytes at `offset` within this space, buffered until
-// `remanence_device_commit` like every other write.
-bool remanence_volume_write_at(RemanenceSpace *space,
-                               uint64_t offset,
-                               const uint8_t *data,
-                               size_t len,
-                               RemanenceErrorCategory *error_category_out,
-                               char **error_out,
-                               char **error_rule_out);
-
-// Whether this space has the namespace vantage — files to name. False
-// for a volume bearing no filesystem, which is an ordinary volume.
-bool remanence_filesystem_has_namespace(const RemanenceSpace *space);
-
-// The filesystem kind in its stable spelling, `"FAT12"` or `"hdos"`, or
-// null where this space bears no namespace.
-const char *remanence_filesystem_kind(const RemanenceSpace *space);
-
-// The label the recognizing filesystem read, or null where this space
-// bears none — a namespace whose format has no such field, or one that
-// bears no namespace at all. Free with `remanence_string_free`.
-//
-// Sets the error on a failure to read the namespace, which a caller
-// tells from an honest absence by whether `error_out` was written.
-char *remanence_filesystem_label(const RemanenceSpace *filesystem,
-                                 RemanenceErrorCategory *error_category_out,
-                                 char **error_out,
-                                 char **error_rule_out);
-
-// How many readings the label answer holds, and each one's source and
-// stored value: the sources the recognizing filesystem consulted, in
-// the order its own policy consults them (P4).
-size_t remanence_filesystem_label_reading_count(const RemanenceSpace *filesystem);
-
-// Writes reading `index`'s source and stored value, each freed with
-// `remanence_string_free`. Returns false past the end.
-bool remanence_filesystem_label_reading(const RemanenceSpace *filesystem,
-                                        size_t index,
-                                        char **source_out,
-                                        char **stored_out);
-
-// How many observations recognized this namespace (P4).
-size_t remanence_filesystem_evidence_count(const RemanenceSpace *filesystem);
-
-// One of them, freed with `remanence_string_free`, or null past the end.
-char *remanence_filesystem_evidence(const RemanenceSpace *filesystem, size_t index);
-
-// Every file under `path` (`""` or null is the whole namespace),
-// gathered as a load's sources in one pass — what
-// `remanence_session_load_media_sources` consumes.
-//
-// The sources are **free-standing** as the single form's is, and a
-// solid archive's coded stream decodes once for the whole gathering
-// (P27). This release gathers from an archive's namespace alone — a
-// volume-backed filesystem's files are read through the filesystem
-// that names them, and refuse here by name. Returns null on failure
-// and stores a message in `error_out` (free with
-// `remanence_string_free`).
-RemanenceFileSourceList *remanence_space_files(RemanenceSpace *space,
-                                               const char *path,
-                                               RemanenceErrorCategory *error_category_out,
-                                               char **error_out,
-                                               char **error_rule_out);
 
 #ifdef __cplusplus
 }  // extern "C"

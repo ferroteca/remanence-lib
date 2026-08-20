@@ -112,15 +112,26 @@ latter at exactly the 450 warnings it emitted before.
 
 **What the split does reach is the generated header's order, and only
 its order.** cbindgen emits in module-declaration order under `[fn]
-sort_by = "None"`, so `remanence.h` is reordered: 2,004 lines moved,
-with the sorted content of the two files byte-identical — the same 446
+sort_by = "None"`, so `remanence.h` is reordered: 604 lines moved, with
+the sorted content of the two files byte-identical — the same 446
 declarations and 26 typedefs, none added, none lost. `sort_by = "Name"`
 would have made the header order-independent for good, and is rejected:
 it would sort 446 functions alphabetically and destroy the grouping that
 makes the header readable, to spare a diff that only appears when a
-function changes groups. rustfmt keeps the module declarations
-alphabetical, so the header now groups by module and orders those groups
-by name.
+function changes groups.
+
+**The declaration order is therefore load-bearing, and root
+`rustfmt.toml` exists to keep it.** rustfmt sorts `mod` declarations by
+default, which would have alphabetized the groups and, with them, the
+header — 2,004 lines moved instead of 604, and a C consumer meeting
+`assurance` and `catalog` before it has met a session. The groups are
+declared in the order a caller meets them, and `reorder_modules = false`
+is the workspace's only formatter setting, added for this one file. It
+was verified to leave `cargo fmt --all` a no-op in every other crate,
+none of which orders its modules deliberately. The alternative — a blank
+line between each declaration, which rustfmt also respects — was
+rejected for making whitespace silently load-bearing, where a config
+line says why out loud.
 
 **Two things could have failed quietly and were made loud instead.**
 `build.rs` watched `cargo:rerun-if-changed=src/lib.rs`, which after the

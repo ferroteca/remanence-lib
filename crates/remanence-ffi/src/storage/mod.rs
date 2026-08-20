@@ -4,7 +4,7 @@
 //! The storage model above a medium: partitions, the vantages they
 //! compose, and the directory and file verbs those vantages carry.
 
+pub mod space;
+pub mod partition;
 pub mod entries;
 pub mod file;
-pub mod partition;
-pub mod space;
