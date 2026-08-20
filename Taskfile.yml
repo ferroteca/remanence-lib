@@ -13,11 +13,16 @@
 # that extends to the tooling that drives these checks, not only the
 # toolchain that builds against them. Task's own bundled
 # utilities on Windows are a small file-operations set (cp, mv, mkdir),
-# not sed/grep/xargs or shell arrays — so every step that needs to
-# reassemble a list of arguments safely (which CMake flags to pass, which
-# ctest labels to select) is done in `xtask` (Rust, real argv, no shell
-# involved) rather than parsed out of text here. Each task below is
-# consequently short: one command to build, one to run.
+# not sed/grep/xargs or shell arrays — so the one step that needs to
+# reassemble a variable-length list of arguments safely (which CMake
+# flags to pass, given a cargo build's own report of what it wrote) is
+# done in `xtask` (Rust, real argv, no shell involved) rather than
+# parsed out of text here. Nothing else needs that: staging the
+# compiled Python module is a fixed set of file copies, and selecting
+# which `ctest` labels to run is `{{.CLI_ARGS}}`, already assembled by
+# the caller (see below) — both run directly in the tasks' own shell.
+# Each task below is consequently short: one command to build, one to
+# run.
 #
 # `{{.CLI_ARGS}}` is used bare, deliberately — Task pre-quotes each
 # argument it substitutes (confirmed directly: `-LE "rigs|fixtures"`
@@ -51,7 +56,38 @@ tasks:
       - cmd: |
           set -euo pipefail
           uv run -- cargo build -p remanence-py
-          STAGE_ROOT=$(cargo run -q -p xtask -- py-stage)
+
+          # Stage the compiled module into a `remanence/` package layout
+          # pytest can import. Plain file-copying (no argument list to
+          # assemble), so it runs directly here rather than through xtask.
+          TARGET_DIR="target/debug"
+          STAGE_ROOT="$(pwd)/$TARGET_DIR/py-stage"
+          PACKAGE_DIR="$STAGE_ROOT/remanence"
+          BUILT_NAME=""
+          STAGED_NAME=""
+          for pair in "remanence_py.dll:remanence.pyd" \
+                      "libremanence_py.so:remanence.so" \
+                      "libremanence_py.dylib:remanence.so"; do
+              name="${pair%%:*}"
+              if [ -f "$TARGET_DIR/$name" ]; then
+                  BUILT_NAME="$name"
+                  STAGED_NAME="${pair##*:}"
+                  break
+              fi
+          done
+          if [ -z "$BUILT_NAME" ]; then
+              echo "no compiled Python module in $TARGET_DIR" >&2
+              echo "Build it first: uv run -- cargo build -p remanence-py" >&2
+              exit 1
+          fi
+          rm -rf "$STAGE_ROOT"
+          mkdir -p "$PACKAGE_DIR"
+          cp "$TARGET_DIR/$BUILT_NAME" "$PACKAGE_DIR/$STAGED_NAME"
+          SOURCE_DIR="crates/remanence-py/python/src/remanence"
+          cp "$SOURCE_DIR/__init__.py" "$PACKAGE_DIR/__init__.py"
+          cp "$SOURCE_DIR/__init__.pyi" "$PACKAGE_DIR/__init__.pyi"
+          cp "$SOURCE_DIR/py.typed" "$PACKAGE_DIR/py.typed"
+
           cd crates/remanence-py
 
           PYTHONPATH="$STAGE_ROOT" uv run --with pytest --no-project pytest -q
@@ -86,7 +122,38 @@ tasks:
           set -euo pipefail
           uv run integration-tests/prep_fixtures.py
           uv run -- cargo build -p remanence-py
-          STAGE_ROOT=$(cargo run -q -p xtask -- py-stage)
+
+          # Stage the compiled module into a `remanence/` package layout
+          # pytest can import. Plain file-copying (no argument list to
+          # assemble), so it runs directly here rather than through xtask.
+          TARGET_DIR="target/debug"
+          STAGE_ROOT="$(pwd)/$TARGET_DIR/py-stage"
+          PACKAGE_DIR="$STAGE_ROOT/remanence"
+          BUILT_NAME=""
+          STAGED_NAME=""
+          for pair in "remanence_py.dll:remanence.pyd" \
+                      "libremanence_py.so:remanence.so" \
+                      "libremanence_py.dylib:remanence.so"; do
+              name="${pair%%:*}"
+              if [ -f "$TARGET_DIR/$name" ]; then
+                  BUILT_NAME="$name"
+                  STAGED_NAME="${pair##*:}"
+                  break
+              fi
+          done
+          if [ -z "$BUILT_NAME" ]; then
+              echo "no compiled Python module in $TARGET_DIR" >&2
+              echo "Build it first: uv run -- cargo build -p remanence-py" >&2
+              exit 1
+          fi
+          rm -rf "$STAGE_ROOT"
+          mkdir -p "$PACKAGE_DIR"
+          cp "$TARGET_DIR/$BUILT_NAME" "$PACKAGE_DIR/$STAGED_NAME"
+          SOURCE_DIR="crates/remanence-py/python/src/remanence"
+          cp "$SOURCE_DIR/__init__.py" "$PACKAGE_DIR/__init__.py"
+          cp "$SOURCE_DIR/__init__.pyi" "$PACKAGE_DIR/__init__.pyi"
+          cp "$SOURCE_DIR/py.typed" "$PACKAGE_DIR/py.typed"
+
           PYTHONPATH="$STAGE_ROOT" uv run --with pytest --no-project pytest -q integration-tests/python {{.CLI_ARGS}}
 
   test-rust:

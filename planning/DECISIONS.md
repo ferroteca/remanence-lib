@@ -58,6 +58,61 @@ removes it is the record either way.
 
 ## Decisions
 
+### D73 — `REMANENCE_CC`/`REMANENCE_CXX` retired; `xtask py-stage` folds into `Taskfile.yml`
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-20. **Supports** S2, S3, changing nothing either promises.
+`DECISIONS.md` was searched first and returned D65 (`xtask`'s origin,
+and `py-stage`'s), D66/D67 (the overrides' most recent shape) and D46
+(the artifact-vs-environment distinction `xtask ffi`'s remaining logic
+still rests on, untouched here).
+
+**The prompt was a direct challenge: why pass any of this into CMake
+externally at all, rather than letting CMake determine it itself?**
+Auditing every value `xtask ffi` still hands CMake (`REMANENCE_INCLUDE`/
+`REMANENCE_EXAMPLES` having already been dropped as pure pass-throughs)
+found two more with no real reason to be external.
+
+**`REMANENCE_CC`/`REMANENCE_CXX` reinvented behavior CMake already has.**
+The pair existed to translate an env var into `-DCMAKE_C_COMPILER=`/
+`-DCMAKE_CXX_COMPILER=`, but `xtask` runs `cmake` as a child process,
+which inherits the caller's environment unaltered — CMake's own native
+`CC`/`CXX` env fallback (seeding those same cache variables on first
+configure, when not already set) reaches an override with no translation
+needed. Deleted from `xtask/src/ffi.rs` outright; a caller who wants
+`clang-cl` now just sets `CC`/`CXX` like any other CMake project, nothing
+project-specific to remember. `REMANENCE_CMAKE_GENERATOR` is unrelated
+and untouched — a generator name can contain spaces
+(`Visual Studio 18 2026`), which is exactly the argv-assembly problem
+`xtask` exists to solve, and CMake has no environment-variable fallback
+for its own generator choice the way it does for the compiler.
+
+**`xtask py-stage` never had the reason `xtask` itself exists for.** D65
+put it in Rust "for the same reason" as `ffi`'s CMake-configure step, but
+that reasoning doesn't actually apply: staging the compiled Python module
+is three fixed file copies plus a `find the one candidate that exists`
+check — no variable-length argument list to assemble, so none of the
+quoting/array hazards that rule out Task's own shell for `ffi` apply
+here. Moved verbatim into `Taskfile.yml`'s `test-py` and `test-python`
+tasks (duplicated rather than factored into a shared Task sub-task,
+since Task tasks have no return-value mechanism to hand a computed path
+back to a caller — five lines twice was judged simpler than fighting
+that). `xtask/src/py.rs` deleted; `xtask` is now `ffi` alone.
+
+**Weighed and declined:** porting `ffi`'s remaining logic — the cargo
+`--message-format=json` report parse and the MSVC/MinGW/native
+classification — into CMake via `execute_process()` + `string(JSON ...)`,
+which would eliminate `xtask` entirely. Judged possible (CMake has had
+native JSON parsing since 3.19, and this project already requires 3.20)
+but not attempted here: it trades roughly 150 lines of unit-tested Rust
+with clear `panic!` messages for the same logic in CMake's weaker
+string/JSON scripting, with `cargo build` now running at configure time
+rather than as a distinct step, for the sole benefit of `xtask` not
+existing. That may still be worth doing, but it's a real rewrite with its
+own risk, not an "obvious bit" — left for a decision of its own.
+
+**No changelog entry.** How the suite is invoked is not release-facing.
+
 ### D72 — `remanence-ffi`'s `src/lib.rs` splits into groups plus a root, on the core crate's shape
 
 **Decided** Paul Galbraith (via the owner-directed implementation),
@@ -500,6 +555,9 @@ the same reason, taking over the compiled-module staging `python_suite.rs`
 used to do before D65 deleted it. This is a genuine simplification, not
 a workaround: it also removes every shell-quoting hazard the `just`
 version carried.
+[Narrowed by D73 — `py-stage`'s reasoning did not actually hold: staging
+is fixed file copies with no argument list to assemble, unlike `ffi`'s
+CMake-configure step, and it moved into `Taskfile.yml` directly.]
 
 **Three things broke while proving this, each fixed and worth recording
 so they are not rediscovered:**
@@ -1885,6 +1943,10 @@ away; it is no longer the default, and no longer discovered.
 [Superseded by D66 — gcc is no longer one variable away for a MinGW
 build specifically: that case is refused outright, not matched. The
 overrides stay, for an unrelated reason (e.g. `-G Ninja` with `clang-cl`).]
+[Narrowed by D73 — `REMANENCE_CC`/`REMANENCE_CXX` themselves are retired;
+CMake's own native `CC`/`CXX` environment fallback reaches `xtask`'s
+`cmake` child process unaided, with no project-specific variable needed.
+`REMANENCE_CMAKE_GENERATOR` is untouched.]
 
 **It is not shorter, and the entry says so.** The shared module is 209
 lines against 224. The gain is in what those lines *do* — configure and

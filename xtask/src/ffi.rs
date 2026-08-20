@@ -27,10 +27,6 @@ use crate::workspace_dir;
 
 /// Overrides the CMake generator, for a host where the default is wrong.
 const GENERATOR: &str = "REMANENCE_CMAKE_GENERATOR";
-/// Overrides the C compiler CMake would choose.
-const CC_OVERRIDE: &str = "REMANENCE_CC";
-/// The same, for C++.
-const CXX_OVERRIDE: &str = "REMANENCE_CXX";
 
 /// Which C toolchain built the library.
 ///
@@ -262,13 +258,16 @@ pub fn run() {
         );
     }
 
-    // Both optional, and only relevant beyond the ordinary MSVC default
-    // now that MinGW is no longer accommodated automatically — forcing a
+    // Optional, and only relevant beyond the ordinary MSVC default now
+    // that MinGW is no longer accommodated automatically — forcing a
     // faster generator (e.g. `-G Ninja` with `clang-cl`) is still a
-    // legitimate reason to reach for either.
+    // legitimate reason to reach for it. A compiler override needs no
+    // equivalent here: `cmake` runs as a child of this process, which
+    // inherits the caller's environment, so CMake's own native `CC`/`CXX`
+    // fallback (used to seed `CMAKE_C_COMPILER`/`CMAKE_CXX_COMPILER` on
+    // first configure when those cache variables aren't already set)
+    // already reaches it unaided.
     let generator = std::env::var(GENERATOR).ok();
-    let cc = std::env::var(CC_OVERRIDE).ok();
-    let cxx = std::env::var(CXX_OVERRIDE).ok();
 
     let workspace = workspace_dir();
     let crate_dir = workspace.join("crates").join("remanence-ffi");
@@ -293,12 +292,6 @@ pub fn run() {
     if let Some(generator) = &generator {
         configure_args.push("-G".to_owned());
         configure_args.push(generator.clone());
-    }
-    if let Some(cc) = &cc {
-        configure_args.push(format!("-DCMAKE_C_COMPILER={cc}"));
-    }
-    if let Some(cxx) = &cxx {
-        configure_args.push(format!("-DCMAKE_CXX_COMPILER={cxx}"));
     }
 
     run_cmake("configuring the C/C++ test project", &configure_args);

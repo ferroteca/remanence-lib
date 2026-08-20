@@ -1157,10 +1157,17 @@ about one file, not guessing from the host or from CMake's own compiler
 search, is exactly the distinction this design has always insisted on —
 now used to refuse rather than to adapt.
 
-Overrides, all optional and no longer MinGW-related: `REMANENCE_CC` /
-`REMANENCE_CXX` set CMake's compilers, and `REMANENCE_CMAKE_GENERATOR`
-sets the generator — for a reason unrelated to toolchain-matching, such
-as forcing `-G Ninja` with `clang-cl` for a faster build. **No CMake or
+A compiler override needs no project-specific variable: `xtask` runs
+`cmake` as a child process, which inherits the caller's environment, so
+CMake's own native `CC`/`CXX` fallback (seeding `CMAKE_C_COMPILER`/
+`CMAKE_CXX_COMPILER` on first configure when those cache variables aren't
+already set) reaches it unaided (D73, retiring the `REMANENCE_CC`/
+`REMANENCE_CXX` pair that used to translate them into `-D` flags).
+`REMANENCE_CMAKE_GENERATOR` still sets the generator — for a reason
+unrelated to toolchain-matching, such as forcing `-G Ninja` with
+`clang-cl` for a faster build — and stays `xtask`'s own: a generator name
+can contain spaces (`Visual Studio 18 2026`), which Task's own shell
+cannot pass through safely. **No CMake or
 no compiler is a test failure, not a skip** (D64), and there is no
 variable that excuses it: choosing not to test this crate is what not
 running `task test-ffi` is for, but a run that does reach it runs all of
