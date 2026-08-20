@@ -6,7 +6,9 @@
 fn main() {
     let crate_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
 
-    println!("cargo:rerun-if-changed=src/lib.rs");
+    // The whole module tree, not just the root: the header is generated from
+    // every `extern "C"` item in the crate, and most of them live in submodules.
+    println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=cbindgen.toml");
 
     let config = cbindgen::Config::from_file(format!("{crate_dir}/cbindgen.toml"))

@@ -58,6 +58,80 @@ removes it is the record either way.
 
 ## Decisions
 
+### D72 — `remanence-ffi`'s `src/lib.rs` splits into groups plus a root, on the core crate's shape
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-19. **Supports** S2, changing nothing it promises.
+`DECISIONS.md` was searched first and returned D69 (the grouping this
+extends inward, having settled `c/{include,examples,tests}` by audience)
+and its "C and C++ do not split, on either crate" clause, which governs
+the *header* layout and is untouched here — one `remanence.h`, one
+`remanence.hpp`, one `-I` flag, exactly as before. Nothing else in the
+record spoke to the crate's own Rust layout.
+
+**The file had become the one place in the workspace with no grouping at
+all.** `src/lib.rs` held 9,814 lines: 447 `extern "C"` functions, some
+forty-five handle and view types, and no `mod` but the leak probe and
+the tests. The core crate had been laid out in eight groups plus a root
+since D49, each group's `mod.rs` stating its own seam; the ABI crate,
+which mirrors that surface function for function, had nothing. What the
+flat file cost was not aesthetic: `RemanenceP64Report` was defined 3,800
+lines from the two functions that construct it, `remanence_device_*` sat
+1,300 lines from the `RemanenceDevice` it reads, and the nesting-layer
+view was named `NestedLayerView` only because the unrelated flux one had
+already taken `LayerView`.
+
+**A function's group is its ABI name prefix.** `remanence_partition_*`
+is `storage/partition.rs`, `remanence_bytestream_*` is
+`flux/stream.rs`, and so on through `abi`, `session`, `device`,
+`discovery`, `medium`, `identify`, `assurance`, `geometry`, `catalog`,
+`report`, `storage/{partition,space,entries,file}` and
+`flux/{image,stream,c1541,ibm,rendition}`. That rule is deliberate and
+does the same work D54's total-coverage rule does for the C++ wrapper:
+where a function belongs is a lookup rather than a judgement, so the
+grouping cannot drift into taste. `lib.rs` keeps the crate's
+conventions, the leak probe, and the three verbs belonging to no group.
+
+**Bitstream and bytestream stay in one file, against the prefix rule.**
+`flux/stream.rs` is the largest group at 840 lines because the two rungs
+are genuinely one seam: `remanence_bitstream_materialize_bytestream`
+crosses between them, both backings resolve through the same pooled
+medium, and both handles answer their strings from one shared
+`LayerView`. Splitting on the prefix would have put a type and its only
+constructor in different files to satisfy a rule whose whole purpose is
+to make lookups cheap.
+
+**The exported ABI cannot notice.** The symbols are
+`#[unsafe(no_mangle)]` and carry no module path, so every one of the 447
+exports is unchanged in name, signature and behaviour — verified by
+`task test-ffi`'s 25 CTest tests, which compile the header standalone,
+compile both `identify` examples against it, run a C++ caller through
+the wrapper, and prove the `_free` discipline with the leak probe.
+`cargo test --workspace` and `cargo clippy` are unchanged too, the
+latter at exactly the 450 warnings it emitted before.
+
+**What the split does reach is the generated header's order, and only
+its order.** cbindgen emits in module-declaration order under `[fn]
+sort_by = "None"`, so `remanence.h` is reordered: 2,004 lines moved,
+with the sorted content of the two files byte-identical — the same 446
+declarations and 26 typedefs, none added, none lost. `sort_by = "Name"`
+would have made the header order-independent for good, and is rejected:
+it would sort 446 functions alphabetically and destroy the grouping that
+makes the header readable, to spare a diff that only appears when a
+function changes groups. rustfmt keeps the module declarations
+alphabetical, so the header now groups by module and orders those groups
+by name.
+
+**Two things could have failed quietly and were made loud instead.**
+`build.rs` watched `cargo:rerun-if-changed=src/lib.rs`, which after the
+split would have stopped regenerating the header whenever a submodule
+changed — it now watches `src/`. And moving code across module
+boundaries needed the private seams named: 62 declarations were raised
+to `pub(crate)`, driven by the compiler rather than by hand, and no
+field on a `pub` handle type was widened past `pub(crate)`, which is
+what keeps cbindgen emitting `RemanenceSession` and its kin as opaque
+typedefs rather than as C structs.
+
 ### D71 — The core crate's fixture/rig-gated integration tests move to their own crate under integration-tests/
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

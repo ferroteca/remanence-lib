@@ -492,6 +492,25 @@ ABI, or Python module.
   `c/examples/identify.c` is the example C consumer and doubles as the ABI
   smoke test (build instructions in its header comment).
 
+  `src/` follows the core's shape — **groups plus a root**, each stating
+  its own seam. A function's group is its ABI name prefix, so finding one
+  is a lookup rather than a judgement: `abi.rs` (the error and string outs
+  every other group builds on), `session.rs`, `device.rs`, `discovery.rs`,
+  `medium.rs`, `identify.rs`, `assurance.rs`, `geometry.rs`, `catalog.rs`
+  (the enumerable static tables), `report.rs`, `storage/`
+  (`partition`, `space`, `entries`, `file`) and `flux/` (`image`,
+  `stream`, `c1541`, `ibm`, `rendition`). `lib.rs` holds the crate's
+  conventions, the leak probe, and the three verbs belonging to no group.
+
+  **Which group a function sits in never reaches the ABI** — the symbols
+  are `#[unsafe(no_mangle)]` and carry no module path — but it does reach
+  the *order* of the generated header, which cbindgen emits in
+  module-declaration order under `[fn] sort_by = "None"`. Moving a
+  function between groups therefore reorders `remanence.h` without
+  changing a line of it; regenerate and commit it in the same change.
+  `build.rs` watches all of `src/`, not just `src/lib.rs`, so a change in
+  any group regenerates the header.
+
   `c/include/remanence.hpp` is the **idiomatic C++ presentation of that
   same ABI** (D53) — header-only, C++17, no compiled artifact of its own,
   and **written by hand**, which is the one thing that makes it
