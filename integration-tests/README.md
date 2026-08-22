@@ -83,6 +83,15 @@ behind, because the install script partitions a disk it takes to be
 blank. It needs QEMU installed; see the rig README for what the
 install script depends on and how it breaks.
 
+Budget accordingly: after a `clean`, `task integration-test` rebuilds
+everything before it tests anything, and the whole pass — every
+download, the rig build, and all three suites — takes on the order of
+ten minutes on a fast connection. The downloads and the rig's LiveCD
+dominate the first half; of the suites themselves, `flux_media` in the
+Rust tier is the slow one at two to three minutes, and the C/C++ build
+a minute or so. With the fixtures already in place the same pass is
+three to four minutes, almost all of it those two.
+
 Going the other way, each reclaim is one directory or tier, and `clean`
 is all three:
 
