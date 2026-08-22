@@ -40,10 +40,17 @@ cargo build                 # the Rust core and the C ABI; nothing but rustc is 
 cargo test
 cargo build --workspace     # every surface; regenerates c/include/remanence.h
 cargo test --workspace      # the Rust-level tests only, minus the fixture/rig-gated suite
-task test-rust                 # the fixture/rig-gated Rust suite: runs the prep script itself
+task test-rust                # the fixture/rig-gated Rust suite: runs the prep script itself
 task test-ffi                 # the C/C++ surface: needs CMake and a C/C++ compiler
 task test-py                  # the Python surface: needs Python 3.10+ with uv
 ```
+
+(`task integration-test` runs `test-rust`, `test-ffi` and `test-python`
+in one go — every one of them even after a failure, exiting non-zero if
+any failed — and `task prep-fixtures` prepares the fixtures on their
+own. The Taskfile lives in `integration-tests/`, beside what it drives;
+the root's includes it, so every task runs by its plain name from
+either directory.)
 
 `crates/remanence` and `crates/remanence-ffi` are default members; only
 `crates/remanence-py` and `integration-tests/rust` are not — the Python

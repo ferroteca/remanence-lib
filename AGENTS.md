@@ -1027,7 +1027,17 @@ directly rather than through Task, that last pair (fixtures already
 prepared) is `cargo test -p remanence-integration-tests --features
 fixtures` and `--features rigs`; `task test-rust` exists for the same
 reason `task test-ffi`/`task test-py` do, a recipe nobody has to
-remember the invocation, or the prerequisite, for.
+remember the invocation, or the prerequisite, for. The prep step is
+also a task of its own, `task prep-fixtures` — what `test-rust` and
+`test-python` depend on, and the way to prepare ahead of time or
+rebuild after a clean — and `task integration-test` runs `test-rust`,
+`test-ffi` and `test-python` in one go, every one of them even after a
+failure so a single pass reports everything, exiting non-zero and
+naming the failed suites if any did. The Taskfile itself lives in
+`integration-tests/`, beside the fixtures and suites it drives; the
+repository root's `Taskfile.yml` includes it flattened, so every task
+runs by its plain name from the root too, with `integration-tests/` as
+its working directory either way.
 
 Going the other way, three tasks reclaim what the prep step laid down,
 each one directory or tier: `task clean-fixtures` removes the cache-only

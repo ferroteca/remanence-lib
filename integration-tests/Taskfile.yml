@@ -1,0 +1,274 @@
+# SPDX-FileCopyrightText: 2026 Paul Galbraith
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Drives the fixture/rig-gated Rust suite, the C/C++ checks and the
+# Python checks — none of the three is triggered by `cargo build`/
+# `cargo test` in any form; all three are reached only by running the
+# tasks below. The file lives here, beside the fixtures and suites it
+# drives, and the repository root's Taskfile includes it flattened, so
+# every task runs under its plain name from the root as well. Either
+# way a task's working directory is this one: paths below are relative
+# to `integration-tests/`, and the `cargo` invocations find the
+# workspace on their own.
+#
+# Task, not just: Task embeds its own shell interpreter (mvdan.cc/sh), so
+# a task runs identically wherever it's invoked from with no external
+# shell dependency at all — no bash, no git-bash, no MSYS2. This project
+# does not support building or testing from an MSYS2 shell at all, and
+# that extends to the tooling that drives these checks, not only the
+# toolchain that builds against them. Task's own bundled
+# utilities on Windows are a small file-operations set (cp, mv, mkdir),
+# not sed/grep/xargs or shell arrays — so the one step that needs to
+# reassemble a variable-length list of arguments safely (which CMake
+# flags to pass, given a cargo build's own report of what it wrote) is
+# done in `xtask` (Rust, real argv, no shell involved) rather than
+# parsed out of text here. Nothing else needs that: staging the
+# compiled Python module is a fixed set of file copies, and selecting
+# which `ctest` labels to run is `{{.CLI_ARGS}}`, already assembled by
+# the caller (see below) — both run directly in the tasks' own shell.
+# Each task below is consequently short: one command to build, one to
+# run.
+#
+# `{{.CLI_ARGS}}` is used bare, deliberately — Task pre-quotes each
+# argument it substitutes (confirmed directly: `-LE "rigs|fixtures"`
+# becomes the literal text `-LE 'rigs|fixtures'`), so it is already safe
+# to paste straight into a command line. Capturing it into a shell
+# variable first and expanding that with an extra layer of quoting (the
+# first version of this file did) double-quotes it instead — the
+# embedded shell then sees literal `'` characters as part of the value,
+# which is not what any label a test actually carries is named, so the
+# filter silently excludes nothing at all.
+
+version: '3'
+
+tasks:
+  default:
+    desc: List available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  prep-fixtures:
+    desc: >-
+      Prepares every fixture (idempotent — `prep_fixtures.py` skips
+      whatever is already on disk): the downloads, the images extracted
+      from them, and the rig-built `freedos-parttest.qcow2`. `test-rust`
+      and `test-python` run this themselves first; bare, it is the way
+      to prepare ahead of time, or to rebuild after a `clean`.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          uv run prep_fixtures.py
+
+  test-py:
+    desc: >-
+      Builds, stages and tests the Python bindings. The build routes
+      through uv so pyo3 resolves the same interpreter uv will later use
+      to run pytest — uv itself never offers an MSYS2 interpreter as a
+      candidate, so this task never triggers remanence-py/build.rs's
+      MinGW/MSYS2 refusal; that refusal guards the other paths instead —
+      a bare `cargo build -p remanence-py`, or `uv build`/`uv publish`'s
+      own internal build.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          uv run -- cargo build -p remanence-py
+
+          # Stage the compiled module into a `remanence/` package layout
+          # pytest can import. Plain file-copying (no argument list to
+          # assemble), so it runs directly here rather than through xtask.
+          TARGET_DIR="../target/debug"
+          STAGE_ROOT="$(cd .. && pwd)/target/debug/py-stage"
+          PACKAGE_DIR="$STAGE_ROOT/remanence"
+          BUILT_NAME=""
+          STAGED_NAME=""
+          for pair in "remanence_py.dll:remanence.pyd" \
+                      "libremanence_py.so:remanence.so" \
+                      "libremanence_py.dylib:remanence.so"; do
+              name="${pair%%:*}"
+              if [ -f "$TARGET_DIR/$name" ]; then
+                  BUILT_NAME="$name"
+                  STAGED_NAME="${pair##*:}"
+                  break
+              fi
+          done
+          if [ -z "$BUILT_NAME" ]; then
+              echo "no compiled Python module in $TARGET_DIR" >&2
+              echo "Build it first: uv run -- cargo build -p remanence-py" >&2
+              exit 1
+          fi
+          rm -rf "$STAGE_ROOT"
+          mkdir -p "$PACKAGE_DIR"
+          cp "$TARGET_DIR/$BUILT_NAME" "$PACKAGE_DIR/$STAGED_NAME"
+          SOURCE_DIR="../crates/remanence-py/python/src/remanence"
+          cp "$SOURCE_DIR/__init__.py" "$PACKAGE_DIR/__init__.py"
+          cp "$SOURCE_DIR/__init__.pyi" "$PACKAGE_DIR/__init__.pyi"
+          cp "$SOURCE_DIR/py.typed" "$PACKAGE_DIR/py.typed"
+
+          cd ../crates/remanence-py
+
+          PYTHONPATH="$STAGE_ROOT" uv run --with pytest --no-project pytest -q
+
+          export MYPYPATH="$PWD/python/src"
+          uv run --with mypy --no-project mypy --strict --python-version 3.10 \
+              --no-error-summary --cache-dir ../../target/mypy-cache/accepts \
+              python/tests/mypy_fixtures/accepts.py
+
+          # rejects.py contains intentionally invalid code and must fail
+          # to type-check. This only checks that mypy refuses the file
+          # as a whole; rejects.py marks each invalid line with the mypy
+          # error code it expects, but nothing here checks those codes
+          # against mypy's actual output.
+          if uv run --with mypy --no-project mypy --strict --python-version 3.10 \
+              --no-error-summary --cache-dir ../../target/mypy-cache/rejects \
+              python/tests/mypy_fixtures/rejects.py; then
+              echo "rejects.py type-checked clean; it is meant to be refused" >&2
+              exit 1
+          fi
+
+  test-python:
+    desc: >-
+      Prepares the fixtures (idempotent, same as `task test-rust`) and
+      runs the fixture-gated Python integration suite
+      (`integration-tests/python/`) against a freshly built and staged
+      module — the Python analog of `task test-rust`, distinct from
+      `task test-py`'s shippable, fixture-free suite. Extra arguments
+      pass through to `pytest`.
+    deps: [prep-fixtures]
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          uv run -- cargo build -p remanence-py
+
+          # Stage the compiled module into a `remanence/` package layout
+          # pytest can import. Plain file-copying (no argument list to
+          # assemble), so it runs directly here rather than through xtask.
+          TARGET_DIR="../target/debug"
+          STAGE_ROOT="$(cd .. && pwd)/target/debug/py-stage"
+          PACKAGE_DIR="$STAGE_ROOT/remanence"
+          BUILT_NAME=""
+          STAGED_NAME=""
+          for pair in "remanence_py.dll:remanence.pyd" \
+                      "libremanence_py.so:remanence.so" \
+                      "libremanence_py.dylib:remanence.so"; do
+              name="${pair%%:*}"
+              if [ -f "$TARGET_DIR/$name" ]; then
+                  BUILT_NAME="$name"
+                  STAGED_NAME="${pair##*:}"
+                  break
+              fi
+          done
+          if [ -z "$BUILT_NAME" ]; then
+              echo "no compiled Python module in $TARGET_DIR" >&2
+              echo "Build it first: uv run -- cargo build -p remanence-py" >&2
+              exit 1
+          fi
+          rm -rf "$STAGE_ROOT"
+          mkdir -p "$PACKAGE_DIR"
+          cp "$TARGET_DIR/$BUILT_NAME" "$PACKAGE_DIR/$STAGED_NAME"
+          SOURCE_DIR="../crates/remanence-py/python/src/remanence"
+          cp "$SOURCE_DIR/__init__.py" "$PACKAGE_DIR/__init__.py"
+          cp "$SOURCE_DIR/__init__.pyi" "$PACKAGE_DIR/__init__.pyi"
+          cp "$SOURCE_DIR/py.typed" "$PACKAGE_DIR/py.typed"
+
+          PYTHONPATH="$STAGE_ROOT" uv run --with pytest --no-project pytest -q python {{.CLI_ARGS}}
+
+  test-rust:
+    desc: >-
+      Prepares the fixtures (idempotent — `prep_fixtures.py` skips
+      whatever is already on disk) and runs the Rust integration suite
+      that needs one (`integration-tests/rust/`, D71) — the tier
+      `cargo test`/`cargo test --workspace` do not reach, same as the
+      C/C++ and Python surfaces below. Bare, it runs both feature tiers;
+      extra arguments replace that default and pass through to
+      `cargo test` instead — e.g. `task test-rust -- --features fixtures`
+      for the half that needs no `reliquary` install (the prep step
+      still prepares both; it takes no feature selection of its own).
+    deps: [prep-fixtures]
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          cargo test -p remanence-integration-tests {{.CLI_ARGS | default "--features fixtures,rigs"}}
+
+  test-ffi:
+    desc: >-
+      Builds the shipped and leak-probe cdylibs and the CMake C/C++ test
+      project via `xtask ffi` (see its own doc comment for why the
+      toolchain-matching/refusal logic lives there and not here), then
+      runs every CTest test. Extra arguments pass through to `ctest` —
+      e.g. `task test-ffi -- -LE "rigs|fixtures"` for the set that needs
+      no downloaded or generated fixture.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          BUILD_DIR=$(cargo run -q -p xtask -- ffi)
+          ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure {{.CLI_ARGS}}
+
+  integration-test:
+    desc: >-
+      Every integration suite, each in full: `test-rust`, `test-ffi` and
+      `test-python`, in that order. A failing suite does not stop the
+      next — all three run so one pass reports everything — and the
+      task exits non-zero if any of them failed, naming which.
+    cmds:
+      - cmd: |
+          set -uo pipefail
+          failed=""
+          for suite in test-rust test-ffi test-python; do
+              if ! task "$suite"; then
+                  failed="$failed $suite"
+              fi
+          done
+          if [ -n "$failed" ]; then
+              echo "integration tests failed:$failed" >&2
+              exit 1
+          fi
+          echo "integration tests passed: test-rust test-ffi test-python"
+
+  destroy-rigs:
+    desc: >-
+      Destroys every rig machine under `test-fixture-prep/test-rigs/cache/`
+      (stopping one that still reads as running) and cleans the media
+      cache — the scaffolding a build leaves behind, through reliquary's
+      own API so its locks and phases are honoured. The fixture a rig
+      built is untouched; `task clean-fixtures` is what removes that, and
+      the next `task test-rust` rebuilds whatever is missing.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          uv run prep_fixtures.py --destroy-rigs
+
+  clean-fixtures:
+    desc: >-
+      Removes the cache-only files from `integration-tests/fixtures/` —
+      everything its `.gitignore` lists: downloaded archives, the images
+      extracted from them, and the rig-built `freedos-parttest.qcow2`.
+      Checked-in fixtures are not listed there and stay. The next
+      `task test-rust`/`task test-python` re-downloads and rebuilds what
+      is missing (the rig build re-downloads its ~0.5 GB LiveCD).
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          git clean -fX fixtures
+
+  clean-downloads:
+    desc: >-
+      Removes `integration-tests/downloads/` — the archives nothing reads
+      directly, held only so a fixture can be repackaged out of them. The
+      fixtures already repackaged stay; `task clean-fixtures` is what
+      removes those.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          git clean -fX downloads
+
+  clean:
+    desc: >-
+      All three reclaims in one: `destroy-rigs`, then `clean-fixtures`,
+      then `clean-downloads` — the machines first, so nothing is still
+      holding an image when the files go. The next `task test-rust`/
+      `task test-python` re-downloads and rebuilds everything.
+    cmds:
+      - task: destroy-rigs
+      - task: clean-fixtures
+      - task: clean-downloads

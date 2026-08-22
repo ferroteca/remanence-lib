@@ -307,9 +307,10 @@ needs a downloaded or generated fixture is
 reached by `cargo build`/`cargo test` in any form:
 
 ```bash
-task test-rust      # downloads fixtures, then runs the Rust suite that needs them
-task test-py        # builds, stages, and runs pytest and mypy against it
-task test-ffi       # builds via CMake and runs the C/C++ suite with CTest
+task test-rust        # downloads fixtures, then runs the Rust suite that needs them
+task test-py          # builds, stages, and runs pytest and mypy against it
+task test-ffi         # builds via CMake and runs the C/C++ suite with CTest
+task integration-test # every fixture-gated suite, all of them even if one fails
 ```
 
 An example C consumer is at
