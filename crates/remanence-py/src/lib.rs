@@ -1857,6 +1857,39 @@ impl Medium {
         Ok(self.get()?.authored_as().map(remanence::NewMedia::id))
     }
 
+    /// Computes the raw image this medium renders to, **writing
+    /// nothing**.
+    ///
+    /// Read it before writing: the write adds nothing to the account. It
+    /// states what the artifact will hold, how many sectors that is, how
+    /// many uncommitted extents the rendition will leave behind, and
+    /// what a raw artifact cannot carry (P29).
+    fn describe_raw(&self) -> PyResult<RawReport> {
+        self.get()?
+            .describe_raw()
+            .map(|report| raw_report(&report))
+            .map_err(to_py_err)
+    }
+
+    /// Writes this medium into a new raw image at `path` and reports
+    /// what the artifact carried.
+    ///
+    /// The sectors go in the recording's own order — cylinder-major,
+    /// head-minor, sectors from one — and nothing else does: raw is
+    /// bytes and no ecosystem, so what the medium says about itself is
+    /// named in the report's declared-loss account instead.
+    ///
+    /// **The rendition is of committed state**, so uncommitted writes
+    /// are not in the artifact and the report says how many extents were
+    /// left behind. An existing file at the destination raises, never an
+    /// overwrite; the artifact is moved into place whole.
+    fn write_raw(&self, path: std::path::PathBuf) -> PyResult<RawReport> {
+        self.get()?
+            .write_raw(&path)
+            .map(|report| raw_report(&report))
+            .map_err(to_py_err)
+    }
+
     /// The layout an author recorded onto this medium, by
     /// `recordings()`'s stable spelling — or **`None` where none was**,
     /// which is every loaded medium and every blank the arc has not run
@@ -2529,6 +2562,49 @@ impl Partition {
             "Partition(ordinal={}, placement={:?}, role={:?})",
             self.ordinal, self.placement, self.role
         )
+    }
+}
+
+/// What a raw rendition carried, or will carry, of one medium.
+///
+/// It is the same record both rendition verbs answer with: `describe_raw`
+/// computes it and writes nothing, `write_raw` produces the artifact and
+/// answers the same account with the destination filled in.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "remanence")]
+pub struct RawReport {
+    /// Where the artifact was written, or `None` for a rendition
+    /// computed and not written.
+    pub path: Option<String>,
+    /// What the artifact occupies: every sector the coordinates address.
+    pub artifact_bytes: u64,
+    pub sectors_written: u64,
+    /// The coordinates the sectors were written in.
+    pub geometry: (u32, u32, u32, u64),
+    /// Cached extents holding writes the medium has not committed. They
+    /// are **not** in the artifact.
+    pub uncommitted_extents: u64,
+    /// What the destination could not carry, in the medium's own terms
+    /// (P29): `(code, detail, count)`.
+    pub declared_loss: Vec<(String, String, u64)>,
+}
+
+fn raw_report(report: &remanence::RawReport) -> RawReport {
+    RawReport {
+        path: report.path.clone(),
+        artifact_bytes: report.artifact_bytes,
+        sectors_written: report.sectors_written,
+        geometry: (
+            report.geometry.cylinders,
+            report.geometry.heads,
+            report.geometry.sectors_per_track,
+            report.geometry.sector_bytes,
+        ),
+        uncommitted_extents: report.uncommitted_extents,
+        declared_loss: report
+            .declared_loss
+            .iter()
+            .map(|loss| (loss.code.clone(), loss.detail.clone(), loss.count))
+            .collect(),
     }
 }
 
@@ -5124,6 +5200,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GeometryReading>()?;
     m.add_class::<DiskReport>()?;
     m.add_class::<DeviceInfo>()?;
+    m.add_class::<RawReport>()?;
     m.add_class::<PartitionSchemaInfo>()?;
     m.add_class::<RegionInfo>()?;
     m.add_class::<VolumeInfo>()?;

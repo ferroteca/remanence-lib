@@ -30,6 +30,7 @@ pub(crate) mod media;
 pub(crate) mod media_profile;
 pub(crate) mod pools;
 pub(crate) mod recording;
+pub(crate) mod rendition;
 pub(crate) mod report;
 pub(crate) mod session;
 pub(crate) mod storage_device;

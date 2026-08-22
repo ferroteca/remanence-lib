@@ -300,6 +300,20 @@ impl SessionCache {
                 .is_some_and(|spill| !spill.slots.is_empty())
     }
 
+    /// How many cached extents hold uncommitted writes.
+    ///
+    /// It is `modified` with a number instead of a yes: a rendition of
+    /// committed state reports what it left behind rather than silently
+    /// rendering a disk the caller has not finished writing.
+    pub fn dirty_extents(&self) -> u64 {
+        let resident = self.resident.values().filter(|extent| extent.dirty).count() as u64;
+        let spilled = self
+            .spill
+            .as_ref()
+            .map_or(0, |spill| spill.slots.len() as u64);
+        resident + spilled
+    }
+
     fn tick(&mut self) -> u64 {
         self.clock += 1;
         self.clock

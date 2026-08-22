@@ -58,6 +58,71 @@ removes it is the record either way.
 
 ## Decisions
 
+### D76 — Rulings made delivering the raw rendition, and U35's arming
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-22. **Supports** S1, S2, S3; P6, P9, P14, P27, P29; U35; D75.
+
+F83's delivery is recorded by the commit, and it is what arms U35 — the
+move from `planning/pledged/` to root `USE-CASES.md` is itself the
+record of that, needing no entry of its own; these are the rulings made
+in F83's course, including the one correction the pledged walk needed
+once the arc's actual shape (D75) was known.
+
+**The rendition reads beneath the session cache, never through it.**
+Every other verb in the library reads the session's own truth (P2): a
+caller sees what it wrote, committed or not. A rendition is the one act
+that must not, because it produces an artifact rather than answering a
+question, and an artifact of half-written state is a disk nobody has.
+So `MediumState`/`AuthoredMedium` grew a `committed_content` accessor
+reaching the plane a commit writes *into* — the presented disk for a
+loaded medium, the sparse backing for an authored one — rather than the
+cache sitting above it, and the report states how many extents the
+cache still holds uncommitted rather than silently rendering a mix.
+
+**The artifact placer streams.** `place_new_artifact` took a whole byte
+slice, which is fine for a d64 or a g64 and wrong for a 1.44 MB or
+larger floppy image read one sector at a time (P27): materializing the
+whole rendition to build it would be the memory cost the streamed
+session cache exists to avoid, one layer up. `place_new_artifact_streamed`
+takes a producer and a sink instead, checks what was actually written
+against what the plan declared, and `place_new_artifact` is now that
+function called with the whole slice as one piece — no duplicated
+staging-and-rename logic between the two.
+
+**The declared-loss account is the medium's facts, not the format's.**
+The C64 renditions declare loss about the *recording* — orbits off grid,
+points not coherent. A raw rendition of a sector medium has no such
+loss: every sector the coordinates address is written, whole. What it
+cannot carry is a different kind of thing — the article, the device,
+the authored or recorded provenance, the assurance evidence — and D19's
+three-facts split is what supplies the codes: `article`, `device-type`,
+`authored-provenance`, `recorded-layout`, `provenance-evidence`. A
+medium holding more content than its geometry addresses adds a sixth,
+`content-past-the-coordinates`, for the same reason F68's ImageDisk
+geometry is read off the artifact rather than assumed: what the
+coordinates state and what the content holds are two different facts,
+and only the first travels into a raw rendition.
+
+**The pledged U35 walk needed one correction against the delivered
+arc.** It read `let fs = ... .record_as(...)?;` as though the arc
+handed back the namespace it just declared. `record_as` returns `()` —
+D75 settled that recording is an act of authorship rather than a
+buffered write, and an act states what it did, not a handle onto what
+follows — so the namespace is reached the ordinary way afterwards,
+through `partition(0).filesystem()`. Corrected in the same move that armed the
+use case, per the record-keeps-history rule for a document already
+promoted; the pledged text is retired along with the file it lived in.
+
+**Weighed and declined:** giving the report a `sectors_read` distinct
+from `sectors_written` (a raw rendition never partially serves a
+sector — the geometry check refuses first — so the two counts are
+always equal and a second field would be a fact with no way to differ);
+letting `write_raw` skip the plan and write directly (the plan is the
+refusal surface — P6 wants everything checked before a byte moves — and
+skipping it would mean discovering a bad geometry mid-write instead of
+before it).
+
 ### D75 — Rulings made delivering the authored-to-recorded arc
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

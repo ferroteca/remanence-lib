@@ -499,6 +499,13 @@ struct Release<RemanenceIbmSectors> {
     }
 };
 template <>
+struct Release<RemanenceRawReport> {
+    void operator()(RemanenceRawReport* handle) const noexcept
+    {
+        remanence_raw_report_free(handle);
+    }
+};
+template <>
 struct Release<RemanenceD64Report> {
     void operator()(RemanenceD64Report* handle) const noexcept
     {
@@ -2817,6 +2824,55 @@ public:
     }
 };
 
+/// What a raw rendition carried, or will carry, of one medium.
+class RawReport : public detail::Held<RemanenceRawReport> {
+public:
+    using Held::Held;
+
+    /// Where the artifact was written, or absent for a rendition
+    /// computed and not written.
+    std::optional<std::string> path() const
+    {
+        return detail::optional_copied(remanence_raw_report_path(get()));
+    }
+
+    /// What the artifact occupies: every sector the coordinates address.
+    std::uint64_t artifact_bytes() const noexcept
+    {
+        return remanence_raw_report_artifact_bytes(get());
+    }
+
+    std::uint64_t sectors_written() const noexcept
+    {
+        return remanence_raw_report_sectors_written(get());
+    }
+
+    /// The coordinates the sectors were written in.
+    Coordinates geometry() const noexcept
+    {
+        Coordinates coordinates{0, 0, 0, 0};
+        remanence_raw_report_geometry(get(), &coordinates.cylinders, &coordinates.heads,
+                                      &coordinates.sectors_per_track, &coordinates.sector_bytes);
+        return coordinates;
+    }
+
+    /// Cached extents holding writes the medium has not committed. They
+    /// are not in the artifact: a rendition is of committed state, and
+    /// this is what was left behind.
+    std::uint64_t uncommitted_extents() const noexcept
+    {
+        return remanence_raw_report_uncommitted_extents(get());
+    }
+
+    std::vector<DeclaredLoss> declared_losses() const
+    {
+        return detail::losses(get(), remanence_raw_report_declared_loss_count,
+                              remanence_raw_report_declared_loss_code,
+                              remanence_raw_report_declared_loss_detail,
+                              remanence_raw_report_declared_loss_amount);
+    }
+};
+
 /// What a d64 rendition carried, or will carry, of one image.
 class D64Report : public detail::Held<RemanenceD64Report> {
 public:
@@ -3623,6 +3679,33 @@ public:
     std::optional<std::string> article() const
     {
         return detail::optional_copied(remanence_medium_article(handle_));
+    }
+
+    /// Computes the raw image this medium renders to, writing nothing.
+    ///
+    /// Read it before writing: the write adds nothing to the account.
+    RawReport describe_raw() const
+    {
+        detail::Outcome outcome;
+        RemanenceRawReport* report = remanence_medium_describe_raw(
+            handle_, outcome.category(), outcome.message(), outcome.rule());
+        return RawReport(outcome.require(report, "this medium renders to no raw image"));
+    }
+
+    /// Writes this medium into a new raw image at `path` and reports
+    /// what the artifact carried.
+    ///
+    /// The sectors go in the recording's own order and nothing else
+    /// does: raw is bytes and no ecosystem, so what the medium says
+    /// about itself is named in the report instead. The rendition is of
+    /// committed state; an existing destination is a refusal, never an
+    /// overwrite.
+    RawReport write_raw(const std::string& path) const
+    {
+        detail::Outcome outcome;
+        RemanenceRawReport* report = remanence_medium_write_raw(
+            handle_, path.c_str(), outcome.category(), outcome.message(), outcome.rule());
+        return RawReport(outcome.require(report, "the raw image could not be written"));
     }
 
     /// What recorded its content, absent where nothing did — an

@@ -299,6 +299,12 @@ let mut files = disk
 files.write_file("AUTOEXEC.BAT", script)?;
 files.make_directory("DATA")?;
 disk.commit()?;
+
+let report = disk.write_raw("floppy.img")?;   // built beside the
+                                              // destination and moved
+                                              // into place whole; an
+                                              // existing file refuses
+println!("{} bytes, {} sectors", report.artifact_bytes, report.sectors_written);
 ```
 
 ## Layout

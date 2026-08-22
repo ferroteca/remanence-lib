@@ -242,6 +242,7 @@ pub use crate::model::geometry::{
 pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
 pub use crate::model::pools::Session;
 pub use crate::model::recording::{Recording, RecordingClaim};
+pub use crate::model::rendition::RawReport;
 pub use crate::model::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,

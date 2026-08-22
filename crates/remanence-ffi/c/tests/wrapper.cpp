@@ -336,6 +336,31 @@ void group_authorship()
               "the file written onto the recorded disk did not read back");
     }
 
+    // The rendition: the recorded disk written out as the raw image an
+    // emulator reads, with the account of what raw cannot carry.
+    remanence::RawReport planned = floppy.describe_raw();
+    CHECK(!planned.path().has_value(), "a plan wrote something");
+    CHECK(planned.artifact_bytes() == 1474560ull, "the plan is not the 1.44 MB disk");
+    CHECK(planned.sectors_written() == 2880ull, "the plan does not write every sector");
+    CHECK(planned.geometry().sectors_per_track == 18,
+          "the plan does not write in the layout's coordinates");
+    CHECK(!planned.declared_losses().empty(),
+          "a raw artifact carries the whole medium, apparently");
+
+    const std::string destination
+        = std::string{"remanence-f83-wrapper-"} + std::to_string(floppy.id()) + ".img";
+    std::remove(destination.c_str());
+    remanence::RawReport written = floppy.write_raw(destination);
+    CHECK(written.path().has_value(), "the written rendition names no destination");
+    CHECK(written.artifact_bytes() == 1474560ull, "the artifact is not the 1.44 MB disk");
+    CHECK(written.uncommitted_extents() == 0,
+          "the committed disk left uncommitted extents behind");
+    // The capture list is `[&]` deliberately: a comma inside it would
+    // split this macro's arguments.
+    CHECK_REFUSES("writing over an artifact that is already there",
+                  [&] { floppy.write_raw(destination); });
+    std::remove(destination.c_str());
+
     // A layout onto an article it does not fit is refused by name.
     remanence::Medium wrong = session.new_media("flexible-5.25-hd");
     std::optional<remanence::Partition> other = wrong.partition(0);

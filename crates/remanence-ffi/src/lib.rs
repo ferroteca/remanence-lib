@@ -53,6 +53,7 @@ pub mod assurance;
 pub mod geometry;
 pub mod storage;
 pub mod flux;
+pub mod rendition;
 pub mod report;
 
 use std::ffi::{CString, c_char};

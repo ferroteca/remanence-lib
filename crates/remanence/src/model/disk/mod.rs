@@ -47,6 +47,7 @@ use crate::error::{Error, Result};
 use crate::filesystem::fat::{FatEntry, FatVolume};
 use crate::flux::load::{self as flux_load, CollectionMember, FluxState};
 use crate::io::device::AccessMode;
+use crate::io::device::Device;
 use crate::io::source::{self};
 use crate::model::assurance::Assurance;
 use crate::model::authored::{AuthoredMedium, AuthoredSpace, NewMedia};
@@ -746,6 +747,34 @@ impl MediumState {
                 fat.make_directory(space, &segments)
             }
             other => other.space_mut("make_directory")?.make_directory(at, path),
+        }
+    }
+
+    /// The medium's **committed** content, beneath the session cache.
+    ///
+    /// Every other reader in the library reads through the cache, which
+    /// is the session's own truth (P2): a caller sees what it wrote,
+    /// committed or not. A rendition is the one act that must not —
+    /// it produces an artifact, and an artifact of half-written state
+    /// would be a disk nobody has. So this reaches the plane a commit
+    /// writes *into*: the presented disk for a loaded medium, and the
+    /// sparse backing for an authored one.
+    pub(crate) fn committed_content(&mut self, verb: &str) -> Result<&mut dyn Device> {
+        match self {
+            Self::Space(space) => Ok(space.committed_device()),
+            Self::Authored(authored) => Ok(authored.space_mut(verb)?.committed_device()),
+            Self::Archive(archive) => Err(no_space(verb, archive)),
+            Self::Flux(flux) => Err(flux_load::no_space(verb, flux)),
+        }
+    }
+
+    /// How many cached extents hold writes the medium has not
+    /// committed — what a rendition of committed state leaves behind.
+    pub(crate) fn uncommitted_extents(&self) -> u64 {
+        match self {
+            Self::Space(space) => space.uncommitted_extents(),
+            Self::Authored(authored) => authored.uncommitted_extents(),
+            Self::Archive(_) | Self::Flux(_) => 0,
         }
     }
 

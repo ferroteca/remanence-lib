@@ -26,13 +26,14 @@ has retired with it, and what specifies it now is the code. The ruling
 it forced along the way is D59. Companion design:
 [design/fm-mfm-read-channel.md](design/fm-mfm-read-channel.md).
 
-F83 is what remains of U35 — a blank DOS floppy, formatted, filled and
-saved as a raw image. Two of its three pieces are **delivered**, and
-their numbers have retired with them: F81 catalogued the PC articles,
-blank kinds and drive families, and F82 delivered the arc that records a
-DOS layout onto a blank article. What specifies both now is the code.
-F83 is the rendition that writes a sector medium out, which is the last
-step of the journey and all that stands between it and delivery.
+U35 — a blank DOS floppy, formatted, filled and saved as a raw image —
+was cut into three pieces and all three are **delivered**: F81
+catalogued the PC articles, blank kinds and drive families; F82
+delivered the arc that records a DOS layout onto a blank article; F83
+delivered the raw rendition that writes a sector medium out. All three
+numbers have retired with them, and U35 itself has moved to root
+USE-CASES.md on that full delivery. What specifies all of it now is the
+code.
 
 ## F77 — HxC MFM read, to the bit tier
 
@@ -88,29 +89,3 @@ for it is not.
 
 Touches: S1, S2, S3. Supports: U1, U2; P3–P5, P10, P12, P13, P16–P19,
 P21–P23, P27. F76 and F77 are prerequisites.
-
-## F83 — The raw rendition of a sector medium
-
-Write a sector-addressed medium out as a raw image, paired with a verb
-that computes everything and writes nothing.
-
-`Medium::describe_raw` and `Medium::write_raw(path)` are the sector
-medium's rendition, shaped as the C64 renditions are (P29): the content
-in the recording's own sector order — cylinder-major, head-minor,
-sectors from one — and nothing else, with a report stating what a raw
-artifact cannot carry: the article and its facts, the authored or
-recorded provenance, the recording kind. The file is built beside the
-destination and moved into place whole (P9); an existing file at the
-destination is a refusal, never an overwrite; a blank article never
-recorded onto has no content to encode and says so; a medium whose
-geometry is undetermined has no sector order to write in and says so.
-
-The rendition is of the medium's committed state. Uncommitted writes are
-not written out, and the report says how many extents were left behind,
-so that a caller who forgot the commit point is told rather than
-surprised.
-
-Raw is the one encode this feature claims; ImageDisk write is F69 and the
-flux masterings are F74, and both remain proposed.
-
-Touches: S1, S2, S3. Supports: U35 (pledged); P2, P6, P9, P10, P29.

@@ -48,6 +48,7 @@ use crate::model::discovery::Discovery;
 use crate::model::disk::{DiskFormat, MediumRecognition, MediumState};
 use crate::model::geometry::{self, Geometry, GeometryRule, RecordingGeometry};
 use crate::model::recording::Recording;
+use crate::model::rendition::{RawFacts, RawReport, plan_raw, write_raw_artifact};
 use crate::model::report::DiskReport;
 use crate::model::session::Identification;
 use crate::model::storage_device::AttachmentId;
@@ -1197,6 +1198,80 @@ impl Medium {
     pub fn partition(&mut self, ordinal: u32) -> Option<PartitionView<'_>> {
         let partition = self.partitions.get(ordinal)?.clone();
         Some(PartitionView::over_medium(partition, self))
+    }
+
+    // ---------------------------------------------------- the renditions
+
+    /// Computes the raw image this medium renders to, **writing
+    /// nothing**.
+    ///
+    /// Read it before writing: the write adds nothing to the account.
+    /// It states what the artifact will hold, how many sectors that is,
+    /// how many uncommitted extents the rendition will leave behind, and
+    /// what a raw artifact cannot carry (P29) — the article and its
+    /// facts, the device that recorded the content, the authored or
+    /// recorded provenance, and the assurance evidence.
+    pub fn describe_raw(&mut self) -> Result<RawReport> {
+        self.raw_plan("describe_raw").map(|plan| plan.report(None))
+    }
+
+    /// Writes this medium into a new raw image at `path` and reports
+    /// what the artifact carried.
+    ///
+    /// The sectors are written in the recording's own order —
+    /// cylinder-major, head-minor, sectors from one — which is what
+    /// every reader of a raw image expects, and nothing else goes in:
+    /// raw is bytes and no ecosystem, so everything the medium says
+    /// about itself is named and counted in the report instead.
+    ///
+    /// **The rendition is of committed state.** It reads beneath the
+    /// session cache, so uncommitted writes are not in the artifact and
+    /// the report says how many extents were left behind. The medium
+    /// itself is untouched.
+    ///
+    /// An existing file at the destination is a refusal, never an
+    /// overwrite; the artifact is built beside it and moved into place
+    /// whole, so an interruption leaves the destination absent rather
+    /// than half an image (P9). A blank article nothing has been
+    /// recorded onto has no content to render, and a medium whose
+    /// geometry the evidence never settled has no sector order to write
+    /// in; both refuse by name.
+    pub fn write_raw(&mut self, path: impl AsRef<Path>) -> Result<RawReport> {
+        let path = path.as_ref();
+        let plan = self.raw_plan("write_raw")?;
+        let committed = self.state.committed_content("write_raw")?;
+        write_raw_artifact(path, &plan, committed)?;
+        Ok(plan.report(Some(path.display().to_string())))
+    }
+
+    /// The plan both rendition verbs share: what will be written, and
+    /// what the destination cannot carry. Nothing is produced here.
+    fn raw_plan(&mut self, verb: &str) -> Result<crate::model::rendition::RawPlan> {
+        let named = self.state.named();
+        let content_bytes = self.state.presented_size(verb)?;
+        let uncommitted = self.state.uncommitted_extents();
+        let article = self.state.media();
+        let device_type = self.state.device_type().map(|device| device.id());
+        let authored = self
+            .state
+            .authored_medium()
+            .map(|authored| authored.kind().id());
+        let recorded = self.state.recorded_as().map(Recording::id);
+        let evidence_lines = self.state.assurance().evidence.len();
+        plan_raw(
+            &self.geometry,
+            content_bytes,
+            uncommitted,
+            &RawFacts {
+                article: article.id,
+                article_name: article.name,
+                device_type,
+                authored_as: authored,
+                recorded_as: recorded,
+                evidence_lines,
+            },
+            &named,
+        )
     }
 
     /// The commit point (P2): writes everything buffered since the medium

@@ -537,6 +537,17 @@ impl MediaState {
         }
     }
 
+    /// The presented disk beneath the session cache — the plane a
+    /// commit writes into, and so the medium's committed state.
+    pub(crate) fn committed_device(&mut self) -> &mut dyn Device {
+        self.virtual_disk.device_mut()
+    }
+
+    /// How many cached extents hold uncommitted writes.
+    pub(crate) fn uncommitted_extents(&self) -> u64 {
+        self.cache.dirty_extents()
+    }
+
     pub(super) fn split_path(path: &str) -> Result<Vec<&str>> {
         let segments: Vec<&str> = path
             .split(['/', '\\'])

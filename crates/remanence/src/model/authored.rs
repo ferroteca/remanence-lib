@@ -544,6 +544,13 @@ impl AuthoredMedium {
         self.space.as_ref().is_some_and(AuthoredSpace::is_modified)
     }
 
+    /// How many cached extents hold uncommitted writes.
+    pub(crate) fn uncommitted_extents(&self) -> u64 {
+        self.space
+            .as_ref()
+            .map_or(0, AuthoredSpace::uncommitted_extents)
+    }
+
     /// The layered identification of a medium no artifact holds: the
     /// article, and nothing beneath it — an authored blank has no image
     /// format because it has no image.
@@ -704,6 +711,17 @@ impl AuthoredSpace {
 
     pub(crate) fn is_modified(&self) -> bool {
         self.cache.modified()
+    }
+
+    /// How many cached extents hold uncommitted writes.
+    pub(crate) fn uncommitted_extents(&self) -> u64 {
+        self.cache.dirty_extents()
+    }
+
+    /// The sparse backing beneath the cache — the plane a commit writes
+    /// into, and so this medium's committed state.
+    pub(crate) fn committed_device(&mut self) -> &mut dyn Device {
+        &mut self.backing
     }
 
     /// The commit point (P2), on a medium with no artifact: the buffered

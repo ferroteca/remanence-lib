@@ -193,6 +193,24 @@ pub(crate) fn create_claimed(path: &Path) -> Result<File> {
 /// the destination and renamed into place — so what `path` names is
 /// either the whole artifact or nothing (P6, P7, P9).
 pub(crate) fn place_new_artifact(path: &Path, bytes: &[u8]) -> Result<()> {
+    place_new_artifact_streamed(path, bytes.len() as u64, |sink| sink(0, bytes))
+}
+
+/// The same guarantee for an artifact too large to hold in memory: the
+/// producer is handed a sink and writes the artifact in pieces, at the
+/// offsets it says they go at.
+///
+/// `expected_bytes` is what the plan says the artifact will hold, and is
+/// checked against what was actually written — a producer that stops
+/// short leaves no artifact behind rather than a plausible short one
+/// (P6). Everything else is [`place_new_artifact`]'s: an existing
+/// destination is a named refusal, the bytes reach storage before the
+/// name exists, and an interruption leaves the destination absent.
+pub(crate) fn place_new_artifact_streamed(
+    path: &Path,
+    expected_bytes: u64,
+    produce: impl FnOnce(&mut dyn FnMut(u64, &[u8]) -> Result<()>) -> Result<()>,
+) -> Result<()> {
     if path.try_exists().unwrap_or(false) {
         return Err(Error::io(format!(
             "cannot write '{}': something is already there, and a destination this \
@@ -202,16 +220,32 @@ pub(crate) fn place_new_artifact(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     let staging = staging_path(path);
     let file = create_claimed(&staging)?;
-    let built = write_all_at(&file, 0, bytes)
-        .map_err(|error| Error::io(format!("cannot write '{}': {error}", staging.display())))
-        .and_then(|()| {
-            file.sync_all().map_err(|error| {
-                Error::io(format!(
-                    "cannot commit '{}' to storage: {error}",
-                    staging.display()
-                ))
-            })
-        });
+    let mut written = 0u64;
+    let built = {
+        let mut sink = |at: u64, bytes: &[u8]| -> Result<()> {
+            write_all_at(&file, at, bytes).map_err(|error| {
+                Error::io(format!("cannot write '{}': {error}", staging.display()))
+            })?;
+            written += bytes.len() as u64;
+            Ok(())
+        };
+        produce(&mut sink)
+    }
+    .and_then(|()| {
+        if written != expected_bytes {
+            return Err(Error::io(format!(
+                "the rendition planned {expected_bytes} bytes and produced {written}; \
+                 nothing is put in place at '{}' on a count that does not hold",
+                path.display()
+            )));
+        }
+        file.sync_all().map_err(|error| {
+            Error::io(format!(
+                "cannot commit '{}' to storage: {error}",
+                staging.display()
+            ))
+        })
+    });
     drop(file);
     if let Err(error) = built {
         let _ = std::fs::remove_file(&staging);

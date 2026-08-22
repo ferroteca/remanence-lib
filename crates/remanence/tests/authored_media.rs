@@ -12,9 +12,18 @@
 //! a recording refuses by name.
 
 use remanence::{
-    Claim, DeviceSlot, FloppyDrive, GeometrySource, GeometryState, HardDrive, NewMedia,
+    Claim, DeviceSlot, FloppyDrive, Format, GeometrySource, GeometryState, HardDrive, NewMedia,
     PartitionType, Recording, RecordingGeometry, Session,
 };
+
+/// A destination no test has used, in the directory temporary files go
+/// in. The rendition refuses an existing file, so each walk names its
+/// own and removes it when it is done.
+fn destination(tag: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("remanence-f83-{tag}-{}.img", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    path
+}
 
 /// The coordinates U32 authors: a 528 MB CHS disk.
 fn chs() -> RecordingGeometry {
@@ -353,6 +362,181 @@ fn a_layout_recorded_onto_a_blank_article_makes_it_a_dos_floppy() {
         bay.insert(id)
             .expect("the drive the layout is recorded for");
     }
+}
+
+/// U35, to the end: the disk is made, formatted, filled, and written
+/// out as the raw image an emulator reads — which then loads back as
+/// the disk it was.
+#[test]
+fn a_recorded_floppy_writes_out_as_a_raw_image_and_loads_back() {
+    let path = destination("roundtrip");
+    let mut session = Session::new();
+    let id = session
+        .new_media(NewMedia::Flexible35Hd)
+        .expect("created")
+        .id();
+    let disk = session.medium_mut(id).expect("pooled");
+    disk.partition(0)
+        .expect("the direct partition")
+        .record_as(Recording::Dos144)
+        .expect("records");
+    let mut files = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem()
+        .expect("FAT12");
+    files
+        .write_file("README.TXT", b"made, not found\r\n")
+        .expect("writes");
+    drop(files);
+
+    // The plan states everything before a byte moves, and writing adds
+    // nothing to the account.
+    let disk = session.medium_mut(id).expect("pooled");
+    let planned = disk.describe_raw().expect("plans");
+    assert_eq!(planned.path, None, "a plan writes nothing");
+    assert_eq!(planned.artifact_bytes, 1_474_560);
+    assert_eq!(planned.sectors_written, 2_880);
+    assert_eq!(planned.geometry, Recording::Dos144.geometry());
+    assert!(
+        planned.uncommitted_extents > 0,
+        "the file written above is not committed yet"
+    );
+
+    // What a raw artifact cannot carry is named, not dropped quietly.
+    let codes: Vec<&str> = planned
+        .declared_loss
+        .iter()
+        .map(|loss| loss.code.as_str())
+        .collect();
+    for named in [
+        "article",
+        "device-type",
+        "authored-provenance",
+        "recorded-layout",
+    ] {
+        assert!(
+            codes.contains(&named),
+            "{named} is not in the account: {codes:?}"
+        );
+    }
+
+    // The rendition is of committed state, so the commit comes first.
+    disk.commit().expect("commits");
+    let written = disk.write_raw(&path).expect("writes the image");
+    assert_eq!(
+        written.path.as_deref(),
+        Some(path.display().to_string().as_str())
+    );
+    assert_eq!(written.artifact_bytes, 1_474_560);
+    assert_eq!(
+        written.uncommitted_extents, 0,
+        "nothing was left behind once it was committed"
+    );
+    assert_eq!(
+        written.declared_loss, planned.declared_loss,
+        "the write adds nothing to the account the plan stated"
+    );
+    assert_eq!(
+        std::fs::metadata(&path).expect("the file is there").len(),
+        1_474_560,
+        "the artifact is the 1.44 MB disk"
+    );
+
+    // An existing destination is a refusal, never an overwrite.
+    let error = session
+        .medium_mut(id)
+        .expect("pooled")
+        .write_raw(&path)
+        .expect_err("something is already there");
+    assert!(
+        error.to_string().contains("already there"),
+        "the refusal names why: {error}"
+    );
+
+    // And the test the whole journey rests on: the artifact loads back
+    // as the disk that was recorded, read by evidence this time.
+    let mut reader = Session::new();
+    let loaded = reader
+        .load_media(
+            std::fs::File::open(&path).expect("opens"),
+            Format::Raw {
+                device: FloppyDrive::Pc35Hd.into(),
+                block_bytes: 512,
+            },
+        )
+        .expect("a raw reading of a floppy");
+    assert_eq!(
+        loaded.geometry().determined(),
+        Some(Recording::Dos144.geometry()),
+        "the BPB states the coordinates the layout recorded"
+    );
+    let boot = loaded
+        .geometry()
+        .readings()
+        .iter()
+        .find(|reading| reading.source == GeometrySource::BootRecord)
+        .expect("the boot record is a source now, where the layout was before");
+    assert_eq!(boot.sectors_per_track, Some(18));
+    // The namespace is *declared* here, where the recorded medium's was
+    // determined — and that difference is the rendition's account made
+    // flesh. On the medium, the author's own `record_as` said it was
+    // FAT12; the artifact carries the bytes that declaration wrote and
+    // not the declaration, so a reader of it says so itself.
+    assert!(
+        loaded
+            .partition(0)
+            .expect("the direct partition")
+            .filesystem()
+            .is_none(),
+        "nothing in a raw artifact declares what is on it"
+    );
+    let mut files = loaded
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("fat")
+        .expect("the boot record bears the reading");
+    assert_eq!(
+        files.read_file("README.TXT").expect("reads"),
+        b"made, not found\r\n",
+        "the file written before the rendition is in the artifact"
+    );
+
+    drop(files);
+    drop(reader);
+    let _ = std::fs::remove_file(&path);
+}
+
+/// The rendition refuses what it cannot render, each by its own rule.
+#[test]
+fn a_medium_with_no_sectors_to_write_refuses_by_name() {
+    let mut session = Session::new();
+
+    // A blank article has no content at all.
+    let blank = session
+        .new_media(NewMedia::Flexible35Hd)
+        .expect("created")
+        .id();
+    let error = session
+        .medium_mut(blank)
+        .expect("pooled")
+        .describe_raw()
+        .expect_err("a blank article renders nothing");
+    assert!(
+        error.to_string().contains("nothing recorded on it"),
+        "the refusal names what it is: {error}"
+    );
+
+    // An archive is reached by name and has no sectors at all.
+    let mut listing = Session::new();
+    assert!(
+        listing
+            .new_media(NewMedia::ChsDisk { geometry: small() })
+            .expect("created")
+            .describe_raw()
+            .is_ok(),
+        "an authored disk states its own coordinates and renders in them"
+    );
 }
 
 /// The arc's own refusals: it records onto a blank article, once, and

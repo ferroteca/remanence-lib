@@ -162,6 +162,57 @@ def test_recording_a_layout_onto_a_blank_makes_it_a_dos_floppy(session):
     device.insert(blank.id)
 
 
+def test_the_recorded_floppy_writes_out_as_a_raw_image(session, tmp_path):
+    """U35 to the end: made, formatted, filled, and written out."""
+    blank = session.new_media("flexible-3.5-hd")
+    blank.partition(0).record_as("dos-1.44")
+    space = blank.partition(0).filesystem()
+    space.write_file("README.TXT", b"made, not found\r\n")
+
+    # The plan states everything and writes nothing.
+    planned = blank.describe_raw()
+    assert planned.path is None
+    assert planned.artifact_bytes == 1_474_560
+    assert planned.sectors_written == 2_880
+    assert planned.geometry == (80, 2, 18, 512)
+    assert planned.uncommitted_extents > 0, "the file above is not committed yet"
+
+    # What a raw artifact cannot carry is named, not dropped quietly.
+    codes = {code for code, _, _ in planned.declared_loss}
+    assert {"article", "device-type", "recorded-layout"} <= codes
+
+    blank.commit()
+    destination = tmp_path / "floppy.img"
+    written = blank.write_raw(destination)
+    assert written.path == str(destination)
+    assert written.uncommitted_extents == 0
+    assert written.declared_loss == planned.declared_loss
+    assert destination.stat().st_size == 1_474_560
+
+    # An existing destination raises, never an overwrite.
+    with pytest.raises(remanence.Error):
+        blank.write_raw(destination)
+
+    # And it loads back as the disk that was recorded.
+    with remanence.Session() as reader:
+        with open(destination, "rb") as source:
+            loaded = reader.load_media(source, "raw", device="pc-3.5-hd", block_bytes=512)
+            geometry = loaded.geometry
+            assert (geometry.cylinders, geometry.heads, geometry.sectors_per_track) == (80, 2, 18)
+            # The artifact carries the bytes the layout wrote and not the
+            # declaration that put them there, so the reading is declared
+            # here where it was determined on the medium.
+            files = loaded.partition(0).filesystem_as("fat")
+            assert files.read_file("README.TXT") == b"made, not found\r\n"
+
+
+def test_a_blank_article_renders_to_no_raw_image(session):
+    blank = session.new_media("flexible-3.5-hd")
+    with pytest.raises(remanence.Error) as refusal:
+        blank.describe_raw()
+    assert "nothing recorded on it" in str(refusal.value)
+
+
 def test_a_layout_records_onto_the_article_it_fits_and_no_other(session):
     blank = session.new_media("flexible-5.25-hd")
     with pytest.raises(remanence.Error) as refusal:

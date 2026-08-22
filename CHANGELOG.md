@@ -20,6 +20,23 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **U35 is complete: a disk can be made, formatted, filled and saved
+  without an artifact anywhere in the journey.** `Medium::describe_raw`
+  and `Medium::write_raw(path)` are the sector medium's rendition,
+  paired the way the C64 renditions pair `describe_d64` with
+  `write_d64`: the content in the recording's own sector order —
+  cylinder-major, head-minor, sectors from one — built beside the
+  destination and moved into place whole, an existing file refused
+  rather than overwritten. The report names what a raw artifact cannot
+  carry — the article, the device that recorded the content, the
+  authored or recorded provenance — and states how many cached extents
+  the rendition left behind: the rendition is of the medium's
+  **committed** state, so an uncommitted write is not in the artifact.
+  A blank article nothing was recorded onto, and a medium whose
+  geometry the evidence never settled, both refuse by name. The C ABI
+  adds `remanence_medium_describe_raw` / `_write_raw` and the
+  `remanence_raw_report_*` accessors; the Python module adds
+  `Medium.describe_raw` / `.write_raw` and `RawReport`.
 - **A blank article can be formatted: the authored-to-recorded arc.**
   `PartitionView::record_as(Recording::Dos12 | Dos144)`, on the direct
   partition of a blank article, lays down what `FORMAT` does — the boot

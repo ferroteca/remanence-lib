@@ -253,6 +253,26 @@ pub(crate) struct RenditionView {
 }
 
 impl RenditionView {
+    /// The destination's name, or null for a rendition computed and not
+    /// written.
+    pub(crate) fn path(&self) -> *const c_char {
+        self.path.as_ref().map_or(ptr::null(), |path| path.as_ptr())
+    }
+
+    /// One loss entry's stable code, or null out of range.
+    pub(crate) fn loss_code(&self, index: usize) -> *const c_char {
+        self.loss_codes
+            .get(index)
+            .map_or(ptr::null(), |code| code.as_ptr())
+    }
+
+    /// One loss entry's detail, or null out of range.
+    pub(crate) fn loss_detail(&self, index: usize) -> *const c_char {
+        self.loss_details
+            .get(index)
+            .map_or(ptr::null(), |detail| detail.as_ptr())
+    }
+
     pub(crate) fn new(path: Option<&String>, loss: &[remanence::DeclaredLoss]) -> Self {
         Self {
             path: path.map(|path| to_cstring(path)),

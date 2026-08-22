@@ -286,6 +286,20 @@ class Medium:
     def recorded_as(self) -> str | None:
         """The layout an author recorded onto it, or `None`."""
 
+    def describe_raw(self) -> RawReport:
+        """Computes the raw image this medium renders to, writing nothing.
+
+        Read it before writing: the write adds nothing to the account.
+        """
+
+    def write_raw(self, path: _Path, /) -> RawReport:
+        """Writes this medium into a new raw image and reports what it carried.
+
+        The sectors go in the recording's own order and nothing else
+        does. The rendition is of committed state; an existing file at
+        the destination raises, never an overwrite.
+        """
+
     @property
     def path(self) -> str | None: ...
     @property
@@ -725,6 +739,23 @@ class DeviceInfo:
     def authoritative_layer(self) -> str: ...
     @property
     def active_layer(self) -> str: ...
+
+@final
+class RawReport:
+    """What a raw rendition carried, and what it did not."""
+
+    @property
+    def path(self) -> str | None: ...
+    @property
+    def artifact_bytes(self) -> int: ...
+    @property
+    def sectors_written(self) -> int: ...
+    @property
+    def geometry(self) -> tuple[int, int, int, int]: ...
+    @property
+    def uncommitted_extents(self) -> int: ...
+    @property
+    def declared_loss(self) -> list[tuple[str, str, int]]: ...
 
 @final
 class PartitionSchemaInfo:
