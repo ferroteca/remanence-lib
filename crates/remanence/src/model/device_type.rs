@@ -57,8 +57,8 @@ use std::fmt;
 use crate::error::{Error, Result};
 use crate::flux::drive_profile::{self, DriveProfile};
 use crate::model::media_profile::{
-    FLEXIBLE_3_5_HD, FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile,
-    OPTICAL_120_PRESSED,
+    FLEXIBLE_3_5_HD, FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_HD, FLEXIBLE_5_25_SOFT,
+    LOGICAL_BLOCK_512, MediaProfile, OPTICAL_120_PRESSED,
 };
 use crate::partition::PartitionScheme;
 
@@ -100,6 +100,13 @@ pub enum FloppyDrive {
     /// family that is not Heath's, and the drive every PC distribution
     /// disk from DOS 3.3 on was read in.
     Pc35Hd,
+    /// The PC's 5.25-inch high-density drive — the AT's controller
+    /// driving the two-head 96 TPI mechanism at 360 RPM and 500 kbit/s
+    /// MFM, fifteen 512-byte records to a track, 1.2 MB. It is served a
+    /// different article from the 1541 and the H-37 — the same jacket,
+    /// twice the coercivity, twice the track density — which is why a
+    /// disk for it is a blank of its own kind.
+    Pc525Hd,
     /// The generic schemeless sector floppy: sector-addressed recording
     /// with geometry per-media — discovered evidence, never a type fact.
     Sector,
@@ -316,6 +323,18 @@ static PC_3_5_HD_SPEC: FloppySpec = FloppySpec {
     flux_path: Some(&crate::flux::ibm::profiles::PC_3_5_HD),
 };
 
+static PC_5_25_HD_SPEC: FloppySpec = FloppySpec {
+    id: "pc-5.25-hd",
+    name: "PC 5.25-inch high-density floppy drive",
+    provenance: "declared from the PC AT floppy controller's published high-density \
+                 conventions: a two-head drive served 5.25-inch high-density media \
+                 and recording it at 500 kbit/s MFM over a 360 RPM revolution",
+    article: &FLEXIBLE_5_25_HD,
+    slot_prefix: "pcfloppy",
+    addressing: Addressing::Sector,
+    flux_path: Some(&crate::flux::ibm::profiles::PC_5_25_HD),
+};
+
 static SECTOR_FLOPPY_SPEC: FloppySpec = FloppySpec {
     id: "sector-floppy",
     name: "sector floppy drive",
@@ -389,6 +408,7 @@ impl FloppyDrive {
             Self::HeathH37Dd48 => &H37_DD48_SPEC,
             Self::HeathH37Dd => &H37_DD_SPEC,
             Self::Pc35Hd => &PC_3_5_HD_SPEC,
+            Self::Pc525Hd => &PC_5_25_HD_SPEC,
             Self::Sector => &SECTOR_FLOPPY_SPEC,
         }
     }
@@ -431,13 +451,14 @@ impl OpticalDrive {
 
 impl DeviceType {
     /// Every device type this release claims, class by class.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Floppy(FloppyDrive::Commodore1541),
         Self::Floppy(FloppyDrive::HeathH17),
         Self::Floppy(FloppyDrive::HeathH37),
         Self::Floppy(FloppyDrive::HeathH37Dd48),
         Self::Floppy(FloppyDrive::HeathH37Dd),
         Self::Floppy(FloppyDrive::Pc35Hd),
+        Self::Floppy(FloppyDrive::Pc525Hd),
         Self::Floppy(FloppyDrive::Sector),
         Self::HardDrive(HardDrive::MbrSector),
         Self::HardDrive(HardDrive::MbrBlock),
@@ -904,6 +925,8 @@ mod tests {
             FloppyDrive::HeathH37,
             FloppyDrive::HeathH37Dd48,
             FloppyDrive::HeathH37Dd,
+            FloppyDrive::Pc35Hd,
+            FloppyDrive::Pc525Hd,
             FloppyDrive::Sector,
         ] {
             assert_eq!(
@@ -966,6 +989,14 @@ mod tests {
                 DeviceType::Floppy(FloppyDrive::HeathH37Dd),
                 &crate::flux::ibm::profiles::HEATH_H17_4_SOFT,
             ),
+            (
+                DeviceType::Floppy(FloppyDrive::Pc35Hd),
+                &crate::flux::ibm::profiles::PC_3_5_HD,
+            ),
+            (
+                DeviceType::Floppy(FloppyDrive::Pc525Hd),
+                &crate::flux::ibm::profiles::PC_5_25_HD,
+            ),
         ] {
             assert_eq!(
                 device.article(),
@@ -1006,6 +1037,20 @@ mod tests {
             .map(|device| device.id())
             .collect();
         assert_eq!(hard, vec!["h17"]);
+
+        // The two PC drives are each served an article of their own:
+        // the high-density 5.25-inch disk is not the one a 1541 takes,
+        // for all that it fits the same slot.
+        let high: Vec<&str> = DeviceType::accepting(&FLEXIBLE_5_25_HD)
+            .iter()
+            .map(|device| device.id())
+            .collect();
+        assert_eq!(high, vec!["pc-5.25-hd"]);
+        let small: Vec<&str> = DeviceType::accepting(&FLEXIBLE_3_5_HD)
+            .iter()
+            .map(|device| device.id())
+            .collect();
+        assert_eq!(small, vec!["pc-3.5-hd"]);
 
         let discs: Vec<&str> = DeviceType::accepting(&OPTICAL_120_PRESSED)
             .iter()

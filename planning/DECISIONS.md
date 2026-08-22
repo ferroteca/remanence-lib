@@ -58,6 +58,61 @@ removes it is the record either way.
 
 ## Decisions
 
+### D74 — Rulings made delivering the PC floppy articles and drives
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-22. **Supports** S1, S2, S3; P3, P12, P14, P22, P30; U35
+(pledged); D19, D36.
+
+F81's delivery is recorded by the commit; these are the calls made in
+its course. `DECISIONS.md` was searched first and returned D19 (what an
+article holds), D36 (the authored blanks and the reserved arc) and D61
+(step pitch as a pair); nothing adjudicated a 1.2 MB drive or a 360 RPM
+rotation.
+
+**The 3.5-inch drive was already enrolled, and the pledge was wrong to
+say otherwise.** F81 as pledged said the drive catalog named Commodore
+and Heath families alone; `FloppyDrive::Pc35Hd` and `flexible-3.5-hd`
+had landed with F77. What F81 actually delivered is the 5.25-inch half
+and the two blank kinds, and the pledged U35 text is corrected in the
+same commit rather than left asserting a gap that had closed.
+
+**A 360 RPM drive is stated against its own reference clock.** The
+enrolled families share a 16 MHz clock as a unit, and six revolutions a
+second do not divide it. Rounding the revolution would put an
+undeclared number into every cell length (P30 wants the declaration
+exact), and widening the shared clock to a common multiple would change
+every enrolled entry to accommodate one. The profile carries its own
+clock — `Rotation` always had the field — at 24 MHz: the 16 MHz unit
+scaled by three halves, which six divides, with a 1 MHz cell a whole
+24 cycles and a resolution near the other entries' rather than the bare
+3 MHz minimum. Nothing above the profile compares raw cycle counts
+across families, which is what makes a per-profile clock safe.
+
+**The 1.2 MB drive pairs with no container format yet.** Its revolution
+is not a whole number of cells — 166,666 and two thirds — which is the
+drive's own arithmetic, and the HxC MFM reader refuses a family whose
+circle is not a whole number of the cells it lays on it. Admitting the
+drive to the HxC MFM and MFI declarations would deliver a pairing that
+can only refuse at the reader; so it is not admitted, the profile
+stands as the drive's P30 declaration, and a recording of the drive
+reaches the library as a raw image. Teaching the container readers a
+fractional last cell is that reader's work when an artifact demands it.
+
+**Raw admits both PC drives.** A DOS floppy's `.img` is bytes like any
+other raw image, and declaring the drive is what says which article it
+is and which bay it goes in; loading it as the generic sector floppy
+would seat a PC disk in a drive of no product class. The raw reading
+already reached across families — its own declaration is that bytes
+belong to none — so this widens a list rather than changing a rule.
+
+**Weighed and declined:** confirming the 5.25-inch profile against a
+recording before enrolling it (no 1.2 MB capture is in hand; the profile
+says so in its provenance, and the first artifact that disagrees with a
+number wins); spelling the blank kinds by capacity (`floppy-1.2mb`) rather
+than by article (a blank is the article, and the capacity is what a
+recording makes of it — F82's business).
+
 ### D73 — `REMANENCE_CC`/`REMANENCE_CXX` retired; `xtask py-stage` folds into `Taskfile.yml`
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

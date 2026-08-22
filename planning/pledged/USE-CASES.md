@@ -602,9 +602,8 @@ device types it admits.
 After the arc the medium is no longer merely authored. Its geometry gains
 a reading whose source is the recording I chose; it binds the device type
 the layout is recorded for, so it goes into a PC floppy drive like any
-loaded image would — which means the drive catalog gains the PC
-families (a 5.25-inch 1.2 MB drive and a 3.5-inch 1.44 MB drive), since
-today it names Commodore and Heath drives alone; and `partition(0).filesystem()` opens FAT12 over it
+loaded image would — the drive catalog names both PC families, the
+5.25-inch 1.2 MB drive and the 3.5-inch 1.44 MB drive; and `partition(0).filesystem()` opens FAT12 over it
 by evidence — the boot record I recorded testifying for itself — through
 the very same door U31 writes a file through on a loaded disk. The file
 verbs are not new; the arc reaches a door already built.

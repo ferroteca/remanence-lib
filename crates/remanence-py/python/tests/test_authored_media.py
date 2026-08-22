@@ -102,6 +102,21 @@ def test_the_blank_article_kinds_take_no_coordinates(session):
         session.new_media(kinds[0][0], cylinders=40)
 
 
+def test_a_pc_floppy_blank_is_its_article_and_states_nothing_else(session):
+    # The two DOS floppies a PC is served, as blanks in their sleeves:
+    # each names its article, records no coordinates and assumes no
+    # drive until something records onto it.
+    for kind, article in [
+        ("flexible-5.25-hd", "flexible-5.25-hd"),
+        ("flexible-3.5-hd", "flexible-3.5-hd"),
+    ]:
+        blank = session.new_media(kind)
+        assert blank.article == article
+        assert blank.device_type is None
+        assert blank.geometry.state == "unstated"
+        assert not blank.is_modified
+
+
 def test_coordinates_that_address_nothing_are_refused_when_stated(session):
     with pytest.raises(remanence.Error):
         session.new_media("chs-disk", cylinders=0, heads=2, sectors_per_track=9)

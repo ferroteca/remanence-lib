@@ -117,10 +117,15 @@ pub(crate) static RECORDED_HARD_DRIVES: [DeviceType; 2] = [
 /// user data of a data track and nothing else, so it is bytes read
 /// through a declared block size exactly as every other raw image is,
 /// and the declaration is what says which drive holds it.
-pub(crate) static RAW_RECORDED_DEVICES: [DeviceType; 4] = [
+pub(crate) static RAW_RECORDED_DEVICES: [DeviceType; 6] = [
     DeviceType::HardDrive(HardDrive::MbrSector),
     DeviceType::HardDrive(HardDrive::MbrBlock),
     DeviceType::Floppy(FloppyDrive::Sector),
+    // The two PC drives: a `.img` of a DOS floppy is bytes like any
+    // other raw image, and declaring the drive is what says which
+    // article it is and which bay it goes in.
+    DeviceType::Floppy(FloppyDrive::Pc35Hd),
+    DeviceType::Floppy(FloppyDrive::Pc525Hd),
     DeviceType::Optical(OpticalDrive::CdRom),
 ];
 
@@ -1341,10 +1346,17 @@ mod tests {
         );
         // The raw reading records a class rather than a product, and it
         // reaches across families because bytes belong to none: the two
-        // MBR hard drives, the sector floppy and the CD-ROM drive, which
-        // is what lets a machine hold each of them in a drive rather
-        // than a caller asserting one into a slot beside the model.
-        assert_eq!(RAW_DESCRIPTOR.devices.len(), 4);
+        // MBR hard drives, the sector floppy, the two PC floppy drives
+        // and the CD-ROM drive, which is what lets a machine hold each
+        // of them in a drive rather than a caller asserting one into a
+        // slot beside the model.
+        assert_eq!(RAW_DESCRIPTOR.devices.len(), 6);
+        assert!(
+            RAW_DESCRIPTOR
+                .devices
+                .contains(&DeviceType::Floppy(FloppyDrive::Pc525Hd)),
+            "a DOS floppy's .img is a raw reading declared for its drive"
+        );
         assert!(
             RAW_DESCRIPTOR
                 .devices

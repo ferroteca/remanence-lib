@@ -11,7 +11,9 @@
 //! the recording it is served, so a mechanism reading two kinds of media
 //! is two profiles rather than one with a branch in it. The PC drive at
 //! the end is the same rule applied to a third mechanism: 3.5-inch media
-//! at 135 tracks to the inch, recorded at the high-density rate.
+//! at 135 tracks to the inch, recorded at the high-density rate — and
+//! the PC's 5.25-inch high-density drive is a fourth, the only one here
+//! that turns at 360 RPM.
 //!
 //! **The rate is fixed and a mismatch is refused.** Every entry declares
 //! the cell rate its family records at; an artifact declaring another
@@ -26,7 +28,7 @@ use crate::flux::drive_profile::{
     Surfaces, UnrecordedRule,
 };
 use crate::flux::ibm::presentation::{FM, IbmCodec, MFM};
-use crate::model::media_profile::{FLEXIBLE_3_5_HD, FLEXIBLE_5_25_SOFT};
+use crate::model::media_profile::{FLEXIBLE_3_5_HD, FLEXIBLE_5_25_HD, FLEXIBLE_5_25_SOFT};
 
 /// The reference clock both families' cells are stated against.
 ///
@@ -39,6 +41,21 @@ const REFERENCE_CLOCK: u64 = 16_000_000;
 /// 300 revolutions a minute is five a second, so a revolution is a fifth
 /// of the reference clock's cycles.
 const CYCLES_PER_ROTATION: u64 = REFERENCE_CLOCK / 5;
+
+/// The clock the 360 RPM drive is stated against.
+///
+/// Six revolutions a second do not divide 16 MHz, so that drive gets a
+/// clock of its own rather than a rounded revolution. 24 MHz is the
+/// 16 MHz unit scaled by three halves: six divides it, a 1 MHz cell is
+/// a whole 24 cycles, and the resolution stays close to the other
+/// entries' rather than dropping to the 3 MHz that would be the bare
+/// minimum. Each profile carries its own clock, so nothing above
+/// compares cycle counts across profiles without converting through
+/// it.
+const REFERENCE_CLOCK_360_RPM: u64 = 24_000_000;
+
+/// 360 revolutions a minute is six a second.
+const CYCLES_PER_ROTATION_360_RPM: u64 = REFERENCE_CLOCK_360_RPM / 6;
 
 /// The channel both families are clocked by — the same phase-locked one
 /// every enrolled family declares its numbers for.
@@ -307,6 +324,7 @@ pub(crate) fn codec_of(profile: &'static DriveProfile) -> Option<&'static IbmCod
         id if id == HEATH_H17_1_SOFT_DD.id => Some(&MFM),
         id if id == HEATH_H17_4_SOFT.id => Some(&MFM),
         id if id == PC_3_5_HD.id => Some(&MFM),
+        id if id == PC_5_25_HD.id => Some(&MFM),
         _ => None,
     }
 }
@@ -382,6 +400,77 @@ pub(crate) static PC_3_5_HD: DriveProfile = DriveProfile {
     },
 };
 
+/// The PC's 5.25-inch high-density drive reading a 1.2 MB recording.
+///
+/// **The one drive here that turns at 360 RPM.** The AT's controller
+/// drives a two-head 96 TPI mechanism at that speed and records MFM at
+/// 500 kbit/s — the same rate as the 3.5-inch drive, spread over a
+/// shorter revolution, so fifteen 512-byte records fit a track where the
+/// 3.5-inch disk takes eighteen — over eighty cylinders, which is the
+/// 1,228,800-byte disk.
+///
+/// **A revolution is not a whole number of cells.** A megahertz of cells
+/// over a sixth of a second is 166,666 and two thirds of them, and that
+/// is the drive's arithmetic rather than a rounding here: a real 1.2 MB
+/// track ends a fraction of a cell before the index. It matters to one
+/// reader: the HxC MFM container lays whole cells on the circle and
+/// refuses a family whose circle is not a whole number of them, so that
+/// format does not pair with this drive. No container format pairs with
+/// it in this release; the profile is the drive's declaration (P30),
+/// and a recording of it arrives as a raw image.
+///
+/// **Declared from the published conventions and not yet confirmed
+/// against a recording**, unlike the 3.5-inch entry above. The first
+/// 1.2 MB capture that disagrees with a number here wins.
+pub(crate) static PC_5_25_HD: DriveProfile = DriveProfile {
+    id: "pc-5.25-hd",
+    name: "PC 5.25-inch high-density drive",
+    version: 1,
+    provenance: "declared from the PC AT floppy controller's published high-density \
+                 conventions — two heads, 96 tracks to the inch, 360 RPM, MFM at \
+                 500 kbit/s, fifteen 512-byte records to a track — and not yet \
+                 confirmed against a recording",
+    media: &FLEXIBLE_5_25_HD,
+    stepping: Stepping {
+        // Mechanism and recording are at the same pitch, so one step
+        // reaches one track.
+        drive_tpi: 96,
+        recorded_tpi: 96,
+        first_location: 0,
+    },
+    rotation: Rotation {
+        nominal_numerator: 6,
+        nominal_denominator: 1,
+        reference_clock: REFERENCE_CLOCK_360_RPM,
+        cycles_per_rotation: CYCLES_PER_ROTATION_360_RPM,
+        index_observed_by_drive: true,
+    },
+    surfaces: Surfaces { recorded: 2 },
+    encoding: MFM_ENCODING,
+    density: &[DensityZone {
+        first_location: 0,
+        last_location: 79,
+        // The same megahertz of cells the 3.5-inch drive records — a
+        // 24-cycle cell against this drive's own clock — carrying the
+        // 500 kbit/s the PC calls high density.
+        rate_numerator: 1_000_000,
+        rate_denominator: 1,
+        records: 15,
+    }],
+    materialization: MATERIALIZATION,
+    presentation: Presentation {
+        read_channel: READ_CHANNEL,
+        channel_policy: crate::flux::presentation::ReadChannelPolicy {
+            density: crate::flux::presentation::DensityPolicy::Declared,
+            unzoned: crate::flux::presentation::UnzonedPolicy::Omit,
+            weak_pulse: crate::flux::presentation::WeakPulsePolicy::Seeded,
+            seed: 0x0052_0015_0052_0015,
+        },
+        bytestream: crate::flux::ibm::presentation::materialize_declared,
+        sectors: crate::flux::ibm::sectors::recognize_declared,
+    },
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,7 +490,12 @@ mod tests {
         // A cell that is not a whole number of cycles would put rounding
         // into the model, which is what stating the clock this way
         // exists to prevent.
-        for profile in [&HEATH_H17_1_SOFT, &HEATH_H17_4_SOFT] {
+        for profile in [
+            &HEATH_H17_1_SOFT,
+            &HEATH_H17_4_SOFT,
+            &PC_3_5_HD,
+            &PC_5_25_HD,
+        ] {
             for zone in profile.density {
                 let (numerator, denominator) = zone.nominal_cell(&profile.rotation);
                 assert_eq!(
@@ -417,6 +511,74 @@ mod tests {
         assert_eq!(cell / per, 64, "single density is a 64-cycle cell");
         let (cell, per) = HEATH_H17_4_SOFT.density[0].nominal_cell(&HEATH_H17_4_SOFT.rotation);
         assert_eq!(cell / per, 32, "double density is half that");
+        let (cell, per) = PC_5_25_HD.density[0].nominal_cell(&PC_5_25_HD.rotation);
+        assert_eq!(
+            cell / per,
+            24,
+            "a megahertz of cells against a 24 MHz clock"
+        );
+    }
+
+    #[test]
+    fn the_two_pc_drives_record_one_rate_and_differ_in_the_revolution() {
+        // Same controller, same encoding, same 500 kbit/s: what parts
+        // the 1.2 MB disk from the 1.44 MB one is that the 5.25-inch
+        // drive turns faster, so a revolution holds fewer records.
+        assert_eq!(
+            codec_of(&PC_5_25_HD).map(|codec| codec.id),
+            codec_of(&PC_3_5_HD).map(|codec| codec.id)
+        );
+        assert_eq!(
+            PC_5_25_HD.density[0].rate_numerator,
+            PC_3_5_HD.density[0].rate_numerator
+        );
+        assert_eq!(PC_5_25_HD.surfaces.recorded, PC_3_5_HD.surfaces.recorded);
+        let rpm = |profile: &DriveProfile| {
+            profile.rotation.reference_clock * 60 / profile.rotation.cycles_per_rotation
+        };
+        assert_eq!(rpm(&PC_3_5_HD), 300);
+        assert_eq!(rpm(&PC_5_25_HD), 360);
+
+        // Two cells to a bit, the records leave about 180 bytes each
+        // for marks and gaps on both drives — the same controller lays
+        // out the same gaps, and the shorter revolution is what takes
+        // the count from eighteen to fifteen.
+        for (profile, expected_records, expected_bytes) in
+            [(&PC_3_5_HD, 18, 1_474_560u64), (&PC_5_25_HD, 15, 1_228_800)]
+        {
+            let zone = &profile.density[0];
+            assert_eq!(zone.records, expected_records);
+            let cells_per_revolution = profile.rotation.nominal_denominator * zone.rate_numerator
+                / (profile.rotation.nominal_numerator * zone.rate_denominator);
+            let payload_cells = u64::from(zone.records) * 512 * 8 * 2;
+            assert!(payload_cells < cells_per_revolution);
+            let spare_bytes_per_record =
+                (cells_per_revolution - payload_cells) / 16 / u64::from(zone.records);
+            assert!(
+                (150..220).contains(&spare_bytes_per_record),
+                "{}: each record's marks and gaps come to {spare_bytes_per_record} bytes",
+                profile.id
+            );
+            let bytes = u64::from(zone.records)
+                * 512
+                * u64::from(profile.surfaces.recorded)
+                * (zone.last_location - zone.first_location + 1);
+            assert_eq!(bytes, expected_bytes, "{} holds {bytes} bytes", profile.id);
+        }
+
+        // The 360 RPM circle is not a whole number of cells, which is
+        // the drive's own arithmetic and the reason the HxC container
+        // reader does not pair with it.
+        let (cell, per) = PC_5_25_HD.density[0].nominal_cell(&PC_5_25_HD.rotation);
+        assert_ne!(
+            PC_5_25_HD.rotation.cycles_per_rotation % (cell / per) as u64,
+            0
+        );
+        let (cell, per) = PC_3_5_HD.density[0].nominal_cell(&PC_3_5_HD.rotation);
+        assert_eq!(
+            PC_3_5_HD.rotation.cycles_per_rotation % (cell / per) as u64,
+            0
+        );
     }
 
     #[test]

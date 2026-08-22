@@ -242,6 +242,8 @@ fn a_blank_article_is_the_article_and_states_nothing_else() {
     for (kind, article) in [
         (NewMedia::Flexible525Soft, "flexible-5.25-soft"),
         (NewMedia::Flexible525HardTen, "flexible-5.25-hard-10"),
+        (NewMedia::Flexible525Hd, "flexible-5.25-hd"),
+        (NewMedia::Flexible35Hd, "flexible-3.5-hd"),
     ] {
         let blank = session.new_media(kind).expect("created");
         assert_eq!(blank.article(), article);

@@ -51,7 +51,8 @@ use crate::io::device::{AccessMode, Claim, Device, read_exact_at, write_all_at};
 use crate::model::assurance::Assurance;
 use crate::model::geometry::{Geometry, RecordingGeometry};
 use crate::model::media_profile::{
-    AUTHORED, FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, MediaProfile,
+    AUTHORED, FLEXIBLE_3_5_HD, FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_HD, FLEXIBLE_5_25_SOFT,
+    MediaProfile,
 };
 use crate::model::session::{
     Identification, Layer, LayerKind, LayerLayout, PhysicalMediaLayout, SizeInformation,
@@ -83,6 +84,14 @@ pub enum NewMedia {
     /// article an H-17 is served, whose ten holes divide the revolution
     /// whether or not anything is recorded between them.
     Flexible525HardTen,
+    /// A blank 5.25-inch high-density flexible disk — the article a
+    /// PC's 1.2 MB drive is served, with nothing recorded on it. The
+    /// same jacket as the soft-sectored disk above and a different
+    /// article: twice the coercivity, twice the track density.
+    Flexible525Hd,
+    /// A blank 3.5-inch high-density flexible disk — the article a
+    /// PC's 1.44 MB drive is served, with nothing recorded on it.
+    Flexible35Hd,
     /// A blank disk addressed in coordinates the author states: so many
     /// cylinders of so many heads, at so many sectors of so many bytes.
     ///
@@ -141,7 +150,7 @@ const CHS_DISK: &str = "chs-disk";
 /// Every kind [`Session::new_media`](crate::Session::new_media) authors,
 /// and what each creates. The catalog is the claim: a kind absent from it
 /// is refused by name.
-static CLAIMED: [NewMediaClaim; 3] = [
+static CLAIMED: [NewMediaClaim; 5] = [
     NewMediaClaim {
         id: "flexible-5.25-soft",
         name: "blank 5.25-inch soft-sectored flexible disk",
@@ -152,6 +161,18 @@ static CLAIMED: [NewMediaClaim; 3] = [
         id: "flexible-5.25-hard-10",
         name: "blank 5.25-inch ten-sector hard-sectored flexible disk",
         article: "flexible-5.25-hard-10",
+        geometry: false,
+    },
+    NewMediaClaim {
+        id: "flexible-5.25-hd",
+        name: "blank 5.25-inch high-density flexible disk",
+        article: "flexible-5.25-hd",
+        geometry: false,
+    },
+    NewMediaClaim {
+        id: "flexible-3.5-hd",
+        name: "blank 3.5-inch high-density flexible disk",
+        article: "flexible-3.5-hd",
         geometry: false,
     },
     NewMediaClaim {
@@ -178,6 +199,8 @@ impl NewMedia {
         match self {
             Self::Flexible525Soft => "flexible-5.25-soft",
             Self::Flexible525HardTen => "flexible-5.25-hard-10",
+            Self::Flexible525Hd => "flexible-5.25-hd",
+            Self::Flexible35Hd => "flexible-3.5-hd",
             Self::ChsDisk { .. } => CHS_DISK,
         }
     }
@@ -187,6 +210,8 @@ impl NewMedia {
         match self {
             Self::Flexible525Soft => "blank 5.25-inch soft-sectored flexible disk",
             Self::Flexible525HardTen => "blank 5.25-inch ten-sector hard-sectored flexible disk",
+            Self::Flexible525Hd => "blank 5.25-inch high-density flexible disk",
+            Self::Flexible35Hd => "blank 3.5-inch high-density flexible disk",
             Self::ChsDisk { .. } => "blank disk in authored cylinder, head and sector coordinates",
         }
     }
@@ -210,7 +235,10 @@ impl NewMedia {
     pub fn geometry(self) -> Option<RecordingGeometry> {
         match self {
             Self::ChsDisk { geometry } => Some(geometry),
-            Self::Flexible525Soft | Self::Flexible525HardTen => None,
+            Self::Flexible525Soft
+            | Self::Flexible525HardTen
+            | Self::Flexible525Hd
+            | Self::Flexible35Hd => None,
         }
     }
 
@@ -218,6 +246,8 @@ impl NewMedia {
         match self {
             Self::Flexible525Soft => &FLEXIBLE_5_25_SOFT,
             Self::Flexible525HardTen => &FLEXIBLE_5_25_HARD_10,
+            Self::Flexible525Hd => &FLEXIBLE_5_25_HD,
+            Self::Flexible35Hd => &FLEXIBLE_3_5_HD,
             Self::ChsDisk { .. } => &AUTHORED,
         }
     }
@@ -251,6 +281,8 @@ impl NewMedia {
         Ok(match claim.id {
             "flexible-5.25-soft" => Self::Flexible525Soft,
             "flexible-5.25-hard-10" => Self::Flexible525HardTen,
+            "flexible-5.25-hd" => Self::Flexible525Hd,
+            "flexible-3.5-hd" => Self::Flexible35Hd,
             CHS_DISK => Self::ChsDisk {
                 geometry: geometry.ok_or_else(|| {
                     Error::unsupported(format!(

@@ -375,6 +375,34 @@ pub(crate) static FLEXIBLE_5_25_HARD_10: MediaProfile = MediaProfile {
     }),
 };
 
+/// High-density 5.25-inch media: what a PC's 1.2 MB drive is served.
+///
+/// It is the same jacket, notch and index hole as the double-density
+/// disk above, and a different article all the same: the coating takes
+/// twice the write current and the disk is made to 96 tracks per inch
+/// rather than 48. That is why a 1.2 MB drive cannot reliably write a
+/// 360 KB disk and why a 360 KB drive reads nothing off this one — and
+/// why the two are separate entries rather than one with a density
+/// flag.
+pub(crate) static FLEXIBLE_5_25_HD: MediaProfile = MediaProfile {
+    id: "flexible-5.25-hd",
+    name: "5.25-inch high-density flexible disk",
+    provenance: "declared from the published 5.25-inch high-density media class: a \
+                 600-oersted coating made to 96 tracks per inch in the same jacket \
+                 as the double-density disk, one index hole, no sector holes, and \
+                 a jacket notch that protects the disk when it is covered",
+    facts: MediaFacts::FlexibleMagnetic(FlexibleMagnetic {
+        form_factor: FormFactor::Inch5_25,
+        coercivity_oersteds: 600,
+        tracks_per_inch: 96,
+        sectoring: Sectoring::Soft,
+        index_holes: 1,
+        write_protect: WriteProtect::Notch {
+            protected_when_covered: true,
+        },
+    }),
+};
+
 /// High-density 3.5-inch media: what a PC's 1.44 MB drive is served.
 ///
 /// The index is the hub's rather than the disk's: a 3.5-inch cookie has
@@ -482,9 +510,10 @@ pub(crate) static AUTHORED: MediaProfile = MediaProfile {
 /// The enrolled articles. Adding one changes its declaration, its
 /// tests, and this list — nothing else, because there is no behavior
 /// here to wire up.
-static ENROLLED: [&MediaProfile; 7] = [
+static ENROLLED: [&MediaProfile; 8] = [
     &FLEXIBLE_5_25_SOFT,
     &FLEXIBLE_5_25_HARD_10,
+    &FLEXIBLE_5_25_HD,
     &FLEXIBLE_3_5_HD,
     &LOGICAL_BLOCK_512,
     &OPTICAL_120_PRESSED,
@@ -595,6 +624,7 @@ mod tests {
         for physical in [
             &FLEXIBLE_5_25_SOFT,
             &FLEXIBLE_5_25_HARD_10,
+            &FLEXIBLE_5_25_HD,
             &FLEXIBLE_3_5_HD,
             &LOGICAL_BLOCK_512,
             &OPTICAL_120_PRESSED,
@@ -676,6 +706,29 @@ mod tests {
             FLEXIBLE_5_25_SOFT.logical_block().is_none(),
             "a flexible disk answers no block question"
         );
+    }
+
+    #[test]
+    fn the_two_5_25_inch_soft_sectored_articles_differ_in_coating_and_pitch_alone() {
+        // Same jacket, same notch, same single index hole — and a disk
+        // a 1541 cannot write, because the coating wants twice the
+        // current and the tracks sit half as far apart. Those two facts
+        // are the whole of what parts the entries, and they are what a
+        // drive's compatibility turns on.
+        let double = FLEXIBLE_5_25_SOFT
+            .flexible_magnetic()
+            .expect("its own family's facts");
+        let high = FLEXIBLE_5_25_HD
+            .flexible_magnetic()
+            .expect("its own family's facts");
+        assert_eq!(high.form_factor, double.form_factor);
+        assert_eq!(high.sectoring, double.sectoring);
+        assert_eq!(high.index_holes, double.index_holes);
+        assert_eq!(high.write_protect, double.write_protect);
+        assert_eq!(high.coercivity_oersteds, 600);
+        assert_eq!(high.tracks_per_inch, 96);
+        assert_eq!(double.coercivity_oersteds, 300);
+        assert_eq!(double.tracks_per_inch, 48);
     }
 
     #[test]

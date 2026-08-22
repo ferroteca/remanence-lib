@@ -18,6 +18,33 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **The PC's 5.25-inch high-density drive is enrolled.** `FloppyDrive::Pc525Hd`
+  (`pc-5.25-hd`) is the AT's controller driving the two-head 96 TPI
+  mechanism at 360 RPM: MFM at 500 kbit/s, fifteen 512-byte records to a
+  track over eighty cylinders, the 1.2 MB disk. It takes the bay
+  `pcfloppy0` beside the 3.5-inch drive and is served a new article,
+  `flexible-5.25-hd` — a 600-oersted coating made to 96 tracks per inch
+  in the same jacket as the 360 KB disk, which is why the two are
+  separate entries and a 1541 is served neither. Its drive profile is
+  declared from the published conventions and not yet confirmed against
+  a recording; it pairs with no container format in this release, since
+  its 360 RPM revolution is not a whole number of cells and the HxC MFM
+  reader lays whole cells on the circle. The C ABI and the Python module
+  accept the new ids wherever a device type or an article is spelled;
+  neither surface's code changes.
+- **Two blank article kinds for the PC's floppies.** `NewMedia::Flexible525Hd`
+  (`flexible-5.25-hd`) and `NewMedia::Flexible35Hd` (`flexible-3.5-hd`)
+  create the 1.2 MB and 1.44 MB disks as blanks in their sleeves: each
+  names its article, records no coordinates and bears no content, as the
+  two blank kinds already catalogued do. The C and Python enumerations
+  of authored kinds carry them.
+- **A raw image may be declared for either PC floppy drive.** `Format::Raw`
+  admits `FloppyDrive::Pc35Hd` and `FloppyDrive::Pc525Hd` beside the
+  generic sector floppy, so a DOS floppy's `.img` loads declared for the
+  drive that holds it rather than for a drive of no product class.
+
 ## 0.0.1-alpha.7 - 2026-08-22
 
 ### Added

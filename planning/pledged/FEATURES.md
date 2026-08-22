@@ -26,12 +26,13 @@ has retired with it, and what specifies it now is the code. The ruling
 it forced along the way is D59. Companion design:
 [design/fm-mfm-read-channel.md](design/fm-mfm-read-channel.md).
 
-F81, F82 and F83 deliver U35 — a blank DOS floppy, formatted, filled and
-saved as a raw image — in the three pieces its journey has: the articles
-and drives it needs catalogued, the arc that records a DOS layout onto a
-blank, and the rendition that writes a sector medium out. Each is a
-sprint on its own; F82 and F83 each need F81 first, and are otherwise
-independent of each other.
+F82 and F83 are what remains of U35 — a blank DOS floppy, formatted,
+filled and saved as a raw image. Its first piece, cataloguing the PC
+articles, blank kinds and drive families, was F81 and is **delivered**;
+its number has retired with it, and what specifies it now is the code.
+F82 is the arc that records a DOS layout onto a blank and F83 the
+rendition that writes a sector medium out; each is a sprint on its own,
+and they are independent of each other.
 
 ## F77 — HxC MFM read, to the bit tier
 
@@ -88,36 +89,6 @@ for it is not.
 Touches: S1, S2, S3. Supports: U1, U2; P3–P5, P10, P12, P13, P16–P19,
 P21–P23, P27. F76 and F77 are prerequisites.
 
-## F81 — The PC floppy articles, blank kinds and drive families
-
-Catalogue what a PC's two high-density floppies *are*, so that U35 has
-something to author and somewhere to seat it.
-
-The article catalog gains `flexible-5.25-hd` — the 600-oersted, 96-tpi
-5.25-inch disk a 1.2 MB drive is served, which is a different
-manufactured thing from the double-density `flexible-5.25-soft` a 1541
-or an H-37 takes — with its facts declared from the published media
-class as every article's are (P14). `flexible-3.5-hd` is already
-catalogued. Two blank article kinds join `NewMedia`, spelled by their
-article as the existing ones are (P3): `Flexible525Hd` and
-`Flexible35Hd`, each creating that substrate with nothing recorded on it
-and stating no coordinates, exactly as the two blank kinds delivered by
-F60 do.
-
-The drive catalog gains the PC families — a 5.25-inch 1.2 MB drive and
-a 3.5-inch 1.44 MB drive — with profiles declared the way the Commodore
-and Heath families' are (P30): the rotation, the data rates the drive
-is served at, the index it observes from the article, and the articles
-it accepts. Nothing here reads or writes a recording; the families
-exist so that a medium recorded for one can be inserted (D19 weighs the
-recording at the edge) and so that a raw image of one can be loaded
-under `Format::Raw { device: FloppyDrive::… }`.
-
-Every addition reaches the C and Python surfaces through the enumerations
-those surfaces already carry for articles, blank kinds and drives.
-
-Touches: S1, S2, S3. Supports: U35 (pledged); P3, P12, P14, P21, P30.
-
 ## F82 — The DOS recording arc onto an authored blank
 
 Deliver the authored-to-recorded arc F60 reserved and D36 declined to
@@ -147,7 +118,7 @@ verbs without change. The commit point stays the ordinary one with no
 journal beneath it (P2, D36).
 
 Touches: S1, S2, S3. Supports: U35 (pledged); P2, P3, P6, P10, P14,
-P16, P18, P19. F81 is a prerequisite.
+P16, P18, P19.
 
 ## F83 — The raw rendition of a sector medium
 
@@ -174,5 +145,4 @@ Raw is the one encode this feature claims; ImageDisk write is F69 and the
 flux masterings are F74, and both remain proposed.
 
 Touches: S1, S2, S3. Supports: U35 (pledged); P2, P6, P9, P10, P29.
-F81 is a prerequisite, for the device a loaded raw image is declared
-under; F82 is not.
+F82 is not a prerequisite.
