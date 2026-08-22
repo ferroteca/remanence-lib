@@ -209,7 +209,10 @@ tasks:
       Every integration suite, each in full: `test-rust`, `test-ffi` and
       `test-python`, in that order. A failing suite does not stop the
       next — all three run so one pass reports everything — and the
-      task exits non-zero if any of them failed, naming which.
+      task exits non-zero if any of them failed, naming which. Silent:
+      the suites it runs announce themselves, and the loop that runs
+      them is not worth a screen.
+    silent: true
     cmds:
       - cmd: |
           set -uo pipefail
