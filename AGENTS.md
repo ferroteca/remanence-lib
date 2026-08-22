@@ -940,6 +940,7 @@ cargo build                 # the core and the C ABI; nothing but rustc is neede
 cargo test
 cargo build --workspace     # every surface; regenerates c/include/remanence.h
 cargo test --workspace      # the Rust-level tests only — see below
+cd integration-tests          # the Taskfile lives here; or `task -d integration-tests …` from the root
 task test-rust                # Rust (S1): the fixture/rig-gated suite; runs the prep script itself
 task test-ffi                # C/C++ (S2): needs CMake and a C/C++ compiler
 task test-py                 # Python (S3): needs uv
@@ -1034,10 +1035,11 @@ rebuild after a clean — and `task integration-test` runs `test-rust`,
 `test-ffi` and `test-python` in one go, every one of them even after a
 failure so a single pass reports everything, exiting non-zero and
 naming the failed suites if any did. The Taskfile itself lives in
-`integration-tests/`, beside the fixtures and suites it drives; the
-repository root's `Taskfile.yml` includes it flattened, so every task
-runs by its plain name from the root too, with `integration-tests/` as
-its working directory either way.
+`integration-tests/`, beside the fixtures and suites it drives, and it
+is the only one: Task searches upward from the current directory, so
+run `task` from `integration-tests/`, or `task -d integration-tests …`
+from the root. A task's working directory is `integration-tests/`
+either way.
 
 Going the other way, three tasks reclaim what the prep step laid down,
 each one directory or tier: `task clean-fixtures` removes the cache-only

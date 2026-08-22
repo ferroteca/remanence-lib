@@ -307,6 +307,7 @@ needs a downloaded or generated fixture is
 reached by `cargo build`/`cargo test` in any form:
 
 ```bash
+cd integration-tests  # the Taskfile lives here (or `task -d integration-tests …`)
 task test-rust        # downloads fixtures, then runs the Rust suite that needs them
 task test-py          # builds, stages, and runs pytest and mypy against it
 task test-ffi         # builds via CMake and runs the C/C++ suite with CTest

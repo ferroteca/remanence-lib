@@ -5,11 +5,11 @@
 # Python checks — none of the three is triggered by `cargo build`/
 # `cargo test` in any form; all three are reached only by running the
 # tasks below. The file lives here, beside the fixtures and suites it
-# drives, and the repository root's Taskfile includes it flattened, so
-# every task runs under its plain name from the root as well. Either
-# way a task's working directory is this one: paths below are relative
-# to `integration-tests/`, and the `cargo` invocations find the
-# workspace on their own.
+# drives, and it is the only Taskfile: run `task` from this directory
+# (or `task -d integration-tests …` from the root). A task's working
+# directory is this one: paths below are relative to
+# `integration-tests/`, and the `cargo` invocations find the workspace
+# on their own.
 #
 # Task, not just: Task embeds its own shell interpreter (mvdan.cc/sh), so
 # a task runs identically wherever it's invoked from with no external
