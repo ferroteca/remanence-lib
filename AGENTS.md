@@ -1035,9 +1035,9 @@ files in `integration-tests/fixtures/` (what its `.gitignore` lists —
 checked-in fixtures stay), `task clean-downloads` removes
 `integration-tests/downloads/`, and `task destroy-rigs` destroys every
 rig machine and cleans the rig's media cache through reliquary's own
-API, leaving the fixture a rig built in place. Nothing is rebuilt until
-the next `task test-rust`/`task test-python`, which prepares whatever is
-then missing.
+API, leaving the fixture a rig built in place; `task clean` runs all
+three. Nothing is rebuilt until the next `task test-rust`/`task
+test-python`, which prepares whatever is then missing.
 
 **The FFI crate's own fixture- and rig-gated tests moved the same way,
 earlier** (D65): `task test-ffi -L fixtures` is the KryoFlux flux walk,

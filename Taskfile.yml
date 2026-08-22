@@ -223,3 +223,14 @@ tasks:
       - cmd: |
           set -euo pipefail
           git clean -fX integration-tests/downloads
+
+  clean:
+    desc: >-
+      All three reclaims in one: `destroy-rigs`, then `clean-fixtures`,
+      then `clean-downloads` — the machines first, so nothing is still
+      holding an image when the files go. The next `task test-rust`/
+      `task test-python` re-downloads and rebuilds everything.
+    cmds:
+      - task: destroy-rigs
+      - task: clean-fixtures
+      - task: clean-downloads
