@@ -28,56 +28,6 @@ the way is D59.
 Companion design:
 [design/fm-mfm-read-channel.md](design/fm-mfm-read-channel.md).
 
-## F68 — ImageDisk read, presenting sectors in the order the recording numbers them
-
-Read an ImageDisk (`.imd`) artifact: the header and comment, every track's
-mode and data rate, its sector-id map and optional cylinder and head maps,
-and all nine of the sector-data record types the format defines.
-
-**The adapter presents sectors in stated-id order, and that is a ruling
-rather than a convenience** (D60). An ImageDisk track stores its sectors in
-the physical order they were recorded in and states separately which id
-each one carries; a raw dump of the same disk is already in id order. Where
-the ordering is resolved decides what every layer above has to know, and it
-belongs to the image format, which is the only layer holding the evidence
-for it. What the format states, the adapter applies; what it does not state
-is somebody else's declaration.
-
-That ruling is what lets this feature be small. With ids resolved, a
-uniform ImageDisk *is* a linear extent, so it needs no new device seam —
-the flat presentation every other sector image uses serves it exactly, and
-the CP/M layouts read it with the same declared block they read a raw dump
-with, minus the skew the format has already resolved.
-
-**Non-uniform images are read, and are not addressed by coordinate.** A
-disk whose track 0 differs from the rest is the ordinary case, not the
-exotic one, and it has no single geometry tuple to declare. Rather than
-invent one, the adapter declares none: byte access and every filesystem
-above it work exactly as they do elsewhere, and `read_sector` refuses
-through the geometry seam's existing rule, because the coordinate genuinely
-is not established. Giving that case coordinates is F80 and is deliberately
-not attempted here.
-
-**A sector the artifact does not hold is not zeroes.** ImageDisk records
-unavailable sectors explicitly, so the extents they occupy are excluded
-from what the load establishes as readable and a read touching one is
-refused with its range (P28) — the same machinery a short raw image already
-uses. Deleted-address marks, data-error marks and compressed encoding are
-counted into the load's evidence rather than flattened away.
-
-An unrecognized sector-data type byte, a map disagreeing with its track
-header, a duplicate id within a track, or a truncated final track is
-refused by name (P3), never repaired.
-
-Read only. The write direction is F69.
-
-Touches: S1, S2, S3. Supports: U1, U2; P3–P5, P8, P10, P12–P14, P21, P27,
-P28. F80 is not a prerequisite; it is what this feature deliberately
-declines to do.
-
-Companion design:
-[design/imagedisk-read.md](design/imagedisk-read.md).
-
 ## F77 — HxC MFM read, to the bit tier
 
 Read an HxC `.mfm` artifact as a flux-family medium and answer its

@@ -138,9 +138,9 @@ A recording's coordinates are one four-tuple today. An ImageDisk whose
 track 0 is single-density and whose remaining tracks are not — the ordinary
 CP/M and DOS floppy, not an exotic one — has no single tuple to state, and
 it is not `Undetermined` either: nothing disagrees, the recording simply is
-not uniform. F68 declines the case honestly, declaring no geometry so that
-bytes and filesystems read while `read_sector` refuses; this feature is
-what gives that recording real coordinates.
+not uniform. The ImageDisk reader declines the case honestly, declaring
+no geometry so that bytes and filesystems read while `read_sector`
+refuses; this feature is what gives that recording real coordinates.
 
 The work is a third settled state beside determined and undetermined,
 carrying the table rather than a tuple, without weakening what
@@ -152,8 +152,7 @@ geometry and refusing the odd one. It reads well in the common case and it
 silently loses track 0 of most CP/M and DOS floppies ever written, which is
 the track carrying the boot record.
 
-Touches: S1, S2, S3. Supports: U1, U2; P3, P4, P10, P13, P14. F68 is a
-prerequisite — it is what produced the recordings this serves.
+Touches: S1, S2, S3. Supports: U1, U2; P3, P4, P10, P13, P14.
 
 ## F69 — ImageDisk write
 
@@ -175,16 +174,15 @@ size is a different act with different evidence, and an adapter that
 invented one would be manufacturing a recording nobody made.
 
 Touches: S1, S2, S3. Supports: U1, U2; P2, P6, P7, P9, P10, P12, P13, P28.
-F68 is a prerequisite.
 
 Companion design:
 [design/record-structured-sector-images.md](design/record-structured-sector-images.md).
 
 ## F70 — H17Disk version 2 read
 
-Read a version 2 H17Disk artifact through the F68 seam. Its worth is
-double: it is a format worth reading, and it is the second format that
-proves the seam is not ImageDisk-shaped.
+Read a version 2 H17Disk artifact through the seam ImageDisk reads
+through. Its worth is double: it is a format worth reading, and it is the
+second format that proves the seam is not ImageDisk-shaped.
 
 Its structure is a tagged container rather than a bare track run, and what
 it carries beyond the payload is different in kind from ImageDisk's — disk
@@ -203,7 +201,7 @@ the other's improvement — the same distinction proposed U11 draws when it
 keeps both out of the flux tier.
 
 Touches: S1, S2, S3. Supports: U1, U2; P3–P5, P8, P10, P12–P14, P21, P27,
-P28. F68 is a prerequisite.
+P28.
 
 Companion design:
 [design/record-structured-sector-images.md](design/record-structured-sector-images.md).

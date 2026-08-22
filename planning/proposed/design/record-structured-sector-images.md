@@ -12,17 +12,17 @@ Design for
 pledged P8, P12–P14, P27 and P28. This is proposed, not implementation
 approval. Public names remain delivery surface design.
 
-> **ImageDisk *reading* was pledged separately and under a smaller cut.**
-> It is F68, and its design is
-> [pledged/design/imagedisk-read.md](../../pledged/design/imagedisk-read.md).
-> The cut turned on D60: with sector ordering resolved by the image format,
-> a uniform ImageDisk is a linear extent and needs none of the seam below.
-> What survives here is the case that still does — **writing**, where a
-> record's encoded length changes under the caller's hand, and H17Disk,
-> which has not been looked at against a real artifact yet. Read the
-> sections below in that light: they were written before F68 was built,
-> and the geometry section in particular is now F80's problem rather than
-> this family's.
+> **ImageDisk *reading* is delivered, and under a smaller cut than this
+> design called for.** The cut turned on D60: with sector ordering
+> resolved by the image format, a uniform ImageDisk is a linear extent and
+> needs none of the seam below. The reader is `crates/remanence/src/image/imd.rs`,
+> and its design was swept with its feature on delivery, as every
+> delivered design is. What survives here is the case that still needs
+> the seam — **writing**, where a record's encoded length changes under
+> the caller's hand, and H17Disk, which has not been looked at against a
+> real artifact yet. Read the sections below in that light: they were
+> written before the reader was built, and the geometry section in
+> particular is now F80's problem rather than this family's.
 
 ## What actually blocks these two formats
 
@@ -87,7 +87,7 @@ declares nine sectors and stores eight is a fact about the recording;
 serving zeroes for the ninth would be the one thing this library never
 does. The absence is named at the read.
 
-## The geometry problem, which is the real content of F68
+## The geometry problem, which is now F80's
 
 `RecordingGeometry` is one four-tuple, and the discovered-geometry seam
 settles between readings that may disagree. A mixed-density ImageDisk
