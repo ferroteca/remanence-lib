@@ -31,9 +31,8 @@ decisions are recorded — is mapped in [planning/README.md](planning/README.md)
 
 ## Development setup
 
-remanence-lib is a Cargo workspace, pinned to one toolchain by
-`rust-toolchain.toml` so every host formats and lints alike. A stable
-Rust toolchain is all the core needs.
+remanence-lib is a Cargo workspace. A stable Rust toolchain is all the
+core needs.
 
 ```bash
 cargo build                 # the Rust core and the C ABI; nothing but rustc is needed
