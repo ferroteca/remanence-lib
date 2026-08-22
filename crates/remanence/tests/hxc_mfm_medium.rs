@@ -35,7 +35,9 @@ impl Declared {
             tracks: 2,
             sides: 2,
             rpm: 300,
-            bitrate_kbps: 500,
+            // The container states the data rate, which is half the
+            // family's 500 kHz cell rate.
+            bitrate_kbps: 250,
             interface_type: 1,
         }
     }
@@ -211,7 +213,7 @@ fn a_container_is_read_and_its_cells_reach_the_records_it_was_written_from() {
     // the fact that its flux layer is this reader's restatement.
     let assurance = medium.assurance();
     let evidence = assurance.evidence.join("\n");
-    assert!(evidence.contains("500 kbit/s"), "{evidence}");
+    assert!(evidence.contains("250 kbit/s"), "{evidence}");
     assert!(evidence.contains("300 RPM"), "{evidence}");
     assert!(
         evidence.contains("no weak region"),
@@ -257,19 +259,134 @@ fn a_container_is_read_and_its_cells_reach_the_records_it_was_written_from() {
 
 #[test]
 fn a_rate_the_family_does_not_record_is_refused_showing_both_numbers() {
+    // 500 kbit/s is the PC's high-density rate, and a container stating
+    // it is not a recording of a double-density Heath family.
     let mut declared = Declared::h17_4();
-    declared.bitrate_kbps = 250;
+    declared.bitrate_kbps = 500;
     let (_session, outcome, path) = load(
         "wrong-rate",
         &whole_disk(&declared),
         FloppyDrive::HeathH37Dd,
     );
 
-    let error = outcome.expect_err("the family records at 500 kbit/s");
+    let error = outcome.expect_err("the family records at 250 kbit/s");
     let said = error.to_string();
-    assert!(said.contains("250"), "{said}");
-    assert!(said.contains("500000"), "{said}");
+    assert!(said.contains("states 500 kbit/s"), "{said}");
+    assert!(said.contains("records 250 kbit/s"), "{said}");
     assert!(said.contains("a mismatch is refused"), "{said}");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_measured_rate_within_the_band_is_the_familys_and_the_figure_is_declared() {
+    // HxC's writer states the rate it measured off the track it
+    // converted, so a 250 kbit/s recording arrives as 251 or 249.
+    let mut declared = Declared::h17_4();
+    declared.bitrate_kbps = 251;
+    let (mut session, outcome, path) = load(
+        "measured-rate",
+        &whole_disk(&declared),
+        FloppyDrive::HeathH37Dd,
+    );
+    outcome.expect("a figure one part in two hundred and fifty off is a measurement");
+
+    let id = *session.media().first().expect("pooled");
+    let medium = session.medium_mut(id).expect("pooled");
+    let evidence = medium.assurance().evidence.join(
+        "
+",
+    );
+    assert!(
+        evidence.contains("states 251 kbit/s, a measured figure"),
+        "{evidence}"
+    );
+    assert!(evidence.contains("family's 250 kbit/s"), "{evidence}");
+
+    // And the cells were laid at the family's rate, not the stated one:
+    // the records still come back.
+    let sectors = medium
+        .bytestream()
+        .expect("the codec resolves the container's cells")
+        .recognize_sectors(1 << 20)
+        .expect("the grammar reads the container's own records")
+        .into_ibm()
+        .expect("an IBM recording answers the IBM reading");
+    assert_eq!(sectors.claim_count(), 16);
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn an_unstated_rotation_takes_the_familys_and_declares_the_absence() {
+    // HxC's writer puts zero in the RPM field unconditionally, so zero
+    // is the writer declining to state one rather than a rotation of
+    // zero.
+    let mut declared = Declared::h17_4();
+    declared.rpm = 0;
+    let (mut session, outcome, path) =
+        load("no-rpm", &whole_disk(&declared), FloppyDrive::HeathH37Dd);
+    outcome.expect("an unstated rotation is the family's");
+
+    let id = *session.media().first().expect("pooled");
+    let medium = session.medium_mut(id).expect("pooled");
+    let evidence = medium.assurance().evidence.join(
+        "
+",
+    );
+    assert!(evidence.contains("states no RPM"), "{evidence}");
+    assert!(evidence.contains("family's 300 RPM is taken"), "{evidence}");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn cells_past_one_revolution_are_left_out_and_counted() {
+    // A real container holds a little more than one revolution, the
+    // writer having read past the index it started from. The family's
+    // circle holds 100,000 cells; this track states 101,000, and the
+    // thousand past the circle are an angle on nothing.
+    let declared = Declared::h17_4();
+    let mut long = track_cells(0, 0, 4);
+    let (gap, _) = encode_mfm(&[0x4e; 1], false);
+    while long.len() < 101_000 {
+        long.extend(&gap);
+    }
+    long.truncate(101_000);
+    let tracks = vec![
+        (0u16, 0u8, long),
+        (0, 1, track_cells(0, 1, 4)),
+        (1, 0, track_cells(1, 0, 4)),
+        (1, 1, track_cells(1, 1, 4)),
+    ];
+    let (mut session, outcome, path) = load(
+        "long-track",
+        &container(&declared, &tracks),
+        FloppyDrive::HeathH37Dd,
+    );
+    outcome.expect("a track longer than the circle loads");
+
+    let id = *session.media().first().expect("pooled");
+    let medium = session.medium_mut(id).expect("pooled");
+    let evidence = medium.assurance().evidence.join(
+        "
+",
+    );
+    assert!(
+        evidence.contains("1 track(s) state more cells than one revolution"),
+        "{evidence}"
+    );
+    assert!(
+        evidence.contains("'hxc-mfm.track-longer-than-the-circle' × 1000"),
+        "{evidence}"
+    );
+
+    // The records on the circle still read — all four tracks' worth.
+    let sectors = medium
+        .bytestream()
+        .expect("the codec resolves the container's cells")
+        .recognize_sectors(1 << 20)
+        .expect("the grammar reads the container's own records")
+        .into_ibm()
+        .expect("an IBM recording answers the IBM reading");
+    assert_eq!(sectors.claim_count(), 16);
     std::fs::remove_file(&path).ok();
 }
 

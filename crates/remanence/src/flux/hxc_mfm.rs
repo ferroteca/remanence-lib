@@ -20,11 +20,22 @@
 //! every location is read once, and the absences are declared on the
 //! medium rather than filled in with plausible values.
 //!
-//! **The rate is the container's and the family's, and a mismatch is
-//! refused.** The file states a bit rate and an RPM; the profile states
-//! a cell rate and a rotation. Where they disagree the artifact is
-//! refused by name showing both numbers, rather than clocked at a rate
-//! nobody stated.
+//! **The rate is the family's, and the container's figure is checked
+//! against it rather than clocking anything.** The file states a bit
+//! rate and an RPM; the profile states a cell rate and a rotation. Two
+//! things real containers do settled how the check reads, and both were
+//! learned from HxC's own writer rather than from its format note:
+//!
+//! - It writes the bit rate it *measured* from the track it converted,
+//!   so a 500 kbit/s recording arrives as 501 or 498. A figure within
+//!   one part in fifty of the family's rate is the family's rate — the
+//!   cells are laid at the family's nominal cell and the container's
+//!   figure is declared beside it — and one further off is refused by
+//!   name showing both numbers. The band is narrow on purpose: the
+//!   nearest rates in use, 250 and 300 kbit/s, sit twenty percent apart.
+//! - It writes zero for the RPM, always. Zero says the writer did not
+//!   state one, so the family's rotation is taken and the absence is
+//!   declared; a non-zero RPM that is not the family's is still refused.
 //!
 //! The artifact is read; nothing is written.
 
@@ -136,8 +147,8 @@ pub(crate) fn decode(
             profile.id, profile.surfaces.recorded
         )));
     }
-    check_rate(named, profile, bitrate_kbps)?;
-    let cell_cycles = check_rotation(named, profile, rpm)?;
+    let rate_note = check_rate(named, profile, bitrate_kbps)?;
+    let (cell_cycles, rotation_note) = check_rotation(named, profile, rpm)?;
 
     let entries = (tracks * sides) as usize;
     let list_end = list_at
@@ -218,28 +229,32 @@ pub(crate) fn decode(
 
         // The cells, most significant bit first — which is the order the
         // container writes them and the order the encoding reads them.
+        //
+        // A real container holds a little more than one revolution — the
+        // writer keeps reading past the index it started from, so the
+        // tail of a track repeats its head. A cell past the circle is not
+        // an angle on it, so those cells are left out and counted rather
+        // than laid on a second lap nothing declares.
         let mut pulses = Vec::new();
         let mut cell = 0u64;
         for byte in &bytes[at..end] {
             for shift in (0..8).rev() {
-                if byte >> shift & 1 == 1 {
+                if cell < cells_per_turn && byte >> shift & 1 == 1 {
                     pulses.push(Pulse::new(cell * cell_cycles, Strength::certain(2)));
                     transitions += 1;
                 }
                 cell += 1;
             }
         }
-        cells_read += cell;
+        cells_read += cell.min(cells_per_turn);
 
-        // A track longer than the circle is the container's business and
-        // not this reader's to trim: the cells past one revolution are
-        // counted and declared rather than dropped in silence.
         if cell > cells_per_turn {
             overrun += 1;
             loss.add(
                 "hxc-mfm.track-longer-than-the-circle",
-                "the container states more cells for a track than the family's circle \
-                 holds; the cells are read as stated and the circle is the family's",
+                "the container states more cells for a track than one revolution holds; \
+                 the cells past the circle are left out and counted, the circle being \
+                 the family's",
                 cell - cells_per_turn,
             );
         }
@@ -266,34 +281,56 @@ pub(crate) fn decode(
 
     let (mut medium, sink, total) = builder.seal()?;
     medium.attach_backing(Box::new(sink.into_source()), total, cache_bytes);
+    let mut evidence = vec![format!(
+        "an HxC MFM container of {tracks} track(s) by {sides} side(s), interface \
+         mode {interface_type}, stating {bitrate_kbps} kbit/s at {rpm} RPM"
+    )];
+    evidence.extend(rate_note);
+    evidence.extend(rotation_note);
+    if overrun > 0 {
+        evidence.push(format!(
+            "{overrun} track(s) state more cells than one revolution holds, which is the \
+             writer reading past the index it started from; the cells past the circle \
+             are counted in the declared loss and laid on no second lap"
+        ));
+    }
+    evidence.push(format!(
+        "{cells_read} cells laid on the circle as the container states them, \
+         {transitions} of them transitions"
+    ));
+    evidence.push(
+        "the container carries no weak region, no density variation and no second \
+         observation of a location; every cell is certain, every location is read \
+         once, and none of those absences is filled in"
+            .to_owned(),
+    );
+    evidence.push(
+        "the cells are the container's own and the transitions beneath them are this \
+         reader's restatement of them, declared synthetic rather than presented as \
+         recovered timing"
+            .to_owned(),
+    );
     let report = HxcMfmReport {
-        evidence: vec![
-            format!(
-                "an HxC MFM container of {tracks} track(s) by {sides} side(s), interface \
-                 mode {interface_type}, stating {bitrate_kbps} kbit/s at {rpm} RPM"
-            ),
-            format!(
-                "{cells_read} cells read as the container states them, {transitions} of \
-                 them transitions"
-            ),
-            "the container carries no weak region, no density variation and no second \
-             observation of a location; every cell is certain, every location is read \
-             once, and none of those absences is filled in"
-                .to_owned(),
-            "the cells are the container's own and the transitions beneath them are this \
-             reader's restatement of them, declared synthetic rather than presented as \
-             recovered timing"
-                .to_owned(),
-        ],
+        evidence,
         declared_loss: loss.into_entries(),
     };
-    let _ = overrun;
     Ok((medium, report))
 }
 
+/// How far a container's stated bit rate may sit from the family's and
+/// still be a measurement of it: one part in fifty, which is wider than
+/// any drive's speed tolerance and narrower than the gap to the nearest
+/// other rate in use.
+const RATE_BAND_DENOMINATOR: u64 = 50;
+
 /// Checks the container's declared bit rate against the family's cell
-/// rate, in the family's own terms.
-fn check_rate(named: &str, profile: &'static DriveProfile, bitrate_kbps: u64) -> Result<()> {
+/// rate, in the family's own terms, answering the evidence to declare
+/// where the two agree without being equal.
+fn check_rate(
+    named: &str,
+    profile: &'static DriveProfile,
+    bitrate_kbps: u64,
+) -> Result<Option<String>> {
     let zone = profile
         .density
         .first()
@@ -304,33 +341,67 @@ fn check_rate(named: &str, profile: &'static DriveProfile, bitrate_kbps: u64) ->
             profile.id
         )));
     }
-    let declared = zone.rate_numerator / zone.rate_denominator;
-    if bitrate_kbps == 0 || declared != bitrate_kbps * 1000 {
+    // The container states the *data* rate — 250 kbit/s for a
+    // double-density disk, 500 for high density — and a family's cell
+    // is half a data bit in both FM and MFM, so the family's cell rate
+    // is twice the figure the container states. A real container was
+    // what showed this: its tracks hold 200,000 cells on a 300 RPM
+    // circle and it states 501, which is a megahertz of cells, not half
+    // of one.
+    let cell_rate = zone.rate_numerator / zone.rate_denominator;
+    let family_kbps = cell_rate / 2000;
+    let stated = bitrate_kbps * 2000;
+    let band = cell_rate / RATE_BAND_DENOMINATOR;
+    if bitrate_kbps == 0 || stated.abs_diff(cell_rate) > band {
         return Err(refuse(format!(
-            "{named} states {bitrate_kbps} kbit/s and the family '{}' records at {} \
-             bit/s; the rate is fixed and a mismatch is refused rather than clocked at \
-             a rate nobody stated",
-            profile.id, declared
+            "{named} states {bitrate_kbps} kbit/s and the family '{}' records {family_kbps} \
+             kbit/s, a cell rate of {cell_rate} bit/s; the rate is fixed and a mismatch is \
+             refused rather than clocked at a rate nobody stated",
+            profile.id
         )));
     }
-    Ok(())
+    if stated == cell_rate {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "the container states {bitrate_kbps} kbit/s, a measured figure within one part \
+         in {RATE_BAND_DENOMINATOR} of the family's {family_kbps} kbit/s; the cells are \
+         laid at the family's rate and the container's figure is declared rather than \
+         clocked"
+    )))
 }
 
 /// Checks the container's declared RPM against the family's rotation,
-/// and answers the cell length the two agree on.
-fn check_rotation(named: &str, profile: &'static DriveProfile, rpm: u64) -> Result<u64> {
+/// and answers the cell length the two agree on, with the evidence to
+/// declare where the container stated no rotation at all.
+fn check_rotation(
+    named: &str,
+    profile: &'static DriveProfile,
+    rpm: u64,
+) -> Result<(u64, Option<String>)> {
     let zone = profile
         .density
         .first()
         .ok_or_else(|| refuse(format!("the family '{}' declares no cell rate", profile.id)))?;
     let declared_rpm = profile.rotation.reference_clock * 60 / profile.rotation.cycles_per_rotation;
-    if rpm != declared_rpm {
+    // HxC's own writer puts zero here unconditionally, so zero is the
+    // writer declining to state a rotation rather than a rotation of
+    // zero; the family's is taken and the absence is declared.
+    let note = if rpm == 0 {
+        Some(format!(
+            "the container states no RPM, which is how the HxC writer leaves the field; \
+             the family's {declared_rpm} RPM is taken and the absence is declared rather \
+             than read as a rotation of zero"
+        ))
+    } else if rpm != declared_rpm {
         return Err(refuse(format!(
             "{named} states {rpm} RPM and the family '{}' turns at {declared_rpm}; the \
              rotation is the family's and a mismatch is refused",
             profile.id
         )));
-    }
+    } else {
+        None
+    };
     let cell_cycles =
         profile.rotation.reference_clock * zone.rate_denominator / zone.rate_numerator;
     if cell_cycles == 0 || profile.rotation.cycles_per_rotation % cell_cycles != 0 {
@@ -341,5 +412,5 @@ fn check_rotation(named: &str, profile: &'static DriveProfile, rpm: u64) -> Resu
             profile.id, profile.rotation.cycles_per_rotation
         )));
     }
-    Ok(cell_cycles)
+    Ok((cell_cycles, note))
 }

@@ -2249,10 +2249,39 @@ pub struct Partition {
     /// it. Not part of the Python surface.
     session: Option<Arc<Mutex<remanence::Session>>>,
     media: Option<remanence::MediaId>,
-    sectors: Option<Arc<remanence::C1541Sectors>>,
-    /// The FM or MFM record layer, where that is what composed it. Never
-    /// set alongside `sectors`: a recording belongs to one family.
-    ibm_sectors: Option<Arc<remanence::IbmSectors>>,
+    layer: Option<RecordLayer>,
+}
+
+/// The recording's own record layer a node re-resolves through, where no
+/// device composed it: that layer is reached through its family's types
+/// rather than through a medium, and it is what owns the block grid or
+/// the extent the node reads. One recording belongs to one family, so a
+/// node holds at most one of these.
+#[derive(Clone)]
+enum RecordLayer {
+    /// A CBM DOS recording's blocks, addressed by the recording.
+    Cbm(Arc<remanence::C1541Sectors>),
+    /// An FM or MFM recording's records, which compose an addressed
+    /// extent (D62).
+    Ibm(Arc<remanence::IbmSectors>),
+}
+
+impl RecordLayer {
+    /// Re-opens the direct partition this layer composes and runs
+    /// `action` over the borrow that holds it.
+    fn with_view<T>(
+        &self,
+        action: impl FnOnce(remanence::PartitionView<'_>) -> PyResult<T>,
+    ) -> PyResult<T> {
+        match self {
+            Self::Cbm(sectors) => action(sectors.partition()),
+            // The extent's holder owns the device for the borrow's life.
+            Self::Ibm(sectors) => {
+                let mut holder = sectors.partition().map_err(to_py_err)?;
+                action(holder.view())
+            }
+        }
+    }
 }
 
 /// One partition of a pool, in the module's own record, keyed to whatever
@@ -2261,7 +2290,7 @@ fn partition_record(
     partition: &remanence::Partition,
     session: Option<Arc<Mutex<remanence::Session>>>,
     media: Option<remanence::MediaId>,
-    sectors: Option<Arc<remanence::C1541Sectors>>,
+    layer: Option<RecordLayer>,
 ) -> Partition {
     Partition {
         ordinal: partition.ordinal(),
@@ -2285,20 +2314,23 @@ fn partition_record(
         provenance: partition.provenance().map(str::to_owned),
         session,
         media,
-        sectors,
-        ibm_sectors: None,
+        layer,
     }
 }
 
 /// The direct partition over an FM or MFM recording's records, which
 /// unlike a CBM DOS recording's composes an addressed extent (D62).
 fn partition_over_ibm_sectors(sectors: Arc<remanence::IbmSectors>) -> Partition {
-    let mut holder = sectors
-        .partition()
-        .expect("the caller composed it once already");
-    let mut record = partition_record(holder.view().partition(), None, None, None);
-    record.ibm_sectors = Some(sectors);
-    record
+    let record = {
+        let mut holder = sectors
+            .partition()
+            .expect("the caller composed it once already");
+        partition_record(holder.view().partition(), None, None, None)
+    };
+    Partition {
+        layer: Some(RecordLayer::Ibm(sectors)),
+        ..record
+    }
 }
 
 impl Partition {
@@ -2315,14 +2347,8 @@ impl Partition {
         // The direct partition over a recording's own record layer
         // re-resolves from that layer, exactly as a pooled one re-resolves
         // from its medium (P13).
-        if let Some(sectors) = &self.sectors {
-            return action(sectors.partition());
-        }
-        // An FM or MFM recording composes an addressed extent instead
-        // (D62), and the holder is what owns it for the borrow's life.
-        if let Some(sectors) = &self.ibm_sectors {
-            let mut holder = sectors.partition().map_err(to_py_err)?;
-            return action(holder.view());
+        if let Some(layer) = &self.layer {
+            return layer.with_view(action);
         }
         let (Some(session), Some(media)) = (&self.session, self.media) else {
             return Err(categorized_py_err(
@@ -2364,8 +2390,8 @@ impl Partition {
         StorageSpace {
             session: self.session.clone(),
             media: self.media,
-            sectors: self.sectors.clone(),
-            ordinal: self.sectors.is_none().then_some(self.ordinal),
+            layer: self.layer.clone(),
+            ordinal: self.layer.is_none().then_some(self.ordinal),
             declared,
             volume_id: space.volume_id().map(remanence::VolumeId::value),
             start_bytes: space.start_bytes(),
@@ -2678,7 +2704,7 @@ fn media_source(source: &Bound<'_, PyAny>) -> PyResult<remanence::MediaSource> {
 fn with_filesystem<T>(
     session: Option<&Arc<Mutex<remanence::Session>>>,
     media: Option<remanence::MediaId>,
-    sectors: Option<&Arc<remanence::C1541Sectors>>,
+    layer: Option<&RecordLayer>,
     ordinal: Option<u32>,
     declared: Option<&str>,
     action: impl FnOnce(&mut remanence::StorageSpace<'_>) -> remanence::Result<T>,
@@ -2686,9 +2712,11 @@ fn with_filesystem<T>(
     // A space composed over a recording's own record layer re-resolves
     // from that layer, exactly as a medium-backed one re-resolves from its
     // medium (P13).
-    if let Some(sectors) = sectors {
-        let mut space = open_vantage(sectors.partition(), declared)?;
-        return action(&mut space).map_err(to_py_err);
+    if let Some(layer) = layer {
+        return layer.with_view(|view| {
+            let mut space = open_vantage(view, declared)?;
+            action(&mut space).map_err(to_py_err)
+        });
     }
     let (Some(session), Some(media)) = (session, media) else {
         return Err(categorized_py_err(
@@ -2777,7 +2805,7 @@ pub struct StorageSpace {
     /// family composed it: that family is reached through its own types
     /// rather than through a device, and the node still carries the file
     /// verbs.
-    sectors: Option<Arc<remanence::C1541Sectors>>,
+    layer: Option<RecordLayer>,
     /// The scheme's own ordinal of the partition that composed it — half
     /// the key it re-resolves by, and `None` where no medium composed it.
     ordinal: Option<u32>,
@@ -2839,7 +2867,7 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |space| space.read_at(offset, &mut buf),
@@ -2853,7 +2881,7 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |space| space.write_at(offset, data),
@@ -2886,7 +2914,7 @@ impl StorageSpace {
         Ok(with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.label(),
@@ -2902,7 +2930,7 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.evidence(),
@@ -2915,7 +2943,7 @@ impl StorageSpace {
         let entries = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.entries(path),
@@ -2939,7 +2967,7 @@ impl StorageSpace {
         let sources = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.files(path),
@@ -2955,7 +2983,7 @@ impl StorageSpace {
         let entry = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.stat(path),
@@ -2972,7 +3000,7 @@ impl StorageSpace {
         let entry = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| Ok(filesystem.get_file(path)?.entry().clone()),
@@ -2980,7 +3008,7 @@ impl StorageSpace {
         Ok(File {
             session: self.session.clone(),
             media: self.media,
-            sectors: self.sectors.clone(),
+            layer: self.layer.clone(),
             ordinal: self.ordinal,
             declared: self.declared.clone(),
             path: path.to_owned(),
@@ -2994,7 +3022,7 @@ impl StorageSpace {
         let bytes = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.read_file(path),
@@ -3010,7 +3038,7 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.write_file(path, contents),
@@ -3024,7 +3052,7 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.resize_file(path, size),
@@ -3038,7 +3066,7 @@ impl StorageSpace {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.make_directory(path),
@@ -3064,7 +3092,7 @@ pub struct File {
     media: Option<remanence::MediaId>,
     /// As on `StorageSpace`: the recording's own record layer a namespace
     /// is presented over, where no device composed it.
-    sectors: Option<Arc<remanence::C1541Sectors>>,
+    layer: Option<RecordLayer>,
     /// The partition the space holding this file was reached through, and
     /// the declaration it was opened under — the same key that space
     /// re-resolves by, so a file reaches its bytes the way its space does.
@@ -3117,7 +3145,7 @@ impl File {
         let discovery = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.discover(),
@@ -3139,7 +3167,7 @@ impl File {
         let source = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.source(),
@@ -3153,7 +3181,7 @@ impl File {
         let bytes = with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.bytes(),
@@ -3174,7 +3202,7 @@ impl File {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.read_at(offset, &mut buffer),
@@ -3191,7 +3219,7 @@ impl File {
         with_filesystem(
             self.session.as_ref(),
             self.media,
-            self.sectors.as_ref(),
+            self.layer.as_ref(),
             self.ordinal,
             self.declared.as_deref(),
             |filesystem| filesystem.get_file(&path)?.write_at(offset, data),
@@ -4045,7 +4073,12 @@ impl C1541Sectors {
     /// stays readable either way.
     fn partition(&self) -> Partition {
         let view = self.inner.partition();
-        partition_record(view.partition(), None, None, Some(Arc::clone(&self.inner)))
+        partition_record(
+            view.partition(),
+            None,
+            None,
+            Some(RecordLayer::Cbm(Arc::clone(&self.inner))),
+        )
     }
 
     /// How many records the recognition read.

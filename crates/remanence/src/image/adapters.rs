@@ -714,10 +714,11 @@ static IMD_DESCRIPTOR: ImageFormatDescriptor = ImageFormatDescriptor {
 /// The floppy types a MAME floppy image may be declared as recorded by:
 /// the enrolled flux families, since the container states no drive of
 /// its own and the family supplies the rate and encoding.
-pub(crate) static MFI_RECORDED_DEVICES: [DeviceType; 3] = [
+pub(crate) static MFI_RECORDED_DEVICES: [DeviceType; 4] = [
     DeviceType::Floppy(FloppyDrive::HeathH37),
     DeviceType::Floppy(FloppyDrive::HeathH37Dd48),
     DeviceType::Floppy(FloppyDrive::HeathH37Dd),
+    DeviceType::Floppy(FloppyDrive::Pc35Hd),
 ];
 
 /// The floppy types an ImageDisk artifact may be declared as recorded

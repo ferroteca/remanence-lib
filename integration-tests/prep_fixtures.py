@@ -68,6 +68,7 @@ RIG_DIR = REPO_ROOT / "test-fixture-prep" / "test-rigs"
 #           https://archive.org/details/digitoxin_20260110_213112
 #           https://archive.org/details/Populous2_Electronic_Arts_AtariST_DiskImage
 #           https://archive.org/details/kings-quest-iii-kixxr-xl-c-sierra-on-line-inc.
+#           https://archive.org/details/pcdos_7_de
 
 HDOS_URL = "https://sebhc.github.io/sebhc/software/HDOS/HDOS_1-0.zip"
 # The SEBHC archive publishes no hash; this pin records the archive as
@@ -184,6 +185,21 @@ BEACH_HEAD_ZIP_SHA256 = \
     "f8b532e6d43e082fa76f840ccf0a080d198504b7751381d642f63263f9f680d7"
 BEACH_HEAD_ZIP_NAME = "beach-head[access_1983](v5)(!).zip"
 
+# IBM PC DOS 7 (German), disk 1 of 5: a KryoFlux capture converted to an
+# HxC MFM container by HxC's own tool, which is what makes it the
+# artifact the `.mfm` reader is proved against — a real writer rather
+# than a synthetic one that shares the reader's assumptions. A plain
+# 1.44 MB FAT12 system disk, every sector of it readable, so the flux
+# ladder is provable end to end through the FAT volume. Fixture as
+# downloaded: nothing to extract.
+PCDOS_7_MFM_URL = (
+    "https://archive.org/download/pcdos_7_de/pcdos_7_de_disk1.mfm"
+)
+# Archive.org publishes an MD5 (134d2234f2457fd7674106e98a16ac54), which
+# the file as first fetched (2026-08-22) matches; this is its SHA-256.
+PCDOS_7_MFM_SHA256 =     "346139f444e0e321bc6bbc2a9993ff74947925fc1fc429bf4c2e3110330c5678"
+PCDOS_7_MFM_NAME = "pcdos-7-de-disk1.mfm"
+
 RIG_BLUEPRINT = "remanence-parttest"
 FREEDOS_QCOW2_NAME = "freedos-parttest.qcow2"
 
@@ -248,6 +264,8 @@ def download_archives() -> None:
                       CONTRA_NBZ_SHA256)
     _download_archive(FIXTURES_DIR / BEACH_HEAD_ZIP_NAME, BEACH_HEAD_URL,
                       BEACH_HEAD_ZIP_SHA256)
+    _download_archive(FIXTURES_DIR / PCDOS_7_MFM_NAME, PCDOS_7_MFM_URL,
+                      PCDOS_7_MFM_SHA256)
 
 
 def prepare_hdos_fixtures() -> None:

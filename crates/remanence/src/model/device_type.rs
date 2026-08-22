@@ -57,7 +57,8 @@ use std::fmt;
 use crate::error::{Error, Result};
 use crate::flux::drive_profile::{self, DriveProfile};
 use crate::model::media_profile::{
-    FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile, OPTICAL_120_PRESSED,
+    FLEXIBLE_3_5_HD, FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_SOFT, LOGICAL_BLOCK_512, MediaProfile,
+    OPTICAL_120_PRESSED,
 };
 use crate::partition::PartitionScheme;
 
@@ -93,6 +94,12 @@ pub enum FloppyDrive {
     /// surfaces and in step pitch, and a profile pairs one mechanism
     /// with one recording.
     HeathH37Dd,
+    /// The PC's 3.5-inch high-density drive — the standard PC floppy
+    /// controller driving the two-head 135 TPI mechanism at 500 kbit/s MFM,
+    /// eighteen 512-byte records to a track, 1.44 MB. The first enrolled
+    /// family that is not Heath's, and the drive every PC distribution
+    /// disk from DOS 3.3 on was read in.
+    Pc35Hd,
     /// The generic schemeless sector floppy: sector-addressed recording
     /// with geometry per-media — discovered evidence, never a type fact.
     Sector,
@@ -296,6 +303,19 @@ static H37_DD48_SPEC: FloppySpec = FloppySpec {
     flux_path: Some(&crate::flux::ibm::profiles::HEATH_H17_1_SOFT_DD),
 };
 
+static PC_3_5_HD_SPEC: FloppySpec = FloppySpec {
+    id: "pc-3.5-hd",
+    name: "PC 3.5-inch high-density floppy drive",
+    provenance: "declared from the PC floppy controller's published high-density \
+                 conventions: a two-head drive served 3.5-inch high-density media \
+                 and recording it at 500 kbit/s MFM, confirmed against an IBM PC DOS 7 \
+                 distribution disk",
+    article: &FLEXIBLE_3_5_HD,
+    slot_prefix: "pcfloppy",
+    addressing: Addressing::Sector,
+    flux_path: Some(&crate::flux::ibm::profiles::PC_3_5_HD),
+};
+
 static SECTOR_FLOPPY_SPEC: FloppySpec = FloppySpec {
     id: "sector-floppy",
     name: "sector floppy drive",
@@ -368,6 +388,7 @@ impl FloppyDrive {
             Self::HeathH37 => &H37_SPEC,
             Self::HeathH37Dd48 => &H37_DD48_SPEC,
             Self::HeathH37Dd => &H37_DD_SPEC,
+            Self::Pc35Hd => &PC_3_5_HD_SPEC,
             Self::Sector => &SECTOR_FLOPPY_SPEC,
         }
     }
@@ -410,12 +431,13 @@ impl OpticalDrive {
 
 impl DeviceType {
     /// Every device type this release claims, class by class.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Floppy(FloppyDrive::Commodore1541),
         Self::Floppy(FloppyDrive::HeathH17),
         Self::Floppy(FloppyDrive::HeathH37),
         Self::Floppy(FloppyDrive::HeathH37Dd48),
         Self::Floppy(FloppyDrive::HeathH37Dd),
+        Self::Floppy(FloppyDrive::Pc35Hd),
         Self::Floppy(FloppyDrive::Sector),
         Self::HardDrive(HardDrive::MbrSector),
         Self::HardDrive(HardDrive::MbrBlock),

@@ -1,18 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Paul Galbraith
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The Heath soft-sectored families (F77), and which codec each reads
-//! with.
+//! The FM and MFM families (F77) — the Heath soft-sectored ones and the
+//! PC's high-density drive — and which codec each reads with.
 //!
 //! **Two mechanisms, two profiles.** Heath shipped the H-17-1 and the
 //! H-17-4, and the difference between them is not a detail the same
 //! declaration can carry: one records a single surface at 48 tracks to
 //! the inch and the other two at 96. A profile pairs one mechanism with
 //! the recording it is served, so a mechanism reading two kinds of media
-//! is two profiles rather than one with a branch in it.
+//! is two profiles rather than one with a branch in it. The PC drive at
+//! the end is the same rule applied to a third mechanism: 3.5-inch media
+//! at 135 tracks to the inch, recorded at the high-density rate.
 //!
-//! **The rate is fixed and a mismatch is refused.** Both entries declare
-//! the cell rate their family records at; an artifact declaring another
+//! **The rate is fixed and a mismatch is refused.** Every entry declares
+//! the cell rate its family records at; an artifact declaring another
 //! is refused by name showing both numbers, rather than being clocked at
 //! a rate nobody stated. That is what makes a declared rate falsifiable:
 //! a wrong one here is a loud refusal on the first artifact, not a
@@ -24,7 +26,7 @@ use crate::flux::drive_profile::{
     Surfaces, UnrecordedRule,
 };
 use crate::flux::ibm::presentation::{FM, IbmCodec, MFM};
-use crate::model::media_profile::FLEXIBLE_5_25_SOFT;
+use crate::model::media_profile::{FLEXIBLE_3_5_HD, FLEXIBLE_5_25_SOFT};
 
 /// The reference clock both families' cells are stated against.
 ///
@@ -304,9 +306,81 @@ pub(crate) fn codec_of(profile: &'static DriveProfile) -> Option<&'static IbmCod
         id if id == HEATH_H17_1_SOFT.id => Some(&FM),
         id if id == HEATH_H17_1_SOFT_DD.id => Some(&MFM),
         id if id == HEATH_H17_4_SOFT.id => Some(&MFM),
+        id if id == PC_3_5_HD.id => Some(&MFM),
         _ => None,
     }
 }
+
+/// The PC's 3.5-inch high-density drive reading a 1.44 MB recording.
+///
+/// **This is the one mechanism here that is not Heath's, and it was
+/// enrolled for an artifact rather than ahead of one.** The standard PC
+/// controller drives a two-head 135 TPI mechanism at 300 RPM and records
+/// MFM at 500 kbit/s — a hundred thousand data bits, two hundred thousand
+/// cells, to a revolution — with eighteen 512-byte records to a track
+/// over eighty cylinders, which is the 1,474,560-byte disk everything
+/// from DOS 3.3 on was distributed on.
+///
+/// **Every number was confirmed against a recording before it was
+/// declared.** An IBM PC DOS 7 distribution disk, read as an HxC MFM
+/// container, states two sides and a measured 501 kbit/s, holds eighteen
+/// records on every one of its hundred and sixty tracks with every id
+/// and data CRC agreeing, and carries four empty tracks past cylinder 79
+/// where the capture drive kept stepping. That artifact is the fixture
+/// the integration suite reads; the four extra tracks are what the
+/// density zone's upper bound below is tested against.
+pub(crate) static PC_3_5_HD: DriveProfile = DriveProfile {
+    id: "pc-3.5-hd",
+    name: "PC 3.5-inch high-density drive",
+    version: 1,
+    provenance: "declared from the PC floppy controller's published high-density \
+                 conventions — two heads, 135 tracks to the inch, 300 RPM, MFM at \
+                 500 kbit/s, eighteen 512-byte records to a track — and confirmed \
+                 against an IBM PC DOS 7 distribution disk read as an HxC MFM \
+                 container",
+    media: &FLEXIBLE_3_5_HD,
+    stepping: Stepping {
+        // Mechanism and recording are at the same pitch, so one step
+        // reaches one track.
+        drive_tpi: 135,
+        recorded_tpi: 135,
+        first_location: 0,
+    },
+    rotation: Rotation {
+        nominal_numerator: 5,
+        nominal_denominator: 1,
+        reference_clock: REFERENCE_CLOCK,
+        cycles_per_rotation: CYCLES_PER_ROTATION,
+        index_observed_by_drive: true,
+    },
+    surfaces: Surfaces { recorded: 2 },
+    encoding: MFM_ENCODING,
+    density: &[DensityZone {
+        first_location: 0,
+        last_location: 79,
+        // A megahertz of cells: a 16-cycle cell against the reference
+        // clock, two hundred thousand of them to a revolution, carrying
+        // the 500 kbit/s the PC calls high density — a cell being half
+        // a data bit, exactly as the Heath double-density entry's 500 kHz
+        // carries 250 kbit/s. The container's own track lengths say so:
+        // 25,000 bytes of cells to a track, read off the fixture.
+        rate_numerator: 1_000_000,
+        rate_denominator: 1,
+        records: 18,
+    }],
+    materialization: MATERIALIZATION,
+    presentation: Presentation {
+        read_channel: READ_CHANNEL,
+        channel_policy: crate::flux::presentation::ReadChannelPolicy {
+            density: crate::flux::presentation::DensityPolicy::Declared,
+            unzoned: crate::flux::presentation::UnzonedPolicy::Omit,
+            weak_pulse: crate::flux::presentation::WeakPulsePolicy::Seeded,
+            seed: 0x0035_0012_0035_0012,
+        },
+        bytestream: crate::flux::ibm::presentation::materialize_declared,
+        sectors: crate::flux::ibm::sectors::recognize_declared,
+    },
+};
 
 #[cfg(test)]
 mod tests {

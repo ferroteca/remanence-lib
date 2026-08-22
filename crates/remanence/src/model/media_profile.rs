@@ -112,12 +112,14 @@ impl MediaFamily {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FormFactor {
     Inch5_25,
+    Inch3_5,
 }
 
 impl FormFactor {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Inch5_25 => "5.25-inch",
+            Self::Inch3_5 => "3.5-inch",
         }
     }
 }
@@ -159,6 +161,10 @@ impl Sectoring {
 pub(crate) enum WriteProtect {
     /// A notch cut in the jacket edge, read by the drive's sensor.
     Notch { protected_when_covered: bool },
+    /// A sliding tab in the shell that opens or closes a window, read by
+    /// the drive's sensor. The sense runs the other way from a notch: a
+    /// 3.5-inch disk is protected when its window is *open*.
+    Slider { protected_when_open: bool },
 }
 
 /// The passive compatibility facts of one flexible magnetic media type.
@@ -369,6 +375,32 @@ pub(crate) static FLEXIBLE_5_25_HARD_10: MediaProfile = MediaProfile {
     }),
 };
 
+/// High-density 3.5-inch media: what a PC's 1.44 MB drive is served.
+///
+/// The index is the hub's rather than the disk's: a 3.5-inch cookie has
+/// no hole punched in it, and the drive derives the index pulse from the
+/// metal hub it spins, which is why `index_holes` is zero here while the
+/// drive profile still declares that it observes an index.
+pub(crate) static FLEXIBLE_3_5_HD: MediaProfile = MediaProfile {
+    id: "flexible-3.5-hd",
+    name: "3.5-inch high-density flexible disk",
+    provenance: "declared from the published 3.5-inch high-density media class: a \
+                 720-oersted coating made to 135 tracks per inch in a rigid shell, \
+                 a metal hub the drive keys to and takes its index from, no holes in \
+                 the disk itself, and a sliding tab that protects the disk when its \
+                 window is open",
+    facts: MediaFacts::FlexibleMagnetic(FlexibleMagnetic {
+        form_factor: FormFactor::Inch3_5,
+        coercivity_oersteds: 720,
+        tracks_per_inch: 135,
+        sectoring: Sectoring::Soft,
+        index_holes: 0,
+        write_protect: WriteProtect::Slider {
+            protected_when_open: true,
+        },
+    }),
+};
+
 /// The logical-block medium every block-active image presents.
 pub(crate) static LOGICAL_BLOCK_512: MediaProfile = MediaProfile {
     id: "logical-block-512",
@@ -450,9 +482,10 @@ pub(crate) static AUTHORED: MediaProfile = MediaProfile {
 /// The enrolled articles. Adding one changes its declaration, its
 /// tests, and this list — nothing else, because there is no behavior
 /// here to wire up.
-static ENROLLED: [&MediaProfile; 6] = [
+static ENROLLED: [&MediaProfile; 7] = [
     &FLEXIBLE_5_25_SOFT,
     &FLEXIBLE_5_25_HARD_10,
+    &FLEXIBLE_3_5_HD,
     &LOGICAL_BLOCK_512,
     &OPTICAL_120_PRESSED,
     &VIRTUAL,
@@ -562,6 +595,7 @@ mod tests {
         for physical in [
             &FLEXIBLE_5_25_SOFT,
             &FLEXIBLE_5_25_HARD_10,
+            &FLEXIBLE_3_5_HD,
             &LOGICAL_BLOCK_512,
             &OPTICAL_120_PRESSED,
         ] {
@@ -641,6 +675,31 @@ mod tests {
         assert!(
             FLEXIBLE_5_25_SOFT.logical_block().is_none(),
             "a flexible disk answers no block question"
+        );
+    }
+
+    #[test]
+    fn the_high_density_article_takes_its_index_from_the_hub_and_protects_when_open() {
+        let flexible = FLEXIBLE_3_5_HD
+            .flexible_magnetic()
+            .expect("its own family's facts");
+        assert_eq!(flexible.form_factor, FormFactor::Inch3_5);
+        assert_eq!(flexible.form_factor.name(), "3.5-inch");
+        assert_eq!(flexible.coercivity_oersteds, 720);
+        assert_eq!(flexible.tracks_per_inch, 135);
+        assert_eq!(flexible.sectoring, Sectoring::Soft);
+        // No hole in the cookie: the drive takes its index from the hub.
+        assert_eq!(flexible.index_holes, 0);
+        // The sense runs the other way from a 5.25-inch notch.
+        assert_eq!(
+            flexible.write_protect,
+            WriteProtect::Slider {
+                protected_when_open: true
+            }
+        );
+        assert_eq!(
+            by_id("flexible-3.5-hd").expect("enrolled").id,
+            FLEXIBLE_3_5_HD.id
         );
 
         let block = LOGICAL_BLOCK_512

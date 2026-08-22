@@ -44,6 +44,10 @@ name = "pcdos_files"
 required-features = ["fixtures"]
 
 [[test]]
+name = "pcdos7_hxc_mfm"
+required-features = ["fixtures"]
+
+[[test]]
 name = "identify_hdos_image"
 required-features = ["fixtures"]
 

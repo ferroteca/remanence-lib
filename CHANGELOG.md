@@ -18,6 +18,82 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **The PC's 3.5-inch high-density drive is enrolled** (F77). `FloppyDrive::Pc35Hd`
+  (`pc-3.5-hd`) is the standard PC controller driving the two-head 135 TPI
+  mechanism at 300 RPM: MFM at 500 kbit/s — a megahertz of cells, two
+  hundred thousand to a revolution — eighteen 512-byte records to a track
+  over eighty cylinders, the 1.44 MB disk every PC distribution from DOS
+  3.3 on shipped on. It takes the bay `pcfloppy0`, is served a new
+  article, `flexible-3.5-hd` — 720-oersted media in a rigid shell whose
+  index is the hub's rather than a hole in the disk, and whose sliding
+  tab protects when *open*, the opposite sense from a 5.25-inch notch —
+  and it is the first enrolled family that is not Heath's. The C ABI and
+  the Python module accept the new id wherever a device type is spelled;
+  neither surface's code changes.
+
+  **Every number was confirmed against a recording before it was
+  declared**, and the recording is now a pinned fixture: disk 1 of IBM
+  PC DOS 7, a KryoFlux capture converted to an HxC MFM container by HxC's
+  own tool. It reads whole — 2,880 records over 160 tracks with every id
+  and data CRC agreeing — and the FAT volume above them opens through
+  the ordinary partition seam: the root lists its 44 entries in the
+  order IBM wrote them, and `IBMBIO.COM` and `COMMAND.COM` read at their
+  recorded lengths. Both the Rust and the Python integration suites
+  assert it.
+
+### Changed
+
+- **The HxC MFM reader now reads what HxC's writer actually writes**
+  (F77). The synthetic containers the reader was proved against shared
+  its assumptions, and the first real one disagreed with three of them.
+  Each is now read as the writer means it and declared as evidence
+  rather than refused or silently accommodated:
+
+  - **The stated bit rate is the data rate, and it is a measurement.**
+    The reader compared the container's figure against the family's
+    *cell* rate, a factor of two apart — the synthetic writer made the
+    same mistake, so every test agreed — and it demanded equality, where
+    HxC's writer states the rate it measured off the track it converted:
+    501 kbit/s on this disk, 498 on another. A figure within one part in
+    fifty of the family's rate is now the family's rate, the cells laid
+    at the family's nominal cell and the container's figure declared
+    beside it; one further off is still refused showing both numbers.
+    The band is narrow on purpose — the nearest rates in use, 250 and
+    300 kbit/s, sit twenty percent apart.
+  - **An RPM of zero is no RPM.** HxC's writer puts zero in the field
+    unconditionally. The reader refused it as a rotation the family does
+    not turn at; it now takes the family's rotation and declares the
+    absence. A non-zero RPM that is not the family's is refused as
+    before.
+  - **A track longer than the circle is cut at the circle.** The writer
+    keeps reading past the index it started from, so every track holds a
+    little more than one revolution. The reader's "count the overrun"
+    path had never run — the medium beneath it refuses a pulse at or
+    past one rotation, so a real container could not load at all. The
+    cells past the circle are now left out and counted in the declared
+    loss, and the evidence says how many tracks overran.
+
+  **No synthetic test could have found any of the three**, which is the
+  second time this release line has learned that lesson from a real
+  disk. The synthetic suite now writes containers the way the real
+  writer does — data rate, no RPM, a track past the circle — and
+  asserts each reading.
+
+### Fixed
+
+- **A FAT volume over an FM or MFM recording opens from Python** (S3).
+  `IbmSectors.partition()` answered a `Partition`, and the space its
+  `filesystem_as` handed back could not re-resolve: every verb on it
+  raised "this space names no medium to be resolved through". The Python
+  records carried a re-resolve key for a CBM DOS record layer only, and
+  the IBM layer had been bolted onto `Partition` alone, reaching neither
+  `StorageSpace` nor `File`. One key now names whichever family's record
+  layer composed the node, and all three records carry it. The Python
+  integration suite reads the PC DOS 7 disk's root and two files
+  through that door, which is how the gap was found.
+
 ## 0.0.1-alpha.6 - 2026-08-19
 
 ### Added

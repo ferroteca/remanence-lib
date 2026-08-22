@@ -172,6 +172,25 @@ already reads, so the reach in F78 is provable end to end, and one
 single-density (FM) recording, because a channel proved only on MFM has
 not been proved.
 
+> **Annotation (2026-08-22):** the `.mfm` half is pinned —
+> `integration-tests/prep_fixtures.py` fetches disk 1 of IBM PC DOS 7
+> from archive.org, a KryoFlux capture converted by HxC's own tool — and
+> it cost exactly what the paragraph above predicted. The synthetic
+> containers had agreed with the reader on three things the writer does
+> differently: it states the *data* rate, measured (501, not 500), where
+> the reader compared against the cell rate and demanded equality; it
+> states no RPM at all; and every track runs a little past the index,
+> which the reader claimed to count and in fact could not load. All
+> three are read as the writer means them now and declared as evidence.
+> Reading it also needed the PC's 3.5-inch high-density drive enrolled,
+> there being no family for a 1.44 MB disk until then. With it the
+> reach F78 pledged is proved on a real PC disk: 2,880 of 2,880 records,
+> and the FAT volume's 44 root entries and two system files read whole,
+> from Rust and from Python. The single-density recording was proved on
+> a private artifact (recorded in the alpha.6 changelog) and is not
+> pinned; whether that satisfies the set wanted above is the owner's
+> call to make when sweeping these two features.
+
 Synthetic fixtures carry the rest, as `disk/fixtures.rs` already does for
 the commit tests: encoding a known track and decoding it back is the
 direct test of a channel, and the refusals — a truncated track table, a
