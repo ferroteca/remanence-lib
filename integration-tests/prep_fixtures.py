@@ -33,10 +33,13 @@ it:
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -125,10 +128,12 @@ CPM_2203_SOFT_IMAGE_NAME = "cpm_2_2_03_Disk_1.imd"
 # it serves two readers: the media-descriptor path that reads a 1.x
 # volume, and the ImageDisk adapter, for which it is the second and
 # first non-Heath artifact.
-PCDOS_100_URL = (
-    "https://winworldpc.com/download/5ee2809d-03c2-b6c2-adc3-9711c3a5c28f/"
-    "from/c3ae6ee2-8099-713d-3411-c3a6e280947e"
-)
+# The download *page*, not a mirror: WinWorld serves each file from
+# several mirrors, each behind its own `/from/<mirror>` link on this
+# page, and any one of them can 404 for a while. The page is scraped
+# for the current set and each is tried in turn (`_winworld_mirrors`).
+PCDOS_100_PAGE_URL = \
+    "https://winworldpc.com/download/5ee2809d-03c2-b6c2-adc3-9711c3a5c28f"
 # WinWorld publishes no hash; first fetched 2026-08-16.
 PCDOS_100_ARCHIVE_SHA256 = \
     "7187788b8c1e4f441428e81785134d433a014f7bd1252fd9f1417a9a55dfe65d"
@@ -214,6 +219,17 @@ def _sha256(path: Path) -> str:
 
 def _download_archive(target: Path, url: str, sha256: str) -> None:
     """Download ``url`` to ``target`` unless a verified copy is present."""
+    _download_archive_from(target, [url], sha256)
+
+
+def _download_archive_from(target: Path, urls: list[str], sha256: str) -> None:
+    """Download ``target`` from the first of ``urls`` that serves it.
+
+    A URL that fails with an HTTP or network error is skipped and the
+    next tried; only when every one fails is the last error raised.
+    A URL that serves the wrong bytes is not retried elsewhere — that
+    is a changed artifact, not a dead mirror, and the pin decides.
+    """
     if target.exists():
         if _sha256(target) == sha256:
             print(f"{target.name} already downloaded")
@@ -221,16 +237,25 @@ def _download_archive(target: Path, url: str, sha256: str) -> None:
         print(f"{target.name} fails verification; refetching...")
         target.unlink()
 
-    print(f"Downloading {url}...")
-
     def report(blocks: int, block_size: int, total: int) -> None:
         done = blocks * block_size
         if total >> 20 and blocks % 512 == 0:
             print(f"\r  {done >> 20} / {total >> 20} MiB", end="", flush=True)
 
     partial = target.with_suffix(target.suffix + ".part")
-    urllib.request.urlretrieve(url, partial, reporthook=report)
-    print()
+    for index, url in enumerate(urls):
+        print(f"Downloading {url}...")
+        try:
+            urllib.request.urlretrieve(url, partial, reporthook=report)
+        except (urllib.error.URLError, OSError) as error:
+            print()
+            partial.unlink(missing_ok=True)
+            if index + 1 == len(urls):
+                raise
+            print(f"  {error}; trying the next mirror")
+            continue
+        print()
+        break
     actual = _sha256(partial)
     if actual != sha256:
         partial.unlink()
@@ -239,6 +264,32 @@ def _download_archive(target: Path, url: str, sha256: str) -> None:
             f"{sha256} is pinned; refusing the archive."
         )
     partial.replace(target)
+
+
+_WINWORLD_MIRROR_LINK = re.compile(
+    r'href="(/download/[0-9a-f-]+/from/[0-9a-f-]+)"')
+
+
+def _winworld_mirrors(page_url: str) -> list[str]:
+    """The mirror URLs a WinWorld download page currently offers.
+
+    WinWorld lists its mirrors as ``/download/<file>/from/<mirror>``
+    links; the page is the only place the current set is published,
+    and the ones on it are returned in the page's own order. An empty
+    list is an error: a page with no mirror on it is a changed site,
+    not a file with nowhere to come from.
+    """
+    print(f"Reading mirrors from {page_url}...")
+    with urllib.request.urlopen(page_url) as response:
+        page = response.read().decode("utf-8", errors="replace")
+    mirrors: list[str] = []
+    for path in _WINWORLD_MIRROR_LINK.findall(page):
+        url = urllib.parse.urljoin(page_url, path)
+        if url not in mirrors:
+            mirrors.append(url)
+    if not mirrors:
+        sys.exit(f"{page_url} lists no download mirror; the page has changed.")
+    return mirrors
 
 
 def download_archives() -> None:
@@ -253,8 +304,9 @@ def download_archives() -> None:
                       CPM_2203_ZIP_SHA256)
     _download_archive(FIXTURES_DIR / CPM_2203_SOFT_ZIP_NAME,
                       CPM_2203_SOFT_URL, CPM_2203_SOFT_ZIP_SHA256)
-    _download_archive(DOWNLOADS_DIR / PCDOS_100_ARCHIVE_NAME, PCDOS_100_URL,
-                      PCDOS_100_ARCHIVE_SHA256)
+    _download_archive_from(DOWNLOADS_DIR / PCDOS_100_ARCHIVE_NAME,
+                           _winworld_mirrors(PCDOS_100_PAGE_URL),
+                           PCDOS_100_ARCHIVE_SHA256)
     _download_archive(DOWNLOADS_DIR / PINBALL_ARCHIVE_NAME, PINBALL_URL,
                       PINBALL_ARCHIVE_SHA256)
     # A single NIB-compressed disk image, fixture as downloaded — no
