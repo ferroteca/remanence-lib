@@ -98,10 +98,13 @@ local editable checkout for the run:
 First build notes: the LiveCD zip (~0.5 GB) downloads into
 `../test-rigs/cache/media/`, and the install run can take
 tens of minutes.
-After a failed build the machine is still there to inspect. With no
-project environment to resolve `rlq` through any more, the recovery
-commands name reliquary explicitly and take the home directory's real
-path from the repository root:
+After a failed build the machine is still there to inspect. Once it
+has been, `task destroy-rigs` (from the repository root) destroys
+every rig machine and cleans the media cache through the same API the
+build uses. For a finer hand, with no project environment to resolve
+`rlq` through any more, the recovery commands name reliquary
+explicitly and take the home directory's real path from the
+repository root:
 `uv run --with reliquary==0.1.0a3 rlq destroy-machine --machine
 remanence-parttest-<n> --home-dir test-fixture-prep/test-rigs` (`rlq
 list-machines --home-dir …` names them) resets it, and `rlq

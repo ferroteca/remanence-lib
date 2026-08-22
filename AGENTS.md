@@ -1029,6 +1029,16 @@ fixtures` and `--features rigs`; `task test-rust` exists for the same
 reason `task test-ffi`/`task test-py` do, a recipe nobody has to
 remember the invocation, or the prerequisite, for.
 
+Going the other way, three tasks reclaim what the prep step laid down,
+each one directory or tier: `task clean-fixtures` removes the cache-only
+files in `integration-tests/fixtures/` (what its `.gitignore` lists —
+checked-in fixtures stay), `task clean-downloads` removes
+`integration-tests/downloads/`, and `task destroy-rigs` destroys every
+rig machine and cleans the rig's media cache through reliquary's own
+API, leaving the fixture a rig built in place. Nothing is rebuilt until
+the next `task test-rust`/`task test-python`, which prepares whatever is
+then missing.
+
 **The FFI crate's own fixture- and rig-gated tests moved the same way,
 earlier** (D65): `task test-ffi -L fixtures` is the KryoFlux flux walk,
 and `task test-ffi -L rigs` is every test crossing the boundary with

@@ -515,21 +515,50 @@ def retire_leftover_machines(session) -> None:
     until the next build, no longer.
     """
     for state in session.list_machines(blueprint=RIG_BLUEPRINT):
-        machine_id = state["id"]
-        print(f"Destroying leftover machine {machine_id} (a fresh build "
+        print(f"Destroying leftover machine {state['id']} (a fresh build "
               "starts from a blank disk)...")
-        try:
-            if state.get("phase") == "running":
-                # A guest that powered itself off still reads as
-                # running until a stop reconciles it.
-                session.stop_machine(machine_id)
-            session.destroy_machine(machine_id)
-        except reliquary.ReliquaryError as error:
-            sys.exit(
-                f"could not destroy leftover machine {machine_id}: {error}\n"
-                "(see test-fixture-prep/test-rigs/README.md for the rlq "
-                "commands that reset a machine by hand)"
-            )
+        destroy_machine(state, session)
+
+
+def destroy_machine(state: dict, session) -> None:
+    """Destroy one machine from its state record, stopping it first.
+
+    A guest that powered itself off still reads as `running` until a
+    stop reconciles it, so a running machine is stopped before it is
+    destroyed. A machine that will not go ends the run by name: there
+    is no building over it, and the README records the `rlq` commands
+    that reset one by hand.
+    """
+    machine_id = state["id"]
+    try:
+        if state.get("phase") == "running":
+            session.stop_machine(machine_id)
+        session.destroy_machine(machine_id)
+        print(f"  destroyed machine {machine_id}")
+    except reliquary.ReliquaryError as error:
+        sys.exit(
+            f"could not destroy machine {machine_id}: {error}\n"
+            "(see test-fixture-prep/test-rigs/README.md for the rlq "
+            "commands that reset a machine by hand)"
+        )
+
+
+def destroy_rigs() -> None:
+    """`task destroy-rigs`: every rig machine, and the media cache with it.
+
+    The fixture a rig built is untouched — it is the deliverable, and
+    `task clean-fixtures` is what removes it. This reclaims only the
+    scaffolding: machines left by interrupted builds, and the cached
+    LiveCD that the next build re-downloads.
+    """
+    session = reliquary.Session(rig_context())
+    machines = session.list_machines()
+    if not machines:
+        print("No rig machines to destroy.")
+    for state in machines:
+        print(f"Destroying machine {state['id']}...")
+        destroy_machine(state, session)
+    clean_rig_media(session)
 
 
 def build_rig_machine(session) -> str:
@@ -653,4 +682,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # `--destroy-rigs` is the one mode that is not preparing: the
+    # reclaim `task destroy-rigs` runs. Bare, the script prepares
+    # everything, and takes no selection of less than that.
+    if sys.argv[1:] == ["--destroy-rigs"]:
+        destroy_rigs()
+    elif sys.argv[1:]:
+        sys.exit(f"unknown arguments: {' '.join(sys.argv[1:])} "
+                 "(the script takes none, or --destroy-rigs alone)")
+    else:
+        main()

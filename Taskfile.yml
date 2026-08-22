@@ -186,3 +186,40 @@ tasks:
           set -euo pipefail
           BUILD_DIR=$(cargo run -q -p xtask -- ffi)
           ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure {{.CLI_ARGS}}
+
+  destroy-rigs:
+    desc: >-
+      Destroys every rig machine under `test-fixture-prep/test-rigs/cache/`
+      (stopping one that still reads as running) and cleans the media
+      cache — the scaffolding a build leaves behind, through reliquary's
+      own API so its locks and phases are honoured. The fixture a rig
+      built is untouched; `task clean-fixtures` is what removes that, and
+      the next `task test-rust` rebuilds whatever is missing.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          uv run integration-tests/prep_fixtures.py --destroy-rigs
+
+  clean-fixtures:
+    desc: >-
+      Removes the cache-only files from `integration-tests/fixtures/` —
+      everything its `.gitignore` lists: downloaded archives, the images
+      extracted from them, and the rig-built `freedos-parttest.qcow2`.
+      Checked-in fixtures are not listed there and stay. The next
+      `task test-rust`/`task test-python` re-downloads and rebuilds what
+      is missing (the rig build re-downloads its ~0.5 GB LiveCD).
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          git clean -fX integration-tests/fixtures
+
+  clean-downloads:
+    desc: >-
+      Removes `integration-tests/downloads/` — the archives nothing reads
+      directly, held only so a fixture can be repackaged out of them. The
+      fixtures already repackaged stay; `task clean-fixtures` is what
+      removes those.
+    cmds:
+      - cmd: |
+          set -euo pipefail
+          git clean -fX integration-tests/downloads
