@@ -206,6 +206,8 @@ PCDOS_7_MFM_SHA256 =     "346139f444e0e321bc6bbc2a9993ff74947925fc1fc429bf4c2e31
 PCDOS_7_MFM_NAME = "pcdos-7-de-disk1.mfm"
 
 RIG_BLUEPRINT = "remanence-parttest"
+# The blueprint's hard-drive slot, whose image is the artifact.
+RIG_HDD = "hdd0"
 FREEDOS_QCOW2_NAME = "freedos-parttest.qcow2"
 
 
@@ -500,10 +502,10 @@ def rig_context():
     )
 
 
-def build_rig_machine(session) -> tuple[str, Path]:
-    """Drive the rig's install script; return its machine and directory.
+def build_rig_machine(session) -> str:
+    """Drive the rig's install script; return its machine's id.
 
-    Returning from inside the `try` is what keeps the caller's names
+    Returning from inside the `try` is what keeps the caller's name
     unconditionally bound: the only other way out is `sys.exit`, which
     never reaches a caller at all.
     """
@@ -513,9 +515,7 @@ def build_rig_machine(session) -> tuple[str, Path]:
         # media spec, and drives the install script; failures raise by
         # error class.
         session.run_script("install", blueprint=RIG_BLUEPRINT)
-        machine_id = session.resolve_machine(blueprint=RIG_BLUEPRINT)
-        machine_dir = session.get_machine_dir(machine=machine_id)
-        return machine_id, Path(machine_dir)
+        return session.resolve_machine(blueprint=RIG_BLUEPRINT)
     except reliquary.ReliquaryError as error:
         sys.exit(
             f"reliquary install run failed: {error}\n"
@@ -533,15 +533,20 @@ def prepare_freedos_fixture(session) -> None:
         return
 
     print(f"Building {target.name} with reliquary...")
-    machine_id, machine_dir = build_rig_machine(session)
+    machine_id = build_rig_machine(session)
 
-    # Harvest the machine's hdd0 image.
-    media_dir = machine_dir / "media"
-    image = next(iter(sorted(media_dir.glob("*.qcow2"))), None)
-    if image is None:
+    # Harvest the machine's hdd0 image from where the machine's own
+    # record says it was materialized: reliquary lays its per-machine
+    # images out as it sees fit (the directory moved between releases),
+    # and machine.json carries each drive's realized path.
+    state = session.load_machine_state(machine_id)
+    realized = state.get("drives", {}).get(RIG_HDD, {}).get("path")
+    image = Path(realized) if realized else None
+    if image is None or not image.is_file():
         sys.exit(
-            f"no qcow2 image found under {media_dir} — if reliquary "
-            "materialized hdd0 as another format, the rig blueprint needs "
+            f"machine {machine_id} records no image for drive {RIG_HDD} "
+            f"(path: {realized!r}) — if reliquary materialized it "
+            "elsewhere or as another format, the rig blueprint needs "
             "adjusting"
         )
     shutil.copy(image, target)
