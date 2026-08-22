@@ -98,7 +98,7 @@ After a failed build the machine is still there to inspect. With no
 project environment to resolve `rlq` through any more, the recovery
 commands name reliquary explicitly and take the home directory's real
 path from the repository root:
-`uv run --with reliquary==0.1.0a2 rlq destroy-machine --machine
+`uv run --with reliquary==0.1.0a3 rlq destroy-machine --machine
 remanence-parttest-<n> --home-dir test-fixture-prep/test-rigs` (`rlq
 list-machines --home-dir …` names them) resets it, and `rlq
 clean-media --home-dir …` gives back the LiveCD. A machine whose guest
