@@ -141,6 +141,17 @@ void group_catalogs()
     }
     CHECK(chs, "chs-disk is not among the authored kinds");
 
+    const std::vector<remanence::RecordingLayout> layouts = remanence::recordings();
+    CHECK(!layouts.empty(), "the release records no layouts at all");
+    for (const remanence::RecordingLayout& layout : layouts) {
+        CHECK(!layout.id.empty(), "a layout has an empty id");
+        CHECK(!layout.article.empty(),
+              std::string{"layout "} + std::string{layout.id} + " records onto no article");
+        CHECK(layout.cylinders > 0 && layout.heads > 0 && layout.sectors_per_track > 0
+                  && layout.sector_bytes > 0,
+              std::string{"layout "} + std::string{layout.id} + " records no coordinates");
+    }
+
     CHECK(!remanence::partition_schemes().empty(), "the release claims no partition schemes");
     CHECK(!remanence::partition_types().empty(), "the release claims no partition types");
     CHECK(!remanence::assurance_conditions().empty(), "the release claims no assurance conditions");
@@ -297,11 +308,51 @@ void group_authorship()
     CHECK_REFUSES("inspecting a medium no format presents",
                   [&]() mutable { blank.inspect(); });
 
-    // Release is the one verb that ends state.
+    // The authored-to-recorded arc: a blank article takes a published
+    // layout, and is a DOS floppy afterwards.
+    remanence::Medium floppy = session.new_media("flexible-3.5-hd");
+    CHECK(!floppy.device_type().has_value(), "a blank article assumed a device");
+    std::optional<remanence::Partition> surface = floppy.partition(0);
+    CHECK(surface.has_value(), "a blank article bears no direct partition");
+    if (surface.has_value()) {
+        surface->record_as("dos-1.44");
+    }
+    CHECK(floppy.device_type().has_value() && *floppy.device_type() == "pc-3.5-hd",
+          "the recorded medium did not bind the drive its layout is recorded for");
+    CHECK(floppy.size() == 1474560ull, "the recorded medium is not the 1.44 MB disk");
+
+    // The namespace opens over it by the evidence of the boot record
+    // just written, and the delivered file verbs write into it.
+    std::optional<remanence::Partition> recorded = floppy.partition(0);
+    CHECK(recorded.has_value(), "the recorded medium bears no direct partition");
+    if (recorded.has_value()) {
+        remanence::Filesystem files = recorded->filesystem();
+        CHECK(files.entries().empty(), "a freshly recorded disk is not empty");
+        const std::vector<std::uint8_t> greeting{'h', 'i', '\r', '\n'};
+        files.write_file("HELLO.TXT", greeting);
+        floppy.commit();
+        remanence::FileData read = files.read_file("HELLO.TXT");
+        CHECK(std::vector<std::uint8_t>(read.data(), read.data() + read.size()) == greeting,
+              "the file written onto the recorded disk did not read back");
+    }
+
+    // A layout onto an article it does not fit is refused by name.
+    remanence::Medium wrong = session.new_media("flexible-5.25-hd");
+    std::optional<remanence::Partition> other = wrong.partition(0);
+    CHECK(other.has_value(), "a blank article bears no direct partition");
+    if (other.has_value()) {
+        CHECK_REFUSES("the 1.44 MB layout onto a 5.25-inch article",
+                      [&other] { other->record_as("dos-1.44"); });
+    }
+
+    // Release is the one verb that ends state. Three media were
+    // authored above — the CHS disk, the floppy recorded onto, and the
+    // blank whose layout was refused — and releasing one takes exactly
+    // one away.
     const std::uint64_t media_id = blank.id();
-    CHECK(session.media_count() == 1, "the pool does not hold the authored medium");
+    CHECK(session.media_count() == 3, "the pool does not hold the authored media");
     session.release_media(media_id);
-    CHECK(session.media_count() == 0, "release left the medium pooled");
+    CHECK(session.media_count() == 2, "release did not take exactly one away");
     CHECK(!session.medium(media_id).has_value(), "a released medium still answers");
 }
 

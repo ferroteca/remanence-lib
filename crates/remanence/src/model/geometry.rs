@@ -82,16 +82,28 @@ pub enum GeometrySource {
     /// beside another source — nothing is authored onto a medium that
     /// was loaded, and nothing is discovered onto one that was authored.
     Authorship,
+    /// The layout an author recorded onto a blank article
+    /// ([`PartitionView::record_as`](crate::PartitionView::record_as)).
+    ///
+    /// It is the other reading that is not taken off an artifact, and it
+    /// arrives the same way authorship does: the author chose a
+    /// published layout, and the coordinates are that layout's own
+    /// rather than anything read back. It stands where `Authorship`
+    /// would if the author had stated coordinates, and never beside
+    /// it — a blank article states none, and a medium that states its
+    /// own is not one this arc records onto.
+    Recording,
 }
 
 impl GeometrySource {
     /// Every source this release reads a geometry out of.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::FormatDeclaration,
         Self::BootRecord,
         Self::PartitionTable,
         Self::ExtentArithmetic,
         Self::Authorship,
+        Self::Recording,
     ];
 
     /// The stable cross-language spelling.
@@ -102,6 +114,7 @@ impl GeometrySource {
             Self::PartitionTable => "partition-table",
             Self::ExtentArithmetic => "extent-arithmetic",
             Self::Authorship => "authorship",
+            Self::Recording => "recording",
         }
     }
 
@@ -372,6 +385,33 @@ impl Geometry {
     /// value: no reading, so no part settled and nothing in conflict.
     pub(crate) fn unstated() -> Self {
         settle(Vec::new(), 0)
+    }
+
+    /// The geometry of a medium an author recorded a published layout
+    /// onto: the layout's own coordinates, and no second source.
+    ///
+    /// It settles for the same reason authorship does. The layout states
+    /// every part at once, and the medium it was recorded onto was a
+    /// blank article that stated none — so there is nothing to disagree
+    /// with, and the one reading says which layout it was.
+    pub(crate) fn recorded(coordinates: RecordingGeometry, layout: &'static str) -> Self {
+        let mut reading = GeometryReading::new(
+            GeometrySource::Recording,
+            "the layout the author recorded at record_as",
+            format!(
+                "the author recorded {layout} onto a blank article, and the                  layout states {coordinates}"
+            ),
+        );
+        reading.cylinders = Some(coordinates.cylinders);
+        reading.heads = Some(coordinates.heads);
+        reading.sectors_per_track = Some(coordinates.sectors_per_track);
+        reading.sector_bytes = Some(coordinates.sector_bytes);
+        Self {
+            determined: Some(coordinates),
+            conflicts: Vec::new(),
+            unsettled: Vec::new(),
+            readings: vec![reading],
+        }
     }
 
     /// The geometry of a medium the author stated one for — the third

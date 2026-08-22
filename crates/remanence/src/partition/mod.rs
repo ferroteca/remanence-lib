@@ -37,6 +37,7 @@ use crate::filesystem::cbm_dos::BlockSource;
 use crate::filesystem::{SpaceExtent, SpaceNamespace, StorageSpace};
 use crate::io::device::Device;
 use crate::model::media::Medium;
+use crate::model::recording::Recording;
 use crate::model::report::{DiskContent, RegionId, RegionRole, VolumeId};
 use crate::partition::mbr::PartitionKind;
 
@@ -713,6 +714,42 @@ impl<'a> PartitionView<'a> {
         Some(self.compose())
     }
 
+    /// Records a published DOS layout onto the blank article this
+    /// partition is composed over — the **authored-to-recorded arc**
+    /// (F82).
+    ///
+    /// A blank article is the manufactured disk in its sleeve. This is
+    /// what `FORMAT` does to one: lay down the boot record with its
+    /// parameter block, the FAT copies with their media descriptor, and
+    /// an empty root directory — precisely the layout named and nothing
+    /// chosen on the caller's behalf.
+    ///
+    /// **Afterwards the medium is a recording**, and everything it
+    /// answers says so: its geometry is the layout's own, its device
+    /// type is the drive the layout is recorded for so a drive takes it,
+    /// and [`filesystem`](Self::filesystem) opens FAT12 over it by the
+    /// evidence of the boot record just written — through the same seam
+    /// a loaded image's volume is reached by, the adapter learning
+    /// nothing about which of the two it read.
+    ///
+    /// It refuses by name on a medium loaded from an artifact, on an
+    /// authored medium whose coordinates its author stated, on one
+    /// already recorded onto, and where the layout's article is not the
+    /// article this medium is. A layout this release does not record is
+    /// refused naming what it does (P3).
+    pub fn record_as(self, layout: Recording) -> Result<()> {
+        match self.backing {
+            Backing::Medium(medium) => medium.record_as(layout),
+            Backing::Blocks(_) | Backing::Device(_) => Err(refuse(
+                PartitionRule::NoExtent,
+                "this partition is composed over a recording's own layer, \
+                 which is a disk somebody already recorded; a layout is \
+                 recorded onto a blank article its author made"
+                    .to_owned(),
+            )),
+        }
+    }
+
     /// The declared reading, where no partition type determines one:
     /// `"fat"`, `"hdos"`, `"cpm"`, a `"cpm-*"` layout, or `"cbmdos"`.
     ///
@@ -974,6 +1011,35 @@ impl PartitionPool {
              records no partition scheme and the direct partition is what \
              its content is reached through — synthetic, and never evidence",
         )
+    }
+
+    /// The pool a blank article bears once a layout has been recorded
+    /// onto it (F82): the direct partition over the whole recording,
+    /// bearing the FAT namespace the layout put there.
+    ///
+    /// Nothing is classified to establish it, for the same reason
+    /// nothing was classified to establish the blank's: the author just
+    /// recorded a known layout, so what the content holds is known
+    /// without reading it back. The namespace is still *verified* when
+    /// the door opens — the FAT seam reads the boot record for itself,
+    /// exactly as it does on a loaded image — so a declaration here is
+    /// never a claim that stands unchecked.
+    pub(crate) fn recorded_volume(length_bytes: u64, layout: &'static str) -> Self {
+        let mut pool = Self::direct(
+            DiskContent::DirectVolume,
+            length_bytes,
+            Some(VolumeId::whole_device()),
+            "the library's own composition of the whole recording: a floppy \
+             records no partition scheme, so the direct partition is what its \
+             content is reached through — synthetic, and never evidence",
+        );
+        pool.schema_evidence = vec![format!(
+            "the author recorded the '{layout}' layout onto this blank article, \
+             which lays a FAT12 volume over the whole of it and no partition \
+             table at all"
+        )];
+        pool.partitions[0].namespace = Some(DeclaredNamespace::Fat);
+        pool
     }
 
     /// The pool an authored **blank article** bears: one direct

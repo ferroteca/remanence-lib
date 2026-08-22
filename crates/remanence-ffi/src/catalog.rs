@@ -6,7 +6,7 @@
 //! conditions and geometry sources.
 
 use crate::abi::{to_cstring, utf8_arg};
-use remanence::{DeviceType, Format, NewMedia, PartitionScheme, PartitionType};
+use remanence::{DeviceType, Format, NewMedia, PartitionScheme, PartitionType, Recording};
 use std::ffi::{CString, c_char};
 use std::ptr;
 
@@ -189,6 +189,100 @@ pub extern "C" fn remanence_new_media_takes_geometry(index: usize) -> bool {
     new_media_views()
         .get(index)
         .is_some_and(|view| view.geometry)
+}
+
+pub(crate) struct RecordingView {
+    id: CString,
+    name: CString,
+    article: CString,
+    cylinders: u32,
+    heads: u32,
+    sectors_per_track: u32,
+    sector_bytes: u64,
+}
+
+pub(crate) fn recording_views() -> &'static [RecordingView] {
+    static LAYOUTS: std::sync::OnceLock<Vec<RecordingView>> = std::sync::OnceLock::new();
+    LAYOUTS.get_or_init(|| {
+        Recording::claimed()
+            .iter()
+            .map(|claim| {
+                let geometry = claim.geometry();
+                RecordingView {
+                    id: to_cstring(claim.id()),
+                    name: to_cstring(claim.name()),
+                    article: to_cstring(claim.article()),
+                    cylinders: geometry.cylinders,
+                    heads: geometry.heads,
+                    sectors_per_track: geometry.sectors_per_track,
+                    sector_bytes: geometry.sector_bytes,
+                }
+            })
+            .collect()
+    })
+}
+
+/// How many published layouts this release records onto a blank article.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_recording_count() -> usize {
+    recording_views().len()
+}
+
+/// One layout's stable spelling (`dos-1.44`), by index — the value
+/// passed to `remanence_partition_record_as` — or null out of range.
+/// Owned by the library; do not free.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_recording_id(index: usize) -> *const c_char {
+    recording_views()
+        .get(index)
+        .map_or(ptr::null(), |view| view.id.as_ptr())
+}
+
+/// That layout's name, fit to show a user, or null out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_recording_name(index: usize) -> *const c_char {
+    recording_views()
+        .get(index)
+        .map_or(ptr::null(), |view| view.name.as_ptr())
+}
+
+/// The article layout `index` records onto — and the only article it
+/// records onto. Null out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn remanence_recording_article(index: usize) -> *const c_char {
+    recording_views()
+        .get(index)
+        .map_or(ptr::null(), |view| view.article.as_ptr())
+}
+
+/// The coordinates layout `index` records, written into the four outs.
+/// False out of range, with nothing written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_recording_geometry(
+    index: usize,
+    cylinders_out: *mut u32,
+    heads_out: *mut u32,
+    sectors_per_track_out: *mut u32,
+    sector_bytes_out: *mut u64,
+) -> bool {
+    let Some(view) = recording_views().get(index) else {
+        return false;
+    };
+    unsafe {
+        if let Some(out) = cylinders_out.as_mut() {
+            *out = view.cylinders;
+        }
+        if let Some(out) = heads_out.as_mut() {
+            *out = view.heads;
+        }
+        if let Some(out) = sectors_per_track_out.as_mut() {
+            *out = view.sectors_per_track;
+        }
+        if let Some(out) = sector_bytes_out.as_mut() {
+            *out = view.sector_bytes;
+        }
+    }
+    true
 }
 
 /// How many assurance conditions this release claims.

@@ -95,10 +95,19 @@
 //! carries become the medium's original facts: its provenance, and its
 //! [`Medium::geometry`], whose one reading is
 //! [`GeometrySource::Authorship`]. **An authored blank assumes no
-//! device**: [`Medium::device_type`] answers `None`, no drive takes one,
-//! and the arc from authored to recorded is reserved. It is
-//! session-backed until an explicit encode gives it an artifact, and
-//! [`Medium::commit`] is the ordinary commit point over it.
+//! device**: [`Medium::device_type`] answers `None` and no drive takes
+//! one, until a layout is recorded onto it. It is session-backed until
+//! an explicit encode gives it an artifact, and [`Medium::commit`] is
+//! the ordinary commit point over it.
+//!
+//! **A blank article is formatted by recording a layout onto it.**
+//! [`PartitionView::record_as`] is the arc from authored to recorded: it
+//! lays a published DOS layout down the way `FORMAT` does, and the
+//! medium is a recording afterwards — the layout's coordinates, whose
+//! one reading is [`GeometrySource::Recording`]; the drive the layout is
+//! recorded for, so a drive takes it; and a FAT12 volume the boot record
+//! just written determines, reached through the ordinary partition
+//! seam.
 //!
 //! **Geometry is discovered, and the sector verbs address in it.**
 //! [`Medium::geometry`] is what the sources beneath the medium stated
@@ -232,6 +241,7 @@ pub use crate::model::geometry::{
 };
 pub use crate::model::media::{Format, FormatClaim, MediaId, MediaSource, Medium};
 pub use crate::model::pools::Session;
+pub use crate::model::recording::{Recording, RecordingClaim};
 pub use crate::model::report::{
     DeclaredGeometry, DeviceInfo, DiskContent, DiskReport, FilesystemId, FilesystemInfo,
     LabelReading, PartitionSchemaInfo, RegionId, RegionInfo, RegionRole, VolumeId, VolumeInfo,

@@ -729,6 +729,41 @@ inline std::vector<NewMediaKind> new_media_kinds()
     return kinds;
 }
 
+/// One published layout this release records onto a blank article.
+struct RecordingLayout {
+    /// The stable spelling — `dos-1.2`, `dos-1.44`.
+    std::string_view id;
+    std::string_view name;
+    /// The article this layout records onto, and the only one it does.
+    std::string_view article;
+    /// The coordinates the layout records.
+    std::uint32_t cylinders;
+    std::uint32_t heads;
+    std::uint32_t sectors_per_track;
+    std::uint64_t sector_bytes;
+};
+
+inline std::vector<RecordingLayout> recordings()
+{
+    std::vector<RecordingLayout> layouts;
+    const std::size_t count = remanence_recording_count();
+    layouts.reserve(count);
+    for (std::size_t at = 0; at < count; at += 1) {
+        RecordingLayout layout;
+        layout.id = detail::text(remanence_recording_id(at));
+        layout.name = detail::text(remanence_recording_name(at));
+        layout.article = detail::text(remanence_recording_article(at));
+        layout.cylinders = 0;
+        layout.heads = 0;
+        layout.sectors_per_track = 0;
+        layout.sector_bytes = 0;
+        remanence_recording_geometry(at, &layout.cylinders, &layout.heads,
+                                     &layout.sectors_per_track, &layout.sector_bytes);
+        layouts.push_back(layout);
+    }
+    return layouts;
+}
+
 /// A catalog entry that is a stable spelling and a name for a user.
 struct CatalogEntry {
     std::string_view id;
@@ -2534,6 +2569,23 @@ public:
         outcome.require(remanence_partition_check_type(get(), type_id.c_str(), outcome.category(),
                                                        outcome.message(), outcome.rule()),
                         "the partition is not of that type");
+    }
+
+    /// Records a published DOS layout onto the blank article this
+    /// partition is composed over — the authored-to-recorded arc.
+    ///
+    /// What `FORMAT` does to a new disk: the boot record with its
+    /// parameter block, the FAT copies with their media descriptor, and
+    /// an empty root directory. Afterwards the medium is a recording —
+    /// it answers the layout's coordinates, the drive the layout is
+    /// recorded for takes it, and `filesystem()` opens FAT12 over it by
+    /// the evidence of the boot record just written.
+    void record_as(const std::string& layout) const
+    {
+        detail::Outcome outcome;
+        outcome.require(remanence_partition_record_as(get(), layout.c_str(), outcome.category(),
+                                                      outcome.message(), outcome.rule()),
+                        "that layout does not record here");
     }
 
     /// The addressable vantage.

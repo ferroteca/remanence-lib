@@ -237,8 +237,9 @@ impl Session {
     /// **An authored blank assumes no device.**
     /// [`device_type`](Medium::device_type) answers `None` — the same
     /// honest absence an archive answers — so no drive takes one and
-    /// [`DeviceView::insert`] refuses by name. The arc from authored to
-    /// recorded, which would bind a device type, is reserved.
+    /// [`DeviceView::insert`] refuses by name. Recording a layout onto a
+    /// blank article ([`PartitionView::record_as`](crate::PartitionView::record_as))
+    /// is what binds one.
     ///
     /// The medium is **session-backed**: its content lives in the
     /// session's own bounded working set (P27) until an explicit encode

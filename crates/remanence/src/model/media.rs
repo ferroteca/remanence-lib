@@ -47,6 +47,7 @@ use crate::model::device_type::{Addressing, DeviceSlot, DeviceType, FloppyDrive,
 use crate::model::discovery::Discovery;
 use crate::model::disk::{DiskFormat, MediumRecognition, MediumState};
 use crate::model::geometry::{self, Geometry, GeometryRule, RecordingGeometry};
+use crate::model::recording::Recording;
 use crate::model::report::DiskReport;
 use crate::model::session::Identification;
 use crate::model::storage_device::AttachmentId;
@@ -868,8 +869,9 @@ impl Medium {
     ///
     /// `None` is the honest answer rather than a gap: an archive was
     /// recorded by no device, and neither was an authored blank — an
-    /// author assumes none, and only the reserved authored-to-recorded
-    /// arc would bind one.
+    /// author assumes none until they record a layout onto it
+    /// ([`PartitionView::record_as`](crate::PartitionView::record_as)),
+    /// which is the act that binds one.
     pub fn device_type(&self) -> Option<DeviceType> {
         self.state.device_type()
     }
@@ -884,6 +886,37 @@ impl Medium {
         self.state
             .authored_medium()
             .map(crate::model::authored::AuthoredMedium::kind)
+    }
+
+    /// The layout an author recorded onto this medium, or `None` where
+    /// none was — which is every loaded medium, and every authored blank
+    /// the arc has not run on.
+    pub fn recorded_as(&self) -> Option<Recording> {
+        self.state.recorded_as()
+    }
+
+    /// Records a published layout onto the blank article this medium is
+    /// — the authored-to-recorded arc, reached through the direct
+    /// partition ([`PartitionView::record_as`](crate::PartitionView::record_as)).
+    ///
+    /// **Everything the medium answers about itself moves in this one
+    /// act**, because everything it answers is a consequence of what is
+    /// recorded on it: the pool becomes the direct partition over a
+    /// volume that bears FAT, the geometry becomes the layout's own with
+    /// `recording` as its one reading, and the device type becomes the
+    /// drive the layout is recorded for. They are re-established here
+    /// rather than re-read, for the reason they were never read in the
+    /// first place: nothing was discovered onto an authored medium, and
+    /// the layout the author just chose is what states them.
+    pub(crate) fn record_as(&mut self, layout: Recording) -> Result<()> {
+        self.state.record_as(layout)?;
+        let length = self
+            .state
+            .presented_size("record_as")
+            .expect("the arc gave the medium its content");
+        self.partitions = PartitionPool::recorded_volume(length, layout.id());
+        self.geometry = self.state.establish_geometry(&self.partitions);
+        Ok(())
     }
 
     /// The article this medium is (P14), by the catalog's stable
@@ -1286,19 +1319,19 @@ impl Medium {
         &mut self,
         offset: u64,
     ) -> Result<crate::filesystem::fat::FatRecognition> {
-        self.state.space_mut("filesystem")?.recognize_fat(offset)
+        self.state.recognize_fat(offset)
     }
 
     pub(crate) fn entries(&mut self, at: u64, path: &str) -> Result<Vec<FatEntry>> {
-        self.state.space_mut("entries")?.entries(at, path)
+        self.state.entries(at, path)
     }
 
     pub(crate) fn stat(&mut self, at: u64, path: &str) -> Result<Option<FatEntry>> {
-        self.state.space_mut("stat")?.stat(at, path)
+        self.state.stat(at, path)
     }
 
     pub(crate) fn read_file(&mut self, at: u64, path: &str) -> Result<Vec<u8>> {
-        self.state.space_mut("read_file")?.read_file(at, path)
+        self.state.read_file(at, path)
     }
 
     pub(crate) fn read_file_at(
@@ -1308,15 +1341,11 @@ impl Medium {
         offset: u64,
         buf: &mut [u8],
     ) -> Result<()> {
-        self.state
-            .space_mut("read_file_at")?
-            .read_file_at(at, path, offset, buf)
+        self.state.read_file_at(at, path, offset, buf)
     }
 
     pub(crate) fn resize_file(&mut self, at: u64, path: &str, size: u64) -> Result<()> {
-        self.state
-            .space_mut("resize_file")?
-            .resize_file(at, path, size)
+        self.state.resize_file(at, path, size)
     }
 
     pub(crate) fn write_file_at(
@@ -1326,21 +1355,15 @@ impl Medium {
         offset: u64,
         data: &[u8],
     ) -> Result<()> {
-        self.state
-            .space_mut("write_file_at")?
-            .write_file_at(at, path, offset, data)
+        self.state.write_file_at(at, path, offset, data)
     }
 
     pub(crate) fn write_file(&mut self, at: u64, path: &str, contents: &[u8]) -> Result<()> {
-        self.state
-            .space_mut("write_file")?
-            .write_file(at, path, contents)
+        self.state.write_file(at, path, contents)
     }
 
     pub(crate) fn make_directory(&mut self, at: u64, path: &str) -> Result<()> {
-        self.state
-            .space_mut("make_directory")?
-            .make_directory(at, path)
+        self.state.make_directory(at, path)
     }
 }
 

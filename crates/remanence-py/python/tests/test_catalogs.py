@@ -61,6 +61,20 @@ def test_every_new_media_kind_names_the_article_it_creates():
     )
 
 
+def test_every_recorded_layout_names_the_article_it_fits():
+    layouts = remanence.recordings()
+    assert layouts
+    articles = {entry.article for entry in remanence.device_slots() if entry.article}
+    for identity, name, article, geometry in layouts:
+        assert identity and name and article
+        cylinders, heads, sectors_per_track, sector_bytes = geometry
+        assert cylinders and heads and sectors_per_track and sector_bytes
+        assert article in articles, (
+            f"layout {identity!r} records onto {article!r}, which no device "
+            f"this release claims is served"
+        )
+
+
 def test_device_slots_carry_the_prefix_their_attachments_use():
     slots = remanence.device_slots()
     assert slots

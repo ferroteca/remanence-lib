@@ -117,6 +117,72 @@ def test_a_pc_floppy_blank_is_its_article_and_states_nothing_else(session):
         assert not blank.is_modified
 
 
+def test_recording_a_layout_onto_a_blank_makes_it_a_dos_floppy(session):
+    """U35: the whole journey, with no artifact anywhere in it."""
+    blank = session.new_media("flexible-3.5-hd")
+    assert blank.device_type is None
+    assert blank.recorded_as is None
+
+    blank.partition(0).record_as("dos-1.44")
+
+    # It is a recording now, and every question says so.
+    assert blank.recorded_as == "dos-1.44"
+    assert blank.device_type == "pc-3.5-hd"
+    assert blank.size == 1_474_560
+    assert blank.article == "flexible-3.5-hd", "the article is unchanged"
+
+    geometry = blank.geometry
+    assert geometry.state == "determined"
+    assert (geometry.cylinders, geometry.heads, geometry.sectors_per_track) == (80, 2, 18)
+    readings = geometry.readings
+    assert len(readings) == 1
+    assert readings[0].source == "recording"
+
+    # The namespace opens by the evidence of the boot record just
+    # written — nothing is declared — and the file verbs are the
+    # delivered ones.
+    space = blank.partition(0).filesystem()
+    assert space is not None
+    assert space.kind == "FAT12"
+    assert space.entries("") == []
+
+    space.write_file("AUTOEXEC.BAT", b"@ECHO OFF\r\n")
+    space.make_directory("DATA")
+    space.write_file("DATA/NOTES.TXT", b"recorded, not found\r\n")
+    assert blank.is_modified
+    blank.commit()
+    assert not blank.is_modified
+
+    space = blank.partition(0).filesystem()
+    assert [entry.name for entry in space.entries("")] == ["AUTOEXEC.BAT", "DATA"]
+    assert space.read_file("DATA/NOTES.TXT") == b"recorded, not found\r\n"
+
+    # And a drive takes it now, which an authored blank never allows.
+    device = session.add_device("pc-3.5-hd")
+    device.insert(blank.id)
+
+
+def test_a_layout_records_onto_the_article_it_fits_and_no_other(session):
+    blank = session.new_media("flexible-5.25-hd")
+    with pytest.raises(remanence.Error) as refusal:
+        blank.partition(0).record_as("dos-1.44")
+    message = str(refusal.value)
+    assert "flexible-3.5-hd" in message and "flexible-5.25-hd" in message
+
+    # The 1.2 MB layout is the one that fits, and it records once.
+    blank.partition(0).record_as("dos-1.2")
+    assert blank.size == 1_228_800
+    with pytest.raises(remanence.Error):
+        blank.partition(0).record_as("dos-1.2")
+
+
+def test_an_unclaimed_layout_is_refused_by_name(session):
+    blank = session.new_media("flexible-3.5-hd")
+    with pytest.raises(remanence.Error) as refusal:
+        blank.partition(0).record_as("dos-720k")
+    assert "dos-720k" in str(refusal.value)
+
+
 def test_coordinates_that_address_nothing_are_refused_when_stated(session):
     with pytest.raises(remanence.Error):
         session.new_media("chs-disk", cylinders=0, heads=2, sectors_per_track=9)

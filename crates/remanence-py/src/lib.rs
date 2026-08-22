@@ -625,6 +625,35 @@ fn new_media_kinds() -> Vec<(String, String, String, bool)> {
         .collect()
 }
 
+/// Every published layout this release records onto a blank article
+/// (P3): its stable spelling, its name, the article it records onto, and
+/// the coordinates it records.
+///
+/// These are the values `Partition.record_as` takes — the
+/// authored-to-recorded arc, which is what turns a blank article into a
+/// DOS floppy. A layout declares the one article it fits, and recording
+/// it onto another raises by name.
+#[pyfunction]
+fn recordings() -> Vec<(String, String, String, (u32, u32, u32, u64))> {
+    remanence::Recording::claimed()
+        .iter()
+        .map(|claim| {
+            let geometry = claim.geometry();
+            (
+                claim.id().to_owned(),
+                claim.name().to_owned(),
+                claim.article().to_owned(),
+                (
+                    geometry.cylinders,
+                    geometry.heads,
+                    geometry.sectors_per_track,
+                    geometry.sector_bytes,
+                ),
+            )
+        })
+        .collect()
+}
+
 /// Every device a machine's slot may hold: one per device type this
 /// release claims (P14), plus the archive receiver.
 #[pyfunction]
@@ -1828,6 +1857,18 @@ impl Medium {
         Ok(self.get()?.authored_as().map(remanence::NewMedia::id))
     }
 
+    /// The layout an author recorded onto this medium, by
+    /// `recordings()`'s stable spelling — or **`None` where none was**,
+    /// which is every loaded medium and every blank the arc has not run
+    /// on.
+    ///
+    /// It is the other half of `authored_as`: that says what the medium
+    /// was *made* as, and this says what was *recorded* onto it.
+    #[getter]
+    fn recorded_as(&self) -> PyResult<Option<&'static str>> {
+        Ok(self.get()?.recorded_as().map(remanence::Recording::id))
+    }
+
     /// The artifact the medium was loaded from (the archive itself for an
     /// image loaded out of one), or **`None` where the caller's handle
     /// has no recoverable name** — a name serves location alone. An
@@ -2416,6 +2457,30 @@ impl Partition {
     fn check_type(&self, type_id: &str) -> PyResult<()> {
         let declared = remanence::PartitionType::from_id(type_id).map_err(to_py_err)?;
         self.with_view(|view| view.check_type(declared).map_err(to_py_err))
+    }
+
+    /// Records a published DOS layout onto the blank article this
+    /// partition is composed over — the **authored-to-recorded arc**.
+    ///
+    /// This is what `FORMAT` does to a new disk: the boot record with
+    /// its parameter block, the FAT copies with their media descriptor,
+    /// and an empty root directory — precisely the layout named, and
+    /// nothing chosen on the caller's behalf.
+    ///
+    /// **Afterwards the medium is a recording**, and everything it
+    /// answers says so: `geometry` is the layout's own with `recording`
+    /// as its one reading, `device_type` is the drive the layout is
+    /// recorded for so a drive takes it, and `filesystem()` opens FAT12
+    /// over it by the evidence of the boot record just written.
+    ///
+    /// `layout` is one of the spellings `recordings()` enumerates. It
+    /// raises by name on a medium loaded from an artifact, on an
+    /// authored medium whose coordinates its author stated, on one
+    /// already recorded onto, and where the layout's article is not the
+    /// article this medium is.
+    fn record_as(&self, layout: &str) -> PyResult<()> {
+        let declared = remanence::Recording::declared(layout).map_err(to_py_err)?;
+        self.with_view(|view| view.record_as(declared).map_err(to_py_err))
     }
 
     /// The addressable vantage: the space this partition composes, read
@@ -5076,6 +5141,7 @@ fn remanence_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(formats, m)?)?;
     m.add_function(wrap_pyfunction!(geometry_sources, m)?)?;
     m.add_function(wrap_pyfunction!(new_media_kinds, m)?)?;
+    m.add_function(wrap_pyfunction!(recordings, m)?)?;
     m.add_function(wrap_pyfunction!(partition_schemes, m)?)?;
     m.add_function(wrap_pyfunction!(partition_types, m)?)?;
     Ok(())

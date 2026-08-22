@@ -58,6 +58,76 @@ removes it is the record either way.
 
 ## Decisions
 
+### D75 — Rulings made delivering the authored-to-recorded arc
+
+**Decided** Paul Galbraith (via the owner-directed implementation),
+2026-08-22. **Supports** S1, S2, S3; P2, P3, P4, P6, P14, P18, P19; U35
+(pledged); D19, D32, D36, D74.
+
+F82's delivery is recorded by the commit; these are the calls made in its
+course. `DECISIONS.md` was searched first and returned D36, which
+reserved this arc and declined to fake it, and D32, which settled that a
+medium recording no scheme bears the direct partition; nothing
+adjudicated what recording a layout does to the facts a medium already
+answers.
+
+**Recording is an act of authorship, not a buffered write.** P2 buffers
+writes until a commit, and the arc's own bytes are not among them: the
+medium *becomes* a recorded one in the call, exactly as `new_media`
+makes one whole in its own, and the geometry, the device type and the
+partition pool bind in the same act. Buffering it would have left a
+rollback able to strip the boot record off a medium still claiming the
+layout's coordinates and the layout's drive — three facts unwound to
+two. Everything written *after* the arc is ordinary buffered state, and
+the commit point over it is unchanged.
+
+**The pool and the geometry are re-established, not re-read.** They are
+otherwise settled once at the load and immutable (F56), and the reason
+they may move here is that they were never read in the first place:
+nothing is discovered onto an authored medium, and the layout the author
+just chose is what states them. So the arc restates them from the
+declaration rather than classifying the content it just wrote — the same
+rule D36 applied when it declined to classify a blank the author had
+just made.
+
+**The namespace is declared by the pool and still verified at the door.**
+The recorded pool marks its direct partition as bearing FAT, which is a
+statement about what the author recorded rather than evidence read back.
+It is not a claim that stands unchecked: `filesystem()` opens the FAT
+seam over the content exactly as it does on a loaded image, so a boot
+record that failed to be one would refuse there. Declaring it is what
+makes the door answer by evidence rather than requiring
+`filesystem_as("fat")` — a caller who just recorded FAT12 should not have
+to tell the library what they recorded.
+
+**`GeometrySource::Recording` is its own source, beside `Authorship`.**
+Reusing `Authorship` would have conflated two different facts: the author
+*stated* coordinates in one case and *chose a published layout* in the
+other, and the second is checkable against the layout catalog where the
+first is checkable against nothing. Neither ever stands beside the other,
+or beside a reading taken off an artifact.
+
+**The C ABI's cached device type had to stop being settled at the load.**
+`RemanenceMedium` caches the article and the device type when a view is
+minted, on the strength of both being settled at the load — which the arc
+falsifies for the device type. The view is restated after a successful
+`remanence_partition_record_as`, so a handle a caller already holds
+answers what the medium now says. This is a defect the arc exposed rather
+than one it introduced, and the alternative — leaving the caller to
+re-mint the view — would have made a stale answer the caller's problem.
+
+**Weighed and declined:** a free-form parameter block (a partly stated
+layout is a classification, and P3 wants the declaration enumerated);
+laying the arc over a *loaded* medium (a disk somebody recorded already
+testifies for itself, and overwriting that testimony is a different
+journey with its own refusals); writing a volume serial from the clock
+(the same declaration lays down the same bytes every time, which is P29's
+reproducibility and is worth more than a serial nobody reads); and
+carrying the layout's own `sectors_per_fat` as a computed value rather
+than a declared one (the published layouts state it, and computing it
+would put arithmetic where a citation belongs — the test checks the
+declared figure is big enough for every cluster's entry).
+
 ### D74 — Rulings made delivering the PC floppy articles and drives
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

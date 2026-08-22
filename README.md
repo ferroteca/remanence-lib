@@ -263,10 +263,43 @@ disk's own, recorded as having come from you.
 You can create any of the catalogued blank media — a manufactured disk with
 nothing recorded on it — or state a geometry directly and get a disk with
 those coordinates. A blank disk assumes no drive, so it goes into none
-until you say otherwise, and it lives in the session until you explicitly
-write it out. `commit` works on it as normal, with no recovery journal
-underneath, because there is no file for an interruption to leave
+until something is recorded onto it, and it lives in the session until you
+explicitly write it out. `commit` works on it as normal, with no recovery
+journal underneath, because there is no file for an interruption to leave
 half-written.
+
+## Formatting a blank
+
+A blank article is a disk in its sleeve. `record_as` on its direct
+partition does to it what `FORMAT` does: it lays down a published DOS
+layout — the boot record with its parameter block, the FAT copies with
+their media descriptor, an empty root directory — and nothing chosen on
+your behalf. Two layouts are recorded today, the 1.2 MB 5.25-inch disk
+and the 1.44 MB 3.5-inch one, and each declares the one article it fits;
+recording it onto another is a refusal by name.
+
+Afterwards the disk is a recording rather than a blank. It answers the
+layout's coordinates, it goes into the drive the layout is recorded for,
+and its FAT12 volume opens through the ordinary partition seam — so the
+same `write_file` and `make_directory` that write into a loaded image
+write into this one.
+
+```rust
+let mut session = remanence::Session::new();
+let disk = session.new_media(remanence::NewMedia::Flexible35Hd)?;
+disk.partition(0)
+    .expect("a blank article bears its direct partition")
+    .record_as(remanence::Recording::Dos144)?;   // what FORMAT does
+
+let mut files = disk
+    .partition(0)
+    .expect("the direct partition")
+    .filesystem()                                // FAT12, by the boot
+    .expect("the boot record just recorded");    // record just written
+files.write_file("AUTOEXEC.BAT", script)?;
+files.make_directory("DATA")?;
+disk.commit()?;
+```
 
 ## Layout
 

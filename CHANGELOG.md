@@ -20,6 +20,32 @@ rather than bridged. Read every entry below in that light.
 
 ### Added
 
+- **A blank article can be formatted: the authored-to-recorded arc.**
+  `PartitionView::record_as(Recording::Dos12 | Dos144)`, on the direct
+  partition of a blank article, lays down what `FORMAT` does — the boot
+  record with its parameter block and signature and zero code bytes, the
+  FAT copies with their media descriptor and end-of-chain marks, and an
+  empty root directory. The layouts are an enumerated claim: `dos-1.2`
+  (80 × 2 × 15 × 512, media byte `0xF9`) onto `flexible-5.25-hd`, and
+  `dos-1.44` (80 × 2 × 18 × 512, media byte `0xF0`) onto
+  `flexible-3.5-hd`. A layout declares the one article it fits and is
+  refused by name on any other; a medium loaded from an artifact, an
+  authored medium whose coordinates its author stated, and one already
+  recorded onto all refuse.
+
+  **Afterwards the medium is a recording, not merely authored.** Its
+  geometry is the layout's own with a new reading source, `recording`;
+  its device type is the PC drive the layout is recorded for, so a drive
+  takes it where an authored blank never could; and
+  `partition(0).filesystem()` opens FAT12 over it by the evidence of the
+  boot record just written — through the seam a loaded image's volume is
+  reached by, reusing the delivered FAT write verbs unchanged. The
+  commit point stays the ordinary one, with no journal beneath it.
+
+  So a disk can now be made, formatted and filled without an artifact
+  anywhere in the journey. The C ABI adds `remanence_partition_record_as`
+  and the `remanence_recording_*` catalogue; the Python module adds
+  `Partition.record_as`, `Medium.recorded_as` and `recordings()`.
 - **The PC's 5.25-inch high-density drive is enrolled.** `FloppyDrive::Pc525Hd`
   (`pc-5.25-hd`) is the AT's controller driving the two-head 96 TPI
   mechanism at 360 RPM: MFM at 500 kbit/s, fifteen 512-byte records to a

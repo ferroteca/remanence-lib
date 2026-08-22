@@ -606,6 +606,65 @@ pub(crate) unsafe fn partition_space(
     }
 }
 
+/// Records a published DOS layout onto the blank article this partition
+/// is composed over — the **authored-to-recorded arc**.
+///
+/// This is what `FORMAT` does to a new disk: the boot record with its
+/// parameter block, the FAT copies with their media descriptor, and an
+/// empty root directory — precisely the layout named, and nothing chosen
+/// on the caller's behalf. Afterwards the medium is a recording:
+/// `remanence_medium_geometry` answers the layout's coordinates,
+/// `remanence_medium_device_type` answers the drive it is recorded for so
+/// a drive takes it, and `remanence_partition_filesystem` opens FAT12
+/// over it by the evidence of the boot record just written.
+///
+/// `layout` is one of the spellings `remanence_recording_id` enumerates;
+/// any other is refused naming what this release records. It refuses by
+/// name on a medium loaded from an artifact, on an authored medium whose
+/// coordinates its author stated, on one already recorded onto, and where
+/// the layout's article is not the article this medium is.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_partition_record_as(
+    partition: *const RemanencePartition,
+    layout: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { partition.as_ref() }) else {
+        return false;
+    };
+    let Some(layout) = (unsafe { utf8_arg(layout) }) else {
+        let error = remanence::Error::io("null layout");
+        unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+        return false;
+    };
+    let declared = match remanence::Recording::declared(layout.as_ref()) {
+        Ok(declared) => declared,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            return false;
+        }
+    };
+    match unsafe { with_partition(handle, |view| view.record_as(declared)) } {
+        Ok(()) => {
+            // The medium bound a device type in that act, and a view
+            // minted before it caches the absence. Restate it, so a
+            // handle the caller already holds answers what the medium
+            // now says.
+            if let Some(media) = handle.media {
+                unsafe { crate::session::medium_view(handle.session, media) };
+            }
+            true
+        }
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
 /// The addressable vantage: the space this partition composes, read and
 /// written **by position within the partition's own extent** — the
 /// vantage that reaches a boot record, allocation metadata, or the

@@ -14,14 +14,20 @@
 //! coordinates, as its [`geometry`](crate::Medium::geometry), whose one
 //! reading is the author's own.
 //!
-//! **An authored blank assumes no device.**
-//! [`device_type()`](crate::Medium::device_type) answers `None` — the
-//! same honest absence an archive answers, for the same reason: nothing
-//! recorded it. It follows that no drive takes one, and
-//! [`insert`](crate::DeviceView::insert) refuses by name. The arc from
-//! authored to recorded — a partition editor consuming authored geometry
-//! into MBR end tuples and BPBs, and binding a device type — stays
-//! reserved.
+//! **An authored blank assumes no device until something is recorded
+//! onto it.** [`device_type()`](crate::Medium::device_type) answers
+//! `None` — the same honest absence an archive answers, for the same
+//! reason: nothing recorded it — so no drive takes one and
+//! [`insert`](crate::DeviceView::insert) refuses by name.
+//!
+//! **The arc from authored to recorded is
+//! [`record_as`](crate::PartitionView::record_as)** (F82): recording a
+//! published DOS layout onto a blank article makes the medium a
+//! recorded one. It binds the drive the layout is recorded for, gives
+//! the medium the layout's coordinates, and lays down the boot record
+//! the FAT seam then reads for itself. What the arc still does not do is
+//! record a *partition table* onto anything — a partition editor
+//! consuming coordinates into MBR end tuples stays reserved.
 //!
 //! **The kinds are an enumerated claim** (P3), like every other creation
 //! grammar here: the **blank article kinds**, each naming one entry of
@@ -49,11 +55,13 @@ use crate::error::{Error, Result};
 use crate::io::cache::{EXTENT, SessionCache, session_storage_file};
 use crate::io::device::{AccessMode, Claim, Device, read_exact_at, write_all_at};
 use crate::model::assurance::Assurance;
+use crate::model::device_type::DeviceType;
 use crate::model::geometry::{Geometry, RecordingGeometry};
 use crate::model::media_profile::{
     AUTHORED, FLEXIBLE_3_5_HD, FLEXIBLE_5_25_HARD_10, FLEXIBLE_5_25_HD, FLEXIBLE_5_25_SOFT,
     MediaProfile,
 };
+use crate::model::recording::Recording;
 use crate::model::session::{
     Identification, Layer, LayerKind, LayerLayout, PhysicalMediaLayout, SizeInformation,
 };
@@ -350,9 +358,18 @@ pub(crate) struct AuthoredMedium {
     geometry: Geometry,
     assurance: Assurance,
     /// The content the kind gives the medium, absent for a blank article
-    /// kind — a manufactured blank has an article and no recording, and
-    /// a recording is what a space would be a position within.
+    /// kind until something is recorded onto it — a manufactured blank
+    /// has an article and no recording, and a recording is what a space
+    /// would be a position within.
     space: Option<AuthoredSpace>,
+    /// The layout recorded onto this blank article, where the arc has
+    /// run. It is what makes the medium a recorded one: the coordinates
+    /// above are the layout's from then on, and the device is the drive
+    /// it is recorded for.
+    recorded: Option<Recording>,
+    /// The session cache bound the medium was created under (P27), which
+    /// is what bounds the content the arc gives it.
+    cache_bytes: u64,
 }
 
 impl AuthoredMedium {
@@ -387,7 +404,102 @@ impl AuthoredMedium {
             },
             assurance,
             space,
+            recorded: None,
+            cache_bytes,
         })
+    }
+
+    /// Records a published layout onto this blank article — the
+    /// authored-to-recorded arc (F82).
+    ///
+    /// **It records onto a blank article, once.** A medium the author
+    /// stated coordinates for is not a manufactured article and has its
+    /// own facts already; one that has been recorded onto is a recorded
+    /// medium, and recording over it would discard what the author put
+    /// there. Both refuse by name.
+    ///
+    /// **The layout declares which article it fits**, and the check is
+    /// the catalog's: the 1.44 MB layout is not laid onto a 5.25-inch
+    /// disk because a caller asked for it.
+    ///
+    /// This is an act of authorship rather than a buffered write, which
+    /// is why nothing here waits for a commit: the medium *becomes* a
+    /// recorded one in this call, exactly as `new_media` makes one whole
+    /// in its own. The ordinary commit point (P2) governs everything
+    /// written afterwards.
+    pub(crate) fn record_as(&mut self, layout: Recording) -> Result<()> {
+        if let Some(already) = self.recorded {
+            return Err(Error::unsupported(format!(
+                "{} already carries the {} layout, recorded onto it by its \
+                 author; the arc records onto a blank article once, and a \
+                 medium that has been recorded onto is read through the \
+                 namespace it now bears rather than recorded over",
+                self.named(),
+                already.id()
+            )));
+        }
+        if self.kind.geometry().is_some() {
+            return Err(Error::unsupported(format!(
+                "{} states the author's own coordinates, and a layout is \
+                 recorded onto a manufactured article rather than onto \
+                 coordinates somebody already stated: the arc takes a blank \
+                 article kind, which is the article and nothing else",
+                self.named()
+            )));
+        }
+        if layout.article_profile().id != self.article.id {
+            return Err(Error::unsupported(format!(
+                "the {} is recorded onto the article '{}' and this medium is a \
+                 {} ('{}'): a layout declares the article it fits, and this \
+                 release does not lay it onto another",
+                layout.name(),
+                layout.article_profile().id,
+                self.article.name,
+                self.article.id
+            )));
+        }
+
+        let mut space = AuthoredSpace::new(
+            layout
+                .geometry()
+                .checked_total_bytes()
+                .expect("a claimed layout's coordinates are whole"),
+            self.cache_bytes,
+        );
+        layout.lay_down(&mut space)?;
+        // The arc is one act: what it lays down is the medium's own
+        // state when the call returns, not a buffered write awaiting a
+        // commit that might never come.
+        space.commit()?;
+
+        self.assurance.evidence.push(format!(
+            "the author recorded a layout onto the blank at record_as: {}",
+            layout.describe()
+        ));
+        self.assurance.evidence.push(format!(
+            "the medium is a recording from here on: its coordinates are the \
+             layout's, the device that records it is {} ({}), and the boot \
+             record just laid down is what the filesystem seam reads for \
+             itself",
+            layout.device_type().name(),
+            layout.device_type().id()
+        ));
+        self.geometry = Geometry::recorded(layout.geometry(), layout.id());
+        self.space = Some(space);
+        self.recorded = Some(layout);
+        Ok(())
+    }
+
+    /// The layout recorded onto this medium, where the arc has run.
+    pub(crate) fn recorded_as(&self) -> Option<Recording> {
+        self.recorded
+    }
+
+    /// The device this medium's content is recorded by — the drive the
+    /// layout is recorded for, and `None` while nothing is recorded on
+    /// it at all.
+    pub(crate) fn device_type(&self) -> Option<DeviceType> {
+        self.recorded.map(Recording::device_type)
     }
 
     /// The kind the author declared.
@@ -425,7 +537,7 @@ impl AuthoredMedium {
     /// cylinder, head and sector — true exactly where the author stated
     /// coordinates.
     pub(crate) fn is_sector_addressed(&self) -> bool {
-        self.kind.geometry().is_some()
+        self.kind.geometry().is_some() || self.recorded.is_some()
     }
 
     pub(crate) fn is_modified(&self) -> bool {
@@ -479,9 +591,8 @@ impl AuthoredMedium {
             "'{verb}' reads a medium the way an image format presents it — the \
              container it is, the layout recorded on it, the namespace above \
              that — and {} has none of them: it was created whole by the \
-             author, is session-backed until an explicit encode gives it an \
-             artifact, and the authored-to-recorded arc that records a layout \
-             onto it is reserved",
+             author and is session-backed until an explicit encode gives it \
+             an artifact",
             self.named()
         ))
     }
@@ -492,9 +603,10 @@ fn no_content(kind: NewMedia, article: &'static MediaProfile, verb: &str) -> Err
     Error::unsupported(format!(
         "'{verb}' addresses content and this authored medium is a {} — the \
          {} itself, with nothing recorded on it, which is the whole of what \
-         the kind states. An authored blank whose content is addressed states \
-         its coordinates at creation ('{}'), and recording onto a blank \
-         article is the reserved authored-to-recorded arc",
+         the kind states. Content arrives either way: an authored blank whose \
+         content is addressed states its coordinates at creation ('{}'), and a \
+         blank article takes a published layout through `record_as` on its \
+         direct partition",
         kind.name(),
         article.name,
         CHS_DISK
@@ -541,8 +653,8 @@ fn evidence(
         ));
     }
     evidence.push(
-        "no device is assumed — device_type() answers none — and the \
-         authored-to-recorded arc that would bind one is reserved"
+        "no device is assumed — device_type() answers none — until a layout is \
+         recorded onto it, which is what binds one"
             .to_owned(),
     );
     evidence
@@ -615,6 +727,27 @@ impl AuthoredSpace {
     /// committed; the committed content is untouched.
     pub(crate) fn rollback(&mut self) {
         self.cache.discard_dirty();
+    }
+}
+
+impl Device for AuthoredSpace {
+    fn len(&self) -> u64 {
+        self.size()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        Self::read_at(self, offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        Self::write_at(self, offset, data)
+    }
+
+    /// Nothing to flush: the commit point is
+    /// [`AuthoredSpace::commit`], and there is no artifact underneath for
+    /// a flush to reach.
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
     }
 }
 

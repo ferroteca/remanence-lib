@@ -74,6 +74,14 @@ def formats() -> list[tuple[str, str, list[str], bool, bool]]:
 def new_media_kinds() -> list[tuple[str, str, str, bool]]:
     """Every authored-media kind: `(id, name, article, takes_geometry)`."""
 
+def recordings() -> list[tuple[str, str, str, tuple[int, int, int, int]]]:
+    """Every layout recorded onto a blank article.
+
+    Each entry is `(id, name, article, (cylinders, heads,
+    sectors_per_track, sector_bytes))`. These are the values
+    `Partition.record_as` takes.
+    """
+
 def device_slots() -> list[DeviceSlot]:
     """Every device slot a session can be given, and the archive receiver."""
 
@@ -275,6 +283,10 @@ class Medium:
     @property
     def authored_as(self) -> str | None: ...
     @property
+    def recorded_as(self) -> str | None:
+        """The layout an author recorded onto it, or `None`."""
+
+    @property
     def path(self) -> str | None: ...
     @property
     def image_path(self) -> str | None: ...
@@ -389,6 +401,15 @@ class Partition:
     def evidence(self) -> list[str]: ...
     @property
     def provenance(self) -> str | None: ...
+    def record_as(self, layout: str, /) -> None:
+        """Records a published DOS layout onto a blank article.
+
+        The authored-to-recorded arc: what `FORMAT` does to a new disk.
+        Afterwards the medium is a recording — the layout's coordinates,
+        the drive it is recorded for, and a FAT12 volume the boot record
+        just written determines.
+        """
+
     def check_type(self, type_id: str, /) -> None:
         """The caller's reading, checked against the recorded byte.
 

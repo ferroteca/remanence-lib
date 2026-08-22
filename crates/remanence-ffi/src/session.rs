@@ -49,8 +49,12 @@ pub struct RemanenceMedium {
     /// The artifact's names, absent where the caller's handle has none.
     pub(crate) path: Option<CString>,
     pub(crate) image_path: Option<CString>,
-    /// The article and the device that recorded it, settled at the load
-    /// like the names.
+    /// The article and the device that recorded it.
+    ///
+    /// **The device type is not settled for good at the load**, which
+    /// the names are: an authored blank binds one when a layout is
+    /// recorded onto it, so the view is restated after that act as well
+    /// as when it is minted.
     pub(crate) article: Option<CString>,
     pub(crate) device_type: Option<CString>,
 }
@@ -63,9 +67,12 @@ impl RemanenceMedium {
         session.medium_mut(self.id)
     }
 
-    /// Restates the artifact's names. They are settled at the load and
-    /// never change after it, so this runs once when the view is minted.
-    fn refresh(&mut self) {
+    /// Restates what the view caches, from the medium it names.
+    ///
+    /// It runs when the view is minted and again after the
+    /// authored-to-recorded arc, which is the one act that changes any
+    /// of it: everything else here is settled at the load.
+    pub(crate) fn refresh(&mut self) {
         let (path, image_path, article, device_type) = match self.medium() {
             Some(medium) => (
                 medium.path().map(to_cstring),

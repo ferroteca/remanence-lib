@@ -44,6 +44,7 @@ use std::path::Path;
 
 use crate::archive::{ArchiveMedium, ArchiveRecognition};
 use crate::error::{Error, Result};
+use crate::filesystem::fat::{FatEntry, FatVolume};
 use crate::flux::load::{self as flux_load, CollectionMember, FluxState};
 use crate::io::device::AccessMode;
 use crate::io::source::{self};
@@ -53,6 +54,7 @@ use crate::model::device_type::{DeviceSlot, DeviceType};
 use crate::model::geometry::Geometry;
 use crate::model::media::{FluxFormat, Format, MediaSource, SourceShape};
 use crate::model::media_profile::MediaProfile;
+use crate::model::recording::Recording;
 use crate::model::session::Identification;
 use crate::partition::PartitionPool;
 
@@ -360,10 +362,11 @@ impl MediumState {
     pub(crate) fn device_type(&self) -> Option<DeviceType> {
         match self {
             Self::Space(space) => space.device_type(),
-            // An archive was recorded by no device, and neither was an
-            // authored blank: authorship assumes none, and only the
-            // reserved authored-to-recorded arc would bind one.
-            Self::Archive(_) | Self::Authored(_) => None,
+            Self::Archive(_) => None,
+            // An authored blank assumes none — authorship states no
+            // device — until a layout is recorded onto it, which is the
+            // act that binds the drive the layout is recorded for.
+            Self::Authored(authored) => authored.device_type(),
             Self::Flux(flux) => Some(flux.device_type()),
         }
     }
@@ -379,7 +382,7 @@ impl MediumState {
             Self::Space(space) => space.device_type().map(DeviceSlot::Recorded),
             Self::Archive(_) => Some(DeviceSlot::Archive),
             Self::Flux(flux) => Some(DeviceSlot::Recorded(flux.device_type())),
-            Self::Authored(_) => None,
+            Self::Authored(authored) => authored.device_type().map(DeviceSlot::Recorded),
         }
     }
 
@@ -400,6 +403,34 @@ impl MediumState {
             Self::Authored(authored) => Some(authored),
             Self::Space(_) | Self::Archive(_) | Self::Flux(_) => None,
         }
+    }
+
+    /// Records a published layout onto the blank article this is (F82),
+    /// or refuses by name where this medium is not one.
+    ///
+    /// The arc is authorship rather than evidence, so it belongs to the
+    /// one state class authorship made: a medium loaded from an artifact
+    /// already testifies for itself, and overwriting that testimony is a
+    /// different act with its own refusals.
+    pub(crate) fn record_as(&mut self, layout: Recording) -> Result<()> {
+        match self {
+            Self::Authored(authored) => authored.record_as(layout),
+            Self::Space(space) => Err(Error::unsupported(format!(
+                "{} was loaded from an artifact and testifies for itself: \
+                 recording a layout is what an author does to a blank they \
+                 made, and this release does not lay one over a recording \
+                 somebody else's disk already carries",
+                space.named()
+            ))),
+            Self::Archive(archive) => Err(no_space("record_as", archive)),
+            Self::Flux(flux) => Err(flux_load::no_space("record_as", flux)),
+        }
+    }
+
+    /// The layout recorded onto this medium by its author, where one
+    /// was.
+    pub(crate) fn recorded_as(&self) -> Option<Recording> {
+        self.authored_medium().and_then(AuthoredMedium::recorded_as)
     }
 
     pub(crate) fn mode(&self) -> AccessMode {
@@ -568,6 +599,176 @@ impl MediumState {
             Self::Authored(authored) => authored.space_mut("write_at")?.write_at(offset, data),
             Self::Archive(archive) => Err(no_space("write_at", archive)),
             Self::Flux(flux) => Err(flux_load::no_space("write_at", flux)),
+        }
+    }
+
+    /// The namespace verbs, over whichever medium bears the volume.
+    ///
+    /// **Two arms, one seam.** A loaded image reaches the FAT adapter
+    /// through its own composed device stack — session cache, active
+    /// layer, recovery journal — and an authored recording reaches it
+    /// through the session-backed content its author recorded onto. The
+    /// adapter is handed a device either way and learns nothing about
+    /// which it was, which is what lets the arc reuse the delivered
+    /// write verbs rather than growing a second set (P18, P19).
+    ///
+    /// The authored arm needs no `require_writable`: an authored medium
+    /// is writable by construction — its author made it, and there is no
+    /// evidence beneath it to narrow what they may do with it — and no
+    /// `require_usable`, there being no artifact for a failed commit to
+    /// leave unreconciled.
+    pub(crate) fn entries(&mut self, at: u64, path: &str) -> Result<Vec<FatEntry>> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                let space = authored.space_mut("entries")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.entries(space, &segments)
+            }
+            other => other.space_mut("entries")?.entries(at, path),
+        }
+    }
+
+    pub(crate) fn stat(&mut self, at: u64, path: &str) -> Result<Option<FatEntry>> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                if segments.is_empty() {
+                    return Err(Error::io("a path is required".to_owned()));
+                }
+                let space = authored.space_mut("stat")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.stat(space, &segments)
+            }
+            other => other.space_mut("stat")?.stat(at, path),
+        }
+    }
+
+    pub(crate) fn read_file(&mut self, at: u64, path: &str) -> Result<Vec<u8>> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                if segments.is_empty() {
+                    return Err(Error::io("a file path is required".to_owned()));
+                }
+                let space = authored.space_mut("read_file")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.read_file(space, &segments)
+            }
+            other => other.space_mut("read_file")?.read_file(at, path),
+        }
+    }
+
+    pub(crate) fn read_file_at(
+        &mut self,
+        at: u64,
+        path: &str,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<()> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                if segments.is_empty() {
+                    return Err(Error::io("a file path is required".to_owned()));
+                }
+                let space = authored.space_mut("read_file_at")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.read_file_at(space, &segments, offset, buf)
+            }
+            other => other
+                .space_mut("read_file_at")?
+                .read_file_at(at, path, offset, buf),
+        }
+    }
+
+    pub(crate) fn resize_file(&mut self, at: u64, path: &str, size: u64) -> Result<()> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                if segments.is_empty() {
+                    return Err(Error::io("a file path is required".to_owned()));
+                }
+                let space = authored.space_mut("resize_file")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.resize_file(space, &segments, size)
+            }
+            other => other.space_mut("resize_file")?.resize_file(at, path, size),
+        }
+    }
+
+    pub(crate) fn write_file_at(
+        &mut self,
+        at: u64,
+        path: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                if segments.is_empty() {
+                    return Err(Error::io("a file path is required".to_owned()));
+                }
+                let space = authored.space_mut("write_file_at")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.write_file_at(space, &segments, offset, data)
+            }
+            other => other
+                .space_mut("write_file_at")?
+                .write_file_at(at, path, offset, data),
+        }
+    }
+
+    pub(crate) fn write_file(&mut self, at: u64, path: &str, contents: &[u8]) -> Result<()> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                if segments.is_empty() {
+                    return Err(Error::io("a file path is required".to_owned()));
+                }
+                let space = authored.space_mut("write_file")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.write_file(space, &segments, contents)
+            }
+            other => other
+                .space_mut("write_file")?
+                .write_file(at, path, contents),
+        }
+    }
+
+    pub(crate) fn make_directory(&mut self, at: u64, path: &str) -> Result<()> {
+        match self {
+            Self::Authored(authored) => {
+                let segments = MediaState::split_path(path)?;
+                let space = authored.space_mut("make_directory")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.make_directory(space, &segments)
+            }
+            other => other.space_mut("make_directory")?.make_directory(at, path),
+        }
+    }
+
+    /// Recognizes FAT on the content at `offset`, whichever kind of
+    /// medium bears it (P18).
+    ///
+    /// An authored medium answers here beside the block media, and by
+    /// the same evidence: the boot record its author recorded onto it is
+    /// read exactly as a loaded image's is, the adapter learning nothing
+    /// about which of the two it is looking at.
+    pub(crate) fn recognize_fat(
+        &mut self,
+        offset: u64,
+    ) -> Result<crate::filesystem::fat::FatRecognition> {
+        match self {
+            Self::Space(space) => space.recognize_fat(offset),
+            Self::Authored(authored) => {
+                let space = authored.space_mut("filesystem")?;
+                let volume = crate::filesystem::fat::FatVolume::open(space, offset)?;
+                volume.recognized(space)
+            }
+            Self::Archive(archive) => Err(no_space("filesystem", archive)),
+            Self::Flux(flux) => Err(flux_load::no_space("filesystem", flux)),
         }
     }
 

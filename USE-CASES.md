@@ -447,8 +447,9 @@ let disk = session.new_media(NewMedia::ChsDisk {
     },
 })?;
 // authored provenance — geometry mine, marked mine — and no device
-// assumed: authorship is its own fact class, and only the future
-// authored-to-recorded arc binds a device type
+// assumed: authorship is its own fact class, and what binds a device
+// type is recording a layout onto a blank article, which these
+// coordinates are not
 assert_eq!(disk.device_type(), None);
 assert_eq!(disk.article(), "authored");
 assert_eq!(disk.geometry().readings()[0].source, GeometrySource::Authorship);

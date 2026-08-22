@@ -26,13 +26,13 @@ has retired with it, and what specifies it now is the code. The ruling
 it forced along the way is D59. Companion design:
 [design/fm-mfm-read-channel.md](design/fm-mfm-read-channel.md).
 
-F82 and F83 are what remains of U35 — a blank DOS floppy, formatted,
-filled and saved as a raw image. Its first piece, cataloguing the PC
-articles, blank kinds and drive families, was F81 and is **delivered**;
-its number has retired with it, and what specifies it now is the code.
-F82 is the arc that records a DOS layout onto a blank and F83 the
-rendition that writes a sector medium out; each is a sprint on its own,
-and they are independent of each other.
+F83 is what remains of U35 — a blank DOS floppy, formatted, filled and
+saved as a raw image. Two of its three pieces are **delivered**, and
+their numbers have retired with them: F81 catalogued the PC articles,
+blank kinds and drive families, and F82 delivered the arc that records a
+DOS layout onto a blank article. What specifies both now is the code.
+F83 is the rendition that writes a sector medium out, which is the last
+step of the journey and all that stands between it and delivery.
 
 ## F77 — HxC MFM read, to the bit tier
 
@@ -89,37 +89,6 @@ for it is not.
 Touches: S1, S2, S3. Supports: U1, U2; P3–P5, P10, P12, P13, P16–P19,
 P21–P23, P27. F76 and F77 are prerequisites.
 
-## F82 — The DOS recording arc onto an authored blank
-
-Deliver the authored-to-recorded arc F60 reserved and D36 declined to
-fake: record a published DOS floppy layout onto a blank article, after
-which the medium testifies for itself.
-
-`Recording` is an enumerated claim (P3) of published layouts, and this
-feature claims two: `Dos12` (80 × 2 × 15 × 512, media byte `0xF9`) onto
-`flexible-5.25-hd`, and `Dos144` (80 × 2 × 18 × 512, media byte `0xF0`)
-onto `flexible-3.5-hd`. A kind declares the article it records onto and
-is refused by name on any other. `PartitionView::record_as(kind)` over
-the direct partition of a blank article lays down precisely what
-`FORMAT` does — the boot record with its BPB and signature and zero code
-bytes, the FAT copies with their media byte and end-of-chain marks, and
-the root directory — and nothing chosen on the author's behalf. A blank
-already recorded onto, a `ChsDisk`, and a loaded medium all refuse:
-the arc records onto a blank article, once.
-
-After the arc the medium is recorded, not merely authored: its geometry
-carries one reading whose source is the recording chosen (a source of
-its own, beside `Authorship`, because the author chose a layout and did
-not state coordinates); its device type is the PC family the layout is
-recorded for, so a drive takes it; and `partition(0).filesystem()`
-opens FAT12 over it by the evidence of the boot record just recorded —
-through the seam U31 writes through, reusing the delivered FAT write
-verbs without change. The commit point stays the ordinary one with no
-journal beneath it (P2, D36).
-
-Touches: S1, S2, S3. Supports: U35 (pledged); P2, P3, P6, P10, P14,
-P16, P18, P19.
-
 ## F83 — The raw rendition of a sector medium
 
 Write a sector-addressed medium out as a raw image, paired with a verb
@@ -145,4 +114,3 @@ Raw is the one encode this feature claims; ImageDisk write is F69 and the
 flux masterings are F74, and both remain proposed.
 
 Touches: S1, S2, S3. Supports: U35 (pledged); P2, P6, P9, P10, P29.
-F82 is not a prerequisite.

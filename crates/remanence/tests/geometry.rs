@@ -205,10 +205,17 @@ fn agreeing_sources_establish_the_coordinates_and_each_reading_says_where_it_cam
         .map(|reading| reading.source)
         .collect();
     for source in GeometrySource::ALL {
-        if source == GeometrySource::Authorship {
+        // The two authorship-side sources never appear here. Nothing is
+        // authored onto a medium that was loaded, and nothing is
+        // recorded onto one either — a loaded disk already testifies for
+        // itself, which is what the other four readings are.
+        if matches!(
+            source,
+            GeometrySource::Authorship | GeometrySource::Recording
+        ) {
             assert!(
                 !sources.contains(&source),
-                "nothing was authored onto a medium that was loaded: {sources:?}"
+                "{source} is an author's fact and this medium was loaded: {sources:?}"
             );
             continue;
         }

@@ -12,8 +12,8 @@
 //! a recording refuses by name.
 
 use remanence::{
-    Claim, DeviceSlot, GeometrySource, GeometryState, HardDrive, NewMedia, PartitionType,
-    RecordingGeometry, Session,
+    Claim, DeviceSlot, FloppyDrive, GeometrySource, GeometryState, HardDrive, NewMedia,
+    PartitionType, Recording, RecordingGeometry, Session,
 };
 
 /// The coordinates U32 authors: a 528 MB CHS disk.
@@ -221,8 +221,8 @@ fn an_authored_disk_bears_the_direct_partition_over_its_own_content() {
         .expect("reads within the extent");
     assert_eq!(signature, [0x55, 0xaa]);
 
-    // The namespace vantage does not: nothing recorded one, and the arc
-    // that would record one is reserved.
+    // The namespace vantage does not: nothing recorded one onto these
+    // coordinates, so there is no boot record for the FAT seam to read.
     let partition = disk.partition(0).expect("the direct partition");
     assert!(partition.filesystem().is_none());
     let error = disk
@@ -230,9 +230,215 @@ fn an_authored_disk_bears_the_direct_partition_over_its_own_content() {
         .expect("the direct partition")
         .filesystem_as("fat")
         .expect_err("an authored blank bears no namespace");
+    assert_eq!(
+        error.category(),
+        remanence::ErrorCategory::InvalidImage,
+        "the FAT adapter read the content and found no volume: {error}"
+    );
+
+    // And the arc that records one refuses here too, for its own
+    // reason: a layout is recorded onto a manufactured article, and
+    // this medium's facts are coordinates its author stated.
+    let error = disk
+        .partition(0)
+        .expect("the direct partition")
+        .record_as(Recording::Dos144)
+        .expect_err("a CHS disk is not a blank article");
     assert!(
-        error.to_string().contains("authored-to-recorded arc"),
-        "the refusal names what is reserved: {error}"
+        error.to_string().contains("the author's own coordinates"),
+        "the refusal names why: {error}"
+    );
+}
+
+/// U35 — the authored-to-recorded arc: a blank DOS floppy, formatted,
+/// with files on it, read back through the ordinary seams.
+#[test]
+fn a_layout_recorded_onto_a_blank_article_makes_it_a_dos_floppy() {
+    for (kind, layout, drive, bytes) in [
+        (
+            NewMedia::Flexible525Hd,
+            Recording::Dos12,
+            FloppyDrive::Pc525Hd,
+            1_228_800u64,
+        ),
+        (
+            NewMedia::Flexible35Hd,
+            Recording::Dos144,
+            FloppyDrive::Pc35Hd,
+            1_474_560,
+        ),
+    ] {
+        let mut session = Session::new();
+        let id = session.new_media(kind).expect("created").id();
+
+        // Before the arc it is the article and nothing else.
+        let disk = session.medium_mut(id).expect("pooled");
+        assert_eq!(disk.device_type(), None);
+        assert_eq!(disk.recorded_as(), None);
+        assert_eq!(disk.geometry().state(), GeometryState::Unstated);
+        assert!(disk.size().is_err(), "nothing is recorded on it yet");
+
+        disk.partition(0)
+            .expect("a blank article bears its direct partition")
+            .record_as(layout)
+            .expect("the layout records onto the article it fits");
+
+        // Afterwards it is a recording, and every question says so.
+        let disk = session.medium(id).expect("pooled");
+        assert_eq!(disk.recorded_as(), Some(layout));
+        assert_eq!(disk.device_type(), Some(drive.into()));
+        assert_eq!(disk.size().expect("it has content now"), bytes);
+        assert_eq!(disk.article(), kind.article(), "the article is unchanged");
+
+        let geometry = disk.geometry();
+        assert_eq!(geometry.state(), GeometryState::Determined);
+        assert_eq!(geometry.determined(), Some(layout.geometry()));
+        assert_eq!(geometry.readings().len(), 1, "the layout is the one source");
+        assert_eq!(geometry.readings()[0].source, GeometrySource::Recording);
+
+        // The sector verbs address in the layout's coordinates, and the
+        // first sector is the boot record it just wrote.
+        let disk = session.medium_mut(id).expect("pooled");
+        let mut boot = [0u8; 512];
+        disk.read_sector(0, 0, 1, &mut boot).expect("reads");
+        assert_eq!(&boot[510..], &[0x55, 0xaa], "the boot signature");
+        assert_eq!(boot[21], layout.media_descriptor(), "the media descriptor");
+
+        // The namespace opens by evidence — nothing is declared — and
+        // the file verbs are the delivered ones.
+        let mut files = disk
+            .partition(0)
+            .expect("the direct partition")
+            .filesystem()
+            .expect("the boot record just recorded determines FAT");
+        assert_eq!(files.kind().expect("a recognized volume"), "FAT12");
+        assert!(files.entries("").expect("lists").is_empty(), "a fresh disk");
+
+        files
+            .write_file("AUTOEXEC.BAT", b"@ECHO OFF\r\nPATH C:\\DOS\r\n")
+            .expect("writes");
+        files.make_directory("DATA").expect("makes a directory");
+        files
+            .write_file("DATA/NOTES.TXT", b"recorded, not found\r\n")
+            .expect("writes into it");
+
+        // Buffered until the commit point, like every other write (P2).
+        drop(files);
+        let disk = session.medium_mut(id).expect("pooled");
+        assert!(disk.is_modified());
+        disk.commit().expect("commits with no artifact beneath it");
+        assert!(!disk.is_modified());
+
+        let mut files = disk
+            .partition(0)
+            .expect("the direct partition")
+            .filesystem()
+            .expect("still FAT");
+        let listed: Vec<String> = files
+            .entries("")
+            .expect("lists")
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(listed, vec!["AUTOEXEC.BAT".to_owned(), "DATA".to_owned()]);
+        assert_eq!(
+            files.read_file("DATA/NOTES.TXT").expect("reads back"),
+            b"recorded, not found\r\n"
+        );
+
+        // And a drive takes it now, which is the whole point of binding
+        // the device the layout is recorded for.
+        drop(files);
+        let mut bay = session.add_device(drive).expect("added");
+        bay.insert(id)
+            .expect("the drive the layout is recorded for");
+    }
+}
+
+/// The arc's own refusals: it records onto a blank article, once, and
+/// only where the layout fits the article.
+#[test]
+fn the_arc_records_onto_a_blank_article_once_and_only_where_it_fits() {
+    let mut session = Session::new();
+
+    // A layout onto the wrong article: the check is the catalog's.
+    let wrong = session
+        .new_media(NewMedia::Flexible525Hd)
+        .expect("created")
+        .id();
+    let error = session
+        .medium_mut(wrong)
+        .expect("pooled")
+        .partition(0)
+        .expect("the direct partition")
+        .record_as(Recording::Dos144)
+        .expect_err("the 1.44 MB layout does not fit a 5.25-inch disk");
+    let message = error.to_string();
+    assert!(
+        message.contains("flexible-3.5-hd") && message.contains("flexible-5.25-hd"),
+        "the refusal names both articles: {message}"
+    );
+
+    // A layout onto an article nothing records onto at all.
+    let soft = session
+        .new_media(NewMedia::Flexible525Soft)
+        .expect("created")
+        .id();
+    assert!(
+        session
+            .medium_mut(soft)
+            .expect("pooled")
+            .partition(0)
+            .expect("the direct partition")
+            .record_as(Recording::Dos12)
+            .is_err(),
+        "the high-density layout is not laid onto a double-density disk"
+    );
+
+    // And twice onto the same blank.
+    let twice = session
+        .new_media(NewMedia::Flexible35Hd)
+        .expect("created")
+        .id();
+    session
+        .medium_mut(twice)
+        .expect("pooled")
+        .partition(0)
+        .expect("the direct partition")
+        .record_as(Recording::Dos144)
+        .expect("records");
+    let error = session
+        .medium_mut(twice)
+        .expect("pooled")
+        .partition(0)
+        .expect("the direct partition")
+        .record_as(Recording::Dos144)
+        .expect_err("the arc records once");
+    assert!(
+        error.to_string().contains("already carries"),
+        "the refusal names what is already there: {error}"
+    );
+}
+
+/// Every claimed layout is a published disk, spelled the same way on
+/// every surface.
+#[test]
+fn the_recorded_layouts_are_an_enumerated_claim() {
+    let claimed: Vec<&str> = Recording::claimed()
+        .iter()
+        .map(|claim| claim.id())
+        .collect();
+    assert_eq!(claimed, vec!["dos-1.2", "dos-1.44"]);
+    for claim in Recording::claimed() {
+        let layout = Recording::declared(claim.id()).expect("claimed");
+        assert_eq!(layout.article(), claim.article());
+        assert_eq!(layout.geometry(), claim.geometry());
+        assert_eq!(layout.name(), claim.name());
+    }
+    let error = Recording::declared("dos-360k").expect_err("refused");
+    assert!(
+        error.to_string().contains("dos-1.2"),
+        "an unclaimed layout is refused naming what is claimed: {error}"
     );
 }
 
