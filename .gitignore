@@ -5,6 +5,7 @@ __pycache__/
 .idea/
 .vscode/
 Cargo.lock
+uv.lock
 # The one build output directory, and deliberately the only `dist/`
 # ignored: `uv build` run from the repository root instead of against
 # the crate drops artifacts in a root `dist/`, and leaving that path
