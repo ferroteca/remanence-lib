@@ -16,7 +16,7 @@ backward compatibility: a surface change lands complete across the Rust
 crate, the C ABI, and the Python module, and the old shape is deleted
 rather than bridged. Read every entry below in that light.
 
-## Unreleased
+## 0.0.1-alpha.7 - 2026-08-22
 
 ### Added
 
