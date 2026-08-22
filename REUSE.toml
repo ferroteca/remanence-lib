@@ -39,6 +39,7 @@ path = [
     # the project's to put there.
     "test-fixture-prep/test-rigs/.gitignore",
     "test-fixture-prep/test-rigs/README.md",
+    "integration-tests/README.md",
     # The ignore lists themselves, not the material they name — see
     # below. Both directories are written by the prep script and hold
     # nothing tracked but these two files.
