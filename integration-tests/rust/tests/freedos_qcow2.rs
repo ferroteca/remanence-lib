@@ -89,7 +89,23 @@ fn private_artifact(tag: &str) -> PathBuf {
         "remanence-freedos-{tag}-{}.qcow2",
         std::process::id()
     ));
-    std::fs::copy(master, &copy).expect("artifact copies");
+    std::fs::copy(&master, &copy).expect("artifact copies");
+    // The copy is what the test reads, so it is proven to be the master's
+    // bytes before anything is asserted over it: a private copy that
+    // differs from its master is a finding about the host, not about the
+    // library, and it is named as such rather than surfacing downstream
+    // as a partition table nobody wrote.
+    let expected = std::fs::read(&master).expect("the master reads");
+    let actual = std::fs::read(&copy).expect("the copy reads");
+    assert!(
+        expected == actual,
+        "private copy '{}' ({} bytes) differs from its master '{}' ({} bytes); \
+         both files are left in place for inspection",
+        copy.display(),
+        actual.len(),
+        master.display(),
+        expected.len()
+    );
     copy
 }
 
@@ -288,7 +304,12 @@ fn marker_files_read_out_of_every_volume() {
             .filesystem()
             .expect("its declared type determines a namespace")
             .read_file("RMNMARK.TXT")
-            .unwrap_or_else(|error| panic!("marker in partition {ordinal}: {error}"));
+            .unwrap_or_else(|error| {
+                panic!(
+                    "marker in partition {ordinal} of '{}': {error}",
+                    path.display()
+                )
+            });
         assert!(
             marker.starts_with(b"remanence marker:"),
             "partition {ordinal} carries its marker"
@@ -366,7 +387,10 @@ fn inspection_reports_the_qcow2_device_schema_and_volumes() {
     // Every composed volume carries a filesystem the host read.
     assert_eq!(
         report.readable_filesystem_volume_count(),
-        report.composed_volume_count()
+        report.composed_volume_count(),
+        "every composed volume of '{}' reads; regions: {:#?}",
+        path.display(),
+        report.regions
     );
 
     std::fs::remove_file(&path).ok();

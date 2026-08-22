@@ -74,9 +74,13 @@ would otherwise sit in this tree.
 
 A **failed** build reclaims nothing: the machine, its `screenshots/`
 and every cached payload stay exactly as they were, because that is
-the whole diagnostic. The cost of reclaiming is that the next build
-re-downloads the LiveCD, which only happens when the fixture itself
-is deleted.
+the whole diagnostic. They stay until the next build, which destroys
+the leftover machine before it starts: the install script partitions
+a disk it takes to be blank, and driven over one an interrupted build
+had already partitioned it harvests a disk with extra, unformatted
+logicals that the test suite then rejects. The cost of reclaiming is
+that the next build re-downloads the LiveCD, which only happens when
+the fixture itself is deleted.
 
 Environment knobs:
 

@@ -502,18 +502,49 @@ def rig_context():
     )
 
 
+def retire_leftover_machines(session) -> None:
+    """Destroy whatever machine an earlier build left behind.
+
+    `run_script` reuses an existing machine of the blueprint as it
+    stands, hdd0 included — and the install script partitions a disk
+    it takes to be blank. Driven over a disk an interrupted build had
+    already partitioned, its `fdisk` steps land wherever the old table
+    leaves room and the formats go to whichever letters that produces,
+    and what is harvested is a disk no run ever described: extra
+    logicals, some never formatted. A leftover stays for inspection
+    until the next build, no longer.
+    """
+    for state in session.list_machines(blueprint=RIG_BLUEPRINT):
+        machine_id = state["id"]
+        print(f"Destroying leftover machine {machine_id} (a fresh build "
+              "starts from a blank disk)...")
+        try:
+            if state.get("phase") == "running":
+                # A guest that powered itself off still reads as
+                # running until a stop reconciles it.
+                session.stop_machine(machine_id)
+            session.destroy_machine(machine_id)
+        except reliquary.ReliquaryError as error:
+            sys.exit(
+                f"could not destroy leftover machine {machine_id}: {error}\n"
+                "(see test-fixture-prep/test-rigs/README.md for the rlq "
+                "commands that reset a machine by hand)"
+            )
+
+
 def build_rig_machine(session) -> str:
-    """Drive the rig's install script; return its machine's id.
+    """Drive the rig's install script on a fresh machine; return its id.
 
     Returning from inside the `try` is what keeps the caller's name
     unconditionally bound: the only other way out is `sys.exit`, which
     never reaches a caller at all.
     """
+    retire_leftover_machines(session)
     try:
-        # run_script creates the machine from the blueprint when none
-        # exists, fetches the pinned LiveCD through the blueprint's
-        # media spec, and drives the install script; failures raise by
-        # error class.
+        # run_script creates the machine from the blueprint (none exists
+        # now), fetches the pinned LiveCD through the blueprint's media
+        # spec, and drives the install script; failures raise by error
+        # class.
         session.run_script("install", blueprint=RIG_BLUEPRINT)
         return session.resolve_machine(blueprint=RIG_BLUEPRINT)
     except reliquary.ReliquaryError as error:
