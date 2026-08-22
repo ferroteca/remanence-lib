@@ -15,3 +15,6 @@ crates/remanence-py/dist/
 # integration-tests/fixtures/.gitignore, beside the files; the archive
 # one of them is repackaged out of is covered wholesale by
 # integration-tests/downloads/.gitignore.
+# cbindgen writes this on every build of remanence-ffi (build.rs); it is
+# generated output, never edited, so it is not tracked.
+crates/remanence-ffi/c/include/remanence.h

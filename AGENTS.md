@@ -507,9 +507,12 @@ ABI, or Python module.
   the *order* of the generated header, which cbindgen emits in
   module-declaration order under `[fn] sort_by = "None"`. Moving a
   function between groups therefore reorders `remanence.h` without
-  changing a line of it; regenerate and commit it in the same change.
-  `build.rs` watches all of `src/`, not just `src/lib.rs`, so a change in
-  any group regenerates the header.
+  changing a line of it. The header is not tracked — `.gitignore` names
+  it, and every build writes it afresh — so nothing is committed for it;
+  the crate's `include` list is what still ships it in the package,
+  since cargo would otherwise honour the ignore. `build.rs` watches all
+  of `src/`, not just `src/lib.rs`, so a change in any group regenerates
+  the header.
 
   **The `pub mod` order in `src/lib.rs` is load-bearing for that reason**,
   and is the order a C caller meets the groups in rather than alphabetical.

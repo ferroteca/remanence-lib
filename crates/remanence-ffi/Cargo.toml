@@ -25,7 +25,20 @@ readme = "README.md"
 # both as plain files rather than as targets it builds. `c/tests/` is
 # named `tests`, unlike this crate's own (Rust-only) `tests/`, because
 # `cargo test` never looks inside `c/` at all; `task test-ffi` does.
-exclude = ["c/tests/**"]
+#
+# Stated as `include` rather than `exclude` because `remanence.h` is
+# generated output the repository does not track (`.gitignore` names it),
+# and cargo honours the ignore rules when it packages by exclusion —
+# the header would silently drop out of the release. An `include` list
+# is what cargo ships regardless of ignore rules; Cargo.toml, the README
+# and the licence files ship whether listed or not.
+include = [
+    "src/**",
+    "build.rs",
+    "cbindgen.toml",
+    "c/include/**",
+    "c/examples/**",
+]
 
 [lib]
 name = "remanence_ffi"

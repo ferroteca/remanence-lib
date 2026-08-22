@@ -7,9 +7,9 @@ vintage and modern systems alike.
 
 This crate is something you build, not something you add to a Rust project.
 It produces a static library and a shared library, and generates the C
-header
-[`c/include/remanence.h`](https://github.com/ferroteca/remanence-lib/blob/main/crates/remanence-ffi/c/include/remanence.h)
-as part of the build. If you are writing Rust, use the
+header `c/include/remanence.h` as part of the build (the packaged crate
+carries a copy; the repository does not track it, since every build
+writes it). If you are writing Rust, use the
 [`remanence`](https://crates.io/crates/remanence) crate directly instead.
 
 > **This is an alpha release.** Before 1.0 there is no compatibility
