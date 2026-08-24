@@ -12,14 +12,14 @@ homepage.workspace = true
 # break off GitHub, and whose build instructions are about the cargo
 # workspace rather than this crate.
 readme = "README.md"
-# A released artifact carries what a consumer runs and nothing else.
-# maturin builds the Python sdist from cargo's package listing, so
-# without this the whole integration suite ships — it did, in the
-# published 0.0.1a1 and 0.0.1a2. The large downloaded HDOS, FreeDOS and
-# KryoFlux fixtures no longer need excluding here: they live at
-# `integration-tests/fixtures/`, outside this crate's directory
-# entirely, so cargo never sees them at all.
-exclude = ["tests/**"]
+# No `exclude` on `tests/`: every suite left in it builds its own images
+# by hand and reaches no downloaded fixture (each says so in its own doc
+# comment), so a released artifact carries what a consumer can actually
+# run. That was not always true — the whole integration suite shipped in
+# the published 0.0.1a1 and 0.0.1a2 — but D71 moved every fixture/rig-gated
+# suite out to `integration-tests/rust/`, which sits outside this crate's
+# directory entirely and so is never in cargo's package listing at all.
+# What is left here is meant to publish with the crate (see AGENTS.md).
 
 [features]
 # Test-only, and it gates in-source `#[cfg(test)]` modules rather than any
