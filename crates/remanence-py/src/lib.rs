@@ -3171,6 +3171,28 @@ impl StorageSpace {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Sets or removes this volume's label — the `LABEL`-command analog
+    /// beside `label()`, buffered until `Medium.commit()` like every
+    /// other write.
+    ///
+    /// What is written is exactly what DOS's own `LABEL` writes: the
+    /// root directory's volume-ID entry, created, replaced, or — for
+    /// `None` — removed, with removal of a label the volume does not
+    /// carry succeeding unchanged. The boot record's field keeps what
+    /// was recorded at format time, as `LABEL` leaves it. A label
+    /// outside the format's grammar is refused naming the rule it
+    /// broke, never truncated or repaired to fit.
+    fn set_label(&self, label: Option<&str>) -> PyResult<()> {
+        with_filesystem(
+            self.session.as_ref(),
+            self.media,
+            self.layer.as_ref(),
+            self.ordinal,
+            self.declared.as_deref(),
+            |filesystem| filesystem.set_label(label),
+        )
+    }
+
     /// Writes a file. An existing file is overwritten — shorter or
     /// longer, its old clusters released and reclaimed — while an
     /// existing directory is refused. Buffered until

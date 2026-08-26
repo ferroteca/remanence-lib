@@ -206,6 +206,41 @@ def test_the_recorded_floppy_writes_out_as_a_raw_image(session, tmp_path):
             assert files.read_file("README.TXT") == b"made, not found\r\n"
 
 
+def test_the_label_is_set_where_dos_own_label_writes_it(session):
+    """U35 with a label: the LABEL-command analog on the namespace."""
+    blank = session.new_media("flexible-3.5-hd")
+    blank.partition(0).record_as("dos-1.44")
+    space = blank.partition(0).filesystem()
+
+    label = space.label()
+    assert label is not None and label.name is None, "recorded unlabeled"
+
+    space.set_label("my disk")
+    label = space.label()
+    assert label.name == "MY DISK", "uppercased, the inner space kept"
+    assert label.answered_by == "root-directory-entry"
+    stored = {reading.source: reading.stored for reading in label.readings}
+    assert stored["boot-record-field"] == "NO NAME", (
+        "the boot record's field keeps what the recording laid down, as DOS's "
+        "own LABEL leaves it"
+    )
+    assert space.entries("") == [], "the entry is the label, not a file"
+
+    # A label outside the grammar is refused naming its rule, never
+    # truncated or repaired to fit.
+    with pytest.raises(remanence.Error) as refusal:
+        space.set_label("TWELVE CHARS")
+    assert refusal.value.rule == "label-too-long"
+
+    # None removes the entry, and removing a label the volume does not
+    # carry succeeds unchanged.
+    space.set_label(None)
+    label = space.label()
+    assert label.name is None
+    assert label.answered_by == "boot-record-field"
+    space.set_label(None)
+
+
 def test_a_blank_article_renders_to_no_raw_image(session):
     blank = session.new_media("flexible-3.5-hd")
     with pytest.raises(remanence.Error) as refusal:

@@ -314,6 +314,34 @@ impl<'a> StorageSpace<'a> {
         }
     }
 
+    /// Sets or removes this volume's label — the `LABEL`-command analog
+    /// beside [`label`](Self::label), buffered until
+    /// [`Medium::commit`](crate::Medium::commit) like every other write.
+    ///
+    /// What is written is exactly what DOS's own `LABEL` writes: the
+    /// root directory's volume-ID entry, created, replaced, or — for
+    /// `None` — removed, with removal of a label the volume does not
+    /// carry succeeding unchanged. The boot record's field keeps what
+    /// was recorded at format time, as `LABEL` leaves it, and the
+    /// readings beside the answer say so. A label outside the format's
+    /// grammar is refused naming the rule it broke
+    /// ([`LabelRule`](crate::LabelRule)), never truncated or repaired to
+    /// fit, and a namespace this release reads without writing refuses
+    /// the same way its file writes do.
+    pub fn set_label(&mut self, label: Option<&str>) -> Result<()> {
+        let offset = self.writable()?;
+        self.medium()?.set_label(offset, label)?;
+        // The label carried here was read when the space was composed,
+        // and the write just changed what a fresh composition would
+        // read; re-read so this handle answers the volume as it now
+        // stands.
+        let fresh = self.medium()?.volume_label(offset)?;
+        if let NamespaceState::Present(Namespace::Volume { label, .. }) = &mut self.namespace {
+            *label = fresh;
+        }
+        Ok(())
+    }
+
     /// What recognized the namespace this space bears (P4).
     ///
     /// A verdict without the observations that produced it is not an

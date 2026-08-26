@@ -507,6 +507,92 @@ fn a_recorded_floppy_writes_out_as_a_raw_image_and_loads_back() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// U35 with a label: the LABEL-command analog on the namespace vantage,
+/// set on the authored disk and read back off the raw artifact.
+#[test]
+fn a_label_set_on_the_recorded_disk_travels_into_the_raw_image() {
+    let path = destination("labelled");
+    let mut session = Session::new();
+    let id = session
+        .new_media(NewMedia::Flexible35Hd)
+        .expect("created")
+        .id();
+    let disk = session.medium_mut(id).expect("pooled");
+    disk.partition(0)
+        .expect("the direct partition")
+        .record_as(Recording::Dos144)
+        .expect("records");
+
+    let mut files = disk
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem()
+        .expect("FAT12");
+    files.set_label(Some("my disk")).expect("labels");
+    // The same handle answers the volume as it now stands, without a
+    // recomposition in between.
+    let label = files.label().expect("answers").expect("FAT has labels");
+    assert_eq!(label.name.as_deref(), Some("MY DISK"), "uppercased");
+    assert_eq!(label.answered_by.as_deref(), Some("root-directory-entry"));
+    let boot = label
+        .readings
+        .iter()
+        .find(|reading| reading.source == "boot-record-field")
+        .expect("the boot record was consulted");
+    assert_eq!(
+        boot.stored.as_deref(),
+        Some("NO NAME"),
+        "the boot record's field keeps what the recording laid down"
+    );
+    // A label outside the grammar is refused naming its rule, through
+    // the same door.
+    let error = files
+        .set_label(Some("TWELVE CHARS"))
+        .expect_err("twelve characters");
+    assert_eq!(error.rule(), Some("label-too-long"));
+    files
+        .write_file("README.TXT", b"labelled\r\n")
+        .expect("writes");
+    drop(files);
+
+    let disk = session.medium_mut(id).expect("pooled");
+    disk.commit().expect("commits");
+    disk.write_raw(&path).expect("writes the image");
+
+    // The artifact carries the entry: a reader by evidence answers the
+    // label the author set, and may relabel through the same door.
+    let mut reader = Session::new();
+    let loaded = reader
+        .load_media(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .expect("opens writable"),
+            Format::Raw {
+                device: FloppyDrive::Pc35Hd.into(),
+                block_bytes: 512,
+            },
+        )
+        .expect("a raw reading of a floppy");
+    let mut files = loaded
+        .partition(0)
+        .expect("the direct partition")
+        .filesystem_as("fat")
+        .expect("the boot record bears the reading");
+    let label = files.label().expect("answers").expect("FAT has labels");
+    assert_eq!(label.name.as_deref(), Some("MY DISK"));
+    files
+        .set_label(None)
+        .expect("a loaded disk relabels through the same door DOS's LABEL used");
+    let label = files.label().expect("answers").expect("FAT has labels");
+    assert_eq!(label.name, None, "unlabeled, the entry removed");
+
+    drop(files);
+    drop(reader);
+    let _ = std::fs::remove_file(&path);
+}
+
 /// The rendition refuses what it cannot render, each by its own rule.
 #[test]
 fn a_medium_with_no_sectors_to_write_refuses_by_name() {

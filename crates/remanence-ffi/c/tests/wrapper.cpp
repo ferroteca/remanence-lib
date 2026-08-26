@@ -334,6 +334,27 @@ void group_authorship()
         remanence::FileData read = files.read_file("HELLO.TXT");
         CHECK(std::vector<std::uint8_t>(read.data(), read.data() + read.size()) == greeting,
               "the file written onto the recorded disk did not read back");
+
+        // The LABEL-command analog, with what only this surface can be
+        // wrong about: the optional crossing as text one way and as the
+        // null remove form the other, and a grammar refusal arriving as
+        // remanence::Error carrying the rule.
+        files.set_label("my disk");
+        std::optional<std::string> label = files.label();
+        CHECK(label.has_value() && *label == "MY DISK",
+              "the label set through the wrapper did not read back uppercased");
+        bool named_rule = false;
+        try {
+            files.set_label("TWELVE CHARS");
+        } catch (const remanence::Error& refusal) {
+            named_rule = refusal.rule() == std::optional<std::string>{"label-too-long"};
+        }
+        CHECK(named_rule, "a label past eleven characters did not name its rule");
+        files.set_label(std::nullopt);
+        CHECK(!files.label().has_value(), "a removed label still answers");
+        // The label writes are buffered like any other; the rendition
+        // below is of committed state.
+        floppy.commit();
     }
 
     // The rendition: the recorded disk written out as the raw image an

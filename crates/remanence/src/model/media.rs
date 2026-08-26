@@ -1440,6 +1440,14 @@ impl Medium {
     pub(crate) fn make_directory(&mut self, at: u64, path: &str) -> Result<()> {
         self.state.make_directory(at, path)
     }
+
+    pub(crate) fn volume_label(&mut self, at: u64) -> Result<crate::VolumeLabel> {
+        self.state.volume_label(at)
+    }
+
+    pub(crate) fn set_label(&mut self, at: u64, label: Option<&str>) -> Result<()> {
+        self.state.set_label(at, label)
+    }
 }
 
 /// The session's media pool: every medium it holds, and the identities

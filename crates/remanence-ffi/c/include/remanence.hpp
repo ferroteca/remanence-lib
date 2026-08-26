@@ -2320,6 +2320,21 @@ public:
         return detail::owned_text(read);
     }
 
+    /// Sets or removes the volume's label — the root directory's
+    /// volume-ID entry, exactly what DOS's own `LABEL` writes; the boot
+    /// record's field is left as recorded. `std::nullopt` removes the
+    /// entry, and removing a label the volume does not carry succeeds
+    /// unchanged. A label outside the format's grammar throws naming the
+    /// rule it broke. Buffered until the device's commit.
+    void set_label(const std::optional<std::string>& label) const
+    {
+        detail::Outcome outcome;
+        outcome.require(remanence_filesystem_set_label(
+                            get(), label.has_value() ? label->c_str() : nullptr,
+                            outcome.category(), outcome.message(), outcome.rule()),
+                        "the label could not be set");
+    }
+
     /// The sources consulted for that label, in policy order (P4).
     std::vector<FilesystemLabelReading> label_readings() const
     {

@@ -18,6 +18,23 @@ rather than bridged. Read every entry below in that light.
 
 ## Unreleased
 
+### Added
+
+- **A FAT volume's label can be set: the `LABEL`-command analog on the
+  namespace.** `StorageSpace::set_label(Option<&str>)`, beside the
+  `label()` it already answers, writes exactly what DOS's own `LABEL`
+  writes — the root directory's volume-ID entry, created, replaced, or
+  (for `None`) removed — and leaves the boot record's field as recorded,
+  which is what `LABEL` leaves; the readings beside the label answer say
+  so. The write is buffered until commit like every other, a namespace
+  this release reads without writing refuses the way its file writes do,
+  and a label outside the format's grammar is refused naming its rule —
+  the new `LabelRule` set (`empty-label`, `label-too-long`,
+  `label-surrounding-space`, `label-excluded-character`,
+  `unlabeled-spelling`) — never truncated or repaired to fit. The C ABI
+  adds `remanence_filesystem_set_label` (a null label removes), wrapped
+  in the C++ header; the Python module adds `StorageSpace.set_label`.
+
 ## 0.1.0-alpha.1 - 2026-08-23
 
 ### Added

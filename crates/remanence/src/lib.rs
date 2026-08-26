@@ -214,7 +214,7 @@ mod model;
 mod partition;
 
 pub use crate::filesystem::dos_name::DosNameRule;
-pub use crate::filesystem::fat::FatKind;
+pub use crate::filesystem::fat::{FatKind, LabelRule};
 pub use crate::filesystem::{Entry, EntryFact, EntryKind, File, SpaceRule, StorageSpace};
 pub use crate::flux::c1541::renditions::{D64Block, D64Report, G64HalfTrack, G64Report};
 pub use crate::flux::c1541::sectors::{

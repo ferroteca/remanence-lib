@@ -95,6 +95,126 @@ const BOOT_RECORD_FIELD: &str = "boot-record-field";
 /// volume has no name.
 const UNLABELED: &str = "NO NAME";
 
+/// One rule of the FAT volume-label grammar, as an enumerated claim (P3).
+///
+/// The set a set-label refusal's rule identity is drawn from, owned by
+/// the seam that owns the label policy. A label is one undivided
+/// eleven-character field — no separator, no extension, no reserved
+/// device names — so its rules are its own rather than the 8.3 name's,
+/// though the two grammars admit the same characters (the label adding
+/// the space `NO NAME` itself carries).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelRule {
+    /// An empty label, which is not the unlabeled state: removing the
+    /// label is its own act.
+    Empty,
+    /// More than eleven characters, which the field cannot hold.
+    TooLong,
+    /// A leading or trailing space, which the field's own space padding
+    /// would silently swallow.
+    SurroundingSpace,
+    /// A character the label grammar excludes, named by the refusal.
+    ExcludedCharacter,
+    /// The format's own spelling of unlabeled, which is a statement
+    /// about the volume rather than a name for it.
+    UnlabeledSpelling,
+}
+
+impl LabelRule {
+    /// Every rule in the set, in the order they are checked.
+    pub const ALL: [Self; 5] = [
+        Self::Empty,
+        Self::TooLong,
+        Self::SurroundingSpace,
+        Self::ExcludedCharacter,
+        Self::UnlabeledSpelling,
+    ];
+
+    /// The stable cross-language spelling of this rule, which is what a
+    /// refusal carries.
+    pub const fn as_str(self) -> crate::error::RuleIdentity {
+        match self {
+            Self::Empty => "empty-label",
+            Self::TooLong => "label-too-long",
+            Self::SurroundingSpace => "label-surrounding-space",
+            Self::ExcludedCharacter => "label-excluded-character",
+            Self::UnlabeledSpelling => "unlabeled-spelling",
+        }
+    }
+
+    /// Reads a rule identity back into this set, for a caller branching
+    /// on [`Error::rule`](crate::Error::rule). An identity from another
+    /// seam's set — or from a later revision of this one — is `None`
+    /// rather than a nearest match.
+    pub fn from_identity(identity: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|rule| rule.as_str() == identity)
+    }
+}
+
+impl std::fmt::Display for LabelRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+fn label_refusal(rule: LabelRule, reason: String) -> Error {
+    Error::io(reason).broke_rule(rule.as_str())
+}
+
+/// Validates and normalizes one caller-supplied label into the eleven
+/// bytes the volume-ID entry's name field takes: uppercased, padded with
+/// spaces. Nothing is repaired to fit (P6) — a label outside the grammar
+/// is refused naming the rule it broke, and the rules are checked in a
+/// fixed order so one label always breaks the same rule.
+fn store_label(label: &str) -> Result<[u8; 11]> {
+    let upper = label.to_ascii_uppercase();
+    if upper.is_empty() {
+        return Err(label_refusal(
+            LabelRule::Empty,
+            "an empty label names nothing; removing the label is its own act".to_owned(),
+        ));
+    }
+    let length = upper.chars().count();
+    if length > 11 {
+        return Err(label_refusal(
+            LabelRule::TooLong,
+            format!("'{label}' is {length} characters; a FAT label holds at most 11"),
+        ));
+    }
+    if upper.starts_with(' ') || upper.ends_with(' ') {
+        return Err(label_refusal(
+            LabelRule::SurroundingSpace,
+            format!(
+                "'{label}' has a leading or trailing space; a FAT label allows \
+                 spaces inside alone, the field's padding being spaces itself"
+            ),
+        ));
+    }
+    if let Some(character) = upper.chars().find(|c| *c != ' ' && !dos_name::admits(*c)) {
+        return Err(label_refusal(
+            LabelRule::ExcludedCharacter,
+            format!(
+                "'{label}' contains '{}', which the FAT label grammar excludes",
+                character.escape_debug()
+            ),
+        ));
+    }
+    if upper == UNLABELED {
+        return Err(label_refusal(
+            LabelRule::UnlabeledSpelling,
+            format!(
+                "'{label}' is the format's own spelling of unlabeled; remove \
+                 the label rather than storing its spelling"
+            ),
+        ));
+    }
+    // Every character admitted is ASCII, so the character count is a
+    // byte count and the fixed-width field takes what was measured.
+    let mut raw = [b' '; 11];
+    raw[..upper.len()].copy_from_slice(upper.as_bytes());
+    Ok(raw)
+}
+
 /// A fixed-width name field's content: what it holds, with the format's
 /// own space padding removed.
 fn field_text(bytes: &[u8]) -> String {
@@ -724,12 +844,11 @@ impl FatVolume {
         Ok(out)
     }
 
-    /// The root directory's volume-ID entry as it stands, or `None` where
-    /// the directory holds no such entry. An entry that exists and is
-    /// blank reads as `Some("")`: it is present, and being present is
-    /// what decides which source answers.
-    fn root_directory_label(&self, device: &mut dyn Device) -> Result<Option<String>> {
-        for (_, record) in self.read_records(device, 0)? {
+    /// The root directory's volume-ID entry as it stands, or `None`
+    /// where the directory holds no such entry: the record's offset and
+    /// its name field's content, with the padding removed.
+    fn volume_id_entry(&self, device: &mut dyn Device) -> Result<Option<(u64, String)>> {
+        for (record_offset, record) in self.read_records(device, 0)? {
             if record[0] == FREE {
                 break;
             }
@@ -738,10 +857,18 @@ impl FatVolume {
             }
             let attributes = record[11];
             if attributes & ATTR_LONG_NAME != ATTR_LONG_NAME && attributes & ATTR_VOLUME_ID != 0 {
-                return Ok(Some(field_text(&record[..11])));
+                return Ok(Some((record_offset, field_text(&record[..11]))));
             }
         }
         Ok(None)
+    }
+
+    /// The volume-ID entry's stored name, where the root directory holds
+    /// the entry. An entry that exists and is blank reads as `Some("")`:
+    /// it is present, and being present is what decides which source
+    /// answers.
+    fn root_directory_label(&self, device: &mut dyn Device) -> Result<Option<String>> {
+        Ok(self.volume_id_entry(device)?.map(|(_, stored)| stored))
     }
 
     /// This volume's label, answered whole: the label, or the fact that
@@ -780,6 +907,39 @@ impl FatVolume {
                 },
             ],
         })
+    }
+
+    /// Sets or removes the volume's label — the root directory's
+    /// volume-ID entry, which is the store DOS's own `LABEL` writes and
+    /// the one the label policy above answers first. The boot record's
+    /// field is left exactly as recorded, as `LABEL` leaves it: a disk
+    /// formatted and then labelled carries the format-time spelling
+    /// there, and the readings beside the answer say so.
+    ///
+    /// `None` removes the entry, and removing a label the volume does
+    /// not carry succeeds unchanged — unlabeled is a state, not an
+    /// event. P6-ordered: the label is validated, and the record slot
+    /// found, before the first mutation; a root directory with no free
+    /// record refuses, the root being unable to grow, and an existing
+    /// entry is rewritten in place rather than a second one appearing
+    /// beside it.
+    pub fn set_label(&self, device: &mut dyn Device, label: Option<&str>) -> Result<()> {
+        match label {
+            Some(label) => {
+                let raw = store_label(label)?;
+                let slot = match self.volume_id_entry(device)? {
+                    Some((offset, _)) => offset,
+                    None => self
+                        .find_free_record(device, 0)?
+                        .ok_or_else(|| no_space("root directory is full"))?,
+                };
+                self.write_record(device, slot, raw, ATTR_VOLUME_ID, 0, 0)
+            }
+            None => match self.volume_id_entry(device)? {
+                Some((offset, _)) => device.write_at(offset, &[DELETED]),
+                None => Ok(()),
+            },
+        }
     }
 
     /// Walks `segments` to the directory holding the last segment,
@@ -1399,6 +1559,216 @@ impl FatVolume {
             current = self.create_directory(device, current, slot, *raw_name)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use crate::model::recording::Recording;
+
+    /// A device over a plain byte vector, which is all these need.
+    struct Image(Vec<u8>);
+
+    impl Device for Image {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+            let at = offset as usize;
+            buf.copy_from_slice(&self.0[at..at + buf.len()]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+            let at = offset as usize;
+            self.0[at..at + data.len()].copy_from_slice(data);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The 1.44 MB layout laid down on a blank, which is the very volume
+    /// the U35 journey labels.
+    fn recorded_volume() -> Image {
+        let mut image = Image(vec![
+            0u8;
+            Recording::Dos144.geometry().total_bytes() as usize
+        ]);
+        Recording::Dos144.lay_down(&mut image).expect("lays down");
+        image
+    }
+
+    fn volume_id_records(volume: &FatVolume, image: &mut Image) -> usize {
+        volume
+            .read_records(image, 0)
+            .expect("the root reads")
+            .iter()
+            .filter(|(_, record)| {
+                record[0] != FREE
+                    && record[0] != DELETED
+                    && record[11] & ATTR_LONG_NAME != ATTR_LONG_NAME
+                    && record[11] & ATTR_VOLUME_ID != 0
+            })
+            .count()
+    }
+
+    #[test]
+    fn the_label_is_set_where_dos_own_label_writes_it_and_nowhere_else() {
+        let mut image = recorded_volume();
+        let volume = FatVolume::open(&mut image, 0).expect("a FAT volume");
+        volume
+            .set_label(&mut image, Some("my disk"))
+            .expect("labels");
+
+        let label = volume.label(&mut image).expect("answers");
+        assert_eq!(
+            label.name.as_deref(),
+            Some("MY DISK"),
+            "uppercased, the inner space kept"
+        );
+        assert_eq!(label.answered_by.as_deref(), Some(ROOT_DIRECTORY_ENTRY));
+        let boot = label
+            .readings
+            .iter()
+            .find(|reading| reading.source == BOOT_RECORD_FIELD)
+            .expect("the boot record was consulted");
+        assert_eq!(
+            boot.stored.as_deref(),
+            Some(UNLABELED),
+            "the boot record's field keeps what the recording laid down, as DOS's \
+             own LABEL leaves it"
+        );
+
+        // The entry is the label, not a file: the listing stays empty.
+        assert!(
+            volume.entries(&mut image, &[]).expect("lists").is_empty(),
+            "a volume-ID entry never appears in a directory listing"
+        );
+    }
+
+    #[test]
+    fn relabeling_rewrites_the_one_entry_and_removal_deletes_it() {
+        let mut image = recorded_volume();
+        let volume = FatVolume::open(&mut image, 0).expect("a FAT volume");
+        volume.set_label(&mut image, Some("FIRST")).expect("labels");
+        volume
+            .set_label(&mut image, Some("SECOND"))
+            .expect("relabels");
+        assert_eq!(
+            volume_id_records(&volume, &mut image),
+            1,
+            "a relabel rewrites the entry in place rather than adding a second"
+        );
+        let label = volume.label(&mut image).expect("answers");
+        assert_eq!(label.name.as_deref(), Some("SECOND"));
+
+        volume.set_label(&mut image, None).expect("removes");
+        assert_eq!(volume_id_records(&volume, &mut image), 0);
+        let label = volume.label(&mut image).expect("answers");
+        assert_eq!(label.name, None, "the boot record's NO NAME is unlabeled");
+        assert_eq!(
+            label.answered_by.as_deref(),
+            Some(BOOT_RECORD_FIELD),
+            "with the entry gone, the boot record's field answers again"
+        );
+
+        // Removing a label the volume does not carry is a state already
+        // reached, not an event that failed to happen.
+        volume.set_label(&mut image, None).expect("still unlabeled");
+    }
+
+    #[test]
+    fn every_rule_of_the_label_grammar_is_reachable_and_names_itself() {
+        let mut image = recorded_volume();
+        let volume = FatVolume::open(&mut image, 0).expect("a FAT volume");
+        let mut broken_rule = |label: &str| {
+            let error = volume
+                .set_label(&mut image, Some(label))
+                .expect_err("a refusal");
+            LabelRule::from_identity(error.rule().expect("a rule identity"))
+                .expect("a rule of this set")
+        };
+        assert_eq!(broken_rule(""), LabelRule::Empty);
+        assert_eq!(broken_rule("TWELVE CHARS"), LabelRule::TooLong);
+        assert_eq!(broken_rule(" DISK"), LabelRule::SurroundingSpace);
+        assert_eq!(broken_rule("DISK "), LabelRule::SurroundingSpace);
+        assert_eq!(broken_rule("MY.DISK"), LabelRule::ExcludedCharacter);
+        assert_eq!(broken_rule("A,B"), LabelRule::ExcludedCharacter);
+        assert_eq!(broken_rule("no name"), LabelRule::UnlabeledSpelling);
+
+        // Nothing was repaired to fit, and nothing was written.
+        let label = volume.label(&mut image).expect("answers");
+        assert_eq!(label.name, None, "every refusal left the volume unlabeled");
+        assert_eq!(volume_id_records(&volume, &mut image), 0);
+    }
+
+    #[test]
+    fn a_refusal_says_what_was_found_beside_the_rule_it_names() {
+        let error = store_label("MY.DISK").expect_err("a refusal");
+        assert_eq!(error.rule(), Some(LabelRule::ExcludedCharacter.as_str()));
+        assert_eq!(
+            error.to_string(),
+            "'MY.DISK' contains '.', which the FAT label grammar excludes"
+        );
+        let error = store_label("no name").expect_err("a refusal");
+        assert_eq!(
+            error.to_string(),
+            "'no name' is the format's own spelling of unlabeled; remove the \
+             label rather than storing its spelling"
+        );
+    }
+
+    #[test]
+    fn a_full_root_directory_refuses_a_first_label_and_takes_a_relabel() {
+        let mut image = recorded_volume();
+        let volume = FatVolume::open(&mut image, 0).expect("a FAT volume");
+        volume.set_label(&mut image, Some("EARLY")).expect("labels");
+        // Fill the 223 records the label left free with zero-byte files.
+        for at in 0..223 {
+            let name = format!("F{at:03}");
+            volume
+                .write_file(&mut image, &[name.as_str()], &[])
+                .expect("a zero-byte file takes one record and no cluster");
+        }
+        volume
+            .set_label(&mut image, Some("IN PLACE"))
+            .expect("a relabel rewrites the entry it already holds");
+
+        volume.set_label(&mut image, None).expect("removes");
+        volume
+            .write_file(&mut image, &["LAST"], &[])
+            .expect("the freed record takes a file");
+        let error = volume
+            .set_label(&mut image, Some("NO ROOM"))
+            .expect_err("no record is free for a first label");
+        assert!(
+            error.to_string().contains("root directory is full"),
+            "the refusal is the root's own rule: {error}"
+        );
+    }
+
+    #[test]
+    fn rule_spellings_are_stable() {
+        assert_eq!(LabelRule::Empty.as_str(), "empty-label");
+        assert_eq!(LabelRule::TooLong.as_str(), "label-too-long");
+        assert_eq!(
+            LabelRule::SurroundingSpace.as_str(),
+            "label-surrounding-space"
+        );
+        assert_eq!(
+            LabelRule::ExcludedCharacter.as_str(),
+            "label-excluded-character"
+        );
+        assert_eq!(LabelRule::UnlabeledSpelling.as_str(), "unlabeled-spelling");
+        for rule in LabelRule::ALL {
+            assert_eq!(LabelRule::from_identity(rule.as_str()), Some(rule));
+        }
+        assert_eq!(LabelRule::from_identity("not-a-rule"), None);
     }
 }
 

@@ -573,6 +573,11 @@ let mut fs = disk.partition(0)           // FAT12 by evidence — the boot
     .expect("still the direct partition") // record just recorded is
     .filesystem()                        // what the FAT seam reads
     .expect("the boot record just recorded determines FAT");
+fs.set_label(Some("MYDISK"))?;           // the LABEL-command analog:
+                                         // the root directory's
+                                         // volume-ID entry, the boot
+                                         // record's field left as
+                                         // FORMAT wrote it
 fs.write_file("AUTOEXEC.BAT", script)?;
 fs.make_directory("DATA")?;
 fs.write_file("DATA/NOTES.TXT", notes)?;
@@ -590,6 +595,16 @@ disk.write_raw("blank144.img")?;         // 1,474,560 bytes; an existing
 
 The 1.2 MB journey is the same with `NewMedia::Flexible525Hd` and
 `Recording::Dos12`: 80 × 2 × 15 × 512, 1,228,800 bytes.
+
+The label is mine to set through the same namespace, and `set_label`
+writes exactly what DOS's own `LABEL` writes: the root directory's
+volume-ID entry — created, replaced, or, for `None`, removed — while
+the boot record's field keeps the `NO NAME` the recording laid down,
+which is what `LABEL` leaves there too. The label answer prefers the
+entry the way DOS's own `DIR` does (U4's policy: one whole answer,
+decided where the format is known), with both readings beside it. A
+label outside the format's grammar is refused naming the rule it
+broke, never truncated or repaired to fit.
 
 ### What the recording states
 

@@ -163,6 +163,24 @@ impl MediaState {
         fat.write_file(&mut composed, &segments, contents)
     }
 
+    /// The label of the volume in the extent starting at `offset`,
+    /// answered whole by the FAT seam that owns the policy.
+    pub(crate) fn volume_label(&mut self, offset: u64) -> Result<crate::VolumeLabel> {
+        let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
+        fat.label(&mut composed)
+    }
+
+    /// Sets or removes the label of the volume in the extent starting at
+    /// `offset` — the root directory's volume-ID entry, exactly what
+    /// DOS's own `LABEL` writes. Buffered until commit.
+    pub(crate) fn set_label(&mut self, offset: u64, label: Option<&str>) -> Result<()> {
+        self.require_writable()?;
+        let mut composed = self.composed();
+        let fat = FatVolume::open(&mut composed, offset)?;
+        fat.set_label(&mut composed, label)
+    }
+
     /// Ensures a directory exists, missing parents created and an
     /// existing directory succeeding unchanged. Buffered until commit.
     pub(crate) fn make_directory(&mut self, offset: u64, path: &str) -> Result<()> {
@@ -179,6 +197,40 @@ mod tests {
     use super::super::fixtures::*;
     use super::*;
     use crate::io::device::AccessIntent;
+
+    #[test]
+    fn the_label_verbs_round_trip_on_fat16_and_survive_the_commit() {
+        let path = temp_image("label-verbs");
+        std::fs::write(&path, fat16_volume_bytes()).expect("image writes");
+        let mut disk = MediaState::open(&path, AccessIntent::Write).expect("opens");
+        let volume = only_extent(&mut disk);
+
+        // The fixture's own label answers, from the entry it wrote.
+        let label = disk.volume_label(volume).expect("answers");
+        assert_eq!(label.name.as_deref(), Some("REMANENCE"));
+
+        disk.set_label(volume, Some("RELABELLED"))
+            .expect("relabels");
+        disk.commit().expect("commits");
+        drop(disk);
+
+        let mut reopened = MediaState::open(&path, AccessIntent::Write).expect("reopens");
+        let label = reopened.volume_label(volume).expect("answers");
+        assert_eq!(
+            label.name.as_deref(),
+            Some("RELABELLED"),
+            "the relabel survives the commit"
+        );
+
+        // Removed — and this volume's boot record states no label field
+        // at all, so the answer is no label from no source.
+        reopened.set_label(volume, None).expect("removes");
+        let label = reopened.volume_label(volume).expect("answers");
+        assert_eq!(label.name, None);
+        assert_eq!(label.answered_by, None);
+        drop(reopened);
+        std::fs::remove_file(&path).ok();
+    }
 
     #[test]
     fn streamed_file_verbs_round_trip_beside_the_whole_file_forms() {

@@ -115,7 +115,11 @@ fn refusal(rule: DosNameRule, reason: String) -> Error {
     Error::io(reason).broke_rule(rule.as_str())
 }
 
-fn admits(character: char) -> bool {
+/// Whether the 8.3 namespace admits `character`. The volume-label
+/// grammar draws on the same set — a label admits everything a file
+/// name does, plus the space the label field may hold inside — which is
+/// why this is readable outside the module.
+pub(crate) fn admits(character: char) -> bool {
     character.is_ascii_uppercase() || character.is_ascii_digit() || PUNCTUATION.contains(&character)
 }
 

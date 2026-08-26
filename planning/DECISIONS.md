@@ -58,6 +58,54 @@ removes it is the record either way.
 
 ## Decisions
 
+### D77 — The volume label is set where LABEL writes it, through the namespace
+
+**Decided** Paul Galbraith (alternatives argued and chosen in
+conversation, delivered as T9), 2026-08-25. **Supports** S1, S2, S3;
+P3, P6, P18, P19; U4, U35.
+
+U35 delivered without a way to name the disk: the arc lays down
+`FORMAT`'s unlabelled boot record, and nothing could change it.
+`DECISIONS.md` was searched first: U4 owns the *reading* policy ("the
+label is one whole answer, decided where the format is known"), and
+nothing adjudicated writing one.
+
+**The verb is the namespace's, not the arc's.** `set_label` sits on
+`StorageSpace` beside the `label()` it already answers — the
+`LABEL`-command analog — rather than as a label parameter on
+`record_as`, the `FORMAT /V` analog. The arc stays an enumerated whole
+claim (U35 itself excludes a free-form parameter block), a disk can be
+relabelled at any time rather than at one moment, and the verb
+necessarily reaches loaded FAT disks through the same write guards the
+file verbs pass, which is where DOS's own `LABEL` ran too.
+
+**What is written is the root directory's volume-ID entry, alone.** FAT
+records a label in two places; `LABEL` writes the entry and leaves the
+boot record's field as `FORMAT` spelled it, and this seam does the
+same. An authored-then-labelled disk is thereby the disk
+`FORMAT`-then-`LABEL` produce, a loaded artifact has no byte touched
+that DOS's own tool would not touch, and the reader's U4 policy already
+answers the entry first with both readings beside the answer — so
+nothing is lost to the field staying put, and the disagreement the two
+stores may carry is the authentic one real disks carry.
+
+**The grammar is its own enumerated rule set.** A label is one
+undivided eleven-character field, not an 8.3 name: `LabelRule` admits
+the 8.3 character set plus the interior space (`NO NAME` itself carries
+one), refuses surrounding spaces the padding would swallow, refuses an
+empty label (removal is its own act, `None`), and refuses the literal
+unlabeled spelling `NO NAME` — a label that stored it would read back
+as no label at all, and a caller who wants that state removes the
+label instead.
+
+**Weighed and declined:** a label argument on `record_as` (authoring-
+only, no relabel, and a caller-chosen field opened on an enumerated
+claim); writing both stores (manufactures an agreement DOS itself does
+not maintain, and rewrites boot-sector bytes `LABEL` never touches);
+extending `DosNameRule` with label rules (the two namespaces share
+characters, not rules — a separate set keeps every refusal naming a
+rule of the grammar that was actually asked).
+
 ### D76 — Rulings made delivering the raw rendition, and U35's arming
 
 **Decided** Paul Galbraith (via the owner-directed implementation),

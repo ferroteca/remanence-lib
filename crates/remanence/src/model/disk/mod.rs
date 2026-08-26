@@ -750,6 +750,28 @@ impl MediumState {
         }
     }
 
+    pub(crate) fn volume_label(&mut self, at: u64) -> Result<crate::VolumeLabel> {
+        match self {
+            Self::Authored(authored) => {
+                let space = authored.space_mut("label")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.label(space)
+            }
+            other => other.space_mut("label")?.volume_label(at),
+        }
+    }
+
+    pub(crate) fn set_label(&mut self, at: u64, label: Option<&str>) -> Result<()> {
+        match self {
+            Self::Authored(authored) => {
+                let space = authored.space_mut("set_label")?;
+                let fat = FatVolume::open(space, at)?;
+                fat.set_label(space, label)
+            }
+            other => other.space_mut("set_label")?.set_label(at, label),
+        }
+    }
+
     /// The medium's **committed** content, beneath the session cache.
     ///
     /// Every other reader in the library reads through the cache, which

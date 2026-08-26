@@ -76,6 +76,9 @@ with remanence.Session() as session, open("disk.qcow2", "rb") as handle:
                 facts: list[remanence.EntryFact] = entry.declared
             contents: bytes = space.read_file("BOOT.SYS")
             space.write_file("OUT.TXT", b"written")
+            label: remanence.VolumeLabel | None = space.label()
+            space.set_label("MYDISK")
+            space.set_label(None)
             handle_file = space.get_file("BOOT.SYS")
             payload: bytes = handle_file.bytes()
             chunk: bytes = handle_file.read_at(0, 16)

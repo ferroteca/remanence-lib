@@ -395,6 +395,35 @@ pub unsafe extern "C" fn remanence_filesystem_label_reading(
     true
 }
 
+/// Sets or removes the volume's label — the root directory's volume-ID
+/// entry, exactly what DOS's own `LABEL` writes; the boot record's field
+/// is left as recorded. A null `label` removes the entry, and removing a
+/// label the volume does not carry succeeds unchanged. A label outside
+/// the format's grammar is refused naming the rule it broke, never
+/// truncated or repaired to fit. Buffered until `remanence_device_commit`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remanence_filesystem_set_label(
+    filesystem: *const RemanenceSpace,
+    label: *const c_char,
+    error_category_out: *mut RemanenceErrorCategory,
+    error_out: *mut *mut c_char,
+    error_rule_out: *mut *mut c_char,
+) -> bool {
+    unsafe { clear_error(error_out, error_rule_out) };
+    let Some(handle) = (unsafe { filesystem.as_ref() }) else {
+        return false;
+    };
+    // Null is the remove form, not a missing argument.
+    let label = unsafe { utf8_arg(label) };
+    match unsafe { with_space(handle.origin(), |target| target.set_label(label.as_deref())) } {
+        Ok(()) => true,
+        Err(error) => {
+            unsafe { set_error(error_category_out, error_out, error_rule_out, &error) };
+            false
+        }
+    }
+}
+
 /// How many observations recognized this namespace (P4).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn remanence_filesystem_evidence_count(
